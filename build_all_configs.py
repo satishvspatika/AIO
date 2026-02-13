@@ -20,12 +20,12 @@ BACKUP_GLOBALS = "/tmp/globals.h.backup"
 
 # Build configurations: (SYSTEM, UNIT, output_name)
 CONFIGS = [
-    (0, "KSNDMC_TRG", "TRG_KSNDMC"),
-    (0, "BIHAR_TRG", "TRG_BIHAR"),
-    (0, "SPATIKA_GEN", "TRG_SPATIKA"),
-    (1, "KSNDMC_TWS", "TWS_KSNDMC"),
-    (2, "KSNDMC_ADDON", "TWSRF_KSNDMC"),
-    (2, "SPATIKA_GEN", "TWSRF_SPATIKA"),
+    (0, "KSNDMC_TRG", "KSNDMC_TRG"),
+    (0, "BIHAR_TRG", "BIHAR_TRG"),
+    (0, "SPATIKA_GEN", "SPATIKA_TRG"),
+    (1, "KSNDMC_TWS", "KSNDMC_TWS"),
+    (2, "KSNDMC_ADDON", "KSNDMC_ADDON"),
+    (2, "SPATIKA_GEN", "SPATIKA_ADDON"),
 ]
 
 # Colors

@@ -8,14 +8,14 @@ if [ -z "$CONFIG_NAME" ]; then
     echo "Usage: ./export_bin.sh CONFIG_NAME"
     echo ""
     echo "Available configurations:"
-    echo "  TRG_KSNDMC      (SYSTEM=0, UNIT=KSNDMC_TRG)"
-    echo "  TRG_BIHAR       (SYSTEM=0, UNIT=BIHAR_TRG)"
-    echo "  TRG_SPATIKA     (SYSTEM=0, UNIT=SPATIKA_GEN)"
-    echo "  TWS_KSNDMC      (SYSTEM=1, UNIT=KSNDMC_TWS)"
-    echo "  TWSRF_KSNDMC    (SYSTEM=2, UNIT=KSNDMC_ADDON)"
-    echo "  TWSRF_SPATIKA   (SYSTEM=2, UNIT=SPATIKA_GEN)"
+    echo "  KSNDMC_TRG      (SYSTEM=0, UNIT=KSNDMC_TRG)"
+    echo "  BIHAR_TRG       (SYSTEM=0, UNIT=BIHAR_TRG)"
+    echo "  SPATIKA_TRG     (SYSTEM=0, UNIT=SPATIKA_GEN)"
+    echo "  KSNDMC_TWS      (SYSTEM=1, UNIT=KSNDMC_TWS)"
+    echo "  KSNDMC_ADDON    (SYSTEM=2, UNIT=KSNDMC_ADDON)"
+    echo "  SPATIKA_ADDON   (SYSTEM=2, UNIT=SPATIKA_GEN)"
     echo ""
-    echo "Example: ./export_bin.sh TWSRF_SPATIKA"
+    echo "Example: ./export_bin.sh BIHAR_TRG"
     exit 1
 fi
 
