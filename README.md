@@ -19,7 +19,11 @@ We maintain control by using **Git Tags** for every stable release.
 
 ### 1. Developer Workflow (Modify, Test, & Save)
 If you are making changes to the code:
-- **Test**: Set `SYSTEM` and `UNIT` in `globals.h` and use **Sketch -> Upload** in Arduino IDE.
+- **Quick Test**: Use **Sketch -> Export Compiled Binary** in Arduino IDE, then run:
+  ```bash
+  ./quick_flash.sh /dev/cu.usbserial-A50285BI
+  ```
+  *(This only flashes your code at 0x10000, leaving the bootloader/partitions alone.)*
 - **Save Code**: 
   ```bash
   git add .
