@@ -19,11 +19,11 @@ We maintain control by using **Git Tags** for every stable release.
 
 ### 1. Developer Workflow (Modify, Test, & Save)
 If you are making changes to the code:
-- **One-Step Build & Flash**:
+- **One-Step Compile & Flash**:
   ```bash
-  ./build_and_flash.sh
+  ./compile_and_flash.sh
   ```
-  *(This automatically compiles your code and flashes ONLY the app. It will intelligently find your USB port.)*
+  *(This automatically compiles your code and flashes ONLY the app. It will intelligently find your USB port and release any busy serial monitors.)*
 
 - **Save Code to GitHub**: 
   ```bash
