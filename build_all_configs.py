@@ -77,6 +77,9 @@ def update_globals(system, unit):
     
     # Update UNIT
     content = re.sub(r'char UNIT\[15\] = "[^"]*"', f'char UNIT[15] = "{unit}"', content)
+
+    # Force DEBUG 0 for official builds
+    content = re.sub(r'#define DEBUG \d+', '#define DEBUG 0', content)
     
     # Write back
     with open(GLOBALS_H, 'w') as f:
