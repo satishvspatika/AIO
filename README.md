@@ -15,28 +15,36 @@ We maintain control by using **Git Tags** for every stable release.
 - **Source Code**: Managed in this repository.
 - **Compiled Binaries**: Distributed via [GitHub Releases](https://github.com/satishvspatika/AIO/releases). Members should download the `.bin` files from the "Assets" section of each release.
 
-## 🛠 Development Workflow
-If you want to make changes:
-1. **Pull**: `git pull origin main`
-2. **Edit**: Modify code and update `FIRMWARE_VERSION` in `globals.h`.
-3. **Commit**: `git add .` and `git commit -m "Your description"`
-4. **Tag**: `git tag -a v5.0.1 -m "Short summary of changes"`
-5. **Push**: `git push origin main --tags`
+## 🛠 How to Manage this Project (3 Ways)
 
-## ⚡ Flashing Guide for Members
-Members do not need to install the Arduino IDE or compile code.
-1. Download the binary assets from the latest Release.
-2. Connect your ESP32.
-3. Run the flash script:
+### 1. Developer Workflow (Modify, Test, & Save)
+If you are making changes to the code:
+- **Test**: Set `SYSTEM` and `UNIT` in `globals.h` and use **Sketch -> Upload** in Arduino IDE.
+- **Save Code**: 
+  ```bash
+  git add .
+  git commit -m "Description of fix"
+  git push origin main
+  ```
+- **Revert/Switch versions**: 
+  - To go to a specific release: `git checkout v5.0.0`
+  - To go back to latest: `git checkout main`
+
+### 2. Team Member Workflow (No Tools / Online Flash)
+If a team member needs to flash a device but has no IDE/Python, they can use an **Online ESP Web Tool**. You must provide them with these 4 files and these addresses:
+- `bootloader.bin` --> **0x1000**
+- `partitions.bin` --> **0x8000**
+- `boot_app0.bin`  --> **0xE000**
+- `AIO9_5.0.ino.bin` --> **0x10000**
+
+### 3. Bundling for Official Release (FTP/SD Card)
+To generate the clean bundle for a specific configuration:
+1. Export the binary from Arduino IDE (**Sketch -> Export Compiled Binary**).
+2. Run the packager:
    ```bash
-   ./flash_firmware.sh /dev/cu.usbserial-A50285BI
+   ./organize_build.sh KSNDMC_TRG
    ```
-
-## 🔍 Recent Fixes (v5.0)
-- **ADC Stability**: Fixed the `driver_ng` vs `Legacy` conflict causing crashes.
-- **UI Performance**: Removed flicker from LCD by using space-padding.
-- **Persistence**: Implemented NVS/SD fallback for Station ID.
-- **Input**: Restored Alphanumeric keypad input for Station ID.
+3. Look in the `builds/KSNDMC_TRG` folder for your `firmware.bin` and `fw_version.txt`.
 
 ---
 *Created by Spatika Information Technologies*
