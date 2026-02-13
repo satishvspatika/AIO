@@ -34,7 +34,24 @@ fi
 
 # New: Auto-release the port if it's busy (kills existing serial monitors)
 echo "🔍 Checking if $PORT is busy..."
-fuser -k "$PORT" 2>/dev/null || true 
+# On macOS, lsof is more reliable for finding serial port usage
+PID=$(lsof -t "$PORT")
+if [ -n "$PID" ]; then
+    echo "⚠️  Port $PORT is being used by PID: $PID. Releasing..."
+    kill -9 $PID
+    sleep 1 # Give it a moment to release
+else
+    # Fallback for other environments or if lsof didn't catch it
+    fuser -k "$PORT" 2>/dev/null || true
+fi
+
+# Specifically check for any arduino-cli monitor processes that might be lingering
+ARDUINO_PID=$(ps aux | grep "arduino-cli monitor" | grep "$PORT" | grep -v grep | awk '{print $2}')
+if [ -n "$ARDUINO_PID" ]; then
+    echo "⚠️  Found active arduino-cli monitor for $PORT. Killing PID: $ARDUINO_PID"
+    kill -9 $ARDUINO_PID
+    sleep 1
+fi
 
 # 3. Flash the app
 echo "🚀 Target Port Detected: $PORT"
