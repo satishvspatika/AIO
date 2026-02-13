@@ -29,21 +29,29 @@ echo ""
 # Create output directory
 mkdir -p builds/$CONFIG_NAME
 
-# Find and move binary (try different possible names)
+# Find and move binary (check root and build folder)
 BINARY_FOUND=0
 
-if [ -f "AIO9_5.0.ino.esp32.bin" ]; then
-    mv AIO9_5.0.ino.esp32.bin builds/$CONFIG_NAME/firmware.bin
-    BINARY_FOUND=1
-    echo "✓ Found and moved: AIO9_5.0.ino.esp32.bin"
-elif [ -f "AIO9_5.0.ino.bin" ]; then
-    mv AIO9_5.0.ino.bin builds/$CONFIG_NAME/firmware.bin
-    BINARY_FOUND=1
-    echo "✓ Found and moved: AIO9_5.0.ino.bin"
-else
-    echo "✗ Binary not found!"
-    echo "  Expected: AIO9_5.0.ino.esp32.bin or AIO9_5.0.ino.bin"
-    echo "  Make sure you ran: Sketch → Export Compiled Binary"
+# Possible binary locations
+POSSIBLE_BINS=(
+    "AIO9_5.0.ino.esp32.bin"
+    "AIO9_5.0.ino.bin"
+    "build/esp32.esp32.esp32/AIO9_5.0.ino.bin"
+)
+
+for bin_path in "${POSSIBLE_BINS[@]}"; do
+    if [ -f "$bin_path" ]; then
+        cp "$bin_path" builds/$CONFIG_NAME/firmware.bin
+        BINARY_FOUND=1
+        echo "✓ Found and copied: $bin_path"
+        break
+    fi
+done
+
+if [ $BINARY_FOUND -eq 0 ]; then
+    echo "❌ Binary not found!"
+    echo "  Tried: ${POSSIBLE_BINS[*]}"
+    echo "  Make sure you ran: './compile.sh' or IDE 'Export Compiled Binary'"
     exit 1
 fi
 
