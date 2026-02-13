@@ -1,0 +1,10 @@
+Build Configuration
+===================
+SYSTEM: 1
+UNIT: KSNDMC_TWS
+Output: TWS_KSNDMC
+Firmware Version: 5.0
+Build Date: 2026-02-13 14:47:50.377967
+Binary Size: 1.17 MB
+Binary Path: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/TWS_KSNDMC/firmware.bin
+Version File: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/TWS_KSNDMC/fw_version.txt

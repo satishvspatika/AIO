@@ -1,0 +1,17 @@
+# Arduino/ESP32 junk
+build/
+*.bin
+*.elf
+*.o
+*.d
+*.map
+.arduinoIDE/
+*.tmp
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Keep credentials out of repo if any
+auth.h
+secrets.h
