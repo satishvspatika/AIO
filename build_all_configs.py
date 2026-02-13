@@ -237,6 +237,13 @@ def main():
                         shutil.copy(source_bin, target_dir / "firmware.bin")
                         if source_ver.exists():
                             shutil.copy(source_ver, target_dir / "fw_version.txt")
+            
+            # Copy common Release Notes (from PROJECT_STATUS.md)
+            source_notes = SKETCH_DIR / "PROJECT_STATUS.md"
+            if source_notes.exists():
+                shutil.copy(source_notes, EXTERNAL_RELEASE_BASE / "RELEASE_NOTES.md")
+                print_success(f"Common Release Notes copied to: {EXTERNAL_RELEASE_BASE / 'RELEASE_NOTES.md'}")
+
             print_success(f"Release files copied successfully to:\n   {EXTERNAL_RELEASE_BASE}")
         except Exception as e:
             print_error(f"Failed to copy to external release directory: {e}")

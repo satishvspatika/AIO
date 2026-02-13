@@ -85,6 +85,8 @@ EXTERNAL_RELEASE_PATH="/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIG
 mkdir -p "$EXTERNAL_RELEASE_PATH"
 cp builds/$CONFIG_NAME/firmware.bin "$EXTERNAL_RELEASE_PATH/firmware.bin"
 cp builds/$CONFIG_NAME/fw_version.txt "$EXTERNAL_RELEASE_PATH/fw_version.txt"
+# Copy common Release Notes
+cp PROJECT_STATUS.md "/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5/AIO9_5.0/RELEASE_NOTES.md" 2>/dev/null
 echo "✓ Copied to external release: $EXTERNAL_RELEASE_PATH"
 
 echo ""
