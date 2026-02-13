@@ -35,27 +35,20 @@ If you are making changes to the code:
   - To go to a specific release: `git checkout v5.0.0`
   - To go back to latest: `git checkout main`
 
-### 2. Team Member Workflow (No Tools / Online Flash)
-If a team member needs to flash a device but has no IDE/Python, they can use an **Online ESP Web Tool**. You must provide them with these 4 files and these addresses:
-- `bootloader.bin` --> **0x1000**
-- `partitions.bin` --> **0x8000**
-- `boot_app0.bin`  --> **0xE000**
-- `AIO9_5.0.ino.bin` --> **0x10000**
+### 2. Team Member Workflow (Online/Web Flash)
+If a team member needs to flash a device without any local tools:
+1. Run `./export_web_flash.sh` to gather the 4 binary files into the `WEB_FLASH_FILES` folder.
+2. Send these files to the member.
+3. They can use an **Online ESP Web Tool** (e.g., [web-install.com/esp32](https://web-install.com/esp32)) with these addresses:
+   - `bootloader.bin` --> **0x1000**
+   - `partitions.bin` --> **0x8000**
+   - `boot_app0.bin`  --> **0xE000**
+   - `application.bin` --> **0x10000**
 
-### 3. Bundling for a Single Configuration (Manual)
-To generate the clean bundle for just the current config you are working on:
-1. Export the binary from Arduino IDE (**Sketch -> Export Compiled Binary**).
-2. Run the packager:
-   ```bash
-   ./organize_build.sh KSNDMC_TRG
-   ```
-
-### 4. Full Release (All 6 Configurations Automatically)
-To generate a complete release for every supported system (TRG, TWS, TWS-RF) in one go:
-```bash
-python3 build_all_configs.py
-```
-This script will produce 6 folders in the `builds/` directory, each with its own `firmware.bin` and `fw_version.txt`.
+### 3. Release Bundling (FTP / SD Card / Updates)
+To generate clean `firmware.bin` and `fw_version.txt` bundles:
+- **For a single configuration**: `./organize_build.sh [CONFIG_NAME]`
+- **For a full release (All 6 configs)**: `python3 build_all_configs.py`
 
 ---
 *Created by Spatika Information Technologies*
