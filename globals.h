@@ -31,13 +31,13 @@
 
 // CHANGE THESE FOR DIFFERENT SYSTEMS
 /************************************************************************************************/
-#define SYSTEM 2                // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "KSNDMC_ADDON"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
-                                // KSNDMC_ADDON SPATIKA_GEN
+#define SYSTEM 2               // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "SPATIKA_GEN"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
+                               // KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.0"
+#define FIRMWARE_VERSION "5.1"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)

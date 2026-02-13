@@ -1,4 +1,4 @@
-# ESP32 AIO v5.0 Project Status - Feb 13, 2026
+# ESP32 AIO v5.1 Project Status - Feb 13, 2026
 
 ## 🚀 Key Improvements & Fixes
 
@@ -26,6 +26,12 @@
 - **Unsent Queue**: All system types (TRG, TWS, TWS-RF) now correctly use `unsent.txt` or `ftpunsent.txt` when GPRS is unavailable.
 - **Intelligent Filling**: On boot, the system detects gaps in the daily SPIFFS/SD files and uses an interpolation mechanism to fill missing 15-minute slots.
 - **Status**: ✅ Verified via serial logs.
+
+### 5. Field Hardening & Longevity (v5.1)
+- **I2C Bus Recovery**: Automated detection and recovery of hung SDA/SCL lines. If the bus hangs due to noise, the system now "clocks out" the hanging state automatically.
+- **LCD Heartbeat**: A small blinking pixel at (15,0) provides instant visual confirmation that the firmware is running.
+- **Memory Protection**: Optimized `String` handling in GPRS responses to prevent heap fragmentation during months of uptime.
+- **Status**: ✅ Ready for long-term deployment.
 
 ## 🛠 Active Configuration
 - **Unit**: `KSNDMC_ADDON` (TWS-RF)
