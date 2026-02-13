@@ -19,11 +19,11 @@ We maintain control by using **Git Tags** for every stable release.
 
 ### 1. Developer Workflow (Modify, Test, & Save)
 If you are making changes to the code:
-- **Quick Test**: Use **Sketch -> Export Compiled Binary** in Arduino IDE, then run:
-  ```bash
-  ./quick_flash.sh /dev/cu.usbserial-A50285BI
-  ```
-  *(This only flashes your code at 0x10000, leaving the bootloader/partitions alone.)*
+- **Quick Test (Terminal Only)**:
+  1. `./compile.sh`
+  2. `./quick_flash.sh /dev/cu.usbserial-A50285BI`
+  *(This compiles based on your globals.h and flashes only the app at 0x10000.)*
+- **Quick Test (Arduino IDE)**: Use **Sketch -> Export Compiled Binary**, then run `./quick_flash.sh`.
 - **Save Code**: 
   ```bash
   git add .
