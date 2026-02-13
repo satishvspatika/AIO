@@ -9,9 +9,10 @@ OUT_DIR="WEB_FLASH_FILES"
 
 if [ -n "$CONFIG_NAME" ]; then
     # Grab from an official build folder
-    B_DIR="./builds/$CONFIG_NAME/build"
+    # Common files (bootloader, partitions) are in the shared build folder
+    B_DIR="./build/all_configs_shared"
     APP_BIN="./builds/$CONFIG_NAME/firmware.bin"
-    if [ ! -d "$B_DIR" ]; then
+    if [ ! -f "$APP_BIN" ]; then
         echo "❌ Error: Configuration '$CONFIG_NAME' not found in builds/ folder."
         echo "Did you run 'python3 build_all_configs.py' first?"
         exit 1

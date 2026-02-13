@@ -112,9 +112,9 @@ def build_config(system, unit, output_name):
     output_dir = OUTPUT_BASE / output_name
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Build directory
-    build_dir = output_dir / "build"
-    build_dir.mkdir(exist_ok=True)
+    # Shared Build directory to speed up compilation
+    shared_build_dir = SKETCH_DIR / "build" / "all_configs_shared"
+    shared_build_dir.mkdir(parents=True, exist_ok=True)
     
     # Compile
     print_info("Compiling...")
@@ -129,7 +129,7 @@ def build_config(system, unit, output_name):
         '--fqbn', 'esp32:esp32:esp32:PartitionScheme=custom',
         '--build-property', f'build.partitions=custom',
         '--build-property', f'build.custom_partitions={partitions_file}',
-        '--build-path', str(build_dir),
+        '--build-path', str(shared_build_dir),
         '--export-binaries',
         str(SKETCH_DIR)
     ]
@@ -141,7 +141,7 @@ def build_config(system, unit, output_name):
         print_success("Compilation successful")
         
         # Find and copy binary
-        binary_files = list(build_dir.glob("*.ino.bin"))
+        binary_files = list(shared_build_dir.glob("*.ino.bin"))
         if binary_files:
             binary = binary_files[0]
             firmware_path = output_dir / "firmware.bin"
