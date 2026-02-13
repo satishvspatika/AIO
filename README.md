@@ -37,14 +37,20 @@ If a team member needs to flash a device but has no IDE/Python, they can use an 
 - `boot_app0.bin`  --> **0xE000**
 - `AIO9_5.0.ino.bin` --> **0x10000**
 
-### 3. Bundling for Official Release (FTP/SD Card)
-To generate the clean bundle for a specific configuration:
+### 3. Bundling for a Single Configuration (Manual)
+To generate the clean bundle for just the current config you are working on:
 1. Export the binary from Arduino IDE (**Sketch -> Export Compiled Binary**).
 2. Run the packager:
    ```bash
    ./organize_build.sh KSNDMC_TRG
    ```
-3. Look in the `builds/KSNDMC_TRG` folder for your `firmware.bin` and `fw_version.txt`.
+
+### 4. Full Release (All 6 Configurations Automatically)
+To generate a complete release for every supported system (TRG, TWS, TWS-RF) in one go:
+```bash
+python3 build_all_configs.py
+```
+This script will produce 6 folders in the `builds/` directory, each with its own `firmware.bin` and `fw_version.txt`.
 
 ---
 *Created by Spatika Information Technologies*
