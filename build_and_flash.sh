@@ -32,6 +32,10 @@ if [ -z "$PORT" ]; then
     exit 1
 fi
 
+# New: Auto-release the port if it's busy (kills existing serial monitors)
+echo "🔍 Checking if $PORT is busy..."
+fuser -k "$PORT" 2>/dev/null || true 
+
 # 3. Flash the app
 echo "🚀 Target Port Detected: $PORT"
 ./quick_flash.sh "$PORT"
