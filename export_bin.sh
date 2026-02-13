@@ -1,11 +1,11 @@
 #!/bin/bash
 # Helper script to organize Arduino IDE compiled binaries
-# Usage: ./organize_build.sh CONFIG_NAME
+# Usage: ./export_bin.sh CONFIG_NAME
 
 CONFIG_NAME=$1
 
 if [ -z "$CONFIG_NAME" ]; then
-    echo "Usage: ./organize_build.sh CONFIG_NAME"
+    echo "Usage: ./export_bin.sh CONFIG_NAME"
     echo ""
     echo "Available configurations:"
     echo "  TRG_KSNDMC      (SYSTEM=0, UNIT=KSNDMC_TRG)"
@@ -15,7 +15,7 @@ if [ -z "$CONFIG_NAME" ]; then
     echo "  TWSRF_KSNDMC    (SYSTEM=2, UNIT=KSNDMC_ADDON)"
     echo "  TWSRF_SPATIKA   (SYSTEM=2, UNIT=SPATIKA_GEN)"
     echo ""
-    echo "Example: ./organize_build.sh TWSRF_SPATIKA"
+    echo "Example: ./export_bin.sh TWSRF_SPATIKA"
     exit 1
 fi
 

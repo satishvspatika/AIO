@@ -47,7 +47,7 @@ If a team member needs to flash a device without any local tools:
 
 ### 3. Release Bundling (FTP / SD Card / Updates)
 To generate clean `firmware.bin` and `fw_version.txt` bundles:
-- **For a single configuration**: `./organize_build.sh [CONFIG_NAME]`
+- **For a single configuration**: `./export_bin.sh [CONFIG_NAME]`
 - **For a full release (All 6 configs)**: `python3 build_all_configs.py`
 
 ---
