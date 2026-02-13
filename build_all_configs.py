@@ -28,6 +28,9 @@ CONFIGS = [
     (2, "SPATIKA_GEN", "SPATIKA_ADDON"),
 ]
 
+# External Release Path
+EXTERNAL_RELEASE_BASE = Path("/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5/AIO9_5.0")
+
 # Colors
 class Colors:
     RED = '\033[0;31m'
@@ -217,7 +220,26 @@ def main():
     print_header("Build Summary")
     print(f"{Colors.GREEN}Successful: {success_count}{Colors.NC}")
     print(f"{Colors.RED}Failed: {fail_count}{Colors.NC}")
-    print(f"\nOutput directory: {OUTPUT_BASE}")
+    print(f"\nInternal Build directory: {OUTPUT_BASE}")
+
+    # Copy to external release directory if any builds succeeded
+    if success_count > 0:
+        print_info(f"Copying release-ready binaries to external directory...")
+        try:
+            EXTERNAL_RELEASE_BASE.mkdir(parents=True, exist_ok=True)
+            for config_dir in OUTPUT_BASE.iterdir():
+                if config_dir.is_dir():
+                    source_bin = config_dir / "firmware.bin"
+                    source_ver = config_dir / "fw_version.txt"
+                    if source_bin.exists():
+                        target_dir = EXTERNAL_RELEASE_BASE / config_dir.name
+                        target_dir.mkdir(parents=True, exist_ok=True)
+                        shutil.copy(source_bin, target_dir / "firmware.bin")
+                        if source_ver.exists():
+                            shutil.copy(source_ver, target_dir / "fw_version.txt")
+            print_success(f"Release files copied successfully to:\n   {EXTERNAL_RELEASE_BASE}")
+        except Exception as e:
+            print_error(f"Failed to copy to external release directory: {e}")
     
     # List all builds
     print("\nBuilt configurations:")

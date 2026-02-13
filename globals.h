@@ -32,7 +32,7 @@
 // CHANGE THESE FOR DIFFERENT SYSTEMS
 /************************************************************************************************/
 #define SYSTEM 0                // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "BIHAR_TRG"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
+char UNIT[15] = "SPATIKA_GEN"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
                                 // KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 

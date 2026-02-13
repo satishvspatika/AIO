@@ -80,6 +80,14 @@ echo "Output directory: builds/$CONFIG_NAME/"
 echo ""
 ls -lh builds/$CONFIG_NAME/
 echo ""
+# Copy to external release directory
+EXTERNAL_RELEASE_PATH="/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5/AIO9_5.0/$CONFIG_NAME"
+mkdir -p "$EXTERNAL_RELEASE_PATH"
+cp builds/$CONFIG_NAME/firmware.bin "$EXTERNAL_RELEASE_PATH/firmware.bin"
+cp builds/$CONFIG_NAME/fw_version.txt "$EXTERNAL_RELEASE_PATH/fw_version.txt"
+echo "✓ Copied to external release: $EXTERNAL_RELEASE_PATH"
+
+echo ""
 echo "Files ready for deployment:"
 echo "  - firmware.bin (for FTP or SD card)"
 echo "  - fw_version.txt (for SD card)"
