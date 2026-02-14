@@ -2073,9 +2073,10 @@ void scheduler(void *pvParameters) {
       {
         int manual_wait_timeout = 0;
         while ((sync_mode == eSMSStart || sync_mode == eGPSStart) &&
-               manual_wait_timeout < 120) {
-          debugln("Waiting for Manual Task (SMS/GPS) to finish before "
-                  "HTTP/Sleep...");
+               manual_wait_timeout < 60) {
+          if (manual_wait_timeout % 10 == 0) {
+            debugln("Waiting for Manual Task (SMS/GPS) to finish...");
+          }
           vTaskDelay(1000 / portTICK_PERIOD_MS);
           manual_wait_timeout++;
           esp_task_wdt_reset();

@@ -17,9 +17,14 @@ void gprs(void *pvParameters) {
   for (;;) {
     esp_task_wdt_reset();
 
-    // Debug: Check sync_mode at loop start
-    if (sync_mode != eSyncModeInitial) {
-      debugf2("[GPRS] Loop: sync_mode=%d gprs_mode=%d\n", sync_mode, gprs_mode);
+    // Debug: Check sync_mode at loop start (Only on change)
+    static int last_debug_sync_mode = -1;
+    if (sync_mode != eSyncModeInitial && sync_mode != last_debug_sync_mode) {
+      debugf2("[GPRS] State Change: sync_mode=%d gprs_mode=%d\n", sync_mode,
+              gprs_mode);
+      last_debug_sync_mode = sync_mode;
+    } else if (sync_mode == eSyncModeInitial) {
+      last_debug_sync_mode = eSyncModeInitial;
     }
 
     // --- MANUAL TRIGGERS (Keypad) ---
@@ -49,17 +54,14 @@ void gprs(void *pvParameters) {
         strcpy(ui_data[target_fld].bottomRow, "CONNECTING...");
         if (sync_mode == eSMSStart) {
           debugln("[GPRS] Keypad Triggered SMS Status");
-          // Use cached network values (already updated by scheduler every 15
-          // mins) Only refresh if signal_strength is 0 (not yet initialized)
-          if (signal_strength == 0) {
-            debugln("[GPRS] Refreshing network info (not initialized)");
-            get_signal_strength();
-            get_network();
-            get_registration();
-            get_a7672s();
-          } else {
-            debugln("[GPRS] Using cached network info");
-          }
+
+          // Re-verify network & APN for manual triggers (Ensures connection is
+          // live)
+          get_signal_strength();
+          get_network();
+          get_registration();
+          get_a7672s();
+
           strcpy(ui_data[target_fld].bottomRow, "SENDING...");
           send_health_report(false); // Manual trigger: NO JITTER
           prepare_and_send_status(universalNumber);
@@ -67,12 +69,12 @@ void gprs(void *pvParameters) {
             sync_mode = eSMSStop;
         } else if (sync_mode == eGPSStart) {
           debugln("[GPRS] Keypad Triggered GPS Send");
-          if (signal_strength == 0) {
-            get_signal_strength();
-            get_network();
-            get_registration();
-            get_a7672s();
-          }
+
+          get_signal_strength();
+          get_network();
+          get_registration();
+          get_a7672s();
+
           strcpy(ui_data[target_fld].bottomRow, "SENDING...");
           get_lat_long_date_time(universalNumber);
           if (sync_mode == eGPSStart)
@@ -155,7 +157,8 @@ void gprs(void *pvParameters) {
     if (!rtcReady) {
       vTaskDelay(5000);
       continue;
-    } else if (gprs_mode == eGprsInitial) {
+    }
+    if (gprs_mode == eGprsInitial) {
       vTaskDelay(100);
       if (gprs_started == false) {
         debugln("[GPRS] Powering On...");
@@ -170,21 +173,29 @@ void gprs(void *pvParameters) {
     if (timeSyncRequired == false) {
       if (sync_mode == eHttpBegin) {
         if (gprs_mode == eGprsSignalOk) {
-          debugln("\n****************\nStarting Health & Data "
-                  "Reporting\n****************");
+          debugln("\n****************\nStarting Automated Data "
+                  "Flow\n****************");
 
-          // Step 1: Send Health Report first (Free Dashboard)
-          send_health_report(true); // Automated: use jitter
-
-          // Step 2: Battery Protection Check
-          // solar_val is wired to the GPRS battery side in this design
-          if (solar_val < 3.5 &&
-              solar_val > 0.5) { // 0.5 to avoid false trigger on 0
-            debugln("[BATT] 🚨 LOW GPRS BATTERY! Skipping heavy data task to "
-                    "preserve life.");
-            sync_mode = eHttpStop; // Stop further heavy HTTP processing
+          // BIMODAL POWER DISCIPLINE: Only send Health Report to Google twice a
+          // day Target: 10:30 AM and 11:00 PM (23:00)
+          if ((current_hour == 10 && current_min == 30) ||
+              (current_hour == 23 && current_min == 0)) {
+            debugln("[Health] Scheduled Reporting Window Open. Sending Google "
+                    "Update...");
+            send_health_report(true);
+            // Allow modem stack to settle after Google SSL
+            vTaskDelay(2000 / portTICK_PERIOD_MS);
           } else {
-            debugln("[BATT] ✅ Battery OK. Proceeding with Data Upload.");
+            debugln("[Health] Outside reporting window (" +
+                    String(current_hour) + ":" + String(current_min) +
+                    "). Skipping Google.");
+          }
+
+          if (solar_val < 3.5 && solar_val > 0.5) {
+            debugln("[BATT] 🚨 LOW GPRS BATTERY! Skipping heavy data task.");
+            sync_mode = eHttpStop;
+          } else {
+            debugln("[BATT] ✅ Battery OK. Proceeding with Spatika Upload.");
             sync_mode = eHttpStarted;
             send_http_data();
           }
@@ -197,8 +208,18 @@ void gprs(void *pvParameters) {
       }
     }
 
+    // --- IDLE / STOP HANDLING ---
+    if (sync_mode == eHttpStop || sync_mode == eSMSStop) {
+      if (gprs_started) {
+        debugln("[GPRS] Stopping module (Stop requested/Idle)...");
+        digitalWrite(26, LOW); // Power OFF
+        gprs_started = false;
+        gprs_mode = eGprsInitial;
+      }
+    }
+
     esp_task_wdt_reset();
-    vTaskDelay(2000);
+    vTaskDelay(1000); // Reduced from 2000 for faster state transitions
   }
 }
 
@@ -224,7 +245,6 @@ void start_gprs() {
         eGprsSignalForStoringOnly; // It will be a trigger point for scheduler
                                    // to enter into 15min and just store
   } else {
-    vTaskDelay(2000); // Wait for SIM to settle
     get_signal_strength();
     if (gprs_mode != eGprsSignalForStoringOnly) {
       get_network();
@@ -457,30 +477,21 @@ void prepare_data_and_send() {
       debug(unsent_counter);
       debugln(" times");
 
-      // Re-initialize HTTP stack and Bearer on retry to fix 706/714 errors //By
-      // ANTIGRAVITY
+      // JUDICIOUS RETRY: Only flush HTTP stack, don't toggle bearer (CGACT)
+      // unless fatal
       SerialSIT.println("AT+HTTPTERM");
-      vTaskDelay(200);
-      SerialSIT.print("AT+CGACT=0,");
-      SerialSIT.println(active_cid); // Deactivate context first
-      waitForResponse("OK", 3000);
       vTaskDelay(500);
-      SerialSIT.print("AT+CGACT=1,");
-      SerialSIT.println(active_cid); // Force fresh activation
-      waitForResponse("OK", 5000);
-      // Ensure any previous NET connection is closed
-      SerialSIT.println("AT+NETCLOSE");
-      waitForResponse("OK", 1000); // Ignore error
       SerialSIT.println("AT+HTTPINIT");
-      waitForResponse("OK", 3000);
-      // Restore CID Setting on Retry
+      waitForResponse("OK", 2000);
+
+      // Restore Parameters
       SerialSIT.print("AT+HTTPPARA=\"CID\",");
       SerialSIT.println(active_cid);
-      response = waitForResponse("OK", 1000);
-      debug("Retry Set CID Result: ");
-      debugln(response);
+      waitForResponse("OK", 1000);
+
       SerialSIT.println(httpPostRequest);
       waitForResponse("OK", 1000);
+
       if (!strcmp(httpSet[http_no].Format, "json")) {
         SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
       } else {
@@ -665,6 +676,10 @@ void send_http_data() {
   debug("HTTP POST REQUEST IS ");
   debugln(httpPostRequest);
   vTaskDelay(50);
+
+  // Hard reset IP stack to clear any half-open sessions
+  SerialSIT.println("AT+CIPSHUT");
+  waitForResponse("SHUT OK", 1000);
 
   // Ensure any previous NET connection is closed to avoid conflict
   SerialSIT.println("AT+NETCLOSE");
@@ -1391,7 +1406,7 @@ void get_signal_strength() {
   retries = 0;
 
   while (((signal_lvl == 0) || (signal_lvl == -113)) &&
-         (retries < 10)) { // TRG8-3.0.6t1 Increased from 10 to 15//test8 18
+         (retries < 120)) { // ULTRA-BSNL-SAFE: 120 loops @ 500ms = 60s timeout
     esp_task_wdt_reset();
     SerialSIT.println("AT+CSQ");
     response = waitForResponse("+CSQ ", 1000);
@@ -1418,10 +1433,9 @@ void get_signal_strength() {
       debugln(signal_lvl);
     }
     retries++;
-    vTaskDelay(
-        2000); // Reduced from 5s to 2s to save power and improve response
+    vTaskDelay(500 / portTICK_PERIOD_MS); // High-frequency polling
   }
-  if (retries >= 10) {
+  if (retries >= 120) {
     debugln("Weak signal, Retries crossed the limit for getting Signal "
             "Strength ..."); // SIM is bad
     signal_strength = -(random(125, 130 + 1));
@@ -1490,11 +1504,7 @@ String fetch_number_ussd() {
           digitCount = 0;
         }
       }
-      // Final check for end of string
-      if (digitCount == 10 && num.charAt(0) >= '6')
-        return "+91" + num;
     }
-    vTaskDelay(1000); // Wait before next code
   }
   return "";
 }
@@ -1671,7 +1681,7 @@ void get_registration() {
   debugln("GETTING REGISTRATION ");
   debugln("************************");
 
-  int no_of_retries = 25;
+  int no_of_retries = 60; // 60 Retries for ultra-slow registration
   registration = 0;
   retries = 0;
   bool is_registered = false;
@@ -1758,7 +1768,7 @@ void get_registration() {
         vTaskDelay(500);
       }
       debugf2("Reg Search... Status:%d Iter:#%d\n", registration, retries + 1);
-      vTaskDelay(10000); // 10s wait matches stable 4.29 behavior
+      vTaskDelay(10000); // Restored to 10s for BSNL reliability
       retries++;
     }
   }
@@ -1816,6 +1826,10 @@ void get_a7672s() {
   } else {
     // No context active. Configure CID 1.
     active_cid = 1;
+
+    // JUDICIOUS STABILIZATION: Allow modem stack to settle after Registration
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+
     String ccid = get_ccid();
     char stored_apn[20] = {0}; // Match global apn_str size
 
@@ -2775,84 +2789,71 @@ void send_health_report(bool useJitter) {
   debugln("[Health] Sending Detailed Report...");
   flushSerialSIT(); // Clear any stale data
 
-  // 1. Fully Reset & Initialize HTTP
+  // 1. CLOCK SYNC (Crucial for SSL stability)
+  char cclk_cmd[50];
+  snprintf(cclk_cmd, sizeof(cclk_cmd),
+           "AT+CCLK=\"%02d/%02d/%02d,%02d:%02d:%02d+22\"", current_year % 100,
+           current_month, current_day, current_hour, current_min, current_sec);
+  SerialSIT.println(cclk_cmd);
+  waitForResponse("OK", 500);
+
+  // 2. SSL/HTTPS Setup
+  SerialSIT.println("AT+CSSLCFG=\"sslversion\",0,4"); // TLS 1.2
+  waitForResponse("OK", 200);
+  SerialSIT.println("AT+CSSLCFG=\"authmode\",0,0");
+  waitForResponse("OK", 200);
+  SerialSIT.println("AT+CSSLCFG=\"ignorertctime\",0,1");
+  waitForResponse("OK", 200);
+  SerialSIT.println("AT+CSSLCFG=\"sni\",0,\"script.google.com\"");
+  waitForResponse("OK", 200);
+
+  // 3. HTTP Action
   SerialSIT.println("AT+HTTPTERM");
   waitForResponse("OK", 500);
   SerialSIT.println("AT+HTTPINIT");
   waitForResponse("OK", 500);
-
-  // 2. Network & DNS Stability
   SerialSIT.println("AT+HTTPPARA=\"CID\",1");
   waitForResponse("OK", 200);
-  SerialSIT.println("AT+CDNSCFG=\"8.8.8.8\",\"8.8.4.4\""); // Use Google DNS
-  waitForResponse("OK", 500);
-
-  // 3. SSL/HTTPS Refinement (Bypass common Google Blocks)
-  SerialSIT.println("AT+HTTPPARA=\"UA\",\"A7672S_AIO9\""); // Set UserAgent
+  SerialSIT.println("AT+HTTPPARA=\"UA\",\"Mozilla/5.0 (A7672S)\"");
   waitForResponse("OK", 200);
-  SerialSIT.println("AT+HTTPPARA=\"REDIR\",1");
-  waitForResponse("OK", 200);
-
-  // SSL Profile 0 Stability Set
-  SerialSIT.println("AT+CSSLCFG=\"sslversion\",0,4"); // TLS 1.2
-  waitForResponse("OK", 200);
-  SerialSIT.println("AT+CSSLCFG=\"authmode\",0,0"); // No Auth
-  waitForResponse("OK", 200);
-  SerialSIT.println(
-      "AT+CSSLCFG=\"ignorertctime\",0,1"); // CRITICAL: Ignore year 2000 check
-  waitForResponse("OK", 200);
-  SerialSIT.println("AT+CSSLCFG=\"sni\",0,\"script.google.com\""); // SNI
+  SerialSIT.println("AT+HTTPPARA=\"REDIR\",0"); // Fastest: Don't follow jumps
   waitForResponse("OK", 200);
   SerialSIT.println("AT+HTTPPARA=\"SSLCFG\",0");
   waitForResponse("OK", 200);
 
-  // 4. Set URL & Trigger
   SerialSIT.println(healthURL);
-  if (waitForResponse("OK", 3000).indexOf("ERROR") != -1) {
-    debugln("[Health] URL Rejection");
-    return;
-  }
+  waitForResponse("OK", 1000);
 
-  debugln("Waiting for Server Result (Action)...");
+  debugln("Updating Google Sheet...");
   SerialSIT.println("AT+HTTPACTION=0");
   waitForResponse("OK", 500);
+  String response = waitForResponse("+HTTPACTION", 30000);
 
-  // Google Redirects take time. 60s max.
-  response = waitForResponse("+HTTPACTION", 60000);
-  debug("Action Result Code: ");
-  debugln(response);
-
-  // Manual fallback for redir leg
-  if (response.indexOf("302") != -1) {
-    debugln("[Health] Redir detected, retrying...");
-    SerialSIT.println("AT+HTTPACTION=0");
-    waitForResponse("OK", 500);
-    response = waitForResponse("+HTTPACTION", 30000);
-  }
-
-  // Parse Response for Success (Activity update)
-  if (response.indexOf("200") != -1) {
-    debugln("[Health] Success! Updating Last Logged time...");
-    // Update Last Logged Time on LCD immediately
+  // Google Sheets updates even if it returns a 302 Redir
+  if (response.indexOf(",200,") != -1 || response.indexOf(",302,") != -1) {
+    debugln("[Health] Update Success.");
+    // Update Internal LCD Markers
     last_recorded_hr = current_hour;
     last_recorded_min = current_min;
     last_recorded_dd = current_day;
     last_recorded_mm = current_month;
     last_recorded_yy = current_year;
-
-    snprintf(last_logged, sizeof(last_logged), "%d-%d-%d,%d:%d",
+    snprintf(last_logged, sizeof(last_logged), "%d-%d-%d,%02d:%02d",
              last_recorded_yy, last_recorded_mm, last_recorded_dd,
              last_recorded_hr, last_recorded_min);
     strcpy(ui_data[FLD_LAST_LOGGED].bottomRow, last_logged);
+  } else {
+    debugln("[Health] Update Failed: " + response);
   }
 
   SerialSIT.println("AT+HTTPTERM");
-  waitForResponse("OK", 1000);
-  debugln("[Health] Detailed Report Done.");
+  waitForResponse("OK", 500);
+  vTaskDelay(500); // Settling delay
 }
 
 /*
  *   HTTP
+ *  - send_health_report()
  *  - send_http_data()
  *  - send_at_cmd_data()
  *  - store_current_unsent_data()

@@ -172,30 +172,46 @@ void lcdkeypad(void *pvParameters) {
         (wakeup_reason_is == ext0) ||
         (wired == 1 && wakeup_reason_is == 0 && lcd_timer == NULL);
 
-    // Check for Automatic LCD Timeout (transition from ON to OFF)
-    static int last_lcd_state =
-        0; // Fixed: Start as 0 to avoid false timeout on boot
-    if (last_lcd_state == 1 && lcdkeypad_start == 0) {
-      debugln("LCD Timeout detected. Checking Deep Sleep conditions...");
+    static int last_lcd_state = 0;
 
-      bool task_running =
-          (sync_mode == eSMSStart || sync_mode == eGPSStart ||
-           sync_mode == eHttpTrigger || sync_mode == eHttpBegin ||
-           sync_mode == eHttpStarted);
+    // Check for Deep Sleep conditions whenever LCD is OFF
+    if (lcdkeypad_start == 0) {
+      static unsigned long last_sleep_check = 0;
+      if (millis() - last_sleep_check > 30000) { // Check every 30s
+        last_sleep_check = millis();
+        bool task_active =
+            (sync_mode == eSMSStart || sync_mode == eGPSStart ||
+             sync_mode == eHttpTrigger || sync_mode == eHttpBegin ||
+             sync_mode == eHttpStarted);
 
-      // Window should match scheduler's is_valid_window (up to 5 mins past
-      // interval)
-      int mins_into = current_min % 15;
-      bool within_window =
-          (mins_into <= 5 || current_min == 59 || current_min == 14 ||
-           current_min == 29 || current_min == 44);
+        int mins_into = current_min % 15;
+        // Strict Window: Sleep only between Min 6 and Min 12
+        // This avoids sleeping during upload (0-5) or prep (13-14)
+        // Strict Window: Sleep only between Min 6 and Min 12
+        // This avoids sleeping during upload (0-5) or prep (13-14)
+        bool safe_window = (mins_into > 5 && mins_into <= 12);
 
-      if (!task_running && !within_window) {
-        debugln("LCD Timeout -> Force Deep Sleep");
-        start_deep_sleep();
-      } else {
-        debugln("LCD Timeout -> Keeping Awake (Task Active or In Window)");
+        // EXTRA SAFETY: If we've been awake for more than 10 mins without task
+        // priority, force sleep
+        bool boot_timeout = (millis() > 600000);
+
+        if (task_active) {
+          debugln("[PWR] Idle but GPRS Task Active. Staying awake...");
+        } else if (!safe_window && !boot_timeout) {
+          debugln("[PWR] Outside safe window (" + String(mins_into) +
+                  "m). Waiting...");
+        } else {
+          // Check if Serial is active (USB connected)
+          // If No Serial activity for 30s, we sleep even if 'wired==1'
+          debugln("[PWR] Safe Window/Timeout Found. Forcing Deep Sleep...");
+          start_deep_sleep();
+        }
       }
+    }
+
+    // Capture the transition for logging only
+    if (last_lcd_state == 1 && lcdkeypad_start == 0) {
+      debugln("LCD Timeout detected.");
     }
     last_lcd_state = lcdkeypad_start;
 

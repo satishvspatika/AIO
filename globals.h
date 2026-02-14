@@ -41,12 +41,12 @@ char UNIT[15] = "SPATIKA_GEN"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.1"
+#define FIRMWARE_VERSION "5.2"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
 #define ENABLE_WEBSERVER                                                       \
-  0 // Set to 0 to remove WebServer footprint (SAVES SPACE)
+  1 // Set to 0 to remove WebServer footprint (SAVES SPACE)
 
 #define DEFAULT_RF_RESOLUTION 0.5
 float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
@@ -60,7 +60,7 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 
 #define FILLGAP 1
 
-// Google Sheets Health Monitor (Free Server)
+// Google Sheets Health Monitor (Standard URL)
 #define GOOGLE_HEALTH_URL                                                      \
   "https://script.google.com/macros/s/"                                        \
   "AKfycbx1HFoaTQVSUygYgu0WVj_P8jMImfRnnLxJQWT3GE2M3Ub8jNIilvDxp0V1J7_KTOOBWQ" \
@@ -243,7 +243,8 @@ int unsent_count, success_count;
 int s, fileSize;
 int unsent_counter = 0;
 int http_code = -1;
-int delay_val = 15000; // Delay before starting GPRS
+int delay_val =
+    10000; // Delay before starting GPRS (Reduced from 15s for A7672)
 int signal_strength = 0;
 int signal_lvl = 0;
 int sd_card_ok = 0;

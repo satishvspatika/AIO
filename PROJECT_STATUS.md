@@ -1,48 +1,45 @@
-# ESP32 AIO v5.1 Project Status - Feb 13, 2026
+# ESP32 AIO v5.2 Project Status - Feb 14, 2026
 
-## 🚀 Key Improvements & Fixes
+## 🚀 Key Improvements & Fixes (v5.2 - The Resilient Engine)
 
-### 1. Hardware Stability (ADC Fix)
-- **Problem**: "ADC: CONFLICT!" crashes on ESP32 Core 3.x due to driver mismatch.
-- **Solution**: Standardized all ADC reads (Battery, Solar, Wind) to the **Legacy ADC API** (`adc1_get_raw`). 
-- **Status**: ✅ Verified stable; no more driver conflicts.
+### 1. Bimodal Power Discipline
+- **Status**: ✅ Implemented. Health reports restricted to 10:30 AM and 11:00 PM.
+- **Benefit**: Reduces daily airtime by ~40-60 minutes, preserving solar battery during monsoon/cloudy periods.
 
-### 2. UI & Keypad Responsiveness
-- **Flicker-Free Display**: Removed `lcd.clear()` from the update loop. Screens now refresh using smooth 16-character space padding.
-- **Improved Input**: Station ID editing now supports **Alphanumeric** characters (`FLD_STATION` set to `eAlphaNum`).
-- **Input Protection**: Background sensor updates are now blocked while `cur_mode == eEditOn`, preventing user edits from being overwritten.
-- **Status**: ✅ UI is responsive and smooth.
+### 2. GPRS Resilience (v7.4.1 Hardening)
+- **High-Freq Polling**: 500ms intervals for faster Airtel latching.
+- **BSNL Ready**: 60s signal timeout and 60 registration retries for slow towers.
+- **Stabilization**: 1s delay after CREG ensures reliable APN activation.
 
-### 3. Station ID Persistence
-- **NVS Integration**: Station ID is now primarily stored in **Non-Volatile Storage (Preferences)**, making it independent of SPIFFS formatting.
-- **Multi-Layer Fallback**:
-  1. Load from **NVS**.
-  2. If empty, load from **SPIFFS** (`/station.doc`).
-  3. If still empty, load from **SD Card** (`/station.doc`).
-  4. Fallback to `SIT999` only as a last resort.
-- **Status**: ✅ Settings are robust and survive full flashes/wipes.
+### 3. Protocol & Sleep Fixes (v7.5)
+- **Zero Airtime Leakage**: Fixed logic hang that kept device awake for 14 minutes. Device now sleeps immediately after data task.
+- **Server Acceptance**: Added `AT+CIPSHUT` to kill half-open sessions, solving the "Rejected" status issue.
 
-### 4. Data Reliability (Gap Filling)
-- **Unsent Queue**: All system types (TRG, TWS, TWS-RF) now correctly use `unsent.txt` or `ftpunsent.txt` when GPRS is unavailable.
-- **Intelligent Filling**: On boot, the system detects gaps in the daily SPIFFS/SD files and uses an interpolation mechanism to fill missing 15-minute slots.
-- **Status**: ✅ Verified via serial logs.
-
-### 5. Field Hardening & Longevity (v5.1)
-- **I2C Bus Recovery**: Automated detection and recovery of hung SDA/SCL lines. If the bus hangs due to noise, the system now "clocks out" the hanging state automatically.
-- **LCD Heartbeat**: A small blinking pixel at (15,0) provides instant visual confirmation that the firmware is running.
-- **Memory Protection**: Optimized `String` handling in GPRS responses to prevent heap fragmentation during months of uptime.
-- **Status**: ✅ Ready for long-term deployment.
-
-### 6. Display Polish
-- **Strict Padding**: Solved the "NA0.00" residual text bug by enforcing 16-character space-padding on every LCD update.
-- **Synchronized Heartbeat**: Integrated the heartbeat into the main display loop to prevent it from being clobbered by labels.
-- **Status**: ✅ Display is clean and professional.
-
-## 🛠 Active Configuration
-- **Unit**: `KSNDMC_ADDON` (TWS-RF)
-- **System**: `2`
-- **CPU Freq**: `80MHz` (Power Saving)
-- **Baud Rate**: `115200`
+### 4. Lean Core Architecture
+- **Command Removal**: Stripped OTA, REBOOT, and PING logic. 
+- **Status**: Project is now a dedicated, foolproof reporting engine with reduced code complexity.
 
 ---
-*This document serves as the single source of truth for the v5.0 stabilization sprint.*
+
+## 🚀 Version 5.1 Legacy Improvements (Feb 13, 2026)
+
+### 1. Hardware Stability (ADC Fix)
+- **Solution**: Standardized all ADC reads to `adc_get_raw`. Verified stable on Core 3.x.
+
+### 2. UI & Keypad Responsiveness
+- **Polish**: Flicker-free display refresh and Alphanumeric Station ID support.
+
+### 3. Persistence
+- **NVS Integration**: Station ID and settings stored in persistent preferences, independent of SPIFFS.
+
+---
+
+## 🛠 Active Technical Specs
+- **Unit**: `SPATIKA_GEN`
+- **System**: `2` (TWS-RF)
+- **CPU Freq**: `80MHz`
+- **Baud Rate**: `115200`
+- **Resolution**: `0.5mm` (Active RF)
+
+---
+*Last Updated: 2026-02-14 | v5.2 Release Build*
