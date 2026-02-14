@@ -1144,7 +1144,7 @@ void scheduler(void *pvParameters) {
                    record_hr, record_min, inst_temp, inst_hum, avg_wind_speed,
                    inst_wd, signal_strength, bat_val);
           snprintf(ftpappend_text, sizeof(ftpappend_text),
-                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
                    record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                    signal_strength, bat_val);
@@ -1159,7 +1159,7 @@ void scheduler(void *pvParameters) {
               record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
               signal_strength, bat_val);
           snprintf(ftpappend_text, sizeof(ftpappend_text),
-                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
                    record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
                    inst_wd, signal_strength, bat_val);
@@ -2085,9 +2085,9 @@ void scheduler(void *pvParameters) {
       if (data_writing_initiated == 0) {
         debugln("Skipped data writing. Checking if GPRS needs to send unsent "
                 "data then Sleep.");
-        // Protect manual triggers (SMS/GPS) from being overwritten by Stop
-        // (redundant safety)
-        if (sync_mode != eSMSStart && sync_mode != eGPSStart) {
+        // Protect manual triggers (SMS/GPS/Startup) from being overwritten
+        if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
+            sync_mode != eStartupGPS) {
           sync_mode = eHttpStop;
         }
       } else {

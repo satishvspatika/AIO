@@ -71,14 +71,25 @@ void tempHum(void *pvParameters) {
 // Read 2 bytes from HDC register (mutex-safe)
 uint16_t readRegister16(uint8_t reg) {
   uint16_t result = 0xFFFF;
+  static int failCount = 0;
 
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
     Wire.beginTransmission(HDC_ADDR);
     Wire.write(reg);
-    if (Wire.endTransmission(false) == 0) {
+    byte err = Wire.endTransmission(false);
+    if (err == 0) {
       Wire.requestFrom(HDC_ADDR, 2);
       if (Wire.available() == 2) {
         result = ((uint16_t)Wire.read() << 8) | Wire.read();
+        failCount = 0; // Success, reset failure counter
+      }
+    } else {
+      failCount++;
+      debugf3("[I2C] Read Reg 0x%02X Error: %d, FailCount: %d\n", reg, err,
+              failCount);
+      if (failCount > 5) {
+        recoverI2CBus(); // Attempt to unstick the bus
+        failCount = 0;
       }
     }
     xSemaphoreGive(i2cMutex);

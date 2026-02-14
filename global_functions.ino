@@ -243,3 +243,80 @@ void get_chip_id() {
   debug("Chip ID: ");
   debugln(chip_id);
 }
+
+/**
+ * Perform manual I2C Bus Recovery
+ * If a slave device is hanging (holding SDA low), we pulse SCL until it
+ * releases
+ */
+void recoverI2CBus() {
+  debugln("[I2C] 🚨 Bus hang detected! Attempting recovery...");
+
+  // End any existing Wire session
+  Wire.end();
+
+  // Switch SDA/SCL to GPIO output mode
+  pinMode(I2C_SDA, OUTPUT);
+  pinMode(I2C_SCL, OUTPUT);
+
+  // Digital write both high
+  digitalWrite(I2C_SDA, HIGH);
+  digitalWrite(I2C_SCL, HIGH);
+
+  // If SDA is stuck low, pulse SCL up to 9 times to "clock out" the hanging
+  // data bit
+  for (int i = 0; i < 10; i++) {
+    if (digitalRead(I2C_SDA) == HIGH) {
+      debugf1("[I2C] Bus released after %d pulses\n", i);
+      break;
+    }
+    digitalWrite(I2C_SCL, LOW);
+    delayMicroseconds(5);
+    digitalWrite(I2C_SCL, HIGH);
+    delayMicroseconds(5);
+  }
+
+  // Final check
+  if (digitalRead(I2C_SDA) == LOW) {
+    debugln("[I2C] ❌ Recovery failed: SDA still stuck low!");
+  } else {
+    debugln("[I2C] ✅ Recovery successful.");
+  }
+
+  // Re-initialize Wire
+  Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.setClock(100000); // Standard 100kHz for robustness
+}
+
+/**
+ * Persists current coordinates to SPIFFS
+ */
+void saveGPS() {
+  File file = SPIFFS.open("/gps_coords.txt", FILE_WRITE);
+  if (file) {
+    file.printf("%.6f,%.6f", lati, longi);
+    file.close();
+    debugln("[GPS] Location persisted to SPIFFS");
+  }
+}
+
+/**
+ * Loads last known coordinates from SPIFFS
+ */
+void loadGPS() {
+  if (SPIFFS.exists("/gps_coords.txt")) {
+    File file = SPIFFS.open("/gps_coords.txt", FILE_READ);
+    if (file) {
+      String line = file.readString();
+      int commaIndex = line.indexOf(',');
+      if (commaIndex != -1) {
+        lati = line.substring(0, commaIndex).toFloat();
+        longi = line.substring(commaIndex + 1).toFloat();
+        debugf2("[GPS] Loaded from SPIFFS: %.6f, %.6f\n", lati, longi);
+      }
+      file.close();
+    }
+  } else {
+    debugln("[GPS] No persisted location found.");
+  }
+}

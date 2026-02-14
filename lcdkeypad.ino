@@ -23,7 +23,7 @@ void configure_keypad() {
 /*
  * UI related
  */
-int cur_fld_no, cur_mode;
+extern int cur_fld_no, cur_mode;
 int cur_char_no, cur_pos_no, disp_fld_no, cursor_type;
 
 char inpCharSet[2][49] = {"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
@@ -31,7 +31,18 @@ char inpCharSet[2][49] = {"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
 char key, input_buf[17];
 char show_now;
 
-// enum{eDisplayOnly=2, eAlphaNum=0, eNumeric=1, eLive=3};
+// Returns true if the field should be shown for the current SYSTEM
+bool isFieldVisible(int fld_id) {
+#if SYSTEM == 0 // TRG ONLY
+  if (fld_id == FLD_WIND_DIR || fld_id == FLD_INST_WS || fld_id == FLD_AVG_WS ||
+      fld_id == FLD_TEMP || fld_id == FLD_HUMIDITY)
+    return false;
+#elif SYSTEM == 1 // TWS ONLY (Weather)
+  if (fld_id == FLD_RF_ML || fld_id == FLD_RF_CALIB || fld_id == FLD_RF_RES)
+    return false;
+#endif
+  return true;
+}
 
 // Define timer variables
 hw_timer_t *calib_timer = NULL;
@@ -57,7 +68,8 @@ void IRAM_ATTR lcdTimer() {
 
 void lcdkeypad(void *pvParameters) {
   esp_task_wdt_add(NULL);
-  static int calib_mode = 0; // 0=Field, 1=Test
+  static int calib_mode = 0;  // 0=Field, 1=Test
+  static char calib_text[40]; // Result buffer
 
   // Configure keypad for better responsiveness
   configure_keypad();
@@ -306,9 +318,13 @@ void lcdkeypad(void *pvParameters) {
 
         // LIVE RF UPDATE: Calculate current millimetres live from raw ULP
         // pulses
+#if SYSTEM == 1
+        strcpy(ui_data[FLD_RF_ML].bottomRow, "NA");
+#else
         float live_rf = (float)rf_count.val * RF_RESOLUTION;
         snprintf(ui_data[FLD_RF_ML].bottomRow,
                  sizeof(ui_data[FLD_RF_ML].bottomRow), "%06.2f", live_rf);
+#endif
 
         strcpy(ui_data[FLD_VERSION].bottomRow, UNIT_VER);
         strcpy(ui_data[FLD_REGISTRATION].bottomRow, reg_status);
@@ -442,17 +458,11 @@ void lcdkeypad(void *pvParameters) {
               f_calib.close();
             }
           } else {
-            // Calib Test: Display result (Total Tips)
+            // CALIB TEST (Just show count, no pass/fail storage)
             snprintf(calib_text, sizeof(calib_text), "Total Tips: %d",
                      (int)calib_count_rf);
-            debugf1("Calib Test Result: %s\n", calib_text);
-
-            // OPTIONAL: Save to separate test file if needed
-            File f_test = SPIFFS.open("/calib_test.txt", FILE_WRITE);
-            if (f_test) {
-              f_test.print(calib_text);
-              f_test.close();
-            }
+            debugf1("Calib Test: %s\n", calib_text);
+            // Do NOT save to /calib.txt
           }
 
 #if (SYSTEM == 0) || (SYSTEM == 2)
@@ -469,19 +479,25 @@ void lcdkeypad(void *pvParameters) {
             lcd.print(calib_text);
             xSemaphoreGive(i2cMutex);
             vTaskDelay(3000); // Wait for user to see
+
+            // Cleanup: Revert to standard timeout after showing result
+            // User said: "Once the test completes after 5 mins or manually
+            // SET... After this only the 2 min IDLE timer should start"
+            timerAlarm(lcd_timer, 120000000, false, 0); // 2 mins standard idle
+            timerWrite(lcd_timer, 0);
+            timerRestart(lcd_timer);
+
+            // Cleanup
+            strcpy(ui_data[FLD_RF_CALIB].bottomRow, calib_text);
+            calib_flag = 0;
+            show_now = 1;
+
+          } else {
+            // If mutex fails, DO NOT reset calib_flag.
+            // Let the loop retry display in the next iteration.
+            debugln("[UI] Calibration Result Display Delayed (Mutex failed to "
+                    "take)");
           }
-
-          // Cleanup: Revert to standard timeout after showing result
-          // User said: "Once the test completes after 5 mins or manually SET...
-          // After this only the 2 min IDLE timer should start"
-          timerAlarm(lcd_timer, 120000000, false, 0); // 2 mins standard idle
-          timerWrite(lcd_timer, 0);
-          timerRestart(lcd_timer);
-
-          // Cleanup
-          strcpy(ui_data[FLD_RF_CALIB].bottomRow, calib_text);
-          calib_flag = 0;
-          show_now = 1;
         }
 
         //                  else if(calib_flag == 0) {
@@ -570,16 +586,26 @@ void lcdkeypad(void *pvParameters) {
             if (strcmp(wantedTop, present_topRow)) {
               lcd.setCursor(0, 0);
               lcd.print(wantedTop);
-              lcd.setCursor(0, 1);
               strcpy(present_topRow, wantedTop);
             }
           } else {
             if (strcmp(ui_data[cur_fld_no].topRow, present_topRow)) {
               lcd.setCursor(0, 0);
-              lcd.print(ui_data[cur_fld_no].topRow);
-              lcd.setCursor(0, 1);
+              char tBuf[17];
+              snprintf(tBuf, sizeof(tBuf), "%-15s", ui_data[cur_fld_no].topRow);
+              lcd.print(tBuf);
               strcpy(present_topRow, ui_data[cur_fld_no].topRow);
             }
+          }
+
+          // --- LCD Heartbeat (Bonus) ---
+          static bool heartState = false;
+          static unsigned long lastHeartbeat = 0;
+          if (millis() - lastHeartbeat > 1000) {
+            lastHeartbeat = millis();
+            heartState = !heartState;
+            lcd.setCursor(15, 0);
+            lcd.print(heartState ? "." : " ");
           }
 
           if (cur_fld_no == FLD_SIM_STATUS) { // Signal Strength & SIM Info
@@ -703,16 +729,12 @@ void lcdkeypad(void *pvParameters) {
           else {
             if (strcmp(ui_data[cur_fld_no].bottomRow, present_bottomRow)) {
               lcd.setCursor(0, 1);
-              lcd.print(ui_data[cur_fld_no].bottomRow);
+              char bBuf[17];
+              snprintf(bBuf, sizeof(bBuf), "%-16s",
+                       ui_data[cur_fld_no].bottomRow);
+              lcd.print(bBuf);
               strcpy(present_bottomRow, ui_data[cur_fld_no].bottomRow);
             }
-
-#if (SYSTEM == 1)
-            strcpy(ui_data[FLD_RF_ML].bottomRow, "NA");
-            lcd.setCursor(0, 1);
-            lcd.print(ui_data[cur_fld_no].bottomRow);
-            strcpy(present_bottomRow, ui_data[cur_fld_no].bottomRow);
-#endif
           }
 
           xSemaphoreGive(i2cMutex);
@@ -748,6 +770,12 @@ void lcdkeypad(void *pvParameters) {
           timerAlarm(lcd_timer, 120000000, false, 0); // 2 mins standard
           timerWrite(lcd_timer, 0);
         }
+
+        // This block was moved from gprs.ino to here to avoid duplicate
+        // HTTPACTION and to ensure it's triggered by a key press in normal
+        // mode. It's placed after the timer reset to ensure the display stays
+        // on for the duration of the HTTP action.
+        // on for the duration of the HTTP action.
 
         int i = (int)key - 48; // Converting from ASCII to INT
         debugln();
@@ -841,7 +869,11 @@ void lcdkeypad(void *pvParameters) {
                   inpCharSet[ui_data[cur_fld_no].fieldType][cur_char_no];
             }
           } else {
-            cur_fld_no = (cur_fld_no + 1) % FLD_COUNT;
+            // Loop until we find a visible field
+            int start_fld = cur_fld_no;
+            do {
+              cur_fld_no = (cur_fld_no + 1) % FLD_COUNT;
+            } while (!isFieldVisible(cur_fld_no) && cur_fld_no != start_fld);
             show_now = 1;
 
             if (cur_fld_no == FLD_LOG) {
@@ -947,7 +979,7 @@ void lcdkeypad(void *pvParameters) {
           } else if (cur_fld_no == FLD_RF_CALIB) {
             if (calib_flag == 0) {
               // Mode is now strictly defined by the global flag
-              calib_mode = ENABLE_CALIB_TEST; // 0=Field, 1=Test
+              calib_mode = 0; // ALWAYS Field Calibration (User Request)
 
               calib_start_time = millis();
               calib_count.val = 0; // PHYSICAL SEPARATION: Reset calib bucket
@@ -959,13 +991,9 @@ void lcdkeypad(void *pvParameters) {
 
               // Set initial timeout based on mode
               // Field Calib: 5 mins allowed for test
-              if (calib_mode == 0) {
-                timerAlarm(lcd_timer, 300000000, false, 0); // 5 mins
-              } else {
-                timerAlarm(lcd_timer, 1800000000, false,
-                           0); // 30 mins for calibration
-              }
-              timerWrite(lcd_timer, 0); // Reset count
+              // Field Calib: 5 mins allowed (User Correction)
+              timerAlarm(lcd_timer, 300000000, false, 0); // 5 mins
+              timerWrite(lcd_timer, 0);                   // Reset count
               timerRestart(lcd_timer);
 
               lcd.clear();
@@ -1161,8 +1189,31 @@ void lcdkeypad(void *pvParameters) {
                         lcd.print("No old data");
                       }
                       xSemaphoreGive(i2cMutex);
-                      vTaskDelay(2000);
                     }
+                    vTaskDelay(2000);
+
+                    // NEW: Cleanup for new station
+                    debugln("[UI] Station Changed: Deleting Calib & Unsent "
+                            "files...");
+                    SPIFFS.remove("/calib.txt");
+                    SPIFFS.remove("/unsent.txt");
+                    SPIFFS.remove("/ftpunsent.txt");
+                    SPIFFS.remove("/unsent_pointer.txt");
+
+                    // Reset internal calibration state fully
+                    calib_sts = 0;
+                    calib_day = 0;
+                    calib_month = 0;
+                    calib_year = 0;
+                    strcpy(ui_data[FLD_RF_CALIB].bottomRow, "NOT CALIBRATED");
+
+                    // NEW: Automatic Health Report with GPS after Station ID
+                    // Change
+                    debugln("[UI] Station Changed: Scheduling Automatic GPS & "
+                            "Health Report");
+                    sync_mode = eStartupGPS;
+                    cur_fld_no = FLD_SEND_GPS; // Switch view to GPS Status
+                    strcpy(ui_data[FLD_SEND_GPS].bottomRow, "INITIALIZING...");
                   }
                 } else if (cur_fld_no == FLD_DATE) {
                   sscanf(ui_data[FLD_DATE].bottomRow, "%02d-%02d-%04d",
@@ -1326,10 +1377,14 @@ void lcdkeypad(void *pvParameters) {
             }
           } else {
             if (cur_fld_no == FLD_RF_CALIB && calib_flag == 10) {
-              calib_mode = (calib_mode + 1) % 2;
+              // Toggle removed: User only wants Field Calibration
               show_now = 1;
             } else {
-              cur_fld_no = (cur_fld_no + FLD_COUNT - 1) % FLD_COUNT;
+              // Loop until we find a visible field
+              int start_fld = cur_fld_no;
+              do {
+                cur_fld_no = (cur_fld_no + FLD_COUNT - 1) % FLD_COUNT;
+              } while (!isFieldVisible(cur_fld_no) && cur_fld_no != start_fld);
               if (cur_fld_no == FLD_LOG) {
                 int p_min = (current_min / 15) * 15;
                 int p_hr = current_hour;

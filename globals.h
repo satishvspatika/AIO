@@ -14,6 +14,10 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <Wire.h>
+#include <esp_attr.h>
+#ifndef RTC_DATA_ATTR
+#define RTC_DATA_ATTR __attribute__((section(".rtc.data")))
+#endif
 #include <esp_now.h>
 #include <esp_task_wdt.h>
 #include <esp_wifi.h>
@@ -55,6 +59,12 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 /************************************************************************************************/
 
 #define FILLGAP 1
+
+// Google Sheets Health Monitor (Free Server)
+#define GOOGLE_HEALTH_URL                                                      \
+  "https://script.google.com/macros/s/"                                        \
+  "AKfycbx1HFoaTQVSUygYgu0WVj_P8jMImfRnnLxJQWT3GE2M3Ub8jNIilvDxp0V1J7_KTOOBWQ" \
+  "/exec"
 
 #define HDC_ADDR 0x40 // Default I2C address for both HDC1080 and HDC2022
 #define I2C_SDA 21    // Explicit definition for I2C bus in ESP32
@@ -173,7 +183,8 @@ enum {
   eExceptionHandled,
   eSMSStart,
   eSMSStop,
-  eGPSStart
+  eGPSStart,
+  eStartupGPS
 };                                                               // sync_mode
 enum { eGprsInitial, eGprsSignalOk, eGprsSignalForStoringOnly }; // gprs_mode
 enum { eCurrentData, eClosingData, eUnsentData };                // for http
@@ -248,7 +259,9 @@ char httpPostRequest[125], httpContent[12];
 char append_text[100],
     store_text[100];      // Increased from 65 to 100 for safety #TRUEFIX
 char ftpappend_text[100]; // Increased from 65 to 100 for safety #TRUEFIX
-char ftp_station[16];     // AG2 from int so that alphanumeric can be stored
+int cur_mode = 0;
+int cur_fld_no = 0;
+char ftp_station[16]; // AG2 from int so that alphanumeric can be stored
 size_t len;
 char last_logged[16];
 char http_data[300]; // AG1
@@ -258,8 +271,9 @@ char sample_cum_rf[7], sample_inst_rf[7], sample_temp[7], sample_hum[7],
 char ht_data[40]; // AG1
 char apn_str[20];
 char reg_status[16];
-char carrier[20];
-char sim_number[20] = "NA";
+RTC_DATA_ATTR char carrier[20] = "";
+RTC_DATA_ATTR char sim_number[20] = "NA";
+RTC_DATA_ATTR char cached_iccid[25] = ""; // To detect SIM change
 
 String response;
 String rssiStr;
@@ -378,6 +392,7 @@ void next_date(int *Nd, int *Nm, int *Ny);
 void previous_date(int *Cd, int *Cm, int *Cy);
 int send_at_cmd_data(char *payload, String charArray);
 void send_http_data();
+void send_health_report(bool useJitter = true);
 void send_unsent_data();
 void send_ftp_file(char *fileName);
 void start_gprs();
@@ -501,7 +516,7 @@ ui_data_t ui_data[FLD_COUNT] = {
     {1, "STATION", "SIT099", eAlphaNum},                  // 0
     {2, "DATE(dd-mm-yyyy)", "08-03-2023", eNumeric},      // 1
     {3, "TIME 24hr:mm", "00:00", eNumeric},               // 2
-    {5, "VERSION", "TRG23 0.1", eDisplayOnly},            // 3
+    {5, "VERSION", "5.1", eDisplayOnly},                  // 3
     {4, "RF (mm)", "000.0", eLive},                       // 4
     {8, "SIM STATUS", "0", eLive},                        // 5
     {9, "REGISTRATION", "NA", eLive},                     // 6

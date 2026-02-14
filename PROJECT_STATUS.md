@@ -33,6 +33,11 @@
 - **Memory Protection**: Optimized `String` handling in GPRS responses to prevent heap fragmentation during months of uptime.
 - **Status**: ✅ Ready for long-term deployment.
 
+### 6. Display Polish
+- **Strict Padding**: Solved the "NA0.00" residual text bug by enforcing 16-character space-padding on every LCD update.
+- **Synchronized Heartbeat**: Integrated the heartbeat into the main display loop to prevent it from being clobbered by labels.
+- **Status**: ✅ Display is clean and professional.
+
 ## 🛠 Active Configuration
 - **Unit**: `KSNDMC_ADDON` (TWS-RF)
 - **System**: `2`
