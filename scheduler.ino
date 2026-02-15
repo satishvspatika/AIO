@@ -620,51 +620,42 @@ void scheduler(void *pvParameters) {
         // 00,2024-05-21,08:45,0000.0,0000.0,-111,00.0 : rf : 43+2 = 45
 
 #if SYSTEM == 0
-        // Validate content length before parsing
-        if (strlen(content_buf) < 26) {
-          debugln("Error: Content too short for RF system parsing");
-          continue; // Skip parsing if content is too short
-        }
-        // subString0 = content.substring(0, 2);
-        strncpy(tmp_parse, content_buf, 2);
-        tmp_parse[2] = 0;
-        last_sampleNo = atoi(tmp_parse);
+        // Robust parsing using commas
+        last_sampleNo = atoi(content_buf);
+        debug("Last sample No stored: ");
         debugln(last_sampleNo);
 
-        // CHECK FOR DUPLICATE SAMPLE
         if (last_sampleNo == sampleNo) {
-          debugln("Duplicate sample detected (RF). Data already logged for "
-                  "this interval.");
+          debugln("Duplicate sample detected (RF). Data already logged.");
           data_writing_initiated = 0;
           goto TRIGGER_HTTP;
         }
 
-        // subString1 = content.substring(20, 26);
-        strncpy(tmp_parse, content_buf + 20, 6);
-        tmp_parse[6] = 0;
-        last_instRF = atof(tmp_parse);
-        debug("Last recorded instRF is : ");
-        debugln(last_instRF);
-        if (last_instRF < 0)
-          last_instRF = 0; // Add this
+        char *p = content_buf;
+        // Fields: sampleNo(0), date(1), time(2), inst_rf(3), cum_rf(4)
+        for (int i = 0; i < 3 && p; i++)
+          p = strchr(p + 1, ','); // Skip to 3rd comma
+        if (p) {
+          last_instRF = atof(p + 1);
+          p = strchr(p + 1, ','); // 4th comma
+          if (p)
+            last_cumRF = atof(p + 1);
+        }
 
-        // subString2 = content.substring(27, 33);
-        strncpy(tmp_parse, content_buf + 27, 6);
-        tmp_parse[6] = 0;
-        last_cumRF = atof(tmp_parse);
-        debug("Last recorded cumRF is : ");
-        debugln(last_cumRF);
+        if (last_instRF < 0)
+          last_instRF = 0;
         if (last_cumRF < 0)
-          last_cumRF = 0; // Add this
+          last_cumRF = 0;
+        debug("Last recorded instRF: ");
+        debugln(last_instRF);
+        debug("Last recorded cumRF: ");
+        debugln(last_cumRF);
 
         new_current_cumRF = last_cumRF + rf_value;
         snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(new_current_cumRF));
         snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f",
                  float(new_current_cumRF));
-
-        cum_rf[6] = 0; // iter10
-        ftpcum_rf[5] = 0;
-        debug("Current cumRF (lastCumRF + rf_value) is : ");
+        debug("Current calculated cumRF: ");
         debugln(new_current_cumRF);
 #endif
 
@@ -741,84 +732,59 @@ void scheduler(void *pvParameters) {
           // 58+2 = 60 cumrf,temp,hum,avg_ws,wd
 
 #if SYSTEM == 2
-        // Validate content length before parsing
-        if (strlen(content_buf) < 48) {
-          debugln("Error: Content too short for TWS-RF system parsing");
-          continue; // Skip parsing if content is too short
-        }
-        // subString0 = content.substring(0, 2);
-        strncpy(tmp_parse, content_buf, 2);
-        tmp_parse[2] = 0;
-        last_sampleNo = atoi(tmp_parse);
-        debug("Last sample No stored : ");
-        debugln(last_sampleNo);
-
-        // CHECK FOR DUPLICATE SAMPLE
+        last_sampleNo = atoi(content_buf);
         if (last_sampleNo == sampleNo) {
-          debugln("Duplicate sample detected (TWS-RF). Data already logged for "
-                  "this interval.");
-          // Skip data writing, trigger HTTP/Sleep sequence
+          debugln("Duplicate sample detected (TWS-RF).");
           data_writing_initiated = 0;
-          // Go to end of loop logic to trigger sleep/send
           goto TRIGGER_HTTP;
         }
 
-        // subString1 = content.substring(20, 26);
-        strncpy(tmp_parse, content_buf + 20, 6);
-        tmp_parse[6] = 0;
-        last_cumRF = atof(tmp_parse);
-        debug("Last recorded cumRF is : ");
-        debugln(last_cumRF); // CORRECTED
-        if (last_cumRF < 0)
-          last_cumRF = 0; // Add this
+        char *p = content_buf;
+        // Fields: sampleNo(0), date(1), time(2), cum_rf(3), temp(4), hum(5),
+        // ws(6), wd(7)
+        for (int i = 0; i < 3 && p; i++)
+          p = strchr(p + 1, ',');
+        if (p) {
+          last_cumRF = atof(p + 1);
+          p = strchr(p + 1, ',');
+          if (p)
+            last_instTemp = atof(p + 1);
+          p = strchr(p + 1, ',');
+          if (p)
+            last_instHum = atof(p + 1);
+          p = strchr(p + 1, ',');
+          if (p)
+            last_AvgWS = atof(p + 1);
+          p = strchr(p + 1, ',');
+          if (p)
+            last_instWD = atof(p + 1);
 
-        // subString2 = content.substring(27, 32);
-        strncpy(tmp_parse, content_buf + 27, 5);
-        tmp_parse[5] = 0;
-        last_instTemp = atof(tmp_parse);
-        debug("Last recorded instTemp is : ");
-        debugln(last_instTemp);
-        if (last_instTemp < 0)
-          last_instTemp = 0; // Add this
+          // Data Sanctity Clamping
+          if (last_cumRF < 0)
+            last_cumRF = 0;
+          if (last_instHum < 0)
+            last_instHum = 0;
+          if (last_instHum > 100)
+            last_instHum = 100;
+          if (last_AvgWS < 0)
+            last_AvgWS = 0;
+          if (last_instWD < 0)
+            last_instWD = 0;
+          if (last_instWD >= WIND_DIR_MAX)
+            last_instWD = 0;
+        }
 
-        // subString3 = content.substring(33, 38);
-        strncpy(tmp_parse, content_buf + 33, 5);
-        tmp_parse[5] = 0;
-        last_instHum = atof(tmp_parse);
-        debug("Last recorded instHum is : ");
+        debug("Last Parse: CRF=");
+        debug(last_cumRF);
+        debug(" T=");
+        debug(last_instTemp);
+        debug(" H=");
         debugln(last_instHum);
-        if (last_instHum < 0)
-          last_instHum = 0; // Add this
-        if (last_instHum > 100)
-          last_instHum = 100; // Add this
 
-        // subString4 = content.substring(39, 44);
-        strncpy(tmp_parse, content_buf + 39, 5);
-        tmp_parse[5] = 0;
-        last_AvgWS = atof(tmp_parse);
-        debug("Last recorded AvgWS is : ");
-        debugln(last_AvgWS);
-        if (last_AvgWS < 0)
-          last_AvgWS = 0; // Add this
-
-        // subString5 = content.substring(45, 48);
-        strncpy(tmp_parse, content_buf + 45, 3);
-        tmp_parse[3] = 0;
-        last_instWD = atof(tmp_parse);
-        debug("Last recorded instWD is : ");
-        debugln(last_instWD);
-        if (last_instWD < 0)
-          last_instWD = 0; // Add this
-        if (last_instWD >= WIND_DIR_MAX)
-          last_instWD = 0; // Add this
         new_current_cumRF = last_cumRF + rf_value;
         snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(new_current_cumRF));
         snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f",
                  float(new_current_cumRF));
-        cum_rf[6] = 0; // iter10
-        ftpcum_rf[5] = 0;
-        debug("Current cumRF (lastCumRF + rf_value) is : ");
-        debugln(new_current_cumRF);
 #endif
 
         file1.close();
@@ -1463,8 +1429,16 @@ void scheduler(void *pvParameters) {
             sd1.print(append_text);
           }
           debugln();
-          debug("Current sample record being written to SPIFF file is ");
           debugln(append_text);
+
+          // Reset Daily Diagnostics at start of new rainfall day (8:45 AM)
+          if (sampleNo == 0) {
+            diag_reg_time_total = 0;
+            diag_reg_count = 0;
+            diag_reg_worst = 0;
+            diag_gprs_fails = 0;
+            debugln("[Diag] Daily performance counters reset for new day.");
+          }
         }
 
         file1.close();
@@ -1534,28 +1508,22 @@ void scheduler(void *pvParameters) {
             // 00,2024-05-21,08:45,0000.0,0000.0,-111,00.0 : rf : 43+2 = 45
 
 #if SYSTEM == 0
-            // subString0 = content.substring(0, 2);
-            strncpy(tmp_parse, content_buf, 2);
-            tmp_parse[2] = 0;
-            debug("String sample No stored : ");
-            debugln(tmp_parse);
-            last_sampleNo = atoi(tmp_parse);
-            debug("Last sample No stored : ");
+            // Robust parsing using commas
+            last_sampleNo = atoi(content_buf);
+            debug("Gap Search: Sample No: ");
             debugln(last_sampleNo);
 
-            // subString2 = content.substring(27, 33);
-            strncpy(tmp_parse, content_buf + 27, 6);
-            tmp_parse[6] = 0;
-            last_cumRF = atof(tmp_parse);
-            debug("Last recorded cumRF is : ");
+            char *p = content_buf;
+            // Fields: sampleNo(0), date(1), time(2), inst_rf(3), cum_rf(4)
+            for (int i = 0; i < 4 && p; i++)
+              p = strchr(p + 1, ','); // Skip to 4th comma
+            if (p)
+              last_cumRF = atof(p + 1);
+
+            debug("Gap Search: Last cumRF found: ");
             debugln(last_cumRF);
-            snprintf(
-                cum_rf, sizeof(cum_rf), "%06.2f",
-                float(last_cumRF)); // changed to avg_cumRF instead of cum_RF
-            snprintf(
-                ftpcum_rf, sizeof(ftpcum_rf), "%05.2f",
-                float(last_cumRF)); // Adding the current rf to last recorded
-                                    // cum_rf will make current cum_rf
+            snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(last_cumRF));
+            snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(last_cumRF));
 #endif
 
             // TWS
@@ -1604,54 +1572,31 @@ void scheduler(void *pvParameters) {
             // : 58+2 = 60 rf,temp,hum,avg_ws,wd
 
 #if SYSTEM == 2
-            // subString0 = content.substring(0, 2);
-            strncpy(tmp_parse, content_buf, 2);
-            tmp_parse[2] = 0;
-            last_sampleNo = atoi(tmp_parse);
-            debug("Last sample No stored : ");
-            debugln(last_sampleNo);
-
-            // subString1 = content.substring(20, 26);
-            strncpy(tmp_parse, content_buf + 20, 6);
-            tmp_parse[6] = 0;
-            last_cumRF = atof(tmp_parse);
-            debug("Last recorded cumRF is : ");
+            // Robust parsing for semicolon format (e.g.,
+            // WS1923;2026...;Rainfall;Temp;Hum...)
+            char *p = strchr(content_buf, ';'); // Skip Station
+            if (p) {
+              p = strchr(p + 1, ';'); // Skip DateTime
+              if (p) {
+                last_cumRF = atof(p + 1);
+                p = strchr(p + 1, ';');
+                if (p)
+                  last_instTemp = atof(p + 1);
+                p = strchr(p + 1, ';');
+                if (p)
+                  last_instHum = atof(p + 1);
+                p = strchr(p + 1, ';');
+                if (p)
+                  last_AvgWS = atof(p + 1);
+                p = strchr(p + 1, ';');
+                if (p)
+                  last_instWD = atof(p + 1);
+              }
+            }
+            debug("Lastrecorded (TWS-RF) CRF: ");
             debugln(last_cumRF);
-
-            // subString2 = content.substring(27, 32);
-            strncpy(tmp_parse, content_buf + 27, 5);
-            tmp_parse[5] = 0;
-            last_instTemp = atof(tmp_parse);
-            debug("Last recorded instTemp is : ");
-            debugln(last_instTemp);
-
-            // subString3 = content.substring(33, 38);
-            strncpy(tmp_parse, content_buf + 33, 5);
-            tmp_parse[5] = 0;
-            last_instHum = atof(tmp_parse);
-            debug("Last recorded instHum is : ");
-            debugln(last_instHum);
-
-            // subString4 = content.substring(39, 44);
-            strncpy(tmp_parse, content_buf + 39, 5);
-            tmp_parse[5] = 0;
-            last_AvgWS = atof(tmp_parse);
-            debug("Last recorded AvgWS is : ");
-            debugln(last_AvgWS);
-
-            // subString5 = content.substring(45, 48);
-            strncpy(tmp_parse, content_buf + 45, 3);
-            tmp_parse[3] = 0;
-            last_instWD = atof(tmp_parse);
-            debug("Last recorded instWD is : ");
-            debugln(last_instWD);
-            snprintf(
-                cum_rf, sizeof(cum_rf), "%06.2f",
-                float(last_cumRF)); // changed to avg_cumRF instead of cum_RF
-            snprintf(
-                ftpcum_rf, sizeof(ftpcum_rf), "%05.2f",
-                float(last_cumRF)); // changed to avg_cumRF instead of cum_RF
-
+            snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(last_cumRF));
+            snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(last_cumRF));
 #endif
             file2.close();
 

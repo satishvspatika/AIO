@@ -18,6 +18,11 @@
 #ifndef RTC_DATA_ATTR
 #define RTC_DATA_ATTR __attribute__((section(".rtc.data")))
 #endif
+
+// SAFETY BUFFER: Reserve 512 bytes at the start of RTC Memory to prevent
+// ULP Program Code (loaded at offset 0) from overwriting C variables.
+RTC_DATA_ATTR uint8_t ulp_code_reserve[512] = {0};
+
 #include <esp_now.h>
 #include <esp_task_wdt.h>
 #include <esp_wifi.h>
@@ -41,12 +46,12 @@ char UNIT[15] = "SPATIKA_GEN"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.2"
+#define FIRMWARE_VERSION "5.3"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
 #define ENABLE_WEBSERVER                                                       \
-  1 // Set to 0 to remove WebServer footprint (SAVES SPACE)
+  0 // Set to 0 to remove WebServer footprint (SAVES SPACE)
 
 #define DEFAULT_RF_RESOLUTION 0.5
 float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
@@ -275,6 +280,17 @@ char reg_status[16];
 RTC_DATA_ATTR char carrier[20] = "";
 RTC_DATA_ATTR char sim_number[20] = "NA";
 RTC_DATA_ATTR char cached_iccid[25] = ""; // To detect SIM change
+
+// Field Diagnostic Insights (v5.2) - Tracked across resets
+RTC_DATA_ATTR int diag_reg_time_total = 0; // Cumulative seconds
+RTC_DATA_ATTR int diag_reg_count = 0;      // Number of cycles
+RTC_DATA_ATTR int diag_reg_worst = 0;      // Max seconds for single reg
+RTC_DATA_ATTR int diag_gprs_fails = 0;     // Total registration timeouts
+RTC_DATA_ATTR int diag_last_reset_reason = 0;
+RTC_DATA_ATTR int diag_reg_count_total_cycles = 0;
+RTC_DATA_ATTR uint32_t diag_total_uptime_hrs = 0;
+RTC_DATA_ATTR unsigned long diag_last_health_millis = 0;
+RTC_DATA_ATTR bool diag_rtc_battery_ok = true;
 
 String response;
 String rssiStr;

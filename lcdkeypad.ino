@@ -33,6 +33,11 @@ char show_now;
 
 // Returns true if the field should be shown for the current SYSTEM
 bool isFieldVisible(int fld_id) {
+#if ENABLE_WEBSERVER == 0
+  if (fld_id == FLD_WIFI_ENABLE)
+    return false;
+#endif
+
 #if SYSTEM == 0 // TRG ONLY
   if (fld_id == FLD_WIND_DIR || fld_id == FLD_INST_WS || fld_id == FLD_AVG_WS ||
       fld_id == FLD_TEMP || fld_id == FLD_HUMIDITY)

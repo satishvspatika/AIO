@@ -73,6 +73,14 @@ void setup() {
   delay(300);
   setCpuFrequencyMhz(80); // Save power by stepping down CPU freq
 
+  // Record Reset Reason and Increment Uptime
+  RESET_REASON rr = rtc_get_reset_reason(0);
+  diag_last_reset_reason = (int)rr;
+  if (rr == DEEPSLEEP_RESET) {
+    diag_reg_count_total_cycles++; // 15-min cycles
+    diag_total_uptime_hrs = diag_reg_count_total_cycles / 4;
+  }
+
   // Pre-load essential system data: Try NVS (Preferences) first for robustness
   Preferences prefs;
   prefs.begin("sys-config", false); // Read-Write mode
@@ -654,9 +662,16 @@ void initialize_hw() {
 
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
     if (!rtc.begin()) {
-      debugln("[BOOT] RTC: FAILED");
+      debugln("[BOOT] RTC: HARDWARE FAILED");
+      diag_rtc_battery_ok = false;
     } else {
-      debugln("[BOOT] RTC: OK");
+      if (!rtc.isrunning()) {
+        debugln("[BOOT] RTC: BATTERY FAILED / CLOCK STOPPED");
+        diag_rtc_battery_ok = false;
+      } else {
+        debugln("[BOOT] RTC: OK");
+        diag_rtc_battery_ok = true;
+      }
     }
     xSemaphoreGive(i2cMutex);
   }

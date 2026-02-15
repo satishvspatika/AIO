@@ -177,8 +177,8 @@ void gprs(void *pvParameters) {
                   "Flow\n****************");
 
           // BIMODAL POWER DISCIPLINE: Only send Health Report to Google twice a
-          // day Target: 10:30 AM and 11:00 PM (23:00)
-          if ((current_hour == 10 && current_min == 30) ||
+          // day Target: 11:15 AM and 11:00 PM (23:00)
+          if ((current_hour == 11 && current_min == 15) ||
               (current_hour == 23 && current_min == 0)) {
             debugln("[Health] Scheduled Reporting Window Open. Sending Google "
                     "Update...");
@@ -1773,10 +1773,18 @@ void get_registration() {
     }
   }
 
+  // Update Diagnostics
+  int time_taken = retries * 10; // Approx seconds (10s delay per retry)
   if (is_registered) {
+    diag_reg_time_total += time_taken;
+    diag_reg_count++;
+    if (time_taken > diag_reg_worst)
+      diag_reg_worst = time_taken;
+
     gprs_mode = eGprsSignalOk;
     debugln("Registration Successful.");
   } else {
+    diag_gprs_fails++;
     gprs_mode = eGprsSignalForStoringOnly;
     debugln("Registration failed after all retries.");
     strcpy(reg_status, "REG FAIL");
@@ -2774,17 +2782,50 @@ void send_health_report(bool useJitter) {
     if (cleanStn[i] == ' ')
       cleanStn[i] = '_';
 
-  // 4. Build Expanded URL with Proper Headings
-  char healthURL[600]; // Increased for ICCID
+  // 4. Build Expanded URL with Proper Headings (v5.2 Diagnosis)
+  float avg_reg =
+      (diag_reg_count > 0) ? (float)diag_reg_time_total / diag_reg_count : 0;
+
+  size_t spiffs_used = SPIFFS.usedBytes();
+  size_t spiffs_total = SPIFFS.totalBytes();
+
+  // Plain English Status Summary Logic (v5.2 - SD is Optional)
+  const char *status_summary = "SYSTEM_OK";
+  if (li_bat_val < 3.4)
+    status_summary = "CRITICAL_BATTERY";
+  else if (diag_last_reset_reason == 15)
+    status_summary = "BROWNOUT_RECOVERY";
+  else if (diag_rtc_battery_ok == false)
+    status_summary = "RTC_BATTERY_FAULT";
+  else if (li_bat_val < 3.6)
+    status_summary = "LOW_BATTERY";
+  else if (current_hour >= 10 && current_hour <= 16 &&
+           solar_val < (li_bat_val + 2.0))
+    status_summary = "SOLAR_CHARGING_FAULT";
+  else if (diag_gprs_fails > 0)
+    status_summary = "NETWORK_STABILITY_ISSUE";
+  else if (diag_reg_worst > 150)
+    status_summary = "POOR_SIGNAL_LOCATION";
+  else if (spiffs_used > (spiffs_total * 0.9))
+    status_summary = "MEMORY_NEAR_FULL";
+  else if (diag_last_reset_reason >= 7 && diag_last_reset_reason <= 9)
+    status_summary = "WATCHDOG_RESET";
+
+  char healthURL[850]; // Increased for Status info
   snprintf(
       healthURL, sizeof(healthURL),
       "AT+HTTPPARA=\"URL\",\"%s?Station=%s&SystemType=%d&UnitName=%s&"
       "Version=%s&SolarGprsBat=%0.2f&"
       "Esp32Bat=%0.2f&Signal=%d&SimNo=%s&Carrier=%s&ICCID=%s&Calibration=%s&"
-      "Latitude=%.6f&Longitude=%.6f\"",
+      "Latitude=%.6f&Longitude=%.6f&Reset=%d&RegAvg=%0.1f&RegWorst=%d&RegFails="
+      "%d&Uptime=%d&SpiffsUsed=%u&SpiffsTotal=%u&SDOk=%d&RTCOk=%d&HealthStatus="
+      "%s\"",
       GOOGLE_HEALTH_URL, cleanStn, SYSTEM, UNIT, UNIT_VER, solar_val,
       li_bat_val, signal_strength, sim_number, carrier, cached_iccid, clbInfo,
-      lati, longi);
+      lati, longi, diag_last_reset_reason, avg_reg, diag_reg_worst,
+      diag_gprs_fails, (int)diag_total_uptime_hrs, (unsigned int)spiffs_used,
+      (unsigned int)spiffs_total, sd_card_ok, diag_rtc_battery_ok,
+      status_summary);
 
   debugln("[Health] Sending Detailed Report...");
   flushSerialSIT(); // Clear any stale data
@@ -2810,13 +2851,18 @@ void send_health_report(bool useJitter) {
   // 3. HTTP Action
   SerialSIT.println("AT+HTTPTERM");
   waitForResponse("OK", 500);
+  vTaskDelay(200 / portTICK_PERIOD_MS); // Extra breath for stack cleanup
   SerialSIT.println("AT+HTTPINIT");
   waitForResponse("OK", 500);
-  SerialSIT.println("AT+HTTPPARA=\"CID\",1");
+
+  SerialSIT.print("AT+HTTPPARA=\"CID\",");
+  SerialSIT.println(active_cid);
   waitForResponse("OK", 200);
+
   SerialSIT.println("AT+HTTPPARA=\"UA\",\"Mozilla/5.0 (A7672S)\"");
   waitForResponse("OK", 200);
-  SerialSIT.println("AT+HTTPPARA=\"REDIR\",0"); // Fastest: Don't follow jumps
+  SerialSIT.println(
+      "AT+HTTPPARA=\"REDIR\",0"); // Fastest: Don't follow jumps (Learning v7)
   waitForResponse("OK", 200);
   SerialSIT.println("AT+HTTPPARA=\"SSLCFG\",0");
   waitForResponse("OK", 200);
@@ -2827,7 +2873,8 @@ void send_health_report(bool useJitter) {
   debugln("Updating Google Sheet...");
   SerialSIT.println("AT+HTTPACTION=0");
   waitForResponse("OK", 500);
-  String response = waitForResponse("+HTTPACTION", 30000);
+  String response =
+      waitForResponse("+HTTPACTION", 35000); // 35s for SSL/DNS on weak signal
 
   // Google Sheets updates even if it returns a 302 Redir
   if (response.indexOf(",200,") != -1 || response.indexOf(",302,") != -1) {
