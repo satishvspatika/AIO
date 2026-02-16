@@ -422,6 +422,16 @@ void prepare_data_and_send() {
     temp_min = 30;
   }
 
+  // Create trimmed station name for URL
+  char cleanStn[16];
+  strncpy(cleanStn, station_name, 15);
+  cleanStn[15] = '\0';
+  int tLen = strlen(cleanStn);
+  while (tLen > 0 && cleanStn[tLen - 1] == ' ') {
+    cleanStn[tLen - 1] = '\0';
+    tLen--;
+  }
+
   if (!strcmp(httpSet[http_no].Format,
               "json")) { // if json then this loop otherwise goto urlencoded one
 // BIHAR TRG
@@ -430,7 +440,7 @@ void prepare_data_and_send() {
              "{\"StnNo\":\"%s\",\"DeviceTime\":\"%04d-%02d-%02d "
              "%02d:%02d:00\",\"RainDP\":\"%05.2f\",\"RainCuml\":\"%05.2f\","
              "\"BatVolt\":\"%s\",\"SigStr\":\"%04d\",\"ApiKey\":\"%s\"}",
-             station_name, temp_year, temp_month, temp_day, temp_hr, temp_min,
+             cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
              temp_instrf, temp_crf, sample_bat, temp_sig, httpSet[http_no].Key);
 #endif
 
@@ -441,7 +451,7 @@ void prepare_data_and_send() {
       snprintf(http_data, sizeof(http_data),
                "stn_id=%s&rec_time=%04d-%02d-%02d,%02d:%02d&rainfall=%05.2f&"
                "signal=%04d&key=%s&bat_volt=%s&bat_volt1=%s",
-               station_name, temp_year, temp_month, temp_day, temp_hr, temp_min,
+               cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
                temp_crf, temp_sig, httpSet[http_no].Key, sample_bat,
                sample_bat);
 #endif
@@ -453,7 +463,7 @@ void prepare_data_and_send() {
       snprintf(http_data, sizeof(http_data),
                "stn_id=%s&rec_time=%04d-%02d-%02d,%02d:%02d&rainfall=%05.2f&"
                "signal=%04d&bat_volt=%s&key=%s",
-               station_name, temp_year, temp_month, temp_day, temp_hr, temp_min,
+               cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
                temp_crf, temp_sig, sample_bat, httpSet[http_no].Key);
       debugln();
       debugln("SPATIKA TRG data ..");
@@ -465,7 +475,7 @@ void prepare_data_and_send() {
     snprintf(http_data, sizeof(http_data),
              "stn_no=%s&rec_time=%04d-%02d-%02d,%02d:%02d&temp=%s&humid=%s&w_"
              "speed=%s&w_dir=%s&signal=%04d&key=%s&bat_volt=%s&bat_volt2=%s",
-             station_name, temp_year, temp_month, temp_day, temp_hr, temp_min,
+             cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
              sample_temp, sample_hum, sample_avgWS, sample_WD, temp_sig,
              httpSet[http_no].Key, sample_bat, sample_bat);
 #endif
@@ -478,7 +488,7 @@ void prepare_data_and_send() {
           "stn_id=%s&rec_time=%04d-%02d-%02d,%02d:%02d&key=%s&rainfall=%05."
           "2f&temp=%s&humid=%s&w_speed=%s&w_dir=%s&signal=%04d&bat_volt=%s&"
           "bat_volt2=%s",
-          station_name, temp_year, temp_month, temp_day, temp_hr, temp_min,
+          cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
           httpSet[http_no].Key, temp_crf, sample_temp, sample_hum, sample_avgWS,
           sample_WD, temp_sig, sample_bat, sample_bat);
     else
@@ -487,7 +497,7 @@ void prepare_data_and_send() {
           "stn_no=%s&rec_time=%04d-%02d-%02d,%02d:%02d&key=%s&rainfall=%05."
           "2f&temp=%s&humid=%s&w_speed=%s&w_dir=%s&signal=%04d&bat_volt=%s&"
           "bat_volt2=%s",
-          station_name, temp_year, temp_month, temp_day, temp_hr, temp_min,
+          cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
           httpSet[http_no].Key, temp_crf, sample_temp, sample_hum, sample_avgWS,
           sample_WD, temp_sig, sample_bat, sample_bat);
 #endif
@@ -1316,8 +1326,8 @@ int send_at_cmd_data(char *payload, String charArray) {
   response = waitForResponse("OK", 4000);
 
   SerialSIT.println("AT+HTTPACTION=1");
-  waitForResponse("OK", 2000); // Consume immediate OK
-  response = waitForResponse("+HTTPACTION:", 25000);
+  waitForResponse("OK", 2000);                       // Consume immediate OK
+  response = waitForResponse("+HTTPACTION:", 45000); // 45s for slow BSNL 2G
   debug("Response of AT+HTTPACTION=1 is ");
   debugln(response);
 
@@ -2128,17 +2138,24 @@ void prepare_and_send_status(char *gsm_no) {
   //                  debug("NETWORK is ");debugln(NETWORK);//TRG8-3.0.5
   //        }
 
-  strcpy(status_response, ""); // NEW POST TRG8-3.0.5
+  // Trim Station ID for cleaner SMS
+  char cleanStn[16];
+  strncpy(cleanStn, station_name, 15);
+  cleanStn[15] = '\0';
+  int tLen = strlen(cleanStn);
+  while (tLen > 0 && cleanStn[tLen - 1] == ' ') {
+    cleanStn[tLen - 1] = '\0';
+    tLen--;
+  }
 
   // RF & TWS
   snprintf(
       status_response, sizeof(status_response),
       "%s,%s,%s,%s,%04d-%02d-%02dT%02d:%02d,%s,15,%04d,%04.1f,0.0,%s,%s,%s,"
       "%04d-%02d-%02d,%04d-%02d-%02dT%02d:%02d,0\r\n\032",
-      NETWORK, STATION_TYPE, msg_type, station_name, current_year,
-      current_month, current_day, current_hour, current_min, UNIT_VER,
-      signal_strength, bat_val, (solar_conn ? "Y" : "N"),
-      (sd_card_ok ? "SDC-OK" : "SDC-FAIL"),
+      NETWORK, STATION_TYPE, msg_type, cleanStn, current_year, current_month,
+      current_day, current_hour, current_min, UNIT_VER, signal_strength,
+      bat_val, (solar_conn ? "Y" : "N"), (sd_card_ok ? "SDC-OK" : "SDC-FAIL"),
       (calib_sts == 1 ? "CLB-OK" : "CLB-FAIL"),
       calib_year,  // calib
       calib_month, // calib
@@ -2150,15 +2167,12 @@ void prepare_and_send_status(char *gsm_no) {
   debugln(status_response);
   // first give send sms command
 
-  // iter14
-  //   SerialSIT.println("AT+CSMS=0");
-  //   response = waitForResponse("+CSMS", 5000);
-  //   debug("Response of AT+CSMS=0 is ");debugln(response);
-
   SerialSIT.println("AT+CMGF=1");
-  response = waitForResponse("OK", 5000);
-  debug("Response of AT+CMGF=1 is ");
-  debugln(response);
+  waitForResponse("OK", 1000);
+
+  // Optional but helpful for BSNL: Check Service Center
+  SerialSIT.println("AT+CSCA?");
+  waitForResponse("OK", 500);
 
   debug("Mobile number to be sent to is : ");
   debugln(gsm_no);
@@ -2171,13 +2185,16 @@ void prepare_and_send_status(char *gsm_no) {
     debugln(" Received!");
     SerialSIT.print(status_response); //  SerialSIT.write(26);
     debug("Waiting for +CMGS confirmation...");
-    response = waitForResponse("+CMGS:", 15000);
+    response = waitForResponse("+CMGS:", 35000); // 35s for BSNL 2G
     debugln(" Done.");
+    debug("Response of AT+CMGS is ");
+    debugln(response);
   } else {
     debugln(" TIMEOUT! No '>' prompt received.");
     debug("Response was: ");
     debugln(response);
   }
+
   const char *char_resp = response.c_str();
   if (strstr(char_resp, "+CMGS")) {
     msg_sent = 1;
@@ -2185,7 +2202,6 @@ void prepare_and_send_status(char *gsm_no) {
   } else {
     debugln("FAILED TO SEND MSG - No +CMGS in response");
   }
-  vTaskDelay(1000);
 }
 
 void get_gps_coordinates() {
@@ -2919,8 +2935,10 @@ bool send_health_report(bool useJitter) {
       "AT+HTTPPARA=\"URL\",\"%s?Station=%s&SystemType=%d&UnitName=%s&"
       "Version=%s&SolarGprsBat=%0.2f&"
       "Esp32Bat=%0.2f&Signal=%d&SimNo=%s&Carrier=%s&ICCID=%s&Calibration=%s&"
-      "Latitude=%.6f&Longitude=%.6f&Reset=%d&RegAvg=%0.1f&RegWorst=%d&RegFails="
-      "%d&Uptime=%d&SpiffsUsed=%u&SpiffsTotal=%u&SDOk=%d&RTCOk=%d&HealthStatus="
+      "Latitude=%.6f&Longitude=%.6f&Reset=%d&RegAvg=%0.1f&RegWorst=%d&"
+      "RegFails="
+      "%d&Uptime=%d&SpiffsUsed=%u&SpiffsTotal=%u&SDOk=%d&RTCOk=%d&"
+      "HealthStatus="
       "%s\"",
       GOOGLE_HEALTH_URL, cleanStn, SYSTEM, UNIT, UNIT_VER, solar_val,
       li_bat_val, signal_strength, sim_number, carrier, cached_iccid, clbInfo,
@@ -2946,6 +2964,9 @@ bool send_health_report(bool useJitter) {
   SerialSIT.println("AT+CSSLCFG=\"authmode\",0,0");
   waitForResponse("OK", 200);
   SerialSIT.println("AT+CSSLCFG=\"ignorertctime\",0,1");
+  waitForResponse("OK", 200);
+  SerialSIT.println(
+      "AT+CSSLCFG=\"handshaketimeout\",0,120"); // 120s for BSNL 2G
   waitForResponse("OK", 200);
   SerialSIT.println("AT+CSSLCFG=\"sni\",0,\"script.google.com\"");
   waitForResponse("OK", 200);

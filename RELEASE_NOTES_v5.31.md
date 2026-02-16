@@ -107,20 +107,24 @@ RTC_DATA_ATTR int health_last_reset_day = -1;
 
 ## 📦 Release Contents
 
-This release includes pre-compiled binaries for all system configurations:
+This release includes pre-compiled binaries for all 6 system configurations:
 
-### System Configurations:
-1. **KSNDMC_TRG** - Telemetry Rain Gauge (SYSTEM=0)
-2. **KSNDMC_TWS** - Telemetry Weather Station (SYSTEM=1)
-3. **SPATIKA_GEN** - Generic Spatika System (SYSTEM=2)
-4. **KSNDMC_ADDON** - Add-on Configuration (SYSTEM=3)
-5. **BIHAR_TRG** - Bihar Rain Gauge (SYSTEM=4)
+### High-Power (SYSTEM=0) - Solar/Battery
+1. **KSNDMC_TRG** - Telemetry Rain Gauge
+2. **BIHAR_TRG** - Bihar Government Rain Gauge
+3. **SPATIKA_TRG** - Generic Spatika Rain Gauge
 
-### Each Configuration Includes:
+### Dual-Power (SYSTEM=1) - Weather Station
+4. **KSNDMC_TWS** - Telemetry Weather Station (Wind/Temp/Hum/RF)
+
+### ULP Add-On (SYSTEM=2) - Ultra Low Power
+5. **KSNDMC_ADDON** - KSNDMC Add-on Configuration
+6. **SPATIKA_ADDON** - Spatika Add-on Configuration
+
+### Each Configuration Folder Includes:
 - `firmware.bin` - Main application binary
-- `bootloader.bin` - ESP32 bootloader
-- `partitions.bin` - Partition table
-- `flash_instructions.txt` - Flashing guide
+- `fw_version.txt` - Version verification file
+- `bootloader.bin`, `partitions.bin`, `boot_app0.bin` (in `flash_files/`)
 
 ---
 

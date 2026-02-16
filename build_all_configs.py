@@ -115,24 +115,23 @@ def build_config(system, unit, output_name):
     output_dir = OUTPUT_BASE / output_name
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Shared Build directory to speed up compilation
-    shared_build_dir = SKETCH_DIR / "build" / "all_configs_shared"
-    shared_build_dir.mkdir(parents=True, exist_ok=True)
+    # Unique build directory for this specific config
+    config_build_dir = SKETCH_DIR / "build" / f"config_{output_name}"
+    config_build_dir.mkdir(parents=True, exist_ok=True)
     
     # Compile
-    print_info("Compiling...")
+    print_info(f"Compiling... (Build path: {config_build_dir.name})")
     log_file = output_dir / "build.log"
     
     # Use custom partition scheme from partitions.csv
-    # 8MB Flash: 1.5MB app0 + 1.5MB app1 (OTA) + 5MB SPIFFS
     partitions_file = SKETCH_DIR / "partitions.csv"
     
     cmd = [
         'arduino-cli', 'compile',
         '--fqbn', 'esp32:esp32:esp32:PartitionScheme=custom',
-        '--build-property', f'build.partitions=custom',
+        '--build-property', 'build.partitions=custom',
         '--build-property', f'build.custom_partitions={partitions_file}',
-        '--build-path', str(shared_build_dir),
+        '--build-path', str(config_build_dir),
         '--export-binaries',
         str(SKETCH_DIR)
     ]
@@ -143,8 +142,8 @@ def build_config(system, unit, output_name):
     if result.returncode == 0:
         print_success("Compilation successful")
         
-        # Find and copy binary
-        binary_files = list(shared_build_dir.glob("*.ino.bin"))
+        # Find and copy binary from the specific build dir
+        binary_files = list(config_build_dir.glob("*.ino.bin"))
         if binary_files:
             binary = binary_files[0]
             firmware_path = output_dir / "firmware.bin"
@@ -197,7 +196,10 @@ def main():
     if not check_arduino_cli():
         sys.exit(1)
     
-    # Create output directory
+    # Create clean output directory
+    if OUTPUT_BASE.exists():
+        print_info("Cleaning previous builds...")
+        shutil.rmtree(OUTPUT_BASE)
     OUTPUT_BASE.mkdir(exist_ok=True)
     
     # Backup globals.h

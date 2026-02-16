@@ -1,233 +1,144 @@
 #!/usr/bin/env python3
 """
-Email Release Package Script
+Email Release Package Script via Gmail SMTP
 Sends release ZIP and notes to production team
 """
 
 import os
 import sys
 import smtplib
+import getpass
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-from pathlib import Path
 from datetime import datetime
 
 def send_release_email(version, zip_file, release_notes_file, summary):
-    """
-    Send release package via email
-    
-    Args:
-        version: Version string (e.g., "5.31")
-        zip_file: Path to ZIP file
-        release_notes_file: Path to release notes markdown
-        summary: Brief summary of release
-    """
-    
     # Email configuration
-    TO = ["production.spatika@gmail.com", "rajesh.spatika@gmail.com"]
-    CC = ["ssraghavan.spatika@gmail.com"]
+    SENDER_EMAIL = "satishv.spatika@gmail.com"
+    TO_EMAILS = ["production.spatika@gmail.com", "rajesh.spatika@gmail.com"]
+    CC_EMAILS = ["ssraghavan.spatika@gmail.com", SENDER_EMAIL]
     SUBJECT = f"AIO9_5.0 Firmware Release v{version} - {summary}"
-    
-    # Get sender email from git config
-    try:
-        import subprocess
-        sender_email = subprocess.check_output(
-            ["git", "config", "user.email"], 
-            text=True
-        ).strip()
-        sender_name = subprocess.check_output(
-            ["git", "config", "user.name"], 
-            text=True
-        ).strip()
-    except:
-        sender_email = "noreply@spatika.com"
-        sender_name = "AIO Release Bot"
-    
-    # Add sender to CC so they get a copy in their inbox
-    if sender_email not in CC:
-        CC.append(sender_email)
-    
-    print(f"\n📧 Preparing email...")
-    print(f"   From: {sender_name} <{sender_email}>")
-    print(f"   To: {', '.join(TO)}")
-    print(f"   CC: {', '.join(CC)}")
+
+    print(f"\n📧 Preparing Release Email...")
+    print(f"   From: {SENDER_EMAIL}")
+    print(f"   To: {', '.join(TO_EMAILS)}")
+    print(f"   CC: {', '.join(CC_EMAILS)}")
     print(f"   Subject: {SUBJECT}")
-    
-    # Create message
+
+    # Create message container
     msg = MIMEMultipart()
-    msg['From'] = f"{sender_name} <{sender_email}>"
-    msg['To'] = ", ".join(TO)
-    msg['Cc'] = ", ".join(CC)
+    msg['From'] = SENDER_EMAIL
+    msg['To'] = ", ".join(TO_EMAILS)
+    msg['Cc'] = ", ".join(CC_EMAILS)
     msg['Subject'] = SUBJECT
-    msg['Date'] = datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
-    
-    # Read release notes
+
+    # Read release notes content
     try:
         with open(release_notes_file, 'r') as f:
             release_notes_md = f.read()
-    except:
-        release_notes_md = f"Release v{version}\n\n{summary}"
-    
-    # Convert markdown to plain text for email body
-    # Remove markdown formatting for plain text email
-    release_notes_text = release_notes_md
-    release_notes_text = release_notes_text.replace('#', '')
-    release_notes_text = release_notes_text.replace('**', '')
-    release_notes_text = release_notes_text.replace('`', '')
-    
-    # Email body
-    body = f"""
-Hello Team,
+    except Exception as e:
+        print(f"⚠️ Could not read release notes: {e}")
+        release_notes_md = f"Release v{version}\n\nSummary: {summary}"
 
-A new firmware release is ready for deployment:
+    # Email Body
+    body = f"""Hello Team,
 
-Version: v{version}
-Release Date: {datetime.now().strftime("%B %d, %Y")}
-Summary: {summary}
+A new firmware release is ready for deployment.
 
-{'='*60}
+VERSION: v{version}
+DATE: {datetime.now().strftime("%B %d, %Y")}
+SUMMARY: {summary}
+
+============================================================
 RELEASE NOTES
-{'='*60}
+============================================================
 
-{release_notes_text}
+{release_notes_md}
 
-{'='*60}
+============================================================
 PACKAGE CONTENTS
-{'='*60}
+============================================================
 
-The attached ZIP file contains:
-- 6 pre-compiled firmware configurations:
-  • KSNDMC_TRG (Rain Gauge)
-  • KSNDMC_TWS (Weather Station)
-  • BIHAR_TRG (Bihar Rain Gauge)
-  • SPATIKA_TRG (Spatika Rain Gauge)
-  • KSNDMC_ADDON (Add-on Config)
-  • SPATIKA_ADDON (Spatika Add-on)
+The attached ZIP file contains 6 pre-compiled configurations:
+- KSNDMC_TRG, BIHAR_TRG, SPATIKA_TRG (SYSTEM 0)
+- KSNDMC_TWS (SYSTEM 1)
+- KSNDMC_ADDON, SPATIKA_ADDON (SYSTEM 2)
 
-- Flash files (bootloader, partitions)
-- Complete release notes (RELEASE_NOTES.md)
+============================================================
+DEPLOYMENT
+============================================================
 
-{'='*60}
-DEPLOYMENT INSTRUCTIONS
-{'='*60}
-
-1. Extract the ZIP file
-2. Choose the appropriate configuration folder
-3. Flash using esptool.py or Arduino IDE
-4. Verify firmware version on device
-
-For detailed instructions, see RELEASE_NOTES.md in the ZIP.
-
-{'='*60}
+1. Extract ZIP.
+2. Choose config folder.
+3. Flash firmware.bin using esptool or Arduino.
 
 Best regards,
-{sender_name}
-AIO9_5.0 Release Automation
-
----
-This is an automated release notification.
-For questions, contact the development team.
+Spatika AIO Release Automation
 """
-    
     msg.attach(MIMEText(body, 'plain'))
-    
+
     # Attach ZIP file
     if os.path.exists(zip_file):
-        print(f"   Attaching: {os.path.basename(zip_file)} ({os.path.getsize(zip_file) / (1024*1024):.2f} MB)")
-        
-        with open(zip_file, 'rb') as f:
-            part = MIMEBase('application', 'zip')
-            part.set_payload(f.read())
-            encoders.encode_base64(part)
-            part.add_header(
-                'Content-Disposition',
-                f'attachment; filename=AIO9_v{version}.zip'
-            )
-            msg.attach(part)
+        print(f"   📎 Attaching ZIP: {os.path.basename(zip_file)} ({os.path.getsize(zip_file)/(1024*1024):.2f} MB)")
+        with open(zip_file, "rb") as attachment:
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(attachment.read())
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(zip_file)}")
+        msg.attach(part)
     else:
-        print(f"   ⚠️  ZIP file not found: {zip_file}")
+        print(f"❌ Error: ZIP file not found at {zip_file}")
         return False
-    
-    # Attach release notes as separate file
+
+    # Attach Release Notes MD
     if os.path.exists(release_notes_file):
-        print(f"   Attaching: {os.path.basename(release_notes_file)}")
-        
-        with open(release_notes_file, 'r') as f:
-            part = MIMEText(f.read(), 'plain')
-            part.add_header(
-                'Content-Disposition',
-                f'attachment; filename=RELEASE_NOTES_v{version}.md'
-            )
-            msg.attach(part)
+        print(f"   📎 Attaching MD: {os.path.basename(release_notes_file)}")
+        with open(release_notes_file, "rb") as attachment:
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(attachment.read())
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(release_notes_file)}")
+        msg.attach(part)
+
+    # SMTP Credentials
+    print(f"\n🔑 Authenticating...")
     
-    # Send email - Create draft in Mail.app for user to send
-    print(f"\n📤 Creating email draft in Mail.app...")
-    
+    # Try to fetch from macOS Keychain first
+    password = None
     try:
-        # Create mailto URL with all parameters
-        import urllib.parse
-        
-        all_recipients = TO + CC
-        recipients_str = ",".join(all_recipients)
-        
-        # Create email body file
-        body_file = f"/tmp/release_email_v{version}_body.txt"
-        with open(body_file, 'w') as f:
-            f.write(body)
-        
-        # Save attachments info
-        attachments_file = f"/tmp/release_email_v{version}_attachments.txt"
-        with open(attachments_file, 'w') as f:
-            f.write(f"ZIP: {zip_file}\n")
-            f.write(f"Notes: {release_notes_file}\n")
-        
-        print(f"✅ Email draft prepared")
-        print(f"\n{'='*60}")
-        print(f"📧 MANUAL STEP REQUIRED")
-        print(f"{'='*60}")
-        print(f"\nPlease send the email manually:")
-        print(f"\n1. Open Mail.app")
-        print(f"2. Create new email with:")
-        print(f"   To: {', '.join(TO)}")
-        print(f"   CC: {', '.join(CC)}")
-        print(f"   Subject: {SUBJECT}")
-        print(f"\n3. Attach files:")
-        print(f"   - {zip_file}")
-        print(f"   - {release_notes_file}")
-        print(f"\n4. Copy email body from:")
-        print(f"   {body_file}")
-        print(f"\n5. Send the email")
-        print(f"\n{'='*60}")
-        
-        # Try to open Mail.app with pre-filled data
         import subprocess
+        password = subprocess.check_output(
+            ["security", "find-generic-password", "-a", SENDER_EMAIL, "-s", "AIO_RELEASE_SMTP", "-w"],
+            text=True
+        ).strip()
+        print(f"   ✅ Authorized via macOS Keychain")
+    except:
+        print(f"   ℹ️ No password found in Keychain. Using manual prompt.")
+        print("   Note: Use a Google 'App Password' from myaccount.google.com/apppasswords")
+        password = getpass.getpass(f"   Enter App Password for {SENDER_EMAIL}: ")
+
+    if not password:
+        print("❌ Error: Password cannot be empty.")
+        return False
+
+    try:
+        print(f"\n📤 Connecting to Gmail SMTP...")
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(SENDER_EMAIL, password)
         
-        # Encode subject and body for mailto URL
-        subject_encoded = urllib.parse.quote(SUBJECT)
-        body_preview = "Release package attached. See full details in email body file."
-        body_encoded = urllib.parse.quote(body_preview)
+        print(f"🚀 Sending email...")
+        all_recipients = TO_EMAILS + CC_EMAILS
+        server.sendmail(SENDER_EMAIL, all_recipients, msg.as_string())
+        server.quit()
         
-        mailto_url = f"mailto:{recipients_str}?subject={subject_encoded}&body={body_encoded}"
-        
-        # Open mailto URL (will open Mail.app)
-        subprocess.run(['open', mailto_url], check=False)
-        
-        print(f"\n✅ Mail.app opened with pre-filled email")
-        print(f"⚠️  Remember to:")
-        print(f"   1. Attach the ZIP file: {os.path.basename(zip_file)}")
-        print(f"   2. Attach release notes: {os.path.basename(release_notes_file)}")
-        print(f"   3. Replace body with content from: {body_file}")
-        print(f"   4. Add CC: {', '.join(CC)}")
-        
+        print(f"\n✅ SUCCESS: Email sent successfully!")
+        print(f"   Check your 'Sent' folder at {SENDER_EMAIL}")
         return True
-        
     except Exception as e:
-        print(f"⚠️  Could not open Mail.app: {e}")
-        print(f"\n📋 Email details saved to:")
-        print(f"   Body: {body_file}")
-        print(f"   Attachments: {attachments_file}")
+        print(f"\n❌ FAILED to send email: {e}")
         return False
 
 if __name__ == "__main__":

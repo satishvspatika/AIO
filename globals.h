@@ -46,7 +46,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.31"
+#define FIRMWARE_VERSION "5.32"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
