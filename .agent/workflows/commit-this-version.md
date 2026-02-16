@@ -14,4 +14,4 @@ description: Formal process to commit a new version, build all configurations, a
    - Configuration folders (e.g., `KSNDMC_TRG`, `SPATIKA_GEN`, etc.)
    - `flash_files/` (bootloader, partitions)
    - `RELEASE_NOTES.md`
-   - `AIO9_5.0_v<VERSION>.zip` (compressed release bundle)
+   - `AIO9_v<VERSION>.zip` (compressed release bundle)

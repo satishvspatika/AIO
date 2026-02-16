@@ -36,7 +36,7 @@ AIO9_5.0 Firmware Release v5.31 - Health Report Reliability & GPS Auto-Fix
 
 ### **3. Attach Files**
 Drag and drop these files into the email:
-- `/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5/AIO9_5.0_v5.31.zip`
+- `/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5/AIO9_v5.31.zip`
 - `RELEASE_NOTES_v5.31.md` (from project directory)
 
 ### **4. Copy Email Body**
@@ -106,7 +106,7 @@ AIO9_5.0 Firmware Release v5.31 - Health Report Reliability & GPS Auto-Fix
 ```
 
 **Attachments:**
-- `AIO9_5.0_v5.31.zip` (4.16 MB) - Complete firmware package
+- `AIO9_v5.31.zip` (4.16 MB) - Complete firmware package
 - `RELEASE_NOTES_v5.31.md` - Detailed release notes
 
 ---

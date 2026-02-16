@@ -139,7 +139,7 @@ For questions, contact the development team.
             encoders.encode_base64(part)
             part.add_header(
                 'Content-Disposition',
-                f'attachment; filename=AIO9_5.0_v{version}.zip'
+                f'attachment; filename=AIO9_v{version}.zip'
             )
             msg.attach(part)
     else:

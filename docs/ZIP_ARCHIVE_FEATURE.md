@@ -6,14 +6,14 @@ The `build_all_configs.py` script now automatically creates a compressed ZIP arc
 
 ## Location
 
-**ZIP File:** `/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5/AIO9_5.0_v<VERSION>.zip`
+**ZIP File:** `/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5/AIO9_v<VERSION>.zip`
 
 ## What's Included in the ZIP
 
 The ZIP archive contains the complete release bundle:
 
 ```
-AIO9_5.0_v5.31.zip
+AIO9_v5.31.zip
 └── v5.31/
     ├── BIHAR_TRG/
     │   ├── firmware.bin
@@ -60,8 +60,8 @@ python3 build_all_configs.py
 
 Output will show:
 ```
-→ Creating release archive: AIO9_5.0_v5.31.zip
-✓ Release archive created: AIO9_5.0_v5.31.zip (4.16 MB)
+→ Creating release archive: AIO9_v5.31.zip
+✓ Release archive created: AIO9_v5.31.zip (4.16 MB)
 ```
 
 ### Manual (If Needed)
@@ -70,7 +70,7 @@ To create a ZIP manually for an existing release:
 
 ```bash
 cd /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5
-zip -r AIO9_5.0_v5.31.zip v5.31/
+zip -r AIO9_v5.31.zip v5.31/
 ```
 
 ## Distribution
@@ -87,13 +87,13 @@ The ZIP file can be:
 To verify the ZIP contents:
 
 ```bash
-unzip -l AIO9_5.0_v5.31.zip
+unzip -l AIO9_v5.31.zip
 ```
 
 To extract:
 
 ```bash
-unzip AIO9_5.0_v5.31.zip
+unzip AIO9_v5.31.zip
 ```
 
 ## Implementation Details
@@ -104,7 +104,7 @@ unzip AIO9_5.0_v5.31.zip
 # 4. Create ZIP archive of the release bundle
 try:
     import zipfile
-    zip_filename = external_base.parent / f"AIO9_5.0_v{firmware_version}.zip"
+    zip_filename = external_base.parent / f"AIO9_v{firmware_version}.zip"
     
     print(f"→ Creating release archive: {zip_filename.name}")
     

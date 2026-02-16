@@ -273,7 +273,7 @@ def main():
             # 4. Create ZIP archive of the release bundle
             try:
                 import zipfile
-                zip_filename = external_base.parent / f"AIO9_5.0_v{firmware_version}.zip"
+                zip_filename = external_base.parent / f"AIO9_v{firmware_version}.zip"
                 
                 print(f"→ Creating release archive: {zip_filename.name}")
                 

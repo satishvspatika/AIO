@@ -169,11 +169,11 @@ print_success "All configurations built successfully"
 print_header "Step 5: Verifying Release Package"
 
 RELEASE_DIR="/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5"
-ZIP_FILE="${RELEASE_DIR}/AIO9_5.0_v${VERSION}.zip"
+ZIP_FILE="${RELEASE_DIR}/AIO9_v${VERSION}.zip"
 
 if [ -f "$ZIP_FILE" ]; then
     ZIP_SIZE=$(du -h "$ZIP_FILE" | cut -f1)
-    print_success "ZIP archive created: AIO9_5.0_v${VERSION}.zip ($ZIP_SIZE)"
+    print_success "ZIP archive created: AIO9_v${VERSION}.zip ($ZIP_SIZE)"
 else
     print_warning "ZIP file not found at: $ZIP_FILE"
 fi
@@ -218,7 +218,7 @@ print_header "Step 7: Email Release Package"
 echo -e "${YELLOW}Send release package via email?${NC}"
 echo -e "  To: production.spatika@gmail.com, rajesh.spatika@gmail.com"
 echo -e "  CC: ssraghavan.spatika@gmail.com"
-echo -e "  Attachment: AIO9_5.0_v${VERSION}.zip (${ZIP_SIZE})"
+echo -e "  Attachment: AIO9_v${VERSION}.zip (${ZIP_SIZE})"
 echo -e "\n${YELLOW}Send email? (y/n):${NC}"
 read -r SEND_EMAIL
 

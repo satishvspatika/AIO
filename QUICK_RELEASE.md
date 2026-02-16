@@ -37,7 +37,7 @@ The script will automatically:
 - Commits code: `"Release v5.32: <summary>"`
 - Tags: `v5.32`
 - Builds all configurations (KSNDMC_TRG, KSNDMC_TWS, etc.)
-- Creates ZIP: `AIO9_5.0_v5.32.zip`
+- Creates ZIP: `AIO9_v5.32.zip`
 - Copies to: `/RELEASE/AIO9_5/v5.32/`
 - **Sends email with ZIP attachment** (optional)
 
@@ -62,7 +62,7 @@ After running, you'll have:
 │   ├── SPATIKA_ADDON/
 │   ├── flash_files/
 │   └── RELEASE_NOTES.md
-└── AIO9_5.0_v5.32.zip (4.2 MB)
+└── AIO9_v5.32.zip (4.2 MB)
 ```
 
 ---
@@ -123,7 +123,7 @@ After release, verify:
 
 3. **ZIP:** Verify archive created
    ```bash
-   ls -lh /RELEASE/AIO9_5/AIO9_5.0_v5.32.zip
+   ls -lh /RELEASE/AIO9_5/AIO9_v5.32.zip
    ```
 
 ---
