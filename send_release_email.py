@@ -158,45 +158,72 @@ For questions, contact the development team.
             )
             msg.attach(part)
     
-    # Send email
-    print(f"\n📤 Sending email...")
+    # Send email - Create draft in Mail.app for user to send
+    print(f"\n📤 Creating email draft in Mail.app...")
     
     try:
-        # Try to use macOS 'mail' command (works with local mail setup)
+        # Create mailto URL with all parameters
+        import urllib.parse
+        
+        all_recipients = TO + CC
+        recipients_str = ",".join(all_recipients)
+        
+        # Create email body file
+        body_file = f"/tmp/release_email_v{version}_body.txt"
+        with open(body_file, 'w') as f:
+            f.write(body)
+        
+        # Save attachments info
+        attachments_file = f"/tmp/release_email_v{version}_attachments.txt"
+        with open(attachments_file, 'w') as f:
+            f.write(f"ZIP: {zip_file}\n")
+            f.write(f"Notes: {release_notes_file}\n")
+        
+        print(f"✅ Email draft prepared")
+        print(f"\n{'='*60}")
+        print(f"📧 MANUAL STEP REQUIRED")
+        print(f"{'='*60}")
+        print(f"\nPlease send the email manually:")
+        print(f"\n1. Open Mail.app")
+        print(f"2. Create new email with:")
+        print(f"   To: {', '.join(TO)}")
+        print(f"   CC: {', '.join(CC)}")
+        print(f"   Subject: {SUBJECT}")
+        print(f"\n3. Attach files:")
+        print(f"   - {zip_file}")
+        print(f"   - {release_notes_file}")
+        print(f"\n4. Copy email body from:")
+        print(f"   {body_file}")
+        print(f"\n5. Send the email")
+        print(f"\n{'='*60}")
+        
+        # Try to open Mail.app with pre-filled data
         import subprocess
         
-        # Save message to temp file
-        temp_file = f"/tmp/release_email_v{version}.eml"
-        with open(temp_file, 'w') as f:
-            f.write(msg.as_string())
+        # Encode subject and body for mailto URL
+        subject_encoded = urllib.parse.quote(SUBJECT)
+        body_preview = "Release package attached. See full details in email body file."
+        body_encoded = urllib.parse.quote(body_preview)
         
-        # Use macOS mail command
-        all_recipients = TO + CC
-        cmd = ['mail', '-s', SUBJECT] + all_recipients
+        mailto_url = f"mailto:{recipients_str}?subject={subject_encoded}&body={body_encoded}"
         
-        with open(temp_file, 'r') as f:
-            subprocess.run(cmd, stdin=f, check=True)
+        # Open mailto URL (will open Mail.app)
+        subprocess.run(['open', mailto_url], check=False)
         
-        print(f"✅ Email sent successfully via macOS mail")
-        os.remove(temp_file)
+        print(f"\n✅ Mail.app opened with pre-filled email")
+        print(f"⚠️  Remember to:")
+        print(f"   1. Attach the ZIP file: {os.path.basename(zip_file)}")
+        print(f"   2. Attach release notes: {os.path.basename(release_notes_file)}")
+        print(f"   3. Replace body with content from: {body_file}")
+        print(f"   4. Add CC: {', '.join(CC)}")
+        
         return True
         
     except Exception as e:
-        print(f"⚠️  macOS mail failed: {e}")
-        print(f"\n📋 Email prepared but not sent.")
-        print(f"   Message saved to: /tmp/release_email_v{version}.eml")
-        print(f"\n   To send manually:")
-        print(f"   1. Open Mail.app")
-        print(f"   2. Attach: {zip_file}")
-        print(f"   3. To: {', '.join(TO)}")
-        print(f"   4. CC: {', '.join(CC)}")
-        print(f"   5. Subject: {SUBJECT}")
-        
-        # Save email content for manual sending
-        with open(f"/tmp/release_email_v{version}.txt", 'w') as f:
-            f.write(body)
-        
-        print(f"   6. Body: /tmp/release_email_v{version}.txt")
+        print(f"⚠️  Could not open Mail.app: {e}")
+        print(f"\n📋 Email details saved to:")
+        print(f"   Body: {body_file}")
+        print(f"   Attachments: {attachments_file}")
         return False
 
 if __name__ == "__main__":
