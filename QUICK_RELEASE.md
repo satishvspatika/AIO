@@ -39,9 +39,11 @@ The script will automatically:
 - Builds all configurations (KSNDMC_TRG, KSNDMC_TWS, etc.)
 - Creates ZIP: `AIO9_5.0_v5.32.zip`
 - Copies to: `/RELEASE/AIO9_5/v5.32/`
+- **Sends email with ZIP attachment** (optional)
 
 ### **Manual Confirmation:**
 - Git push (asks for confirmation)
+- Email sending (asks for confirmation)
 
 ---
 
