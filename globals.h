@@ -40,13 +40,13 @@ RTC_DATA_ATTR uint8_t ulp_code_reserve[512] = {0};
 
 // CHANGE THESE FOR DIFFERENT SYSTEMS
 /************************************************************************************************/
-#define SYSTEM 2               // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "SPATIKA_GEN"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
-                               // KSNDMC_ADDON SPATIKA_GEN
+#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "KSNDMC_TWS"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
+                              // KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.3"
+#define FIRMWARE_VERSION "5.31"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
@@ -292,6 +292,11 @@ RTC_DATA_ATTR uint32_t diag_total_uptime_hrs = 0;
 RTC_DATA_ATTR unsigned long diag_last_health_millis = 0;
 RTC_DATA_ATTR bool diag_rtc_battery_ok = true;
 
+// Health Report Retry Logic (persists across deep sleep)
+RTC_DATA_ATTR bool health_morning_sent = false; // Reset at midnight
+RTC_DATA_ATTR bool health_evening_sent = false; // Reset at midnight
+RTC_DATA_ATTR int health_last_reset_day = -1;   // Track when to reset flags
+
 String response;
 String rssiStr;
 String spiffs_stn_name;
@@ -409,7 +414,7 @@ void next_date(int *Nd, int *Nm, int *Ny);
 void previous_date(int *Cd, int *Cm, int *Cy);
 int send_at_cmd_data(char *payload, String charArray);
 void send_http_data();
-void send_health_report(bool useJitter = true);
+bool send_health_report(bool useJitter = true);
 void send_unsent_data();
 void send_ftp_file(char *fileName);
 void start_gprs();

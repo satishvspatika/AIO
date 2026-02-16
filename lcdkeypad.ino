@@ -26,7 +26,7 @@ void configure_keypad() {
 extern int cur_fld_no, cur_mode;
 int cur_char_no, cur_pos_no, disp_fld_no, cursor_type;
 
-char inpCharSet[2][49] = {"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+char inpCharSet[2][49] = {"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ",
                           "0123456789./-,: "};
 char key, input_buf[17];
 char show_now;
@@ -1054,7 +1054,12 @@ void lcdkeypad(void *pvParameters) {
                   strcpy(input_buf, "Yes ");
                 }
               } else {
-                strcpy(input_buf, ui_data[cur_fld_no].bottomRow);
+                // Special handling for Station ID: Start with cleared field
+                if (cur_fld_no == FLD_STATION) {
+                  strcpy(input_buf, "                "); // 16 spaces
+                } else {
+                  strcpy(input_buf, ui_data[cur_fld_no].bottomRow);
+                }
               }
               cur_mode = eEditOn;
               cur_pos_no = 0;
@@ -1144,8 +1149,23 @@ void lcdkeypad(void *pvParameters) {
                   char old_station[16];
                   strcpy(old_station, station_name);
 
+                  // Trim leading and trailing spaces from input_buf
+                  String trimmed = String(input_buf);
+                  trimmed.trim();
+
+                  // Pad to exactly 6 characters (fixed record length
+                  // requirement)
+                  while (trimmed.length() < 6) {
+                    trimmed += " ";
+                  }
+                  if (trimmed.length() > 6) {
+                    trimmed = trimmed.substring(0, 6);
+                  }
+
                   // Update to new station name
-                  strcpy(station_name, input_buf);
+                  strncpy(station_name, trimmed.c_str(),
+                          sizeof(station_name) - 1);
+                  station_name[sizeof(station_name) - 1] = '\0';
                   strcpy(ftp_station, station_name);
 
                   // Save to SPIFFS
@@ -1220,6 +1240,14 @@ void lcdkeypad(void *pvParameters) {
                     SPIFFS.remove("/unsent.txt");
                     SPIFFS.remove("/ftpunsent.txt");
                     SPIFFS.remove("/unsent_pointer.txt");
+
+                    // CRITICAL: Delete GPS cache to force fresh fix for new
+                    // location
+                    SPIFFS.remove("/gps_coords.txt");
+                    debugln("[UI] Station Changed: Deleted GPS cache (will get "
+                            "fresh fix)");
+                    lati = 0; // Clear in-memory coordinates
+                    longi = 0;
 
                     // Reset internal calibration state fully
                     calib_sts = 0;

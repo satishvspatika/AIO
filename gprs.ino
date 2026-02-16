@@ -177,18 +177,72 @@ void gprs(void *pvParameters) {
                   "Flow\n****************");
 
           // BIMODAL POWER DISCIPLINE: Only send Health Report to Google twice a
-          // day Target: 11:15 AM and 11:00 PM (23:00)
-          if ((current_hour == 11 && current_min == 15) ||
-              (current_hour == 23 && current_min == 0)) {
-            debugln("[Health] Scheduled Reporting Window Open. Sending Google "
-                    "Update...");
-            send_health_report(true);
-            // Allow modem stack to settle after Google SSL
+          // day Target: 11:00 AM - 10:59 PM (morning) and 11:00 PM - 10:59 AM
+          // (evening) RETRY LOGIC: Keep trying until successful (persists
+          // across deep sleep)
+
+          // Reset flags at midnight (new day) OR first boot
+          if (current_day != health_last_reset_day) {
+            // Smart initialization: Set flags based on current time
+            if (health_last_reset_day == -1) {
+              // First boot: Mark reports as sent if we're past their windows
+              if (current_hour >= 11 && current_hour < 23) {
+                // Started during morning window - allow morning send
+                health_morning_sent = false;
+                health_evening_sent = true; // Already past evening window
+              } else {
+                // Started during evening window - allow evening send
+                health_morning_sent = true; // Already past morning window
+                health_evening_sent = false;
+              }
+              debugln("[Health] First boot detected. Initialized flags based "
+                      "on time.");
+            } else {
+              // Midnight reset - clear both flags for new day
+              health_morning_sent = false;
+              health_evening_sent = false;
+              debugln(
+                  "[Health] New day detected. Reset morning/evening flags.");
+            }
+            health_last_reset_day = current_day;
+          }
+
+          bool morning_window =
+              (current_hour >= 11 && current_hour < 23); // 11:00 AM - 10:59 PM
+          bool evening_window =
+              (current_hour >= 23 || current_hour < 11); // 11:00 PM - 10:59 AM
+
+          bool should_send_morning = morning_window && !health_morning_sent;
+          bool should_send_evening = evening_window && !health_evening_sent;
+
+          if (should_send_morning) {
+            debugln(
+                "[Health] Morning window (11:00-22:59). Attempting send...");
+            bool success = send_health_report(true);
+            if (success) {
+              health_morning_sent = true;
+              debugln("[Health] ✅ Morning report sent successfully!");
+            } else {
+              debugln(
+                  "[Health] ❌ Morning report failed. Will retry next cycle.");
+            }
+            vTaskDelay(2000 / portTICK_PERIOD_MS);
+          } else if (should_send_evening) {
+            debugln(
+                "[Health] Evening window (23:00-10:59). Attempting send...");
+            bool success = send_health_report(true);
+            if (success) {
+              health_evening_sent = true;
+              debugln("[Health] ✅ Evening report sent successfully!");
+            } else {
+              debugln(
+                  "[Health] ❌ Evening report failed. Will retry next cycle.");
+            }
             vTaskDelay(2000 / portTICK_PERIOD_MS);
           } else {
-            debugln("[Health] Outside reporting window (" +
-                    String(current_hour) + ":" + String(current_min) +
-                    "). Skipping Google.");
+            debugln("[Health] Reports already sent (M:" +
+                    String(health_morning_sent) +
+                    " E:" + String(health_evening_sent) + "). Skipping.");
           }
 
           if (solar_val < 3.5 && solar_val > 0.5) {
@@ -1496,9 +1550,9 @@ String fetch_number_ussd() {
           if (digitCount == 10) {
             char first = num.charAt(0);
             if (first >= '6' && first <= '9')
-              return "+91" + num;
+              return num; // Return 10-digit number without +91 prefix
           } else if (digitCount == 12 && num.startsWith("91")) {
-            return "+" + num;
+            return num.substring(2); // Strip "91" prefix, return 10 digits
           }
           num = "";
           digitCount = 0;
@@ -1606,6 +1660,14 @@ full_discovery:
     String number = cnumResp.substring(plusIndex, endIndex);
     debug("Extracted Number: ");
     debugln(number);
+
+    // Strip +91 prefix if present (keep only 10-digit mobile number)
+    if (number.startsWith("+91") && number.length() == 13) {
+      number = number.substring(3); // Remove "+91"
+    } else if (number.startsWith("91") && number.length() == 12) {
+      number = number.substring(2); // Remove "91"
+    }
+
     strcpy(sim_number, number.c_str());
 
     // Airtel M2M Logic
@@ -1686,12 +1748,24 @@ void get_registration() {
   retries = 0;
   bool is_registered = false;
 
+  // Enable registration reporting ONCE (not every retry - prevents BSNL issues)
+  SerialSIT.println("AT+CREG=1");
+  waitForResponse("OK", 500);
+
+  // Diagnostic: Check IMEI (helps identify IMEI lock issues)
+  SerialSIT.println("AT+GSN");
+  String imei_response = waitForResponse("OK", 1000);
+  if (imei_response.length() > 0) {
+    debugln("[DIAG] IMEI: " + imei_response);
+  }
+
+  // Diagnostic: Check current network operator
+  SerialSIT.println("AT+COPS?");
+  String cops_response = waitForResponse("OK", 1000);
+  debugln("[DIAG] Network: " + cops_response);
+
   while (!is_registered && (retries < no_of_retries)) {
     esp_task_wdt_reset();
-
-    // Ensure reporting is enabled
-    SerialSIT.println("AT+CREG=1");
-    waitForResponse("OK", 500);
 
     // UI Feedback: Show progress on LCD
     snprintf(reg_status, 16, "TRY #%d...", retries + 1);
@@ -2753,7 +2827,7 @@ void convert_gmt_to_ist(struct tm *gmt_time) {
  * Sends a health report to the Google Sheets "Server"
  * Parameters: stn, type, gbat, ebat, sig
  */
-void send_health_report(bool useJitter) {
+bool send_health_report(bool useJitter) {
   // COLLISION PREVENTION: Only used for automated 15-min wakeups
   if (useJitter) {
     int jitter = random(0, 5000);
@@ -2762,7 +2836,26 @@ void send_health_report(bool useJitter) {
 
   // 1. Ensure we have the latest GPS (Load from SPIFFS if no live fix)
   if (lati == 0 || longi == 0) {
+    debugln("[Health] No GPS coordinates in memory. Attempting to load from "
+            "cache...");
     loadGPS();
+
+    // Still no GPS after loading from cache?
+    if (lati == 0 || longi == 0) {
+      debugln("[Health] No cached GPS. Attempting fresh CLBS fix...");
+      get_gps_coordinates(); // Try to get fresh GPS via CLBS
+
+      // Final check after CLBS attempt
+      if (lati == 0 || longi == 0) {
+        debugln(
+            "[Health] ⚠️ WARNING: All GPS attempts failed. Sending 0,0");
+        debugln("[Health] → CLBS service may be unavailable or disabled");
+      } else {
+        debugln("[Health] ✅ Fresh GPS fix obtained via CLBS");
+      }
+    } else {
+      debugln("[Health] ✅ GPS loaded from cache");
+    }
   }
 
   // 2. Prepare Calibration String (Date + Status)
@@ -2774,10 +2867,19 @@ void send_health_report(bool useJitter) {
     strcpy(clbInfo, "NA");
   }
 
-  // 3. Cleanup Station Name
+  // 3. Cleanup Station Name (Trim trailing spaces, then URL-safe)
   char cleanStn[16];
   strncpy(cleanStn, station_name, 15);
   cleanStn[15] = '\0';
+
+  // Trim trailing spaces
+  int len = strlen(cleanStn);
+  while (len > 0 && cleanStn[len - 1] == ' ') {
+    cleanStn[len - 1] = '\0';
+    len--;
+  }
+
+  // Replace remaining spaces with underscores for URL
   for (int i = 0; i < strlen(cleanStn); i++)
     if (cleanStn[i] == ' ')
       cleanStn[i] = '_';
@@ -2877,6 +2979,7 @@ void send_health_report(bool useJitter) {
       waitForResponse("+HTTPACTION", 35000); // 35s for SSL/DNS on weak signal
 
   // Google Sheets updates even if it returns a 302 Redir
+  bool success = false;
   if (response.indexOf(",200,") != -1 || response.indexOf(",302,") != -1) {
     debugln("[Health] Update Success.");
     // Update Internal LCD Markers
@@ -2889,13 +2992,17 @@ void send_health_report(bool useJitter) {
              last_recorded_yy, last_recorded_mm, last_recorded_dd,
              last_recorded_hr, last_recorded_min);
     strcpy(ui_data[FLD_LAST_LOGGED].bottomRow, last_logged);
+    success = true;
   } else {
     debugln("[Health] Update Failed: " + response);
+    success = false;
   }
 
   SerialSIT.println("AT+HTTPTERM");
   waitForResponse("OK", 500);
   vTaskDelay(500); // Settling delay
+
+  return success;
 }
 
 /*

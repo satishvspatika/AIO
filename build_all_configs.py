@@ -224,27 +224,51 @@ def main():
 
     # Copy to external release directory if any builds succeeded
     if success_count > 0:
-        print_info(f"Copying release-ready binaries to external directory...")
+        # Get firmware version for the release directory
+        import re
+        with open(GLOBALS_H, 'r') as f:
+            globals_content = f.read()
+        version_match = re.search(r'#define FIRMWARE_VERSION "([^"]+)"', globals_content)
+        firmware_version = version_match.group(1) if version_match else "UNKNOWN"
+        
+        # New Dynamic Base Path
+        external_base = Path("/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5") / f"v{firmware_version}"
+        
+        print_info(f"Copying release-ready binaries to: {external_base}")
         try:
-            EXTERNAL_RELEASE_BASE.mkdir(parents=True, exist_ok=True)
+            external_base.mkdir(parents=True, exist_ok=True)
+            
+            # 1. Copy Configurations
             for config_dir in OUTPUT_BASE.iterdir():
                 if config_dir.is_dir():
                     source_bin = config_dir / "firmware.bin"
                     source_ver = config_dir / "fw_version.txt"
                     if source_bin.exists():
-                        target_dir = EXTERNAL_RELEASE_BASE / config_dir.name
+                        target_dir = external_base / config_dir.name
                         target_dir.mkdir(parents=True, exist_ok=True)
                         shutil.copy(source_bin, target_dir / "firmware.bin")
                         if source_ver.exists():
                             shutil.copy(source_ver, target_dir / "fw_version.txt")
             
-            # Copy common Release Notes (from PROJECT_STATUS.md)
-            source_notes = SKETCH_DIR / "PROJECT_STATUS.md"
-            if source_notes.exists():
-                shutil.copy(source_notes, EXTERNAL_RELEASE_BASE / "RELEASE_NOTES.md")
-                print_success(f"Common Release Notes copied to: {EXTERNAL_RELEASE_BASE / 'RELEASE_NOTES.md'}")
+            # 2. Copy flash_files (Required for ESPTool)
+            source_flash = SKETCH_DIR / "flash_files"
+            if source_flash.exists():
+                target_flash = external_base / "flash_files"
+                if target_flash.exists():
+                    shutil.rmtree(target_flash)
+                shutil.copytree(source_flash, target_flash)
+                print_success("Flash files (bootloader/partitions) copied.")
 
-            print_success(f"Release files copied successfully to:\n   {EXTERNAL_RELEASE_BASE}")
+            # 3. Copy Version-Specific Release Notes
+            source_notes = SKETCH_DIR / f"RELEASE_NOTES_v{firmware_version}.md"
+            if not source_notes.exists():
+                source_notes = SKETCH_DIR / "RELEASE_NOTES.md" # Fallback
+                
+            if source_notes.exists():
+                shutil.copy(source_notes, external_base / "RELEASE_NOTES.md")
+                print_success(f"Release Notes copied to: {external_base / 'RELEASE_NOTES.md'}")
+
+            print_success(f"Release v{firmware_version} package complete.")
         except Exception as e:
             print_error(f"Failed to copy to external release directory: {e}")
     

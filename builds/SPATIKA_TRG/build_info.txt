@@ -3,8 +3,8 @@ Build Configuration
 SYSTEM: 0
 UNIT: SPATIKA_GEN
 Output: SPATIKA_TRG
-Firmware Version: 5.1
-Build Date: 2026-02-13 21:02:05.327344
+Firmware Version: 5.3
+Build Date: 2026-02-15 11:32:47.444021
 Binary Size: 1.08 MB
 Binary Path: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/SPATIKA_TRG/firmware.bin
 Version File: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/SPATIKA_TRG/fw_version.txt
