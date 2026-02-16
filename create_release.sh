@@ -136,10 +136,22 @@ fi
 print_header "Step 3: Git Commit & Tag"
 
 git add .
-git commit -m "Release v${VERSION}: ${SUMMARY}"
-git tag -a "v${VERSION}" -m "Version ${VERSION}"
 
-print_success "Git commit and tag created: v${VERSION}"
+# Check if there are changes to commit
+if git diff --cached --quiet; then
+    print_warning "No changes to commit (working tree clean)"
+else
+    git commit -m "Release v${VERSION}: ${SUMMARY}"
+    print_success "Git commit created"
+fi
+
+# Create tag (or update if exists)
+if git tag -l | grep -q "^v${VERSION}$"; then
+    print_warning "Tag v${VERSION} already exists, skipping tag creation"
+else
+    git tag -a "v${VERSION}" -m "Version ${VERSION}"
+    print_success "Git tag created: v${VERSION}"
+fi
 
 # 5. Build all configurations
 print_header "Step 4: Building All Configurations"
