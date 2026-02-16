@@ -45,6 +45,10 @@ def send_release_email(version, zip_file, release_notes_file, summary):
         sender_email = "noreply@spatika.com"
         sender_name = "AIO Release Bot"
     
+    # Add sender to CC so they get a copy in their inbox
+    if sender_email not in CC:
+        CC.append(sender_email)
+    
     print(f"\n📧 Preparing email...")
     print(f"   From: {sender_name} <{sender_email}>")
     print(f"   To: {', '.join(TO)}")
