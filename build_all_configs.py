@@ -269,6 +269,28 @@ def main():
                 print_success(f"Release Notes copied to: {external_base / 'RELEASE_NOTES.md'}")
 
             print_success(f"Release v{firmware_version} package complete.")
+            
+            # 4. Create ZIP archive of the release bundle
+            try:
+                import zipfile
+                zip_filename = external_base.parent / f"AIO9_5.0_v{firmware_version}.zip"
+                
+                print(f"→ Creating release archive: {zip_filename.name}")
+                
+                with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    # Walk through all files in the release directory
+                    for root, dirs, files in os.walk(external_base):
+                        for file in files:
+                            file_path = Path(root) / file
+                            # Calculate relative path from external_base parent
+                            arcname = file_path.relative_to(external_base.parent)
+                            zipf.write(file_path, arcname)
+                
+                zip_size = zip_filename.stat().st_size / (1024 * 1024)
+                print_success(f"Release archive created: {zip_filename.name} ({zip_size:.2f} MB)")
+            except Exception as e:
+                print_error(f"Failed to create zip archive: {e}")
+
         except Exception as e:
             print_error(f"Failed to copy to external release directory: {e}")
     
