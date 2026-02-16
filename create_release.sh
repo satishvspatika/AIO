@@ -200,4 +200,30 @@ echo -e "  1. Verify release package: ${RELEASE_DIR}/v${VERSION}/"
 echo -e "  2. Test firmware on device"
 echo -e "  3. Upload ZIP to GitHub Releases (optional)"
 
+# 9. Send email notification (with confirmation)
+print_header "Step 7: Email Release Package"
+
+echo -e "${YELLOW}Send release package via email?${NC}"
+echo -e "  To: production.spatika@gmail.com, rajesh.spatika@gmail.com"
+echo -e "  CC: ssraghavan.spatika@gmail.com"
+echo -e "  Attachment: AIO9_5.0_v${VERSION}.zip (${ZIP_SIZE})"
+echo -e "\n${YELLOW}Send email? (y/n):${NC}"
+read -r SEND_EMAIL
+
+if [ "$SEND_EMAIL" = "y" ] || [ "$SEND_EMAIL" = "Y" ]; then
+    if [ -f "$ZIP_FILE" ]; then
+        python3 send_release_email.py "$VERSION" "$ZIP_FILE" "$RELEASE_NOTES" "$SUMMARY"
+        
+        if [ $? -eq 0 ]; then
+            print_success "Email sent successfully"
+        else
+            print_warning "Email preparation completed. Check /tmp for manual sending instructions."
+        fi
+    else
+        print_error "Cannot send email: ZIP file not found"
+    fi
+else
+    print_warning "Skipped email. Run manually: python3 send_release_email.py $VERSION $ZIP_FILE $RELEASE_NOTES \"$SUMMARY\""
+fi
+
 echo -e "\n${GREEN}🎉 Release v${VERSION} is ready for deployment!${NC}\n"
