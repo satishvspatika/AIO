@@ -1024,38 +1024,41 @@ void scheduler(void *pvParameters) {
 // 00,    2024-05-21,08:45,00.00,00.00,00.00,000,-111,00.0
 // 003655;2025-08-18,19:45;+21.5;099.9;00.0;023;-079;13.13
 #if SYSTEM == 1
-              //                                                            sprintf(append_text,"%02d,%04d-%02d-%02d,%02d:%02d,00.00,00.00,00.00,000,-112,%04.1f\r\n",q,temp_year,temp_month,temp_day,temp_hr,temp_min,bat_val);
+              // SPIFFS Format: sample,date,temp,hum,ws,wd,sig,bat
               snprintf(
                   append_text, sizeof(append_text),
-                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,-%03d,%04.1f\r\n",
-                  q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%d,%04.1f\r\n", q,
+                  temp_year, temp_month, temp_day, temp_hr, temp_min,
                   fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
-                  fill_inst_wd, fill_sig, bat_val);
-              snprintf(
-                  ftpappend_text, sizeof(ftpappend_text),
-                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;-%04d;%04.1f\r\n",
-                  stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                  fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
-                  fill_inst_wd, fill_sig, bat_val);
+                  fill_inst_wd, SIGNAL_STRENGTH_GAP_FILLED, bat_val);
 
+              // FTP Format: stn;date;temp;hum;ws;wd;sig;bat
+              snprintf(ftpappend_text, sizeof(ftpappend_text),
+                       "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%d;%04.1f\r\n",
+                       stnId, temp_year, temp_month, temp_day, temp_hr,
+                       temp_min, fill_inst_temp, fill_inst_hum,
+                       fill_avg_wind_speed, fill_inst_wd,
+                       SIGNAL_STRENGTH_GAP_FILLED, bat_val);
 #endif
 
 // TWS-RF
 #if SYSTEM == 2
-              // 000266;2025-08-18,09:30;000.0;+23.1;097.0;00.1;349;-079;13.35
-              // 00,    2024-05-21,08:45,0000.0,00.00,00.00,00.00,000,-111,00.0
+              // SPIFFS Format: sample,date,cumrf,temp,hum,ws,wd,sig,bat
               snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,-%03d,%04."
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%d,%04."
                        "1f\r\n",
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                        cum_rf, fill_inst_temp, fill_inst_hum,
-                       fill_avg_wind_speed, fill_inst_wd, fill_sig, bat_val);
+                       fill_avg_wind_speed, fill_inst_wd,
+                       SIGNAL_STRENGTH_GAP_FILLED, bat_val);
+
+              // FTP Format: stn;date;cumrf;temp;hum;ws;wd;sig;bat
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
-                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;-%04d;%04.1f\r\n",
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%d;%04.1f\r\n",
                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   ftpcum_rf, fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
-                  fill_inst_wd, fill_sig, bat_val);
+                  fill_inst_wd, SIGNAL_STRENGTH_GAP_FILLED, bat_val);
 #endif
 
               //                                                        len =
@@ -1119,7 +1122,7 @@ void scheduler(void *pvParameters) {
 // TWS
 #if SYSTEM == 1
           snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
+                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%d,%04.1f\r\n",
                    sampleNo, current_year, current_month, current_day,
                    record_hr, record_min, inst_temp, inst_hum, avg_wind_speed,
                    inst_wd, signal_strength, bat_val);
@@ -1130,14 +1133,12 @@ void scheduler(void *pvParameters) {
                    signal_strength, bat_val);
 #endif
 
-// TWS-RF
 #if SYSTEM == 2
-          snprintf(
-              append_text, sizeof(append_text),
-              "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
-              sampleNo, current_year, current_month, current_day, record_hr,
-              record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-              signal_strength, bat_val);
+          snprintf(append_text, sizeof(append_text),
+                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%d,%04.1f\r\n",
+                   sampleNo, current_year, current_month, current_day,
+                   record_hr, record_min, cum_rf, inst_temp, inst_hum,
+                   avg_wind_speed, inst_wd, signal_strength, bat_val);
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
@@ -1344,7 +1345,7 @@ void scheduler(void *pvParameters) {
                 temp_year, temp_month, temp_day, temp_hr, temp_min,
                 SIGNAL_STRENGTH_NO_DATA, bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
-                     "%s;%04d-%02d-%02d,%02d:%02d;00.00;00.00;%04d;%04.1f\r\n",
+                     "%s;%04d-%02d-%02d,%02d:%02d;00.00;00.00;%d;%04.1f\r\n",
                      stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
 #endif
@@ -1357,7 +1358,7 @@ void scheduler(void *pvParameters) {
                      i, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
-                     "%s;%04d-%02d-%02d,%02d:%02d;000.0;000.0;00.00;000;%04d;%"
+                     "%s;%04d-%02d-%02d,%02d:%02d;000.0;000.0;00.00;000;%d;%"
                      "04.1f\r\n",
                      stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
@@ -1367,14 +1368,14 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 2
             snprintf(append_text, sizeof(append_text),
                      "%02d,%04d-%02d-%02d,%02d:%02d,000.00,000.0,000.0,00.00,"
-                     "000,-111,%04.1f\r\n",
+                     "000,%d,%04.1f\r\n",
                      i, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                     bat_val);
+                     SIGNAL_STRENGTH_NO_DATA, bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
-                     "%s;%04d-%02d-%02d,%02d:%02d;00.00;000.0;000.0;00.00;000;-"
-                     "111;%04.1f\r\n",
+                     "%s;%04d-%02d-%02d,%02d:%02d;000.00;000.0;000.0;00.00;000;"
+                     "%d;%04.1f\r\n",
                      stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                     bat_val);
+                     SIGNAL_STRENGTH_NO_DATA, bat_val);
 #endif
 
             //                                                    len =

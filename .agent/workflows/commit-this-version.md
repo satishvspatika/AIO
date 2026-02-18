@@ -2,16 +2,17 @@
 description: Formal process to commit a new version, build all configurations, and package the release.
 ---
 
-1. **Verify Version:** Check `globals.h` for the correct `FIRMWARE_VERSION`.
-2. **Review/Create Release Notes:** Ensure `RELEASE_NOTES_v<VERSION>.md` is present and describes all changes.
-3. **Commit Code:**
+1. **Update Firmware Version**: Ensure `FIRMWARE_VERSION` in `globals.h` is incremented.
+2. **Review Changes**: Verify all modifications are correct and tested.
+3. **Execute Automated Release**:
    // turbo
-   `git add . && git commit -m "Release v<VERSION>: <Summary>" && git tag -a v<VERSION> -m "Version <VERSION>"`
-4. **Build All Configurations:**
-   // turbo
-   `python3 build_all_configs.py`
-5. **Verify Package:** Check that the folder `EXTERNAL_RELEASE_BASE/v<VERSION>` contains:
-   - Configuration folders (e.g., `KSNDMC_TRG`, `SPATIKA_GEN`, etc.)
-   - `flash_files/` (bootloader, partitions)
-   - `RELEASE_NOTES.md`
-   - `AIO9_v<VERSION>.zip` (compressed release bundle)
+   `./create_release.sh "Your detailed release summary here" --non-interactive`
+
+This single command will:
+- Generate/Verify Release Notes
+- Commit code and tag the version
+- Build all 6 configurations
+- Package the release (ZIP)
+- Push to GitHub (Tags & Main)
+- Send the Release Email with attachments.
+

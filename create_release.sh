@@ -1,6 +1,4 @@
-#!/bin/bash
-# Automated Release Script for AIO9_5.0
-# Usage: ./create_release.sh "Release summary message"
+# Usage: ./create_release.sh "Release summary message" [--non-interactive]
 # 
 # Prerequisites:
 # 1. Update FIRMWARE_VERSION in globals.h
@@ -8,6 +6,14 @@
 # 3. Script will auto-generate release notes, build, package, and commit
 
 set -e  # Exit on error
+
+# Parse arguments
+NON_INTERACTIVE=false
+for arg in "$@"; do
+    if [ "$arg" == "--non-interactive" ]; then
+        NON_INTERACTIVE=true
+    fi
+done
 
 # Colors
 RED='\033[0;31m'
@@ -152,9 +158,13 @@ This release includes pre-compiled binaries for all 6 system configurations:
 EOF
     
     print_success "Template created: $RELEASE_NOTES"
-    print_warning "Please edit $RELEASE_NOTES before continuing"
-    echo -e "${YELLOW}Press Enter when ready to continue...${NC}"
-    read -r
+    if [ "$NON_INTERACTIVE" = false ]; then
+        print_warning "Please edit $RELEASE_NOTES before continuing"
+        echo -e "${YELLOW}Press Enter when ready to continue...${NC}"
+        read -r
+    else
+        print_success "Non-interactive mode: Using default template."
+    fi
 fi
 
 # 4. Git commit and tag
@@ -206,11 +216,15 @@ fi
 # 7. Git push (with confirmation)
 print_header "Step 6: Push to GitHub"
 
-echo -e "${YELLOW}Ready to push to GitHub?${NC}"
-echo -e "  - Commit: Release v${VERSION}: ${SUMMARY}"
-echo -e "  - Tag: v${VERSION}"
-echo -e "\n${YELLOW}Push to origin? (y/n):${NC}"
-read -r CONFIRM
+if [ "$NON_INTERACTIVE" = true ]; then
+    CONFIRM="y"
+else
+    echo -e "${YELLOW}Ready to push to GitHub?${NC}"
+    echo -e "  - Commit: Release v${VERSION}: ${SUMMARY}"
+    echo -e "  - Tag: v${VERSION}"
+    echo -e "\n${YELLOW}Push to origin? (y/n):${NC}"
+    read -r CONFIRM
+fi
 
 if [ "$CONFIRM" = "y" ] || [ "$CONFIRM" = "Y" ]; then
     git push origin main --tags
@@ -240,12 +254,16 @@ echo -e "  3. Upload ZIP to GitHub Releases (optional)"
 # 9. Send email notification (with confirmation)
 print_header "Step 7: Email Release Package"
 
-echo -e "${YELLOW}Send release package via email?${NC}"
-echo -e "  To: production.spatika@gmail.com, rajesh.spatika@gmail.com"
-echo -e "  CC: ssraghavan.spatika@gmail.com"
-echo -e "  Attachment: AIO9_v${VERSION}.zip (${ZIP_SIZE})"
-echo -e "\n${YELLOW}Send email? (y/n):${NC}"
-read -r SEND_EMAIL
+if [ "$NON_INTERACTIVE" = true ]; then
+    SEND_EMAIL="y"
+else
+    echo -e "${YELLOW}Send release package via email?${NC}"
+    echo -e "  To: production.spatika@gmail.com, rajesh.spatika@gmail.com"
+    echo -e "  CC: ssraghavan.spatika@gmail.com"
+    echo -e "  Attachment: AIO9_v${VERSION}.zip (${ZIP_SIZE})"
+    echo -e "\n${YELLOW}Send email? (y/n):${NC}"
+    read -r SEND_EMAIL
+fi
 
 if [ "$SEND_EMAIL" = "y" ] || [ "$SEND_EMAIL" = "Y" ]; then
     if [ -f "$ZIP_FILE" ]; then
