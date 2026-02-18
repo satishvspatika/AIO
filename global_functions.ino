@@ -320,3 +320,14 @@ void loadGPS() {
     debugln("[GPS] No persisted location found.");
   }
 }
+
+bool isDigitStr(const char *s) {
+  if (!s || !*s)
+    return false;
+  while (*s) {
+    if (!isdigit(*s))
+      return false;
+    s++;
+  }
+  return true;
+}

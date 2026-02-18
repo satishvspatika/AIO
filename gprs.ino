@@ -176,73 +176,31 @@ void gprs(void *pvParameters) {
           debugln("\n****************\nStarting Automated Data "
                   "Flow\n****************");
 
-          // BIMODAL POWER DISCIPLINE: Only send Health Report to Google twice a
-          // day Target: 11:00 AM - 10:59 PM (morning) and 11:00 PM - 10:59 AM
-          // (evening) RETRY LOGIC: Keep trying until successful (persists
-          // across deep sleep)
+          // QUAD-DAILY HEALTH DISCIPLINE (User Request: 01:00, 07:00, 13:00,
+          // 19:00) RETRY LOGIC: Try only once per scheduled hour slot to avoid
+          // data overhead.
+          bool is_health_time = (current_hour == 1 || current_hour == 7 ||
+                                 current_hour == 13 || current_hour == 19);
 
-          // Reset flags at midnight (new day) OR first boot
-          if (current_day != health_last_reset_day) {
-            // Smart initialization: Set flags based on current time
-            if (health_last_reset_day == -1) {
-              // First boot: Mark reports as sent if we're past their windows
-              if (current_hour >= 11 && current_hour < 23) {
-                // Started during morning window - allow morning send
-                health_morning_sent = false;
-                health_evening_sent = true; // Already past evening window
-              } else {
-                // Started during evening window - allow evening send
-                health_morning_sent = true; // Already past morning window
-                health_evening_sent = false;
-              }
-              debugln("[Health] First boot detected. Initialized flags based "
-                      "on time.");
-            } else {
-              // Midnight reset - clear both flags for new day
-              health_morning_sent = false;
-              health_evening_sent = false;
-              debugln(
-                  "[Health] New day detected. Reset morning/evening flags.");
-            }
-            health_last_reset_day = current_day;
-          }
+          if (is_health_time && health_last_sent_hour != current_hour) {
+            debugf1("[Health] Scheduled window %02d:00 detected. Attempting "
+                    "send...\n",
+                    current_hour);
 
-          bool morning_window =
-              (current_hour >= 11 && current_hour < 23); // 11:00 AM - 10:59 PM
-          bool evening_window =
-              (current_hour >= 23 || current_hour < 11); // 11:00 PM - 10:59 AM
+            // Mark as attempted immediately to prevent retries in subsequent
+            // 15m slots of the same hour, as per user request.
+            health_last_sent_hour = current_hour;
 
-          bool should_send_morning = morning_window && !health_morning_sent;
-          bool should_send_evening = evening_window && !health_evening_sent;
-
-          if (should_send_morning) {
-            debugln(
-                "[Health] Morning window (11:00-22:59). Attempting send...");
             bool success = send_health_report(true);
             if (success) {
-              health_morning_sent = true;
-              debugln("[Health] ✅ Morning report sent successfully!");
+              debugln("[Health] ✅ Scheduled report sent successfully!");
             } else {
               debugln(
-                  "[Health] ❌ Morning report failed. Will retry next cycle.");
+                  "[Health] ❌ Report failed. Skipping retries for this slot.");
             }
             vTaskDelay(2000 / portTICK_PERIOD_MS);
-          } else if (should_send_evening) {
-            debugln(
-                "[Health] Evening window (23:00-10:59). Attempting send...");
-            bool success = send_health_report(true);
-            if (success) {
-              health_evening_sent = true;
-              debugln("[Health] ✅ Evening report sent successfully!");
-            } else {
-              debugln(
-                  "[Health] ❌ Evening report failed. Will retry next cycle.");
-            }
-            vTaskDelay(2000 / portTICK_PERIOD_MS);
-          } else {
-            debugln("[Health] Reports already sent (M:" +
-                    String(health_morning_sent) +
-                    " E:" + String(health_evening_sent) + "). Skipping.");
+          } else if (is_health_time) {
+            debugln("[Health] Report already handled for this slot. Skipping.");
           }
 
           if (solar_val < 3.5 && solar_val > 0.5) {
@@ -541,14 +499,20 @@ void prepare_data_and_send() {
       debug(unsent_counter);
       debugln(" times");
 
-      // JUDICIOUS RETRY: Only flush HTTP stack, don't toggle bearer (CGACT)
-      // unless fatal
+      // 1. Bearer Verification & Recovery (The Core Fix)
+      if (!verify_bearer_or_recover()) {
+        debugln("AG Recovery: Failed to restore PDP context. Skipping retry "
+                "cycle.");
+        continue; // Try again in next iteration
+      }
+
+      // 2. RESET HTTP stack
       SerialSIT.println("AT+HTTPTERM");
       vTaskDelay(500);
       SerialSIT.println("AT+HTTPINIT");
-      waitForResponse("OK", 2000);
+      waitForResponse("OK", 5000);
 
-      // Restore Parameters
+      // Restore Parameters in correct order (CID before URL)
       SerialSIT.print("AT+HTTPPARA=\"CID\",");
       SerialSIT.println(active_cid);
       waitForResponse("OK", 1000);
@@ -566,7 +530,7 @@ void prepare_data_and_send() {
       SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
       waitForResponse("OK", 1000);
 
-      // Flush Serial buffer before retry action //By ANTIGRAVITY
+      // Flush Serial buffer before retry action
       while (SerialSIT.available())
         SerialSIT.read();
 
@@ -606,10 +570,10 @@ void prepare_data_and_send() {
                temp_min, sample_temp, sample_hum, sample_avgWS, sample_WD,
                temp_sig, temp_bat);
       char stnId[16];
-      if (strstr(UNIT, "SPATIKA_GEN")) {
-        snprintf(stnId, sizeof(stnId), "%s", ftp_station);
+      if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
+        snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
       } else {
-        snprintf(stnId, sizeof(stnId), "%06d", atoi(ftp_station));
+        strcpy(stnId, ftp_station);
       }
 
       snprintf(ftpappend_text, sizeof(ftpappend_text),
@@ -626,10 +590,10 @@ void prepare_data_and_send() {
                temp_min, sample_cum_rf, sample_temp, sample_hum, sample_avgWS,
                sample_WD, temp_sig, temp_bat);
       char stnId[16];
-      if (strstr(UNIT, "SPATIKA_GEN")) {
-        snprintf(stnId, sizeof(stnId), "%s", ftp_station);
+      if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
+        snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
       } else {
-        snprintf(stnId, sizeof(stnId), "%06d", atoi(ftp_station));
+        strcpy(stnId, ftp_station);
       }
 
       snprintf(ftpappend_text, sizeof(ftpappend_text),
@@ -657,11 +621,12 @@ void prepare_data_and_send() {
       }
       snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
       File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
-      if (!file2) {
+      if (file2) {
+        file2.print(finalBuffer);
+        file2.close();
+      } else {
         debugln("Failed to open unsent.txt for appending");
-      } // #TRUEFIX
-      file2.print(finalBuffer);
-      file2.close();
+      }
 #endif
 
 #if SYSTEM == 1
@@ -684,11 +649,12 @@ void prepare_data_and_send() {
       debugln(finalBuffer);
       snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
       File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-      if (!ftpfile2) {
+      if (ftpfile2) {
+        ftpfile2.print(finalBuffer);
+        ftpfile2.close();
+      } else {
         debugln("Failed to open ftpunsent.txt for appending (TWS)");
-      } // #TRUEFIX
-      ftpfile2.print(finalBuffer);
-      ftpfile2.close();
+      }
 #endif
 
 #if SYSTEM == 2
@@ -712,11 +678,12 @@ void prepare_data_and_send() {
       debugln(finalBuffer);
       snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
       File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-      if (!ftpfile2) {
+      if (ftpfile2) {
+        ftpfile2.print(finalBuffer);
+        ftpfile2.close();
+      } else {
         debugln("Failed to open ftpunsent.txt for appending (TWS-RF)");
-      } // #TRUEFIX
-      ftpfile2.print(finalBuffer);
-      ftpfile2.close();
+      }
 #endif
 
       debugln("Current/Closing data not sent to unsent.txt is ");
@@ -743,18 +710,30 @@ void send_http_data() {
 
   // Hard reset IP stack to clear any half-open sessions
   SerialSIT.println("AT+CIPSHUT");
-  waitForResponse("SHUT OK", 1000);
+  waitForResponse("SHUT OK", 2000);
 
-  // Ensure any previous NET connection is closed to avoid conflict
-  SerialSIT.println("AT+NETCLOSE");
-  waitForResponse("OK", 1000); // Ignore error if already closed
+  // Ensure PDP context is active
+  SerialSIT.println("AT+CGACT?");
+  response = waitForResponse("OK", 3000);
+  if (response.indexOf("+CGACT: " + String(active_cid) + ",1") == -1) {
+    debugln("[GPRS] PDP context inactive. Activating...");
+    SerialSIT.print("AT+CGACT=1,");
+    SerialSIT.println(active_cid);
+    waitForResponse("OK", 10000);
+  }
 
-  SerialSIT.println("AT+HTTPTERM"); // AG1
-  vTaskDelay(100);
+  SerialSIT.println("AT+HTTPTERM");
+  vTaskDelay(200);
 
   SerialSIT.println("AT+HTTPINIT");
   response = waitForResponse("OK", 5000);
-  vTaskDelay(100);
+  if (response.indexOf("OK") == -1) {
+    debugln("[GPRS] HTTPINIT Failed. Trying TERM then INIT...");
+    SerialSIT.println("AT+HTTPTERM");
+    vTaskDelay(500);
+    SerialSIT.println("AT+HTTPINIT");
+    waitForResponse("OK", 5000);
+  }
 
   // Restore CID Setting (Quiet)
   SerialSIT.print("AT+HTTPPARA=\"CID\",");
@@ -766,17 +745,16 @@ void send_http_data() {
 
   if (!strcmp(httpSet[http_no].Format, "json")) {
     SerialSIT.println(httpPostRequest);
-    response = waitForResponse("OK", 100);
+    response = waitForResponse("OK", 1000);
     SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-    response = waitForResponse("OK", 100);
+    response = waitForResponse("OK", 1000);
     debugln("It is json");
   } else {
     SerialSIT.println(httpPostRequest);
-    response = waitForResponse("OK", 100);
+    response = waitForResponse("OK", 1000);
     SerialSIT.println(
         "AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"");
-    response = waitForResponse("OK", 100);
-    response = waitForResponse("OK", 100);
+    response = waitForResponse("OK", 1000);
   }
 
   /*
@@ -790,17 +768,30 @@ void send_http_data() {
   data_mode = eCurrentData; // Set the data mode
   prepare_data_and_send();
 
-  if (unsent_counter != 6) { // Success in sending current data ... Continue
-                             // only if the current data was sent to server
-    // Storing last logged data first before proceeding to unsent data
+  if (success_count == 1) { // Success in sending current data ... Continue
+    // Update internal persistent markers for 'Last Logged'
+    last_recorded_hr = record_hr;
+    last_recorded_min = record_min;
+    last_recorded_dd = current_day;
+    last_recorded_mm = current_month;
+    last_recorded_yy = current_year;
+
+    // Storing last logged data for signature check
     File fileTemp2 = SPIFFS.open("/signature.txt", FILE_WRITE);
-    if (!fileTemp2) {
-      debugln("Failed to open signature.txt for writing");
-    } // #TRUEFIX
-    snprintf(signature, sizeof(signature), "%04d-%02d-%02d,%02d:%02d",
-             current_year, current_month, current_day, record_hr, record_min);
-    fileTemp2.print(signature);
-    fileTemp2.close();
+    if (fileTemp2) {
+      snprintf(signature, sizeof(signature), "%04d-%02d-%02d,%02d:%02d",
+               last_recorded_yy, last_recorded_mm, last_recorded_dd,
+               last_recorded_hr, last_recorded_min);
+      fileTemp2.print(signature);
+      fileTemp2.close();
+    }
+
+    // Update Internal LCD Markers
+    snprintf(last_logged, sizeof(last_logged), "%d-%d-%d,%02d:%02d",
+             last_recorded_yy, last_recorded_mm, last_recorded_dd,
+             last_recorded_hr, last_recorded_min);
+    strcpy(ui_data[FLD_LAST_LOGGED].bottomRow, last_logged);
+
     debugln();
     debug("**** Storing Last Logged Data as ");
     debugln(signature);
@@ -925,13 +916,23 @@ void send_http_data() {
 #endif
 
 #if (SYSTEM == 1 || SYSTEM == 2)
-    send_unsent_data(); // for TWS and TWS-ADDON
+    // For FTP systems, always attempt to send unsent data if we have signal,
+    // even if HTTP fails or is not used.
+    if (gprs_mode == eGprsSignalOk) {
+      send_unsent_data();
+    }
 #endif
 
-  } else { // Only if the current data is sent, enter this loop above.
-    debug("*** Current data couldnt be sent after 5 trials... Only if FTP data "
-          "for TWS/TWSRF and it is in 1 hr cycle will it be sent ");
-    debugln();
+  } else { // Handle failure to send current data
+    debugln("*** Current data couldn't be sent. Backlog will be handled if "
+            "connection is stable.");
+#if (SYSTEM == 1 || SYSTEM == 2)
+    // Even if HTTP Current failed, try FTP Backlog/Unsent logic if we have
+    // signal
+    if (gprs_mode == eGprsSignalOk) {
+      send_unsent_data();
+    }
+#endif
   }
 
   //  CHECK FOR SMS
@@ -970,13 +971,16 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
 
   // 9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,0,1,2,3,4,5,6,7,8 -- Unsent
   // data
-  if (sampleNo == 1 || sampleNo == 5 || sampleNo == 9 || sampleNo == 13 ||
-      sampleNo == 17 || sampleNo == 21 || sampleNo == 25 || sampleNo == 29 ||
-      sampleNo == 33 || sampleNo == 37 || sampleNo == 41 || sampleNo == 45 ||
-      sampleNo == 49 || sampleNo == 53 || sampleNo == 57 || sampleNo == 61 ||
-      sampleNo == 65 || sampleNo == 69 || sampleNo == 73 || sampleNo == 77 ||
-      sampleNo == 81 || sampleNo == 85 || sampleNo == 89 || sampleNo == 93 ||
-      sampleNo == 95) {
+  // Aggressive Recovery: If it's a TWS/ADDON system and we have a backlog,
+  // try to send it regardless of sample number if it's currently an hourly mark
+  // OR if we just recovered from a signal failure.
+  bool is_hourly_mark = (sampleNo % 4 == 1) || (sampleNo == 95);
+
+  // Hourly Backlog Recovery (Reduced frequency from 15m to 1h per USER request)
+  if (is_hourly_mark && SPIFFS.exists(ftpunsent_file)) {
+    debugln();
+    debug("FTP Unsent check - File present: ");
+    debugln(SPIFFS.exists(ftpunsent_file));
     debugln();
     debug("FTP file name is ");
     debugln(fileName);
@@ -1000,10 +1004,11 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
   if (sampleNo == 3 ||
       sampleNo ==
           7) { // send previous day's data (96 data) if available through FTP
-    if (sampleNo == 0) {
+    if (current_hour == 8 && current_min > 45 && current_min < 59) {
+      // Cleanup at start of 8:45 AM cycle
       snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
       SPIFFS.remove(ftpunsent_file);
-      debug("Removed unsent file at beginning of the day : ");
+      debug("Cleaned up unsent file at start of new RF Day: ");
       debugln(ftpunsent_file);
     }
     debugln();
@@ -1145,12 +1150,16 @@ void send_ftp_file(char *fileName) {
 
         if (response1.indexOf("+CFTPSPUTFILE: 0") != -1) {
 
-          if (sampleNo == 0 || sampleNo == 3 || sampleNo == 7 ||
+          if (sampleNo == 3 ||
               sampleNo ==
-                  11) { // If FTP is successful, remove the dailyftp file.
+                  7) { // If Daily FTP is successful, remove the dailyftp file.
             SPIFFS.remove(temp_file);
-            debug("Removed : ");
+            debug("Removed Daily FTP file: ");
             debugln(temp_file);
+          } else {
+            // If it was a generic unsent data send, clear the unsent buffer
+            SPIFFS.remove("/ftpunsent.txt");
+            debugln("Cleared ftpunsent.txt after successful upload");
           }
 
           // Remove the *.kwd files. These are the ftp files
@@ -1326,15 +1335,19 @@ int send_at_cmd_data(char *payload, String charArray) {
   response = waitForResponse("OK", 4000);
 
   SerialSIT.println("AT+HTTPACTION=1");
-  waitForResponse("OK", 2000);                       // Consume immediate OK
-  response = waitForResponse("+HTTPACTION:", 45000); // 45s for slow BSNL 2G
+  waitForResponse("OK", 2000); // Consume immediate OK
+  response = waitForResponse("+HTTPACTION:",
+                             25000); // 25s for slow BSNL 2G (Reduced from 45s)
   debug("Response of AT+HTTPACTION=1 is ");
   debugln(response);
 
   if (response.indexOf("706") != -1) {
-    debugln("HTTP Stack Busy (706). Clearing...");
+    debugln("HTTP Stack Busy (706). Aggressive Reset...");
     SerialSIT.println("AT+HTTPTERM");
-    waitForResponse("OK", 1000);
+    waitForResponse("OK", 2000);
+    vTaskDelay(500);
+    SerialSIT.println("AT+HTTPINIT"); // Quick re-init for the next attempt
+    waitForResponse("OK", 2000);
     return 0;
   }
 
@@ -1379,11 +1392,12 @@ void store_current_unsent_data() {
 #if SYSTEM == 0
   snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
   File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
-  if (!file2) {
+  if (file2) {
+    file2.print(finalStringBuffer);
+    file2.close();
+  } else {
     debugln("Failed to open unsent.txt for appending (store_current)");
-  } // #TRUEFIX
-  file2.print(finalStringBuffer);
-  file2.close();
+  }
   debug("************************");
   debug("Storing data in unsent file due to SIM issue/REG issue/Signal issue ");
   debugln("************************");
@@ -1394,11 +1408,12 @@ void store_current_unsent_data() {
 #if (SYSTEM == 1 || SYSTEM == 2)
   snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
   File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-  if (!ftpfile2) {
+  if (ftpfile2) {
+    ftpfile2.print(finalStringBuffer);
+    ftpfile2.close();
+  } else {
     debugln("Failed to open ftpunsent.txt for appending (store_current)");
-  } // #TRUEFIX
-  ftpfile2.print(finalStringBuffer);
-  ftpfile2.close();
+  }
   debug("************************");
   debug("Storing data in FTP unsent file due to SIM issue/REG issue/Signal "
         "issue ");
@@ -1469,8 +1484,9 @@ void get_signal_strength() {
   signal_lvl = 0;
   retries = 0;
 
+  int invalid_signal_count = 0;
   while (((signal_lvl == 0) || (signal_lvl == -113)) &&
-         (retries < 120)) { // ULTRA-BSNL-SAFE: 120 loops @ 500ms = 60s timeout
+         (retries < 120)) { // 120 loops @ 500ms = 60s max timeout
     esp_task_wdt_reset();
     SerialSIT.println("AT+CSQ");
     response = waitForResponse("+CSQ ", 1000);
@@ -1495,83 +1511,31 @@ void get_signal_strength() {
       signal_lvl = signal_strength;
       debug("Signal Level is ");
       debugln(signal_lvl);
+    } else {
+      invalid_signal_count++;
+      // If we see "No Signal (85)" for 15s, move to registration
+      // Towers are often only found AFTER the registration process starts
+      // scanning.
+      if (invalid_signal_count > 30) {
+        debugln("Wait for signal timed out. Moving to Registration to trigger "
+                "search.");
+        break;
+      }
     }
     retries++;
     vTaskDelay(500 / portTICK_PERIOD_MS); // High-frequency polling
   }
-  if (retries >= 120) {
-    debugln("Weak signal, Retries crossed the limit for getting Signal "
-            "Strength ..."); // SIM is bad
-    signal_strength = -(random(125, 130 + 1));
-    signal_lvl = signal_strength;
-    gprs_mode = eGprsSignalForStoringOnly;
-    // Update UI variables so LCD doesn't stay stuck on "FETCHING..."
-    strcpy(carrier, "NO SIGNAL");
-    strcpy(reg_status, "WEAK SIGNAL");
+  // CLAMP: Modem returns 85 for "No Signal". Convert to -111 sentinel.
+  if (signal_strength == 85 || signal_strength > 31) {
+    signal_strength = -111;
+    signal_lvl = -111;
   }
-
-  debug("gprs_mode inside loop of get_signal_strength is  ");
-  debugln(gprs_mode); // TRG8-3.0.5
-  debug("sync_mode inside loop of get_signal_strength is  ");
-  debugln(sync_mode); // TRG8-3.0.5
 }
 
 /**
  * Attempts to fetch SIM number via USSD as a secondary fallback
  */
-String fetch_number_ussd() {
-  String codes[3] = {"", "", ""};
-  if (strstr(carrier, "Airtel")) {
-    codes[0] = "*282#";
-    codes[1] = "*121*9#";
-    codes[2] = "*121*1#";
-  } else if (strstr(carrier, "Jio")) {
-    codes[0] = "*1#";
-  } else if (strstr(carrier, "BSNL")) {
-    codes[0] = "*222#";
-    codes[1] = "*1#";
-    codes[2] = "*555#";
-  } else if (strstr(carrier, "Vi")) {
-    codes[0] = "*199#";
-    codes[1] = "*111*2#";
-  }
-
-  for (int c = 0; c < 3; c++) {
-    if (codes[c] == "")
-      continue;
-
-    debug("[USSD] Trying ");
-    debugln(codes[c]);
-    SerialSIT.print("AT+CUSD=1,\"");
-    SerialSIT.print(codes[c]);
-    SerialSIT.println("\""); // Removed ,15 for better compatibility
-
-    String ussdResp = waitForResponse("+CUSD:", 8000);
-    if (ussdResp != "") {
-      // Look for 10 digit number pattern (9, 8, 7, 6 prefix)
-      int digitCount = 0;
-      String num = "";
-      for (int i = 0; i < ussdResp.length(); i++) {
-        char ch = ussdResp.charAt(i);
-        if (isdigit(ch)) {
-          num += ch;
-          digitCount++;
-        } else if (digitCount > 0) {
-          if (digitCount == 10) {
-            char first = num.charAt(0);
-            if (first >= '6' && first <= '9')
-              return num; // Return 10-digit number without +91 prefix
-          } else if (digitCount == 12 && num.startsWith("91")) {
-            return num.substring(2); // Strip "91" prefix, return 10 digits
-          }
-          num = "";
-          digitCount = 0;
-        }
-      }
-    }
-  }
-  return "";
-}
+// USSD Discovery Removed - Inefficient for release
 
 void get_network() {
   debugln();
@@ -1647,102 +1611,50 @@ full_discovery:
     strcpy(apn_str, "airteliot.com");
   }
 
-  // Get Number (Universal for all carriers)
-  SerialSIT.println("AT+CNUM");
-  String cnumResp = waitForResponse("+CNUM", 1000);
+  // Get SIM identifier via IMSI (fast, always works on IoT/BSNL SIMs)
+  // CNUM and USSD are skipped - they consistently fail on IoT/BSNL SIMs
+  // and waste ~30 seconds. IMSI is sufficient as a unique identifier.
+  SerialSIT.println("AT+CIMI");
+  String imsiResp = waitForResponse("OK", 2000);
 
-  int plusIndex = cnumResp.indexOf("+91");
-  if (plusIndex != -1) {
-    // Find the end of the number. The number usually ends with a quote,
-    // comma, or newline
-    int endIndex = -1;
-    for (int k = plusIndex; k < cnumResp.length(); k++) {
-      char c = cnumResp.charAt(k);
-      if (c != '+' && (c < '0' || c > '9')) {
-        endIndex = k;
+  // Extract IMSI (15 digits)
+  int imsiStart = -1;
+  for (int i = 0; i < imsiResp.length(); i++) {
+    if (imsiResp.charAt(i) >= '0' && imsiResp.charAt(i) <= '9') {
+      imsiStart = i;
+      break;
+    }
+  }
+
+  if (imsiStart != -1) {
+    String imsi = "";
+    for (int i = imsiStart; i < imsiResp.length() && imsi.length() < 15; i++) {
+      char c = imsiResp.charAt(i);
+      if (c >= '0' && c <= '9') {
+        imsi += c;
+      } else if (imsi.length() > 0) {
         break;
       }
     }
-
-    if (endIndex == -1)
-      endIndex = cnumResp.length();
-
-    String number = cnumResp.substring(plusIndex, endIndex);
-    debug("Extracted Number: ");
-    debugln(number);
-
-    // Strip +91 prefix if present (keep only 10-digit mobile number)
-    if (number.startsWith("+91") && number.length() == 13) {
-      number = number.substring(3); // Remove "+91"
-    } else if (number.startsWith("91") && number.length() == 12) {
-      number = number.substring(2); // Remove "91"
-    }
-
-    strcpy(sim_number, number.c_str());
-
-    // Airtel M2M Logic
-    if ((strstr(r1, "airtel") || strstr(r2, "airtel")) &&
-        number.length() > 13) {
-      strcpy(apn_str, "airteliot.com");
-      debugln("Detected 13 digit M2M card, using airteliot.com");
+    if (imsi.length() >= 10) {
+      debug("IMSI: ");
+      debugln(imsi);
+      strcpy(sim_number, imsi.c_str());
+    } else {
+      strcpy(sim_number, "NA");
     }
   } else {
-    // CNUM failed, try USSD first
-    debugln("CNUM failed. Trying USSD discovery...");
-    String ussdNum = fetch_number_ussd();
-    if (ussdNum != "") {
-      debug("USSD Success: ");
-      debugln(ussdNum);
-      strcpy(sim_number, ussdNum.c_str());
-    } else {
-      // USSD failed, try IMSI as final fallback
-      debugln("USSD failed. Trying IMSI...");
-      SerialSIT.println("AT+CIMI");
-      String imsiResp = waitForResponse("OK", 2000);
-
-      // Extract IMSI (15 digits)
-      int imsiStart = -1;
-      for (int i = 0; i < imsiResp.length(); i++) {
-        if (imsiResp.charAt(i) >= '0' && imsiResp.charAt(i) <= '9') {
-          imsiStart = i;
-          break;
-        }
-      }
-
-      if (imsiStart != -1) {
-        String imsi = "";
-        for (int i = imsiStart; i < imsiResp.length() && imsi.length() < 15;
-             i++) {
-          char c = imsiResp.charAt(i);
-          if (c >= '0' && c <= '9') {
-            imsi += c;
-          } else if (imsi.length() > 0) {
-            break; // Stop at first non-digit after digits started
-          }
-        }
-
-        if (imsi.length() >= 10) {
-          debug("IMSI: ");
-          debugln(imsi);
-          strcpy(sim_number, imsi.c_str());
-        } else {
-          strcpy(sim_number, "NA");
-        }
-      } else {
-        strcpy(sim_number, "NA");
-      }
-    }
-
-    debug("Service Provider APN is ");
-    debugln(apn_str);
-    debug("Carrier: ");
-    debugln(carrier);
-    debug("Number: ");
-    debugln(sim_number);
-    debugln();
-    if (!strcmp(apn_str, "bsnlnet")) {
-      debugln("BSNL network found..");
-    }
+    strcpy(sim_number, "NA");
+  }
+  debug("Service Provider APN is ");
+  debugln(apn_str);
+  debug("Carrier: ");
+  debugln(carrier);
+  debug("Number: ");
+  debugln(sim_number);
+  debugln();
+  if (!strcmp(apn_str, "bsnlnet")) {
+    debugln("BSNL network found..");
   }
 }
 
@@ -1848,17 +1760,22 @@ void get_registration() {
     if (!is_registered) {
       // Periodic Modem Wakeup every 5 tries
       if (retries % 5 == 0 && retries > 0) {
+        // If still not searching/registered, force an automatic search
+        if (registration == 0 || registration == 4) {
+          SerialSIT.println("AT+COPS=0");
+          vTaskDelay(500);
+        }
         SerialSIT.println("AT+CGACT=1,1");
         vTaskDelay(500);
       }
       debugf2("Reg Search... Status:%d Iter:#%d\n", registration, retries + 1);
-      vTaskDelay(10000); // Restored to 10s for BSNL reliability
+      vTaskDelay(5000); // Reduced from 10s to 5s for faster handshake
       retries++;
     }
   }
 
   // Update Diagnostics
-  int time_taken = retries * 10; // Approx seconds (10s delay per retry)
+  int time_taken = retries * 5; // Approx seconds (5s delay per retry)
   if (is_registered) {
     diag_reg_time_total += time_taken;
     diag_reg_count++;
@@ -1867,6 +1784,8 @@ void get_registration() {
 
     gprs_mode = eGprsSignalOk;
     debugln("Registration Successful.");
+    // Reduced from 3s to 1s - APN activation logic now handles surgical delays
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
   } else {
     diag_gprs_fails++;
     gprs_mode = eGprsSignalForStoringOnly;
@@ -1967,7 +1886,22 @@ void get_a7672s() {
       return;
     }
 
-    debugln("APN: All attempts failed.");
+    // 3. Last Resort: GPRS Stack Reset (CGATT Reset)
+    debugln("APN: Initial attempts failed. Performing Soft Reset (CGATT)...");
+    SerialSIT.println("AT+CGATT=0"); // Detach
+    waitForResponse("OK", 5000);
+    vTaskDelay(1000);
+    SerialSIT.println("AT+CGATT=1"); // Re-attach
+    waitForResponse("OK", 5000);
+    vTaskDelay(2000);
+
+    // Final Retry of the SIM's primary APN
+    if (try_activate_apn(apn_str)) {
+      save_apn_config(apn_str, ccid);
+      return;
+    }
+
+    debugln("APN: All attempts failed even after reset.");
   }
 }
 
@@ -2438,8 +2372,10 @@ int setup_ftp() {
            ftpUser, ftpPassword); //\r\n removed
 
   // NEW DOTA
+  SerialSIT.println("AT+CFTPSSTOP"); // Ensure a clean slate
+  vTaskDelay(500);
   SerialSIT.println("AT+CFTPSSTART");
-  waitForResponse("+CFTPSSTART: 0", 10000);
+  response = waitForResponse("+CFTPSSTART: 0", 10000);
   debugln(response);
 
   SerialSIT.println("AT+CFTPSSINGLEIP=1"); // FTP client context
@@ -2929,6 +2865,13 @@ bool send_health_report(bool useJitter) {
   else if (diag_last_reset_reason >= 7 && diag_last_reset_reason <= 9)
     status_summary = "WATCHDOG_RESET";
 
+  // ENSURE BEARER IS LIVE BEFORE STARTING HEALTH HTTP
+  if (!verify_bearer_or_recover()) {
+    debugln(
+        "[Health] ABORT: No active bearer found even after recovery attempt.");
+    return false;
+  }
+
   char healthURL[850]; // Increased for Status info
   snprintf(
       healthURL, sizeof(healthURL),
@@ -2951,7 +2894,8 @@ bool send_health_report(bool useJitter) {
   flushSerialSIT(); // Clear any stale data
 
   // 1. CLOCK SYNC (Crucial for SSL stability)
-  char cclk_cmd[50];
+  char cclk_cmd[64];
+  // Convert year to YY for CCLK (e.g., 2026 -> 26)
   snprintf(cclk_cmd, sizeof(cclk_cmd),
            "AT+CCLK=\"%02d/%02d/%02d,%02d:%02d:%02d+22\"", current_year % 100,
            current_month, current_day, current_hour, current_min, current_sec);
@@ -2963,10 +2907,9 @@ bool send_health_report(bool useJitter) {
   waitForResponse("OK", 200);
   SerialSIT.println("AT+CSSLCFG=\"authmode\",0,0");
   waitForResponse("OK", 200);
-  SerialSIT.println("AT+CSSLCFG=\"ignorertctime\",0,1");
+  SerialSIT.println("AT+CSSLCFG=\"ignorertctime\",0,0"); // Use CCLK sync
   waitForResponse("OK", 200);
-  SerialSIT.println(
-      "AT+CSSLCFG=\"handshaketimeout\",0,120"); // 120s for BSNL 2G
+  SerialSIT.println("AT+CSSLCFG=\"handshaketimeout\",0,90");
   waitForResponse("OK", 200);
   SerialSIT.println("AT+CSSLCFG=\"sni\",0,\"script.google.com\"");
   waitForResponse("OK", 200);
@@ -2974,41 +2917,42 @@ bool send_health_report(bool useJitter) {
   // 3. HTTP Action
   SerialSIT.println("AT+HTTPTERM");
   waitForResponse("OK", 500);
-  vTaskDelay(200 / portTICK_PERIOD_MS); // Extra breath for stack cleanup
+  vTaskDelay(200 / portTICK_PERIOD_MS);
   SerialSIT.println("AT+HTTPINIT");
   waitForResponse("OK", 500);
 
   SerialSIT.print("AT+HTTPPARA=\"CID\",");
-  SerialSIT.println(active_cid);
+  SerialSIT.println(active_cid != 0 ? active_cid : 1);
   waitForResponse("OK", 200);
 
   SerialSIT.println("AT+HTTPPARA=\"UA\",\"Mozilla/5.0 (A7672S)\"");
   waitForResponse("OK", 200);
-  SerialSIT.println(
-      "AT+HTTPPARA=\"REDIR\",0"); // Fastest: Don't follow jumps (Learning v7)
+
+  // Follow redirects (required for Google Macros)
+  SerialSIT.println("AT+HTTPPARA=\"REDIR\",1");
   waitForResponse("OK", 200);
+
   SerialSIT.println("AT+HTTPPARA=\"SSLCFG\",0");
   waitForResponse("OK", 200);
 
   SerialSIT.println(healthURL);
-  waitForResponse("OK", 1000);
+  waitForResponse("OK", 2000); // Wait longer for URL acceptance
 
   debugln("Updating Google Sheet...");
   SerialSIT.println("AT+HTTPACTION=0");
   waitForResponse("OK", 500);
-  String response =
-      waitForResponse("+HTTPACTION", 35000); // 35s for SSL/DNS on weak signal
+  String response = waitForResponse("+HTTPACTION",
+                                    45000); // 45s for slow Google SSL handshake
 
-  // Google Sheets updates even if it returns a 302 Redir
+  // Google Sheets updates even if it returns a 302 Redir (though REDIR=1
+  // handled it)
   bool success = false;
-  if (response.indexOf(",200,") != -1 || response.indexOf(",302,") != -1) {
+  if (response.indexOf(",200,") != -1 || response.indexOf(",301,") != -1 ||
+      response.indexOf(",302,") != -1) {
     debugln("[Health] Update Success.");
     // Update Internal LCD Markers
-    last_recorded_hr = current_hour;
-    last_recorded_min = current_min;
-    last_recorded_dd = current_day;
-    last_recorded_mm = current_month;
-    last_recorded_yy = current_year;
+    // Use the existing last_recorded variables which now persist and reflect
+    // the actual data slot
     snprintf(last_logged, sizeof(last_logged), "%d-%d-%d,%02d:%02d",
              last_recorded_yy, last_recorded_mm, last_recorded_dd,
              last_recorded_hr, last_recorded_min);

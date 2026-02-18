@@ -46,7 +46,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.32"
+#define FIRMWARE_VERSION "5.33"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
@@ -293,9 +293,8 @@ RTC_DATA_ATTR unsigned long diag_last_health_millis = 0;
 RTC_DATA_ATTR bool diag_rtc_battery_ok = true;
 
 // Health Report Retry Logic (persists across deep sleep)
-RTC_DATA_ATTR bool health_morning_sent = false; // Reset at midnight
-RTC_DATA_ATTR bool health_evening_sent = false; // Reset at midnight
-RTC_DATA_ATTR int health_last_reset_day = -1;   // Track when to reset flags
+RTC_DATA_ATTR int health_last_sent_hour =
+    -1; // Track last successful or attempted hour
 
 String response;
 String rssiStr;
@@ -357,8 +356,11 @@ char inst_hum[7], avg_wind_speed[7], inst_wd[7];
 // RTC
 volatile bool rtcReady = false;
 
-int last_recorded_dd, last_recorded_mm, last_recorded_yy, last_recorded_hr,
-    last_recorded_min;
+RTC_DATA_ATTR int last_recorded_dd = 0;
+RTC_DATA_ATTR int last_recorded_mm = 0;
+RTC_DATA_ATTR int last_recorded_yy = 0;
+RTC_DATA_ATTR int last_recorded_hr = 0;
+RTC_DATA_ATTR int last_recorded_min = 0;
 char signature[20]; // 2023-02-23,11:15
 volatile bool rtcTimeChanged = false;
 bool signature_valid = false;
@@ -439,6 +441,7 @@ void parse_and_convert_clbs_response(const char *response, int year1,
                                      int minute1, int seconds1);
 bool initHDC();
 bool readHDC(float &tempC, float &humidity);
+bool isDigitStr(const char *s);
 
 // GPRS / SMS / GPS Helper Prototypes
 void get_signal_strength();
@@ -448,13 +451,14 @@ void get_a7672s();
 void prepare_and_send_status(char *number);
 void get_lat_long_date_time(char *number);
 void store_current_unsent_data();
-void get_a7672s_gps();
+void get_gps_coordinates();
 void prepare_data_and_send();
 
 // GPRS Helpers (gprs_helpers.ino)
 String get_ccid();
 bool load_apn_config(String current_ccid, char *target_apn, size_t max_len);
 bool try_activate_apn(const char *apn);
+bool verify_bearer_or_recover();
 void save_apn_config(String apn, String ccid);
 
 /*
@@ -535,30 +539,30 @@ esp_now_peer_info_t peerInfo;
 
 // Unified Layout for ALL Systems
 ui_data_t ui_data[FLD_COUNT] = {
-    {1, "STATION", "SIT099", eAlphaNum},                  // 0
-    {2, "DATE(dd-mm-yyyy)", "08-03-2023", eNumeric},      // 1
-    {3, "TIME 24hr:mm", "00:00", eNumeric},               // 2
-    {5, "VERSION", "5.1", eDisplayOnly},                  // 3
-    {4, "RF (mm)", "000.0", eLive},                       // 4
-    {8, "SIM STATUS", "0", eLive},                        // 5
-    {9, "REGISTRATION", "NA", eLive},                     // 6
-    {10, "LAST LOGGED AT", "0", eNumeric},                // 7
-    {6, "SEND STATUS", "YES ?", eDisplayOnly},            // 8
-    {7, "RF CALIBRATION", "Yes?", eLive},                 // 9
-    {25, "RF RESOLUTION", "0.50", eNumeric},              // 10
-    {11, "DELETE DATA?", "YES?", eNumeric},               // 11
-    {12, "COPY TO SDCARD?", "YES?", eDisplayOnly},        // 12
-    {13, "BATTERY VOLTAGE", "0", eLive},                  // 13
-    {14, "SOLAR VOLTAGE", "0", eLive},                    // 14
-    {15, "SEND LAT/LONG", "YES ?", eDisplayOnly},         // 15
-    {23, "ENABLE WIFI", "PRESS SET", eDisplayOnly},       // 16
-    {21, "LOG (RFCL_DT TM)", "20260205 08:30", eNumeric}, // 17
-    {16, "Wind Direction", "NA", eLive},                  // 18
-    {17, "INST WND SP(m/s)", "NA", eLive},                // 19
-    {18, "AVG WND SP(m/s)", "NA", eLive},                 // 20
-    {19, "Temperature (C)", "NA", eLive},                 // 21
-    {20, "Humidity (%)", "NA", eLive},                    // 22
-    {22, "TURN OFF LCD", "YES?", eDisplayOnly}            // 23
+    {1, "STATION", "SIT099", eAlphaNum},             // 0
+    {2, "DATE(dd-mm-yyyy)", "08-03-2023", eNumeric}, // 1
+    {3, "TIME 24hr:mm", "00:00", eNumeric},          // 2
+    {5, "VERSION", "5.1", eDisplayOnly},             // 3
+    {4, "RF (mm)", "000.0", eLive},                  // 4
+    {8, "SIM STATUS", "0", eLive},                   // 5
+    {9, "REGISTRATION", "NA", eLive},                // 6
+    {10, "LAST LOGGED AT", "0", eNumeric},           // 7
+    {6, "SEND STATUS", "YES ?", eDisplayOnly},       // 8
+    {7, "RF CALIBRATION", "Yes?", eLive},            // 9
+    {25, "RF RESOLUTION", "0.50", eNumeric},         // 10
+    {11, "DELETE DATA?", "YES?", eNumeric},          // 11
+    {12, "COPY TO SDCARD?", "YES?", eDisplayOnly},   // 12
+    {13, "BATTERY VOLTAGE", "0", eLive},             // 13
+    {14, "SOLAR VOLTAGE", "0", eLive},               // 14
+    {15, "SEND LAT/LONG", "YES ?", eDisplayOnly},    // 15
+    {23, "ENABLE WIFI", "PRESS SET", eDisplayOnly},  // 16
+    {21, "LOG (DT TM)", "20260205 08:30", eNumeric}, // 17
+    {16, "Wind Direction", "NA", eLive},             // 18
+    {17, "INST WND SP(m/s)", "NA", eLive},           // 19
+    {18, "AVG WND SP(m/s)", "NA", eLive},            // 20
+    {19, "Temperature (C)", "NA", eLive},            // 21
+    {20, "Humidity (%)", "NA", eLive},               // 22
+    {22, "TURN OFF LCD", "YES?", eDisplayOnly}       // 23
 };
 
 extern TaskHandle_t webServer_h;

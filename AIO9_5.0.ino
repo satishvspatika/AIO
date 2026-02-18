@@ -89,6 +89,14 @@ void setup() {
   if (nvs_station.length() > 0) {
     strncpy(station_name, nvs_station.c_str(), sizeof(station_name) - 1);
     station_name[sizeof(station_name) - 1] = '\0';
+
+    // Requirement: if it's numeric "00XXXX", treat as "XXXX"
+    if (strlen(station_name) == 6 && isDigitStr(station_name) &&
+        strncmp(station_name, "00", 2) == 0) {
+      char temp[16];
+      strcpy(temp, station_name + 2);
+      strcpy(station_name, temp);
+    }
     strcpy(ftp_station, station_name);
     debug("Loaded Station ID from NVS: ");
     debugln(station_name);
@@ -98,8 +106,16 @@ void setup() {
       File fileTemp = SPIFFS.open("/station.doc", FILE_READ);
       if (fileTemp) {
         String temp = fileTemp.readStringUntil('\n');
+        temp.trim();
         strncpy(station_name, temp.c_str(), sizeof(station_name) - 1);
         station_name[sizeof(station_name) - 1] = '\0';
+
+        if (strlen(station_name) == 6 && isDigitStr(station_name) &&
+            strncmp(station_name, "00", 2) == 0) {
+          char t[16];
+          strcpy(t, station_name + 2);
+          strcpy(station_name, t);
+        }
         strcpy(ftp_station, station_name);
         fileTemp.close();
 
@@ -115,6 +131,13 @@ void setup() {
         temp.trim();
         strncpy(station_name, temp.c_str(), sizeof(station_name) - 1);
         station_name[sizeof(station_name) - 1] = '\0';
+
+        if (strlen(station_name) == 6 && isDigitStr(station_name) &&
+            strncmp(station_name, "00", 2) == 0) {
+          char t[16];
+          strcpy(t, station_name + 2);
+          strcpy(station_name, t);
+        }
         strcpy(ftp_station, station_name);
         fileTemp.close();
         // Migrate to NVS immediately
@@ -136,6 +159,13 @@ void setup() {
         if (temp.length() > 0) {
           strncpy(station_name, temp.c_str(), sizeof(station_name) - 1);
           station_name[sizeof(station_name) - 1] = '\0';
+
+          if (strlen(station_name) == 6 && isDigitStr(station_name) &&
+              strncmp(station_name, "00", 2) == 0) {
+            char t[16];
+            strcpy(t, station_name + 2);
+            strcpy(station_name, t);
+          }
           strcpy(ftp_station, station_name);
           debug("Loaded Station ID from SD: ");
           debugln(station_name);
@@ -168,6 +198,48 @@ void setup() {
     }
   }
 
+  // --- Proactive Station Data Migration ---
+  // If the station name was normalized (e.g. from 001934 to 1934),
+  // proactively rename critical persistence files to maintain continuity.
+  if (strlen(station_name) == 4 && isDigitStr(station_name)) {
+    char old_prefix_lastrec[32], new_prefix_lastrec[32];
+    snprintf(old_prefix_lastrec, sizeof(old_prefix_lastrec),
+             "/lastrecorded_00%s.txt", station_name);
+    snprintf(new_prefix_lastrec, sizeof(new_prefix_lastrec),
+             "/lastrecorded_%s.txt", station_name);
+    if (SPIFFS.exists(old_prefix_lastrec) &&
+        !SPIFFS.exists(new_prefix_lastrec)) {
+      debugln("[BOOT] Migrating lastrecorded file to normalized name...");
+      File oldF = SPIFFS.open(old_prefix_lastrec, FILE_READ);
+      File newF = SPIFFS.open(new_prefix_lastrec, FILE_WRITE);
+      if (oldF && newF) {
+        while (oldF.available())
+          newF.write(oldF.read());
+        oldF.close();
+        newF.close();
+        SPIFFS.remove(old_prefix_lastrec);
+      }
+    }
+    char old_prefix_closing[32], new_prefix_closing[32];
+    snprintf(old_prefix_closing, sizeof(old_prefix_closing),
+             "/closingdata_00%s.txt", station_name);
+    snprintf(new_prefix_closing, sizeof(new_prefix_closing),
+             "/closingdata_%s.txt", station_name);
+    if (SPIFFS.exists(old_prefix_closing) &&
+        !SPIFFS.exists(new_prefix_closing)) {
+      debugln("[BOOT] Migrating closingdata file to normalized name...");
+      File oldF = SPIFFS.open(old_prefix_closing, FILE_READ);
+      File newF = SPIFFS.open(new_prefix_closing, FILE_WRITE);
+      if (oldF && newF) {
+        while (oldF.available())
+          newF.write(oldF.read());
+        oldF.close();
+        newF.close();
+        SPIFFS.remove(old_prefix_closing);
+      }
+    }
+  }
+
   if (SPIFFS.exists("/signature.txt")) {
     File fileTemp1 = SPIFFS.open("/signature.txt", FILE_READ);
     if (fileTemp1) {
@@ -177,6 +249,11 @@ void setup() {
              &last_recorded_dd, &last_recorded_hr, &last_recorded_min);
       fileTemp1.close();
       signature_valid = true;
+
+      // Populate last_logged string for UI display immediately
+      snprintf(last_logged, sizeof(last_logged), "%d-%d-%d,%02d:%02d",
+               last_recorded_yy, last_recorded_mm, last_recorded_dd,
+               last_recorded_hr, last_recorded_min);
     }
   } else {
     File fileTemp1 = SPIFFS.open("/signature.txt", FILE_WRITE);

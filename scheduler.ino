@@ -33,10 +33,10 @@ void scheduler(void *pvParameters) {
   snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
 
   char stnId[16];
-  if (strstr(UNIT, "SPATIKA_GEN")) {
-    snprintf(stnId, sizeof(stnId), "%s", ftp_station);
+  if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
+    snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
   } else {
-    snprintf(stnId, sizeof(stnId), "%06d", atoi(ftp_station));
+    strcpy(stnId, ftp_station);
   }
 
   char fileName[50];
@@ -725,11 +725,20 @@ void scheduler(void *pvParameters) {
           last_instWD = 0; // Add this
         if (last_instWD >= WIND_DIR_MAX)
           last_instWD = 0; // Add this
+
+        // FIX: Ensure display variables match file data immediately
+        if (last_AvgWS > 0) {
+          cur_avg_wind_speed = last_AvgWS;
+          snprintf(prevWindSpeedAvg_str, sizeof(prevWindSpeedAvg_str), "%05.2f",
+                   last_AvgWS);
+          // Also update instantaneous for consistency if needed, or leave as
+          // live
+        }
 #endif
 
-          // TWS-RF (KSNDMC)
-          // 00,2024-05-21,08:45,0000.0,000.0,000.0,00.00,000,-111,00.0 : tws :
-          // 58+2 = 60 cumrf,temp,hum,avg_ws,wd
+        // TWS-RF (KSNDMC)
+        // 00,2024-05-21,08:45,0000.0,000.0,000.0,00.00,000,-111,00.0 : tws :
+        // 58+2 = 60 cumrf,temp,hum,avg_ws,wd
 
 #if SYSTEM == 2
         last_sampleNo = atoi(content_buf);
@@ -758,6 +767,13 @@ void scheduler(void *pvParameters) {
           p = strchr(p + 1, ',');
           if (p)
             last_instWD = atof(p + 1);
+
+          // FIX: Ensure display variables match file data immediately
+          if (last_AvgWS > 0) {
+            cur_avg_wind_speed = last_AvgWS;
+            snprintf(prevWindSpeedAvg_str, sizeof(prevWindSpeedAvg_str),
+                     "%05.2f", last_AvgWS);
+          }
 
           // Data Sanctity Clamping
           if (last_cumRF < 0)
@@ -831,17 +847,11 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 0
           snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
           File unsent = SPIFFS.open(unsent_file, FILE_APPEND);
-          if (!unsent) {
-            debugln("Failed to open unsent file");
-          } // #TRUEFIX
 #endif
 
 #if (SYSTEM == 1 || SYSTEM == 2)
           snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
           File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-          if (!ftpunsent) {
-            debugln("Failed to open ftpunsent file");
-          } // #TRUEFIX
 #endif
 
 #endif
@@ -1057,10 +1067,12 @@ void scheduler(void *pvParameters) {
               debug("APPENDED TEXT to unsent.txt is : ");
               debugln(append_text);
 #if SYSTEM == 0
-              unsent.print(append_text); // unsent data only ... data gaps
+              if (unsent)
+                unsent.print(append_text); // unsent data only ... data gaps
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
-              ftpunsent.print(ftpappend_text);
+              if (ftpunsent)
+                ftpunsent.print(ftpappend_text);
 #endif
               debug("GAPS FOUND IN THE SPIFFS FILE WILL BE APPENDED TO UNSENT "
                     "FILE ...SampleNo: ");
@@ -1080,10 +1092,12 @@ void scheduler(void *pvParameters) {
 
 #if FILLGAP == 1
 #if SYSTEM == 0
-          unsent.close(); // 2024 iter6
+          if (unsent)
+            unsent.close();
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
-          ftpunsent.close();
+          if (ftpunsent)
+            ftpunsent.close();
 #endif
 #endif
 
@@ -1135,7 +1149,8 @@ void scheduler(void *pvParameters) {
           //                                            strlen(append_text);
           //                                            append_text[len] = '\0';
 
-          file2.print(append_text);
+          if (file2)
+            file2.print(append_text);
           if (sd_card_ok && sd2)
             sd2.print(append_text);
           debugln();
@@ -1634,16 +1649,10 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 0
             snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
             File unsent3 = SPIFFS.open(unsent_file, FILE_APPEND);
-            if (!unsent3) {
-              debugln("Failed to open unsent3 file");
-            } // #TRUEFIX
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
             snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
             File ftpunsent3 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-            if (!ftpunsent3) {
-              debugln("Failed to open ftpunsent3 file");
-            } // #TRUEFIX
 #endif
 #endif
 
@@ -1728,32 +1737,35 @@ void scheduler(void *pvParameters) {
 
 #if FILLGAP == 1
 #if SYSTEM == 0
-              unsent3.print(append_text);
+              if (unsent3)
+                unsent3.print(append_text);
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
-              ftpunsent3.print(ftpappend_text); // AG2
-              //                                                                      ftpunsent3.close();
+              if (ftpunsent3)
+                ftpunsent3.print(ftpappend_text); // AG2
 #endif
 #endif
               file3.print(append_text);
               if (sd_card_ok && sd3) {
                 sd3.print(append_text);
               }
-            }
 
 #if FILLGAP == 1
 #if SYSTEM == 0
-            unsent3.close();
+              if (unsent3)
+                unsent3.close(); // 2024 iter6
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
-            ftpunsent3.close();
+              if (ftpunsent3)
+                ftpunsent3.close();
 #endif
 #endif
 
-            file3.close();
-            if (sd_card_ok && sd3) {
-              sd3.close();
-            }
+              file3.close();
+              if (sd_card_ok && sd3) {
+                sd3.close();
+              }
+            } // end for q (gap filling)
 
           } // previous rf_close_date file if exists (temp_file if exists)
           // Fill data to current day rf close date file also from 8:45am to
@@ -1794,8 +1806,9 @@ void scheduler(void *pvParameters) {
 #endif
 
 #if (SYSTEM == 1 || SYSTEM == 2)
-      strcpy(store_text, ftpappend_text); // COPY this so that it can beused for
-                                          // storing data if signal is not good.
+      strcpy(store_text,
+             ftpappend_text); // COPY this so that it can beused for
+                              // storing data if signal is not good.
       debugln();
       debug("ftpappend_text->store_text : Used for storing in FTP unsent file "
             "is: ");
@@ -1817,25 +1830,24 @@ void scheduler(void *pvParameters) {
         }
       }
       { // Scope for ftp_file
-        char daily_file[50];
         snprintf(temp_file, sizeof(temp_file), "/dailyftp_%04d%02d%02d.txt",
                  rf_cls_yy, rf_cls_mm, rf_cls_dd);
 
         if (sampleNo != 0) {
           File ftp_file = SPIFFS.open(temp_file, FILE_APPEND);
-          if (!ftp_file) {
-            debugln("Failed to open daily ftp file for appending");
-          } else { // FIX #2 Safe write
+          if (ftp_file) {
             ftp_file.print(store_text);
             ftp_file.close();
+          } else {
+            debugln("Failed to open daily ftp file for appending");
           }
         } else {
           File ftp_file = SPIFFS.open(temp_file, FILE_WRITE);
-          if (!ftp_file) {
-            debugln("Failed to open daily ftp file for writing");
-          } else { // FIX #2 Safe write
+          if (ftp_file) {
             ftp_file.print(store_text);
             ftp_file.close();
+          } else {
+            debugln("Failed to open daily ftp file for writing");
           }
         }
       }
@@ -2112,18 +2124,17 @@ void previous_date(int *Cd, int *Cm, int *Cy) {
  *  Find current_sampleNo - done
  *  Find the battery level and store it as structure member.
  *  Put current_signalLvl = -110 // intial value. shd change - done
- *  If the sampleNo is = 0, create a new rf_close_dt file using next_date() for
- * (8:45am data) with headers (these headers shd be avoided for sending) If
- * sampleNo <= 60 , then rf_cls_dd is the next_day already stored in rf_cls_dd,
- * if not, store the current date to rf_cls_dd See if the file is present for
- * the rf_cls_dd
+ *  If the sampleNo is = 0, create a new rf_close_dt file using next_date()
+ * for (8:45am data) with headers (these headers shd be avoided for sending)
+ * If sampleNo <= 60 , then rf_cls_dd is the next_day already stored in
+ * rf_cls_dd, if not, store the current date to rf_cls_dd See if the file is
+ * present for the rf_cls_dd
  *
- *  If file is present (yes), find the sampleNo of the last record using size()
- * and seek(). if (diff = current_sampleNo - last_recorded_sample_No) > 1, then
- * find (last_recorded_cumRF + current_cumRF)/diff and start appending the file.
- *                    else
- *                        do nothing // this means the SPIFFs file is present
- * and it is upto date for the current sample to be recorded. else (if file not
+ *  If file is present (yes), find the sampleNo of the last record using
+ * size() and seek(). if (diff = current_sampleNo - last_recorded_sample_No) >
+ * 1, then find (last_recorded_cumRF + current_cumRF)/diff and start appending
+ * the file. else do nothing // this means the SPIFFs file is present and it
+ * is upto date for the current sample to be recorded. else (if file not
  * present) // this means it is a new installation or the device switched on
  * after 8:45am or mid-day Store cumRF = 0 along with signalLvl = -111, do not
  * store this data into unsent_data.txt // -111 means data not available. just
@@ -2146,9 +2157,9 @@ void previous_date(int *Cd, int *Cm, int *Cy) {
  *  if unsent_data_sent > 1
  *    Find using size() and seek() to point to data not sent.
  *    Open a new file new_insent_data.txt
- *    Copy records from this point to this new file new_unsent_data.txt till EOF
- * of unsent_data.txt close unsent_data.txt close new_unsent_data.txt rename
- * unsent_data.txt to old_unsent_data.txt rename new_unsent_data.txt to
+ *    Copy records from this point to this new file new_unsent_data.txt till
+ * EOF of unsent_data.txt close unsent_data.txt close new_unsent_data.txt
+ * rename unsent_data.txt to old_unsent_data.txt rename new_unsent_data.txt to
  * unsent_data.txt . Delete old_unsent_data.txt
  *
  *  make scheduler_loop = 6 // it should go to sleep mode which is checked in

@@ -125,16 +125,12 @@ bool try_activate_apn(const char *apn) {
   debug("Trying APN: ");
   debugln(apn);
 
-  // Check if context 1 is already active with THIS apn
-  // (Optimization to avoid redundant re-activation)
-  flushSerialSIT();
-  SerialSIT.println("AT+CGACT?");
-  String cgact = waitForResponse("OK", 3000);
-  if (cgact.indexOf("+CGACT: 1,1") != -1) {
-    debugln("Context already active. Testing...");
-    // We'll proceed with activation just to be sure the APN matches
-  }
+  // 1. Force Deactivation for a clean state
+  SerialSIT.println("AT+CGACT=0,1");
+  waitForResponse("OK", 3000);
+  vTaskDelay(500 / portTICK_PERIOD_MS);
 
+  // 2. Set Context
   if (strcmp(apn, "jionet") == 0) {
     snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
              "AT+CGDCONT=1,\"IPV4V6\",\"%s\"", apn);
@@ -144,23 +140,67 @@ bool try_activate_apn(const char *apn) {
   }
   SerialSIT.println(gprs_xmit_buf);
   waitForResponse("OK", 3000);
+  vTaskDelay(500 / portTICK_PERIOD_MS);
 
+  // 3. Attempt Activation
   SerialSIT.println("AT+CGACT=1,1");
-  String response = waitForResponse("OK", 20000); // 20s for network
-  vTaskDelay(2000);
+  String response = waitForResponse("OK", 25000);
 
   if (response.indexOf("OK") != -1 && response.indexOf("ERROR") == -1) {
-    vTaskDelay(2000); // 2-second settling delay for network routing
+    vTaskDelay(2000); // Settling delay
 
-    // Verify assigned IP (Warms up the PDP context)
+    // 4. STRICT VERIFICATION: Assigned IP must be valid (not 0.0.0.0)
     SerialSIT.println("AT+CGPADDR=1");
-    String ip_resp = waitForResponse("OK", 2000);
+    String ip_resp = waitForResponse("OK", 3000);
     debug("Assigned IP: ");
     debugln(ip_resp);
 
-    debugln("APN Activation Success!");
+    // Look for a pattern like "+CGPADDR: 1,10.x.x.x" or similar.
+    // If it contains "0.0.0.0" or no digits at all, it's a failure.
+    if (ip_resp.indexOf("+CGPADDR: 1,") != -1 &&
+        ip_resp.indexOf("0.0.0.0") == -1 && ip_resp.indexOf(".") != -1) {
+      debugln("APN Activation Success (Valid IP)!");
+      return true;
+    } else {
+      debugln("APN Activation ERROR: No valid IP assigned (0.0.0.0).");
+      // Force cleanup
+      SerialSIT.println("AT+CGACT=0,1");
+      waitForResponse("OK", 1000);
+    }
+  }
+
+  debugln("APN Activation Failed.");
+  return false;
+}
+
+bool verify_bearer_or_recover() {
+  // Check assigned IP
+  SerialSIT.println("AT+CGPADDR=1");
+  String ip_resp = waitForResponse("OK", 3000);
+
+  // 1. If IP is valid, we are good.
+  if (ip_resp.indexOf("+CGPADDR: 1,") != -1 &&
+      ip_resp.indexOf("0.0.0.0") == -1 && ip_resp.indexOf(".") != -1) {
+    debugln("Bearer Check: OK (Valid IP)");
     return true;
   }
-  debugln("APN Activation Failed.");
+
+  // 2. Bearer is dead or invalid. Attempt recovery using stored APN.
+  debugf1("Bearer Check: FAILED (%s). Recovering...\n", ip_resp.c_str());
+
+  // Try cached APN search first
+  String ccid = get_ccid();
+  char stored_apn[20] = {0};
+  if (load_apn_config(ccid, stored_apn, sizeof(stored_apn))) {
+    if (try_activate_apn(stored_apn))
+      return true;
+  }
+
+  // Fallback to current runtime apn_str
+  if (strlen(apn_str) > 0) {
+    if (try_activate_apn(apn_str))
+      return true;
+  }
+
   return false;
 }

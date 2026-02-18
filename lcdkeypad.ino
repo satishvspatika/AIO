@@ -311,11 +311,6 @@ void lcdkeypad(void *pvParameters) {
         float temp_rf = (float)(rf_count.val) * RF_RESOLUTION;
         snprintf(rf_str, sizeof(rf_str), "%06.2f", temp_rf);
 
-        if (last_recorded_min % 15 == 0)
-          snprintf(last_logged, sizeof(last_logged), "%d-%d-%d,%d:%d",
-                   last_recorded_yy, last_recorded_mm, last_recorded_dd,
-                   last_recorded_hr, last_recorded_min);
-
         // Prepare the data for sending through ESPNOW
         if (cur_mode == eEditOff) {
           // Generate actual strings from variables
@@ -374,7 +369,8 @@ void lcdkeypad(void *pvParameters) {
         // 2. We have been on this page for > 500ms (prevent lag when scrolling
         // past)
         // 3. The refresh interval (2s) has passed
-        if (isLogPage && (millis() - log_page_entry_time > 500) &&
+        if (isLogPage && cur_mode == eEditOff &&
+            (millis() - log_page_entry_time > 500) &&
             (millis() - spiffs_check_timer > 2000)) {
           spiffs_check_timer = millis();
 
@@ -403,8 +399,20 @@ void lcdkeypad(void *pvParameters) {
           }
 
           char log_item_display[20];
-          snprintf(log_item_display, sizeof(log_item_display), "%s %02d:%02d",
-                   lcdActiveDate, last_recorded_hr, last_recorded_min);
+          // Default to current calendar date and normalized last record time
+          // for intuitive search
+          int show_hr = record_hr;
+          int show_min = record_min;
+          // Use last_recorded if available (it comes from file read at boot)
+          if (last_recorded_hr != 0 || last_recorded_min != 0 ||
+              last_recorded_dd != 0) {
+            show_hr = last_recorded_hr;
+            show_min = last_recorded_min;
+          }
+
+          snprintf(log_item_display, sizeof(log_item_display),
+                   "%04d%02d%02d %02d:%02d", current_year, current_month,
+                   current_day, show_hr, show_min);
 
           strcpy(ui_data[FLD_LOG].bottomRow, log_item_display); // LOG Page
         }
@@ -820,42 +828,10 @@ void lcdkeypad(void *pvParameters) {
           if (cur_mode == eEditOn) {
             // Special case for FLD_LOG to reset default time
             if (cur_fld_no == FLD_LOG) {
-              int p_min = (current_min / 15) * 15;
-              int p_hr = current_hour;
-              int d_day = rf_cls_dd;
-              int d_month = rf_cls_mm;
-              int d_year = rf_cls_yy;
-
-              if (d_day <= 0 || (d_day == current_day &&
-                                 (current_hour > 8 ||
-                                  (current_hour == 8 && current_min >= 30)))) {
-                if (d_day <= 0) {
-                  d_day = current_day;
-                  d_month = current_month;
-                  d_year = current_year;
-                }
-                if ((current_hour > 8) ||
-                    (current_hour == 8 && current_min >= 30)) {
-                  d_day++;
-                  int daysInMonth[] = {0,  31, 28, 31, 30, 31, 30,
-                                       31, 31, 30, 31, 30, 31};
-                  if ((d_year % 4 == 0 && d_year % 100 != 0) ||
-                      (d_year % 400 == 0))
-                    daysInMonth[2] = 29;
-                  if (d_day > daysInMonth[d_month]) {
-                    d_day = 1;
-                    d_month++;
-                    if (d_month > 12) {
-                      d_month = 1;
-                      d_year++;
-                    }
-                  }
-                }
-              }
               char defaultTimeStr[17];
               snprintf(defaultTimeStr, sizeof(defaultTimeStr),
-                       "%04d%02d%02d %02d:%02d", d_year, d_month, d_day, p_hr,
-                       p_min);
+                       "%04d%02d%02d %02d:%02d", current_year, current_month,
+                       current_day, record_hr, record_min);
               strcpy(ui_data[FLD_LOG].bottomRow, defaultTimeStr);
             } else if (cur_fld_no == FLD_RF_RES) {
               rf_res_edit_state = 0;
@@ -898,41 +874,10 @@ void lcdkeypad(void *pvParameters) {
             show_now = 1;
 
             if (cur_fld_no == FLD_LOG) {
-              int p_min = (current_min / 15) * 15;
-              int p_hr = current_hour;
-              int d_day = rf_cls_dd;
-              int d_month = rf_cls_mm;
-              int d_year = rf_cls_yy;
-
-              if (d_day <= 0 || (d_day == current_day &&
-                                 (current_hour > 8 ||
-                                  (current_hour == 8 && current_min >= 30)))) {
-                if (d_day <= 0) {
-                  d_day = current_day;
-                  d_month = current_month;
-                  d_year = current_year;
-                }
-                if ((current_hour > 8) ||
-                    (current_hour == 8 && current_min >= 30)) {
-                  d_day++;
-                  int daysInMonth[] = {0,  31, 28, 31, 30, 31, 30,
-                                       31, 31, 30, 31, 30, 31};
-                  if ((d_year % 4 == 0 && d_year % 100 != 0) ||
-                      (d_year % 400 == 0))
-                    daysInMonth[2] = 29;
-                  if (d_day > daysInMonth[d_month]) {
-                    d_day = 1;
-                    d_month++;
-                    if (d_month > 12) {
-                      d_month = 1;
-                      d_year++;
-                    }
-                  }
-                }
-              }
               char defStr[17];
-              snprintf(defStr, sizeof(defStr), "%04d%02d%02d %02d:%02d", d_year,
-                       d_month, d_day, p_hr, p_min);
+              snprintf(defStr, sizeof(defStr), "%04d%02d%02d %02d:%02d",
+                       current_year, current_month, current_day, record_hr,
+                       record_min);
               strcpy(ui_data[FLD_LOG].bottomRow, defStr);
             }
           }
@@ -1153,13 +1098,10 @@ void lcdkeypad(void *pvParameters) {
                   String trimmed = String(input_buf);
                   trimmed.trim();
 
-                  // Pad to exactly 6 characters (fixed record length
-                  // requirement)
-                  while (trimmed.length() < 6) {
-                    trimmed += " ";
-                  }
-                  if (trimmed.length() > 6) {
-                    trimmed = trimmed.substring(0, 6);
+                  // Requirement: if it's numeric "00XXXX", treat as "XXXX"
+                  if (trimmed.length() == 6 && isDigitStr(trimmed.c_str()) &&
+                      trimmed.startsWith("00")) {
+                    trimmed = trimmed.substring(2);
                   }
 
                   // Update to new station name
@@ -1389,12 +1331,163 @@ void lcdkeypad(void *pvParameters) {
                     strcpy(ui_data[FLD_DELETE_DATA].bottomRow, "Yes ?");
                   }
                 } else if (cur_fld_no == FLD_LOG) {
-                  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+                  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                     lcd.clear();
+                    lcd.setCursor(0, 0);
                     lcd.print("SEARCHING...");
-                    // Search Logic Placeholder to avoid file size limit
-                    // Logic is available in earlier versions if needed
                     xSemaphoreGive(i2cMutex);
+
+                    // dateTimeStr is "YYYYMMDD HH:MM"
+                    char dateTimeStr[17];
+                    strcpy(dateTimeStr, ui_data[FLD_LOG].bottomRow);
+
+                    char year_s[5], month_s[3], day_s[3], hour_s[3], min_s[3];
+                    strncpy(year_s, dateTimeStr, 4);
+                    year_s[4] = 0;
+                    strncpy(month_s, dateTimeStr + 4, 2);
+                    month_s[2] = 0;
+                    strncpy(day_s, dateTimeStr + 6, 2);
+                    day_s[2] = 0;
+                    strncpy(hour_s, dateTimeStr + 9, 2);
+                    hour_s[2] = 0;
+                    strncpy(min_s, dateTimeStr + 12, 2);
+                    min_s[2] = 0;
+
+                    int hr = atoi(hour_s);
+                    int mn = atoi(min_s);
+                    int dy = atoi(day_s);
+                    int mo = atoi(month_s);
+                    int yr = atoi(year_s);
+
+                    int sample = (hr * 4 + mn / 15 + 61) % 96;
+
+                    // RF Day Logic: Samples 0-60 (8:45 AM to Midnight) belong
+                    // to the NEXT day's file
+                    if (sample <= 60) {
+                      int no_of_days[13] = {0,  31, 28, 31, 30, 31, 30,
+                                            31, 31, 30, 31, 30, 31};
+                      dy++;
+                      int days_in_mo = no_of_days[mo];
+                      if (mo == 2 && yr % 4 == 0)
+                        days_in_mo = 29;
+                      if (dy > days_in_mo) {
+                        dy = 1;
+                        mo++;
+                        if (mo > 12) {
+                          mo = 1;
+                          yr++;
+                        }
+                      }
+                    }
+
+                    char log_filename[50];
+                    snprintf(log_filename, sizeof(log_filename),
+                             "/%s_%04d%02d%02d.txt", station_name, yr, mo, dy);
+
+                    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
+                        pdTRUE) {
+                      lcd.clear();
+                      if (!SPIFFS.exists(log_filename)) {
+                        // Fallback check for legacy "00" prefix or normalized
+                        // station ID
+                        char fallback_filename[50];
+                        if (strncmp(station_name, "00", 2) == 0) {
+                          snprintf(fallback_filename, sizeof(fallback_filename),
+                                   "/%s_%04d%02d%02d.txt", station_name + 2, yr,
+                                   mo, dy);
+                        } else {
+                          snprintf(fallback_filename, sizeof(fallback_filename),
+                                   "/00%s_%04d%02d%02d.txt", station_name, yr,
+                                   mo, dy);
+                        }
+
+                        if (SPIFFS.exists(fallback_filename)) {
+                          strcpy(log_filename, fallback_filename);
+                        } else {
+                          lcd.print("NO LOG FILE");
+                          debug("Search Failed. Searched for: ");
+                          debug(log_filename);
+                          debug(" and fallback: ");
+                          debugln(fallback_filename);
+                          xSemaphoreGive(i2cMutex);
+                          vTaskDelay(2000);
+                          return;
+                        }
+                      }
+
+                      File f = SPIFFS.open(log_filename, FILE_READ);
+                      if (!f) {
+                        lcd.print("OPEN FAILED");
+                      } else {
+                        char line_buf[100];
+                        bool found = false;
+                        while (f.available()) {
+                          String l = f.readStringUntil('\n');
+                          int sNo = l.substring(0, 2).toInt();
+                          if (sNo == sample) {
+                            strcpy(line_buf, l.c_str());
+                            found = true;
+                            break;
+                          }
+                        }
+                        f.close();
+
+                        if (!found) {
+                          lcd.print("DATA NOT FOUND");
+                        } else {
+                          // SYSTEM 0:
+                          // 01,2026-02-18,11:30,000.00,000.00,-111,04.2
+                          // SYSTEM 1:
+                          // 11,2026-02-18,11:30,25.32,38.42,00.38,105,-055,04.2
+                          // SYSTEM 2:
+                          // 11,2026-02-18,11:30,001.00,25.32,38.42,00.10,105,-055,04.2
+
+                          float rf = 0, temp = 0, hum = 0, aws = 0;
+                          int wd = 0;
+                          char dbuf1[16], dbuf2[16];
+
+                          if (SYSTEM == 0) {
+                            float instRF, cumRF;
+                            // sample,date,time,inst,cum
+                            // format: %*d,YYYY-MM-DD,HH:MM,inst,cum
+                            sscanf(line_buf, "%*d,%*[^,],%*[^,],%f,%f", &instRF,
+                                   &cumRF);
+                            lcd.setCursor(0, 0);
+                            lcd.print("CUM_RF:");
+                            lcd.setCursor(0, 1);
+                            lcd.print(cumRF, 2);
+                          } else if (SYSTEM == 1) {
+                            // format: sample,date,time,temp,hum,aws,wd
+                            sscanf(line_buf, "%*d,%*[^,],%*[^,],%f,%f,%f,%d",
+                                   &temp, &hum, &aws, &wd);
+                            lcd.setCursor(0, 0);
+                            snprintf(dbuf1, sizeof(dbuf1), "T:%-4.1f H:%-4.1f",
+                                     temp, hum);
+                            lcd.print(dbuf1);
+                            lcd.setCursor(0, 1);
+                            snprintf(dbuf2, sizeof(dbuf2), "AWS:%-4.1f WD:%-3d",
+                                     aws, wd);
+                            lcd.print(dbuf2);
+                          } else if (SYSTEM == 2) {
+                            // format: sample,date,time,cumrf,temp,hum,aws,wd
+                            sscanf(line_buf, "%*d,%*[^,],%*[^,],%f,%f,%f,%f,%d",
+                                   &rf, &temp, &hum, &aws, &wd);
+                            lcd.setCursor(0, 0);
+                            // Optimized for 16 chars: RF:XX.X T:XX.X H:XX
+                            snprintf(dbuf1, sizeof(dbuf1),
+                                     "RF:%-3.1fT:%-4.1fH:%-2.0f", rf, temp,
+                                     hum);
+                            lcd.print(dbuf1);
+                            lcd.setCursor(0, 1);
+                            snprintf(dbuf2, sizeof(dbuf2), "AWS:%-4.1f WD:%-3d",
+                                     aws, wd);
+                            lcd.print(dbuf2);
+                          }
+                        }
+                      }
+                    }
+                    xSemaphoreGive(i2cMutex);
+                    vTaskDelay(5000); // Allow user to read
                   }
                 }
               }

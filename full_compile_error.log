@@ -1,0 +1,115 @@
+WARNING: library LiquidCrystal I2C claims to run on avr architecture(s) and may be incompatible with your current board which runs on esp32 architecture(s).
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino: In function 'void scheduler(void*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:1817:15: error: 'file2' was not declared in this scope; did you mean 'file1'?
+ 1817 |           if (file2)
+      |               ^~~~~
+      |               file1
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:2014:7: error: jump to label 'TRIGGER_HTTP'
+ 2014 |       TRIGGER_HTTP: // Label for duplicate/invalid skip jump
+      |       ^~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:686:16: note:   from here
+  686 |           goto TRIGGER_HTTP;
+      |                ^~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:1173:14: note:   crosses initialization of 'fs::File sd1'
+ 1173 |         File sd1;
+      |              ^~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:1169:14: note:   crosses initialization of 'fs::File file1'
+ 1169 |         File file1 = SPIFFS.open(cur_file, FILE_APPEND);
+      |              ^~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:2014:7: error: jump to label 'TRIGGER_HTTP'
+ 2014 |       TRIGGER_HTTP: // Label for duplicate/invalid skip jump
+      |       ^~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:511:14: note:   from here
+  511 |         goto TRIGGER_HTTP;
+      |              ^~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:1173:14: note:   crosses initialization of 'fs::File sd1'
+ 1173 |         File sd1;
+      |              ^~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:1169:14: note:   crosses initialization of 'fs::File file1'
+ 1169 |         File file1 = SPIFFS.open(cur_file, FILE_APPEND);
+      |              ^~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:2014:7: error: jump to label 'TRIGGER_HTTP'
+ 2014 |       TRIGGER_HTTP: // Label for duplicate/invalid skip jump
+      |       ^~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:259:16: note:   from here
+  259 |           goto TRIGGER_HTTP;
+      |                ^~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:1173:14: note:   crosses initialization of 'fs::File sd1'
+ 1173 |         File sd1;
+      |              ^~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:1169:14: note:   crosses initialization of 'fs::File file1'
+ 1169 |         File file1 = SPIFFS.open(cur_file, FILE_APPEND);
+      |              ^~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:2058:45: error: a function-definition is not allowed here before '{' token
+ 2058 |   void next_date(int *Nd, int *Nm, int *Ny) {
+      |                                             ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:2079:49: error: a function-definition is not allowed here before '{' token
+ 2079 |   void previous_date(int *Cd, int *Cm, int *Cy) {
+      |                                                 ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/stackMonitor.ino:5:40: error: a function-definition is not allowed here before '{' token
+    5 | void stackMonitor(void * pvParameters) {
+      |                                        ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/tempHum.ino:17:34: error: a function-definition is not allowed here before '{' token
+   17 | void tempHum(void *pvParameters) {
+      |                                  ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/tempHum.ino:72:38: error: a function-definition is not allowed here before '{' token
+   72 | uint16_t readRegister16(uint8_t reg) {
+      |                                      ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/tempHum.ino:102:16: error: a function-definition is not allowed here before '{' token
+  102 | bool initHDC() {
+      |                ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/tempHum.ino:138:45: error: a function-definition is not allowed here before '{' token
+  138 | bool readHDC(float &tempC, float &humidity) {
+      |                                             ^
+In file included from /Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/ESPmDNS/src/ESPmDNS.h:48,
+                 from /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/webServer.ino:2:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/espressif__mdns/include/mdns.h:10:8: error: expected unqualified-id before string constant
+   10 | extern "C" {
+      |        ^~~
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/ESPmDNS/src/ESPmDNS.h:125:3: error: 'mdns_result_t' does not name a type
+  125 |   mdns_result_t *results;
+      |   ^~~~~~~~~~~~~
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/ESPmDNS/src/ESPmDNS.h:126:3: error: 'mdns_result_t' does not name a type
+  126 |   mdns_result_t *_getResult(int idx);
+      |   ^~~~~~~~~~~~~
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/ESPmDNS/src/ESPmDNS.h:127:3: error: 'mdns_txt_item_t' does not name a type
+  127 |   mdns_txt_item_t *_getResultTxt(int idx, int txtIdx);
+      |   ^~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/windDirection.ino:3:40: error: a function-definition is not allowed here before '{' token
+    3 | void windDirection(void *pvParameters) {
+      |                                        ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/windSpeed.ino:4:36: error: a function-definition is not allowed here before '{' token
+    4 | void windSpeed(void *pvParameters) {
+      |                                    ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/windSpeed.ino:73:2: error: expected '}' at end of input
+   73 | }
+      |  ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:3:36: note: to match this '{'
+    3 | void scheduler(void *pvParameters) {
+      |                                    ^
+Multiple libraries were found for "WiFi.h"
+  Used: /Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi
+  Not used: /Users/satishkripavasan/Documents/Arduino/libraries/WiFiEspAT
+
+[92mUsed library[0m      [92mVersion[0m [90mPath[0m
+[93mKeypad[0m            3.1.1   [90m/Users/satishkripavasan/Documents/Arduino/libraries/Keypad-master[0m
+[93mLiquidCrystal I2C[0m 1.1.2   [90m/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C[0m
+[93mWire[0m              3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Wire[0m
+[93mPreferences[0m       3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Preferences[0m
+[93mRTClib[0m            2.1.4   [90m/Users/satishkripavasan/Documents/Arduino/libraries/RTClib[0m
+[93mAdafruit BusIO[0m    1.9.3   [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_BusIO[0m
+[93mSD[0m                3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SD[0m
+[93mFS[0m                3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/FS[0m
+[93mSPI[0m               3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SPI[0m
+[93mSPIFFS[0m            3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SPIFFS[0m
+[93mUpdate[0m            3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Update[0m
+[93mWebServer[0m         3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WebServer[0m
+[93mNetworking[0m        3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Network[0m
+[93mWiFi[0m              3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi[0m
+[93mHULP[0m              2.0.1   [90m/Users/satishkripavasan/Documents/Arduino/libraries/HULP-master[0m
+[93mESPmDNS[0m           3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/ESPmDNS[0m
+[93mHash[0m              3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Hash[0m
+
+[92mUsed platform[0m [92mVersion[0m [90mPath[0m
+[93mesp32:esp32[0m   3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6[0m
+Error during build: exit status 1
