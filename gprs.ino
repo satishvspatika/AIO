@@ -522,7 +522,8 @@ void prepare_data_and_send() {
 
       // 1. Full Reset of HTTP stack to clear jams
       SerialSIT.println("AT+HTTPTERM");
-      vTaskDelay(500);
+      vTaskDelay(1000);
+      flushSerialSIT(); // Clear any pending +CGEV or +HTTPACTION notifications
 
       // 2. POWER-SAFE RECOVERY: Only reset the Data Bearer on persistent errors
       // (Iter 2+)
@@ -534,13 +535,21 @@ void prepare_data_and_send() {
         vTaskDelay(1000);
         SerialSIT.println("AT+CGACT=1,1");
         waitForResponse("OK", 5000);
+        flushSerialSIT();
       }
 
       // 3. RE-INITIALIZE HTTP Stack
       SerialSIT.println("AT+HTTPINIT");
       if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
-        debugln("HTTP INIT Failed in retry. Skipping iteration.");
-        continue;
+        debugln("HTTP INIT Failed in retry. Attempting TERM then INIT one last "
+                "time...");
+        SerialSIT.println("AT+HTTPTERM");
+        vTaskDelay(500);
+        SerialSIT.println("AT+HTTPINIT");
+        if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
+          debugln("HTTP INIT Hard Failure. Skipping iteration.");
+          continue;
+        }
       }
 
       // 4. RESTORE Parameters (URL, CID, Content Type)
@@ -3010,10 +3019,17 @@ bool send_health_report(bool useJitter) {
 
   // 3. HTTP Action
   SerialSIT.println("AT+HTTPTERM");
-  waitForResponse("OK", 500);
-  vTaskDelay(200 / portTICK_PERIOD_MS);
+  waitForResponse("OK", 1000);
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  flushSerialSIT();
   SerialSIT.println("AT+HTTPINIT");
-  waitForResponse("OK", 500);
+  if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
+    debugln("[Health] HTTP INIT Failed. Trying clean TERM...");
+    SerialSIT.println("AT+HTTPTERM");
+    vTaskDelay(500);
+    SerialSIT.println("AT+HTTPINIT");
+    waitForResponse("OK", 3000);
+  }
 
   SerialSIT.print("AT+HTTPPARA=\"CID\",");
   SerialSIT.println(active_cid != 0 ? active_cid : 1);

@@ -87,28 +87,41 @@ String get_ccid() {
   String ccid = "";
 
   // Attempt 1: Try AT+CICCID (Primary for A7672)
-  vTaskDelay(100);
+  flushSerialSIT();
+  vTaskDelay(200);
   SerialSIT.println("AT+CICCID");
-  String resp = waitForResponse("OK", 3000);
+  String resp =
+      waitForResponse("+CICCID:", 3000); // Wait for the specific header
   debug("Raw CICCID Resp: ");
   debugln(resp);
 
-  for (int i = 0; i < resp.length(); i++) {
-    if (isdigit(resp[i]))
-      ccid += resp[i];
+  int startIdx = resp.indexOf("+CICCID:");
+  if (startIdx != -1) {
+    for (int i = startIdx + 8; i < resp.length(); i++) {
+      if (isdigit(resp[i]))
+        ccid += resp[i];
+      else if (ccid.length() > 0)
+        break;
+    }
   }
 
   // Attempt 2: Fallback to AT+CCID
   if (ccid.length() < 10) {
     ccid = ""; // Reset
-    vTaskDelay(100);
+    flushSerialSIT();
+    vTaskDelay(200);
     SerialSIT.println("AT+CCID");
-    resp = waitForResponse("OK", 3000);
+    resp = waitForResponse("+CCID:", 3000);
     debug("Raw CCID Resp: ");
     debugln(resp);
-    for (int i = 0; i < resp.length(); i++) {
-      if (isdigit(resp[i]))
-        ccid += resp[i];
+    startIdx = resp.indexOf("+CCID:");
+    if (startIdx != -1) {
+      for (int i = startIdx + 6; i < resp.length(); i++) {
+        if (isdigit(resp[i]))
+          ccid += resp[i];
+        else if (ccid.length() > 0)
+          break;
+      }
     }
   }
 
