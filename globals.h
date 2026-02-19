@@ -46,7 +46,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.34"
+#define FIRMWARE_VERSION "5.35"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
@@ -281,6 +281,13 @@ RTC_DATA_ATTR char carrier[20] = "";
 RTC_DATA_ATTR char sim_number[20] = "NA";
 RTC_DATA_ATTR char cached_iccid[25] = ""; // To detect SIM change
 RTC_DATA_ATTR bool isLTE = false;         // Track if on LTE vs GSM fallback
+
+// Persistent Sensor Diagnostics (survive deep sleep) // RTC RAM variables now
+// at globals.h
+RTC_DATA_ATTR float prev_15min_temp = INITIAL_PREV_TEMP;
+RTC_DATA_ATTR float prev_15min_hum = INITIAL_PREV_HUM;
+RTC_DATA_ATTR int temp_same_count = 0;
+RTC_DATA_ATTR int hum_same_count = 0;
 
 // Field Diagnostic Insights (v5.2) - Tracked across resets
 RTC_DATA_ATTR int diag_reg_time_total = 0; // Cumulative seconds

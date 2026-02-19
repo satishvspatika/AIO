@@ -143,11 +143,7 @@ void scheduler(void *pvParameters) {
   //      esp_task_wdt_reset();
   //      vTaskDelay(100);
   //    }
-  // --- ADD THIS BLOCK ---
-  static float prev_15min_temp = INITIAL_PREV_TEMP;
-  static float prev_15min_hum = INITIAL_PREV_HUM;
-  static int temp_same_count = 0;
-  static int hum_same_count = 0;
+  // RTC RAM variables now at globals.h
 
   // Initialize sensor strings to prevent empty fields in records
   strcpy(inst_temp, "000.0");

@@ -1228,6 +1228,8 @@ void send_ftp_file(char *fileName) {
         debugln(response1);
 
         if (response1.indexOf("+CFTPSPUTFILE: 0") != -1) {
+          diag_consecutive_reg_fails =
+              0; // RESET counter on any successful data upload
 
           if (sampleNo == 3 || sampleNo == 7) { // If Daily FTP is successful,
                                                 // remove the dailyftp file.
@@ -1468,6 +1470,22 @@ void store_current_unsent_data() {
 
 #if SYSTEM == 0
   snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
+
+  // SAFETY: If the file is getting too large (>150KB), SPIFFS appends can get
+  // slow or buggy. 150KB = ~2500 records. If we haven't sent by then, something
+  // is very wrong.
+  if (SPIFFS.exists(unsent_file)) {
+    File f_check = SPIFFS.open(unsent_file, FILE_READ);
+    if (f_check.size() > 150000) {
+      f_check.close();
+      debugln("[SPIFFS] unsent.txt exceeds 150KB. Truncating to prevent "
+              "filesystem jam.");
+      SPIFFS.remove(unsent_file);
+    } else {
+      f_check.close();
+    }
+  }
+
   File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
   if (file2) {
     file2.print(finalStringBuffer);
@@ -1485,6 +1503,19 @@ void store_current_unsent_data() {
 
 #if (SYSTEM == 1 || SYSTEM == 2)
   snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
+
+  // SAFETY: Hard limit on backlog file size
+  if (SPIFFS.exists(ftpunsent_file)) {
+    File f_check = SPIFFS.open(ftpunsent_file, FILE_READ);
+    if (f_check.size() > 150000) {
+      f_check.close();
+      debugln("[SPIFFS] ftpunsent.txt exceeds 150KB. Truncating.");
+      SPIFFS.remove(ftpunsent_file);
+    } else {
+      f_check.close();
+    }
+  }
+
   File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
   if (ftpfile2) {
     ftpfile2.print(finalStringBuffer);

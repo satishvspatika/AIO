@@ -90,14 +90,20 @@ String get_ccid() {
   flushSerialSIT();
   vTaskDelay(200);
   SerialSIT.println("AT+CICCID");
-  String resp =
-      waitForResponse("+CICCID:", 3000); // Wait for the specific header
+  String resp = waitForResponse("OK", 3000);
   debug("Raw CICCID Resp: ");
   debugln(resp);
 
+  // Flexible Header Check: Look for either +CICCID: or +ICCID:
   int startIdx = resp.indexOf("+CICCID:");
+  int headerLen = 8;
+  if (startIdx == -1) {
+    startIdx = resp.indexOf("+ICCID:");
+    headerLen = 7;
+  }
+
   if (startIdx != -1) {
-    for (int i = startIdx + 8; i < resp.length(); i++) {
+    for (int i = startIdx + headerLen; i < resp.length(); i++) {
       if (isdigit(resp[i]))
         ccid += resp[i];
       else if (ccid.length() > 0)
