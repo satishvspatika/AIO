@@ -938,62 +938,106 @@ void scheduler(void *pvParameters) {
               //                                                        append_text[len]
               //                                                        = '\0';
 
-            } else { // if it is not current sample all the filled up data will
-                     // have -112 as signal strength
-
+            } else { // Gap Filling with Linear Interpolation
               float target_number, min_val, max_val;
-              float deviation = 1.0f; // This means the random number will be
-                                      // between 9.0 and 11.0
-
               char fill_inst_temp[7], fill_inst_hum[7], fill_avg_wind_speed[7],
-                  fill_inst_wd[7];
-              float fill_temp, fill_hum, fill_AvgWS;
+                  fill_inst_wd[7], fill_cum_rf[10], fill_ftpcum_rf[10];
+              float fill_temp, fill_hum, fill_AvgWS, fill_crf;
               int fill_WD;
               int fill_sig;
 
-              fill_temp = (last_instTemp + temperature) / 2;
-              if ((fill_temp > 1) && (fill_temp < 32)) {
-                min_val = fill_temp - 0.3;
-                max_val = fill_temp + 0.3;
-                target_number =
-                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
-                snprintf(fill_inst_temp, sizeof(fill_inst_temp), "%05.1f",
-                         float(target_number));
-              } else {
-                snprintf(fill_inst_temp, sizeof(fill_inst_temp), "%05.1f",
-                         float(fill_temp));
-              }
+              int total_gaps = sampleNo - last_sampleNo;
+              int gap_idx = q - last_sampleNo;
 
-              fill_hum = (last_instHum + humidity) / 2;
-              if (fill_hum < 0)
-                fill_hum = 0; // Add this
-              if (fill_hum > 100)
-                fill_hum = 100; // Add this
-              if ((fill_hum > 3) && (fill_hum < 97)) {
-                min_val = fill_hum - 2.0;
-                max_val = fill_hum + 2.0;
-                target_number =
-                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
-                snprintf(fill_inst_hum, sizeof(fill_inst_hum), "%05.1f",
-                         float(target_number));
-              } else {
-                snprintf(fill_inst_hum, sizeof(fill_inst_hum), "%05.1f",
-                         float(fill_hum));
-              }
+              // IQ Start: Ensure we don't interpolate from 0.0 if it looks like
+              // an error
+              // IQ Start: Ensure we don't interpolate from 0.0 or -999.0 if it
+              // looks like an error
+              float start_t = (last_instTemp < 1.0 && temperature > 5.0)
+                                  ? temperature
+                                  : last_instTemp;
+              float start_h = (last_instHum < 1.0 && humidity > 5.0)
+                                  ? humidity
+                                  : last_instHum;
+              float start_ws = (last_AvgWS < 0.0 || last_AvgWS > 50.0)
+                                   ? cur_avg_wind_speed
+                                   : last_AvgWS;
+              float start_crf = (last_cumRF < 0.0)
+                                    ? new_current_cumRF - rf_value
+                                    : last_cumRF;
 
-              fill_AvgWS = (last_AvgWS + cur_avg_wind_speed) / 2;
-              if (fill_AvgWS > 0.6) {
-                min_val = fill_AvgWS - 0.4;
-                max_val = fill_AvgWS + 0.4;
-                target_number =
-                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
-                snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
-                         "%05.2f", float(target_number));
-              } else {
-                snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
-                         "%05.2f", float(fill_AvgWS));
-              }
+              // Temperature Interpolation
+              fill_temp =
+                  start_t + ((temperature - start_t) * gap_idx / total_gaps);
+              // Clamp to realistic range 10-35 C
+              if (fill_temp < 10.0)
+                fill_temp = 10.0 + (random(0, 10) / 10.0);
+              if (fill_temp > 35.0)
+                fill_temp = 35.0 - (random(0, 10) / 10.0);
+              // Add Jitter
+              min_val = fill_temp - 0.2;
+              max_val = fill_temp + 0.2;
+              target_number =
+                  ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+              snprintf(fill_inst_temp, sizeof(fill_inst_temp), "%05.1f",
+                       target_number);
 
+              // Humidity Interpolation
+              fill_hum =
+                  start_h + ((humidity - start_h) * gap_idx / total_gaps);
+              if (fill_hum < 10.0)
+                fill_hum = 10.0 + random(0, 5);
+              if (fill_hum > 100.0)
+                fill_hum = 100.0;
+              min_val = fill_hum - 1.5;
+              max_val = fill_hum + 1.5;
+              target_number =
+                  ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+              if (target_number > 100.0)
+                target_number = 100.0;
+              if (target_number < 10.0)
+                target_number = 10.0;
+              snprintf(fill_inst_hum, sizeof(fill_inst_hum), "%05.1f",
+                       target_number);
+
+              // Wind Speed Interpolation
+              fill_AvgWS = start_ws + ((cur_avg_wind_speed - start_ws) *
+                                       gap_idx / total_gaps);
+              // Wind speed can be 0 or 0.1 to 2.2
+              if (fill_AvgWS < 0.05) {
+                fill_AvgWS = 0.0;
+              } else {
+                min_val = fill_AvgWS - 0.2;
+                max_val = fill_AvgWS + 0.2;
+                fill_AvgWS =
+                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+                if (fill_AvgWS < 0.1)
+                  fill_AvgWS = 0.1;
+                if (fill_AvgWS > 2.2)
+                  fill_AvgWS = 2.2;
+              }
+              snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
+                       "%05.2f", fill_AvgWS);
+
+#if (SYSTEM == 0 || SYSTEM == 2)
+              // Cumulative Rainfall Interpolation with Resolution Rounding
+              if (total_gaps > 0) {
+                fill_crf = start_crf + ((new_current_cumRF - start_crf) *
+                                        gap_idx / total_gaps);
+              } else {
+                fill_crf = new_current_cumRF;
+              }
+              // Round to nearest RF_RESOLUTION (e.g. 0.5 or 0.25)
+              if (RF_RESOLUTION > 0) {
+                fill_crf =
+                    floor((fill_crf / RF_RESOLUTION) + 0.5) * RF_RESOLUTION;
+              }
+              snprintf(fill_cum_rf, sizeof(fill_cum_rf), "%06.2f", fill_crf);
+              snprintf(fill_ftpcum_rf, sizeof(fill_ftpcum_rf), "%05.2f",
+                       fill_crf);
+#endif
+
+              // Wind Direction (Simple random around current/last midpoint)
               if ((windDir > WIND_DIR_MIN_VALID) &&
                   (windDir < WIND_DIR_MAX_VALID)) {
                 fill_WD = random(windDir - WIND_DIR_RANGE,
@@ -1003,95 +1047,82 @@ void scheduler(void *pvParameters) {
                 snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", windDir);
               }
 
-              fill_sig =
-                  (rand() % (FILL_SIG_MAX - FILL_SIG_MIN + 1)) + FILL_SIG_MIN;
+              // Calculate fill_sig as negative for consistent formatting
+              fill_sig = -((rand() % (FILL_SIG_MAX - FILL_SIG_MIN + 1)) +
+                           FILL_SIG_MIN);
 
 // RF
 #if SYSTEM == 0
               snprintf(
                   append_text, sizeof(append_text),
-                  "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,-%03d,%04.1f\r\n", q,
-                  temp_year, temp_month, temp_day, temp_hr, temp_min, cum_rf,
-                  fill_sig,
-                  bat_val); // inst_rf is 0 for the filled up ones
-                            // till the current sample
+                  "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,%04d,%04.1f\r\n", q,
+                  temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  fill_cum_rf, fill_sig, bat_val);
 #endif
 
 // TWS
-// ftp - battery is having 5 digits but windspeed is having 4
-// http unsent - batttery is having 4 and windpeed is having 5 ... overall
-// datapacket size remains same
-// 00,    2024-05-21,08:45,00.00,00.00,00.00,000,-111,00.0
-// 003655;2025-08-18,19:45;+21.5;099.9;00.0;023;-079;13.13
 #if SYSTEM == 1
-              // SPIFFS Format: sample,date,temp,hum,ws,wd,sig,bat
               snprintf(
                   append_text, sizeof(append_text),
-                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%d,%04.1f\r\n", q,
-                  temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
+                  q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
                   fill_inst_wd, SIGNAL_STRENGTH_GAP_FILLED, bat_val);
 
-              // FTP Format: stn;date;temp;hum;ws;wd;sig;bat
-              snprintf(ftpappend_text, sizeof(ftpappend_text),
-                       "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%d;%04.1f\r\n",
-                       stnId, temp_year, temp_month, temp_day, temp_hr,
-                       temp_min, fill_inst_temp, fill_inst_hum,
-                       fill_avg_wind_speed, fill_inst_wd,
-                       SIGNAL_STRENGTH_GAP_FILLED, bat_val);
+              snprintf(
+                  ftpappend_text, sizeof(ftpappend_text),
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
+                  stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
+                  fill_inst_wd, SIGNAL_STRENGTH_GAP_FILLED, bat_val);
 #endif
 
 // TWS-RF
 #if SYSTEM == 2
-              // SPIFFS Format: sample,date,cumrf,temp,hum,ws,wd,sig,bat
               snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%d,%04."
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04."
                        "1f\r\n",
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                       cum_rf, fill_inst_temp, fill_inst_hum,
+                       fill_cum_rf, fill_inst_temp, fill_inst_hum,
                        fill_avg_wind_speed, fill_inst_wd,
                        SIGNAL_STRENGTH_GAP_FILLED, bat_val);
 
-              // FTP Format: stn;date;cumrf;temp;hum;ws;wd;sig;bat
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
-                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%d;%04.1f\r\n",
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                  ftpcum_rf, fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
-                  fill_inst_wd, SIGNAL_STRENGTH_GAP_FILLED, bat_val);
-#endif
-
-              //                                                        len =
-              //                                                        strlen(append_text);
-              //                                                        append_text[len]
-              //                                                        = '\0';
-
-#if FILLGAP == 1
-              debug("APPENDED TEXT to unsent.txt is : ");
-              debugln(append_text);
-#if SYSTEM == 0
-              if (unsent)
-                unsent.print(append_text); // unsent data only ... data gaps
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2)
-              if (ftpunsent)
-                ftpunsent.print(ftpappend_text);
-#endif
-              debug("GAPS FOUND IN THE SPIFFS FILE WILL BE APPENDED TO UNSENT "
-                    "FILE ...SampleNo: ");
-              debugln(q);
-#else
-              debug("GAPS FOUND IN THE SPIFFS FILE BUT WILL NOT BE APPENDED TO "
-                    "UNSENT FILE ...SampleNo: ");
-              debugln(q);
+                  fill_ftpcum_rf, fill_inst_temp, fill_inst_hum,
+                  fill_avg_wind_speed, fill_inst_wd, SIGNAL_STRENGTH_GAP_FILLED,
+                  bat_val);
 #endif
             }
+
+            //                                                        len =
+            //                                                        strlen(append_text);
+            //                                                        append_text[len]
+            //                                                        = '\0';
+
+            debugln(q);
 
             file2.print(append_text);
             if (sd_card_ok && sd2) {
               sd2.print(append_text);
             }
-          }
+#if FILLGAP == 1
+            if (q < sampleNo) { // Only append GAPS (not current) to unsent
+              debug("APPENDED TEXT to unsent.txt is : ");
+              debugln(append_text);
+#if SYSTEM == 0
+              if (unsent)
+                unsent.print(append_text);
+#endif
+#if (SYSTEM == 1 || SYSTEM == 2)
+              if (ftpunsent)
+                ftpunsent.print(ftpappend_text);
+#endif
+            }
+#endif
+          } // End of q loop
 
 #if FILLGAP == 1
 #if SYSTEM == 0
@@ -1122,25 +1153,26 @@ void scheduler(void *pvParameters) {
 // TWS
 #if SYSTEM == 1
           snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%d,%04.1f\r\n",
+                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
                    sampleNo, current_year, current_month, current_day,
                    record_hr, record_min, inst_temp, inst_hum, avg_wind_speed,
                    inst_wd, signal_strength, bat_val);
           snprintf(ftpappend_text, sizeof(ftpappend_text),
-                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%d;%04.1f\r\n",
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
                    record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                    signal_strength, bat_val);
 #endif
 
 #if SYSTEM == 2
-          snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%d,%04.1f\r\n",
-                   sampleNo, current_year, current_month, current_day,
-                   record_hr, record_min, cum_rf, inst_temp, inst_hum,
-                   avg_wind_speed, inst_wd, signal_strength, bat_val);
+          snprintf(
+              append_text, sizeof(append_text),
+              "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
+              sampleNo, current_year, current_month, current_day, record_hr,
+              record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+              signal_strength, bat_val);
           snprintf(ftpappend_text, sizeof(ftpappend_text),
-                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%d;%04.1f\r\n",
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
                    record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
                    inst_wd, signal_strength, bat_val);
@@ -1242,14 +1274,14 @@ void scheduler(void *pvParameters) {
           cum_rf[6] = 0;
           snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(rf_value));
           ftpcum_rf[5] = 0; // Add this
-          snprintf(
-              append_text, sizeof(append_text),
-              "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
-              sampleNo, current_year, current_month, current_day, record_hr,
-              record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-              signal_strength,
-              bat_val); // inst_rf is cum_rf as it is the same
-                        // for 8:45 data //iter10
+          snprintf(append_text, sizeof(append_text),
+                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04."
+                   "1f\r\n",
+                   sampleNo, current_year, current_month, current_day,
+                   record_hr, record_min, cum_rf, inst_temp, inst_hum,
+                   avg_wind_speed, inst_wd, signal_strength,
+                   bat_val); // inst_rf is cum_rf as it is the same
+                             // for 8:45 data //iter10
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
@@ -1341,24 +1373,25 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 0
             snprintf(
                 append_text, sizeof(append_text),
-                "%02d,%04d-%02d-%02d,%02d:%02d,000.00,000.00,%d,%04.1f\r\n", i,
-                temp_year, temp_month, temp_day, temp_hr, temp_min,
+                "%02d,%04d-%02d-%02d,%02d:%02d,000.00,000.00,%04d,%04.1f\r\n",
+                i, temp_year, temp_month, temp_day, temp_hr, temp_min,
                 SIGNAL_STRENGTH_NO_DATA, bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
-                     "%s;%04d-%02d-%02d,%02d:%02d;00.00;00.00;%d;%04.1f\r\n",
+                     "%s;%04d-%02d-%02d,%02d:%02d;00.00;00.00;%04d;%04.1f\r\n",
                      stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
 #endif
 
 // TWS
 #if SYSTEM == 1
-            snprintf(append_text, sizeof(append_text),
-                     "%02d,%04d-%02d-%02d,%02d:%02d,000.0,000.0,00.00,000,%d,%"
-                     "04.1f\r\n",
-                     i, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                     SIGNAL_STRENGTH_NO_DATA, bat_val);
+            snprintf(
+                append_text, sizeof(append_text),
+                "%02d,%04d-%02d-%02d,%02d:%02d,000.0,000.0,00.00,000,%04d,%"
+                "04.1f\r\n",
+                i, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                SIGNAL_STRENGTH_NO_DATA, bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
-                     "%s;%04d-%02d-%02d,%02d:%02d;000.0;000.0;00.00;000;%d;%"
+                     "%s;%04d-%02d-%02d,%02d:%02d;000.0;000.0;00.00;000;%04d;%"
                      "04.1f\r\n",
                      stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
@@ -1368,12 +1401,12 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 2
             snprintf(append_text, sizeof(append_text),
                      "%02d,%04d-%02d-%02d,%02d:%02d,000.00,000.0,000.0,00.00,"
-                     "000,%d,%04.1f\r\n",
+                     "000,%04d,%04.1f\r\n",
                      i, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
                      "%s;%04d-%02d-%02d,%02d:%02d;000.00;000.0;000.0;00.00;000;"
-                     "%d;%04.1f\r\n",
+                     "%04d;%04.1f\r\n",
                      stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
 #endif
@@ -1444,7 +1477,7 @@ void scheduler(void *pvParameters) {
           if (sd_card_ok && sd1) {
             sd1.print(append_text);
           }
-          debugln();
+          // debugln(); // Removed extra debugln()
           debugln(append_text);
 
           // Reset Daily Diagnostics at start of new rainfall day (8:45 AM)
@@ -1492,8 +1525,8 @@ void scheduler(void *pvParameters) {
 #endif
 
           debugln();
-          debug("SEARCHING FOR ...  ");
-          debugln(temp_file);
+          // debug("SEARCHING FOR ...  ");
+          // debugln(temp_file);
 
           if (SPIFFS.exists(temp_file)) {
             //                                                        String
@@ -1686,47 +1719,152 @@ void scheduler(void *pvParameters) {
                 debugln(temp_min);
               }
 
+              // Linear Interpolation for Rollover
+              float target_number, min_val, max_val;
+              char fill_inst_temp[7], fill_inst_hum[7], fill_avg_wind_speed[7],
+                  fill_inst_wd[7], fill_cum_rf[10], fill_ftpcum_rf[10];
+              float fill_temp, fill_hum, fill_AvgWS, fill_crf;
+              int fill_WD;
+
+              // total_gaps = approximate distance to today's current sample
+              // across the rollover
+              int total_gaps_roll =
+                  (MAX_SAMPLE_NO - last_sampleNo) + sampleNo + 1;
+              int gap_idx_roll = q - last_sampleNo;
+
+              // IQ Start: Ensure we don't interpolate from 0.0 or -999.0 if it
+              // looks like an error
+              float start_t = (last_instTemp < 1.0 && temperature > 5.0)
+                                  ? temperature
+                                  : last_instTemp;
+              float start_h = (last_instHum < 1.0 && humidity > 5.0)
+                                  ? humidity
+                                  : last_instHum;
+              float start_ws = (last_AvgWS < 0.0 || last_AvgWS > 50.0)
+                                   ? cur_avg_wind_speed
+                                   : last_AvgWS;
+              float start_crf = (last_cumRF < 0.0)
+                                    ? new_current_cumRF - rf_value
+                                    : last_cumRF;
+
+              // Temperature Interpolation
+              fill_temp = start_t + ((temperature - start_t) * gap_idx_roll /
+                                     total_gaps_roll);
+              if (fill_temp < 10.0)
+                fill_temp = 10.0 + (random(0, 10) / 10.0);
+              if (fill_temp > 35.0)
+                fill_temp = 35.0 - (random(0, 10) / 10.0);
+              min_val = fill_temp - 0.2;
+              max_val = fill_temp + 0.2;
+              target_number =
+                  ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+              snprintf(fill_inst_temp, sizeof(fill_inst_temp), "%05.1f",
+                       target_number);
+
+              // Humidity Interpolation
+              fill_hum = start_h + ((humidity - start_h) * gap_idx_roll /
+                                    total_gaps_roll);
+              if (fill_hum < 10.0)
+                fill_hum = 10.0 + random(0, 5);
+              if (fill_hum > 100.0)
+                fill_hum = 100.0;
+              min_val = fill_hum - 1.5;
+              max_val = fill_hum + 1.5;
+              target_number =
+                  ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+              if (target_number > 100.0)
+                target_number = 100.0;
+              if (target_number < 10.0)
+                target_number = 10.0;
+              snprintf(fill_inst_hum, sizeof(fill_inst_hum), "%05.1f",
+                       target_number);
+
+              // Wind Speed Interpolation
+              fill_AvgWS = start_ws + ((cur_avg_wind_speed - start_ws) *
+                                       gap_idx_roll / total_gaps_roll);
+              if (fill_AvgWS < 0.05) {
+                fill_AvgWS = 0.0;
+              } else {
+                min_val = fill_AvgWS - 0.2;
+                max_val = fill_AvgWS + 0.2;
+                fill_AvgWS =
+                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+                if (fill_AvgWS < 0.1)
+                  fill_AvgWS = 0.1;
+                if (fill_AvgWS > 2.2)
+                  fill_AvgWS = 2.2;
+              }
+              snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
+                       "%05.2f", fill_AvgWS);
+
+              // Cumulative Rainfall Interpolation with Rounding
+              fill_crf = start_crf + ((new_current_cumRF - start_crf) *
+                                      gap_idx_roll / total_gaps_roll);
+              if (RF_RESOLUTION > 0) {
+                fill_crf =
+                    floor((fill_crf / RF_RESOLUTION) + 0.5) * RF_RESOLUTION;
+              }
+              snprintf(fill_cum_rf, sizeof(fill_cum_rf), "%06.2f", fill_crf);
+              snprintf(fill_ftpcum_rf, sizeof(fill_ftpcum_rf), "%05.2f",
+                       fill_crf);
+
+              // Wind Direction
+              if ((windDir > WIND_DIR_MIN_VALID) &&
+                  (windDir < WIND_DIR_MAX_VALID)) {
+                fill_WD = random(windDir - WIND_DIR_RANGE,
+                                 windDir + WIND_DIR_RANGE + 1);
+                snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", fill_WD);
+              } else {
+                snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", windDir);
+              }
+
 // RF
 #if SYSTEM == 0
-              snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,%d,%04.1f\r\n",
-                       q, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                       cum_rf, SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+              snprintf(
+                  append_text, sizeof(append_text),
+                  "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,%04d,%04.1f\r\n", q,
+                  temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  fill_cum_rf, SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
 #endif
 
               // TWS
               // 003655;2025-08-18,19:45;+21.5;099.9;00.0;023;-079;13.13
 
 #if SYSTEM == 1
-              snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,000.0,000.0,00.00,000,%"
-                       "d,%04.1f\r\n",
-                       q, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                       SIGNAL_STRENGTH_PREV_DAY_GAP,
-                       bat_val); // ALL_NEW_REVIEW1
               snprintf(
-                  ftpappend_text, sizeof(ftpappend_text),
-                  "%s;%04d-%02d-%02d,%02d:%02d;000.0;000.0;00.00;000;%04d;%"
-                  "04.1f\r\n",
-                  stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                  SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+                  append_text, sizeof(append_text),
+                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
+                  q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
+                  fill_inst_wd, SIGNAL_STRENGTH_PREV_DAY_GAP,
+                  bat_val); // ALL_NEW_REVIEW1
+              snprintf(ftpappend_text, sizeof(ftpappend_text),
+                       "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%"
+                       "04.1f\r\n",
+                       stnId, temp_year, temp_month, temp_day, temp_hr,
+                       temp_min, fill_inst_temp, fill_inst_hum,
+                       fill_avg_wind_speed, fill_inst_wd,
+                       SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
 
 #endif
 
 // TWS-RF
 #if SYSTEM == 2
               snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,000.00,000.0,000.0,00.00,"
-                       "000,%d,%04.1f\r\n",
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04."
+                       "1f\r\n",
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                       fill_cum_rf, fill_inst_temp, fill_inst_hum,
+                       fill_avg_wind_speed, fill_inst_wd,
                        SIGNAL_STRENGTH_PREV_DAY_GAP,
                        bat_val); // ALL_NEW_REVIEW1
-              snprintf(
-                  ftpappend_text, sizeof(ftpappend_text),
-                  "%s;%04d-%02d-%02d,%02d:%02d;00.00;000.0;000.0;00.00;000;"
-                  "%04d;%04.1f\r\n",
-                  stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                  SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+              snprintf(ftpappend_text, sizeof(ftpappend_text),
+                       "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;"
+                       "%04.1f\r\n",
+                       stnId, temp_year, temp_month, temp_day, temp_hr,
+                       temp_min, fill_ftpcum_rf, fill_inst_temp, fill_inst_hum,
+                       fill_avg_wind_speed, fill_inst_wd,
+                       SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
 #endif
 
               //                                                              len
@@ -1943,11 +2081,13 @@ void scheduler(void *pvParameters) {
           debug(" | Size: ");
           debugln(fsize);
           if (fsize > 0) {
-            int seekPos = (fsize > 150) ? fsize - 150 : 0;
+            int seekPos =
+                (fsize > (record_length * 5)) ? fsize - (record_length * 5) : 0;
             file3.seek(seekPos);
             String tail = file3.readString();
             debugln("   ... [Tail Content] ...");
-            debugln(tail);
+            Serial.print(tail); // Burst print
+            debugln("-----------------------");
           }
           file3.close();
         } else {
@@ -1970,11 +2110,14 @@ void scheduler(void *pvParameters) {
           debug(" | Size: ");
           debugln(fsize);
           if (fsize > 0) {
-            int seekPos = (fsize > 150) ? fsize - 150 : 0;
+            int seekPos = (sd3.size() > (record_length * 5))
+                              ? sd3.size() - (record_length * 5)
+                              : 0;
             sd3.seek(seekPos);
             String tail = sd3.readString();
             debugln("   ... [Tail Content] ...");
-            debugln(tail);
+            Serial.print(tail); // Burst print
+            debugln("-----------------------");
           }
           sd3.close();
         } else {
@@ -1986,40 +2129,33 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 0
       snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
       if (SPIFFS.exists(unsent_file)) {
-        debug("[FILE] Unsent Detected: ");
-        debugln(unsent_file);
-        {
-          File file4 = SPIFFS.open(unsent_file, FILE_READ);
-          if (file4) {
-            debugln("--- UNSENT DATA START ---");
-            String content = file4.readString();
-            debugln(content);
-            debugln("--- UNSENT DATA END ---");
-            file4.close();
+        File file4 = SPIFFS.open(unsent_file, FILE_READ);
+        if (file4) {
+          String content = file4.readString();
+          file4.close();
+          if (content.length() > 0) {
+            debugln("\n--- UNSENT DATA START ---");
+            Serial.print(content); // Burst print to prevent interleaving
+            debugln("--- UNSENT DATA END ---\n");
           }
         }
-        debugln();
       }
 #endif
 
 #if (SYSTEM == 1 || SYSTEM == 2)
       snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
       if (SPIFFS.exists(ftpunsent_file)) {
-        debug("[FILE] Unsent Detected: ");
-        debugln(ftpunsent_file);
-        {
-          File file4 = SPIFFS.open(ftpunsent_file, FILE_READ);
-          if (file4) {
-            debugln("--- UNSENT DATA START ---");
-            String content = file4.readString();
-            debugln(content);
-            debugln("--- UNSENT DATA END ---");
-            file4.close();
+        File file4 = SPIFFS.open(ftpunsent_file, FILE_READ);
+        if (file4) {
+          String content = file4.readString();
+          file4.close();
+          if (content.length() > 0) {
+            debugln("\n--- UNSENT DATA START ---");
+            Serial.print(content); // Burst print to prevent interleaving
+            debugln("--- UNSENT DATA END ---\n");
           }
         }
-        debugln();
       }
-
 #endif
 #endif
 

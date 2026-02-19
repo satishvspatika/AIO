@@ -55,7 +55,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
 
 #define DEFAULT_RF_RESOLUTION 0.5
 float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
-#define ENABLE_CALIB_TEST 1 // 1 to enable CALIB TEST in UI, 0 for Field only
+#define ENABLE_CALIB_TEST 0 // 1 to enable CALIB TEST in UI, 0 for Field only
 
 // 1. SYSTEM ==0 and UNIT as KSNDMC_TRG or BIHAR_TRG or SPATIKA_GEN
 // 2. SYSTEM ==1 and UNIT as KSNDMC_TWS
@@ -280,6 +280,7 @@ char reg_status[16];
 RTC_DATA_ATTR char carrier[20] = "";
 RTC_DATA_ATTR char sim_number[20] = "NA";
 RTC_DATA_ATTR char cached_iccid[25] = ""; // To detect SIM change
+RTC_DATA_ATTR bool isLTE = false;         // Track if on LTE vs GSM fallback
 
 // Field Diagnostic Insights (v5.2) - Tracked across resets
 RTC_DATA_ATTR int diag_reg_time_total = 0; // Cumulative seconds
@@ -291,6 +292,8 @@ RTC_DATA_ATTR int diag_reg_count_total_cycles = 0;
 RTC_DATA_ATTR uint32_t diag_total_uptime_hrs = 0;
 RTC_DATA_ATTR unsigned long diag_last_health_millis = 0;
 RTC_DATA_ATTR bool diag_rtc_battery_ok = true;
+RTC_DATA_ATTR int diag_consecutive_reg_fails =
+    0; // Tracks slots with NO registration
 
 // Health Report Retry Logic (persists across deep sleep)
 RTC_DATA_ATTR int health_last_sent_hour =

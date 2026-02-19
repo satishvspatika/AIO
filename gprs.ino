@@ -179,17 +179,31 @@ void gprs(void *pvParameters) {
           // QUAD-DAILY HEALTH DISCIPLINE (User Request: 01:00, 07:00, 13:00,
           // 19:00) RETRY LOGIC: Try only once per scheduled hour slot to avoid
           // data overhead.
-          bool is_health_time = (current_hour == 1 || current_hour == 7 ||
-                                 current_hour == 13 || current_hour == 19);
+          bool is_health_time =
+              (record_min == 0) && (current_hour == 1 || current_hour == 7 ||
+                                    current_hour == 13 || current_hour == 19);
+
+          // BOOT PERSISTENCE: If RTC RAM was cleared (reboot), check SPIFFS
+          if (health_last_sent_hour == -1 && is_health_time) {
+            File h = SPIFFS.open("/health_sent.txt", FILE_READ);
+            if (h) {
+              health_last_sent_hour = h.readString().toInt();
+              h.close();
+            }
+          }
 
           if (is_health_time && health_last_sent_hour != current_hour) {
             debugf1("[Health] Scheduled window %02d:00 detected. Attempting "
                     "send...\n",
                     current_hour);
 
-            // Mark as attempted immediately to prevent retries in subsequent
-            // 15m slots of the same hour, as per user request.
+            // Mark as attempted immediately in both RTC and SPIFFS
             health_last_sent_hour = current_hour;
+            File h = SPIFFS.open("/health_sent.txt", FILE_WRITE);
+            if (h) {
+              h.print(current_hour);
+              h.close();
+            }
 
             bool success = send_health_report(true);
             if (success) {
@@ -506,18 +520,35 @@ void prepare_data_and_send() {
         continue; // Try again in next iteration
       }
 
-      // 2. RESET HTTP stack
+      // 1. Full Reset of HTTP stack to clear jams
       SerialSIT.println("AT+HTTPTERM");
       vTaskDelay(500);
-      SerialSIT.println("AT+HTTPINIT");
-      waitForResponse("OK", 5000);
 
-      // Restore Parameters in correct order (CID before URL)
+      // 2. POWER-SAFE RECOVERY: Only reset the Data Bearer on persistent errors
+      // (Iter 2+)
+      if (unsent_counter >= 2) {
+        debugln("[RECOVERY] HTTP Error persistent. Resetting Data Bearer "
+                "(CGACT)...");
+        SerialSIT.println("AT+CGACT=0,1");
+        waitForResponse("OK", 3000);
+        vTaskDelay(1000);
+        SerialSIT.println("AT+CGACT=1,1");
+        waitForResponse("OK", 5000);
+      }
+
+      // 3. RE-INITIALIZE HTTP Stack
+      SerialSIT.println("AT+HTTPINIT");
+      if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
+        debugln("HTTP INIT Failed in retry. Skipping iteration.");
+        continue;
+      }
+
+      // 4. RESTORE Parameters (URL, CID, Content Type)
       SerialSIT.print("AT+HTTPPARA=\"CID\",");
       SerialSIT.println(active_cid);
       waitForResponse("OK", 1000);
 
-      SerialSIT.println(httpPostRequest);
+      SerialSIT.println(httpPostRequest); // The URL command
       waitForResponse("OK", 1000);
 
       if (!strcmp(httpSet[http_no].Format, "json")) {
@@ -527,171 +558,186 @@ void prepare_data_and_send() {
             "AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"");
       }
       waitForResponse("OK", 1000);
+
       SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
       waitForResponse("OK", 1000);
 
-      // Flush Serial buffer before retry action
-      while (SerialSIT.available())
-        SerialSIT.read();
-
+      // 5. SEND DATA
       success_count = send_at_cmd_data(http_data, charArray);
       vTaskDelay(200);
 
       if (success_count == 1) {
-        debug("Success in sending current data .. Attempt : ");
-        debugln(unsent_counter);
-
-        break;
+        diag_consecutive_reg_fails = 0; // RESET counter on any success
+        if (unsent_counter > 0) {
+          debug("Success in sending current data .. Attempt : ");
+          debugln(unsent_counter);
+        } else {
+          debugln("Success in sending the current data in 1st attempt");
+        }
+        break; // Exit retry loop on success
       }
-    }
-  } else if (success_count == 1) {
-    debugln("Success in sending the current data in 1st attempt");
-  }
+    } // End of retry for loop
 
-  if (unsent_counter == 4) { // Complete failure in sending current data
+    if (unsent_counter >= 4 && success_count == 0) { // Complete failure
+      if (data_mode == eCurrentData) {
+        char current_record[record_length + 1];
+        debugln();
+        debugln("CURRENT DATA : Retries exceeded limit... Storing to backlog.");
 
-    if (data_mode == eCurrentData) {
-      char current_record[record_length + 1];
-
-      debugln();
-      debugln("CURRENT DATA : Retries exceeded limit... Going to store the "
-              "current data and go to deep sleep mode ...");
-      debugln();
+        debugln();
 #if SYSTEM == 0 // RF
-      snprintf(current_record, sizeof(current_record),
-               "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%04.1f\r\n",
-               temp_sampleNo, temp_year, temp_month, temp_day, temp_hr,
-               temp_min, sample_inst_rf, sample_cum_rf, temp_sig, temp_bat);
+        snprintf(current_record, sizeof(current_record),
+                 "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%04.1f\r\n",
+                 temp_sampleNo, temp_year, temp_month, temp_day, temp_hr,
+                 temp_min, sample_inst_rf, sample_cum_rf, temp_sig, temp_bat);
 #endif
 #if SYSTEM == 1 // TWS
-      snprintf(current_record, sizeof(current_record),
-               "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
-               temp_sampleNo, temp_year, temp_month, temp_day, temp_hr,
-               temp_min, sample_temp, sample_hum, sample_avgWS, sample_WD,
-               temp_sig, temp_bat);
-      char stnId[16];
-      if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
-        snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
-      } else {
-        strcpy(stnId, ftp_station);
-      }
+        snprintf(current_record, sizeof(current_record),
+                 "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
+                 temp_sampleNo, temp_year, temp_month, temp_day, temp_hr,
+                 temp_min, sample_temp, sample_hum, sample_avgWS, sample_WD,
+                 temp_sig, temp_bat);
+        char stnId[16];
+        if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
+          snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
+        } else {
+          strcpy(stnId, ftp_station);
+        }
 
-      snprintf(ftpappend_text, sizeof(ftpappend_text),
-               "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n", stnId,
-               temp_year, temp_month, temp_day, temp_hr, temp_min, sample_temp,
-               sample_hum, sample_avgWS, sample_WD, temp_sig, bat_val);
-      debug("ftpappend_text is : ");
-      debugln(ftpappend_text);
+        snprintf(ftpappend_text, sizeof(ftpappend_text),
+                 "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
+                 stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                 sample_temp, sample_hum, sample_avgWS, sample_WD, temp_sig,
+                 temp_bat);
+        debug("ftpappend_text is : ");
+        debugln(ftpappend_text);
 #endif
 #if SYSTEM == 2 // TWS-RF
-      snprintf(current_record, sizeof(current_record),
-               "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
-               temp_sampleNo, temp_year, temp_month, temp_day, temp_hr,
-               temp_min, sample_cum_rf, sample_temp, sample_hum, sample_avgWS,
-               sample_WD, temp_sig, temp_bat);
-      char stnId[16];
-      if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
-        snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
-      } else {
-        strcpy(stnId, ftp_station);
-      }
+        snprintf(current_record, sizeof(current_record),
+                 "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
+                 temp_sampleNo, temp_year, temp_month, temp_day, temp_hr,
+                 temp_min, sample_cum_rf, sample_temp, sample_hum, sample_avgWS,
+                 sample_WD, temp_sig, temp_bat);
+        char stnId[16];
+        if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
+          snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
+        } else {
+          strcpy(stnId, ftp_station);
+        }
 
-      snprintf(ftpappend_text, sizeof(ftpappend_text),
-               "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
-               stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
-               ftpsample_cum_rf, sample_temp, sample_hum, sample_avgWS,
-               sample_WD, temp_sig, bat_val);
-      debug("ftpappend_text is : ");
-      debugln(ftpappend_text);
+        snprintf(ftpappend_text, sizeof(ftpappend_text),
+                 "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
+                 stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                 ftpsample_cum_rf, sample_temp, sample_hum, sample_avgWS,
+                 sample_WD, temp_sig, temp_bat);
+        debug("ftpappend_text is : ");
+        debugln(ftpappend_text);
 #endif
-      vTaskDelay(100);
+        vTaskDelay(100);
 
-      char finalBuffer[100]; // AG1 [record_length + 1];
+        // SMART RECOVERY (User Request):
+        // If data fails for 4 consecutive slots (~1 hour), trigger a Full Modem
+        // Reset.
+        diag_consecutive_reg_fails++;
+        if (diag_consecutive_reg_fails >= 4) {
+          debugln("[RECOVERY] 4 Consecutive Slot Failures. Triggering Full "
+                  "Modem Reset...");
+          SerialSIT.println("AT+CFUN=1,1");
+          vTaskDelay(5000);
+          diag_consecutive_reg_fails =
+              0; // Reset counter - next slot is a fresh start
+        }
+
+        char finalBuffer[100]; // AG1 [record_length + 1];
 
 #if SYSTEM == 0
-      size_t textLength =
-          strlen(current_record); // Get the length of the C-style string
-      if (textLength > record_length) {
-        debugln("WARNING: Text length exceeds maximum allowed characters. "
-                "Truncating...");
-        strncpy(finalBuffer, current_record, record_length);
-        finalBuffer[record_length] = '\0'; // Manually null-terminate
-      } else {
-        strcpy(finalBuffer, current_record); // strcpy handles null termination
-      }
-      snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-      File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
-      if (file2) {
-        file2.print(finalBuffer);
-        file2.close();
-      } else {
-        debugln("Failed to open unsent.txt for appending");
-      }
+        size_t textLength =
+            strlen(current_record); // Get the length of the C-style string
+        if (textLength > record_length) {
+          debugln("WARNING: Text length exceeds maximum allowed characters. "
+                  "Truncating...");
+          strncpy(finalBuffer, current_record, record_length);
+          finalBuffer[record_length] = '\0'; // Manually null-terminate
+        } else {
+          strcpy(finalBuffer,
+                 current_record); // strcpy handles null termination
+        }
+        snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
+        File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
+        if (file2) {
+          file2.print(finalBuffer);
+          file2.close();
+        } else {
+          debugln("Failed to open unsent.txt for appending");
+        }
 #endif
 
 #if SYSTEM == 1
-      // 001881;2025-11-07,20:30;000.0;000.0;00.00;000;-083;04.2
-      // 55+2 = 57 is the record length
-      size_t textLength =
-          strlen(ftpappend_text); // Get the length of the C-style string
-      debugln();
-      debug("Text length is ");
-      debugln(textLength);
-      if (textLength > 57) {
-        debugln("WARNING: Text length exceeds maximum allowed characters. "
-                "Truncating...");
-        strncpy(finalBuffer, ftpappend_text, 57);
-        finalBuffer[57] = '\0'; // Manually null-terminate
-      } else {
-        strcpy(finalBuffer, ftpappend_text); // strcpy handles null termination
-      }
-      debugln("Record written into /ftpunsent.txt is as below : ");
-      debugln(finalBuffer);
-      snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-      File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-      if (ftpfile2) {
-        ftpfile2.print(finalBuffer);
-        ftpfile2.close();
-      } else {
-        debugln("Failed to open ftpunsent.txt for appending (TWS)");
-      }
+        // 001881;2025-11-07,20:30;000.0;000.0;00.00;000;-083;04.2
+        // 55+2 = 57 is the record length
+        size_t textLength =
+            strlen(ftpappend_text); // Get the length of the C-style string
+        debugln();
+        debug("Text length is ");
+        debugln(textLength);
+        if (textLength > 57) {
+          debugln("WARNING: Text length exceeds maximum allowed characters. "
+                  "Truncating...");
+          strncpy(finalBuffer, ftpappend_text, 57);
+          finalBuffer[57] = '\0'; // Manually null-terminate
+        } else {
+          strcpy(finalBuffer,
+                 ftpappend_text); // strcpy handles null termination
+        }
+        debugln("Record written into /ftpunsent.txt is as below : ");
+        debugln(finalBuffer);
+        snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
+        File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+        if (ftpfile2) {
+          ftpfile2.print(finalBuffer);
+          ftpfile2.close();
+        } else {
+          debugln("Failed to open ftpunsent.txt for appending (TWS)");
+        }
 #endif
 
 #if SYSTEM == 2
-      // 001881;2024-05-21,08:45;000.0;000.0;000.0;00.00;000;-111;04.2
-      // 61+2 is the record_length
-      size_t textLength =
-          strlen(ftpappend_text); // Get the length of the C-style string
-      debugln();
-      debug("Text length is ");
-      debugln(textLength);
+        // 001881;2024-05-21,08:45;000.0;000.0;000.0;00.00;000;-111;04.2
+        // 61+2 is the record_length
+        size_t textLength =
+            strlen(ftpappend_text); // Get the length of the C-style string
+        debugln();
+        debug("Text length is ");
+        debugln(textLength);
 
-      if (textLength > 63) {
-        debugln("WARNING: Text length exceeds maximum allowed characters. "
-                "Truncating...");
-        strncpy(finalBuffer, ftpappend_text, 63);
-        finalBuffer[63] = '\0'; // Manually null-terminate
-      } else {
-        strcpy(finalBuffer, ftpappend_text); // strcpy handles null termination
-      }
-      debugln("Record written into /ftpunsent.txt is as below : ");
-      debugln(finalBuffer);
-      snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-      File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-      if (ftpfile2) {
-        ftpfile2.print(finalBuffer);
-        ftpfile2.close();
-      } else {
-        debugln("Failed to open ftpunsent.txt for appending (TWS-RF)");
-      }
+        if (textLength > 63) {
+          debugln("WARNING: Text length exceeds maximum allowed characters. "
+                  "Truncating...");
+          strncpy(finalBuffer, ftpappend_text, 63);
+          finalBuffer[63] = '\0'; // Manually null-terminate
+        } else {
+          strcpy(finalBuffer,
+                 ftpappend_text); // strcpy handles null termination
+        }
+        debugln("Record written into /ftpunsent.txt is as below : ");
+        debugln(finalBuffer);
+        snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
+        File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+        if (ftpfile2) {
+          ftpfile2.print(finalBuffer);
+          ftpfile2.close();
+        } else {
+          debugln("Failed to open ftpunsent.txt for appending (TWS-RF)");
+        }
 #endif
 
-      debugln("Current/Closing data not sent to unsent.txt is ");
-      debugln(current_record);
+        debugln("Current/Closing data not sent to unsent.txt is ");
+        debugln(current_record);
 
-    } // for unsent data it is there in send_http_data()
-  }
-}
+      } // closes if(data_mode == eCurrentData)
+    }   // closes if(unsent_counter >= 4 && success_count == 0)
+  }     // closes if(success_count == 0)
+} // closes prepare_data_and_send()
 
 void send_http_data() {
 
@@ -801,14 +847,6 @@ void send_http_data() {
     /*
      * SENDING 8:30 as well as UNSENT DATA IF FILE EXISTS ...
      */
-    snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-    debugln(unsent_file);
-
-    if (sampleNo == 1 || sampleNo == 3) {
-      data_mode = eClosingData;
-      prepare_data_and_send();
-    }
-
     if (SPIFFS.exists(unsent_file)) {
       File f = SPIFFS.open(unsent_file, FILE_READ);
       size_t fsize = f.size();
@@ -874,7 +912,8 @@ void send_http_data() {
             debugln();
             debugln("UNSENT DATA : Retries exceeded limit ...");
             debugln();
-            debug("unsent_pointer_count in unsent_pointer.txt is updated to ");
+            debug("unsent_pointer_count in unsent_pointer.txt is updated "
+                  "to ");
             debugln(unsent_pointer_count);
             File unsent_count = SPIFFS.open("/unsent_pointer.txt", FILE_WRITE);
             if (!unsent_count) {
@@ -916,8 +955,8 @@ void send_http_data() {
 #endif
 
 #if (SYSTEM == 1 || SYSTEM == 2)
-    // For FTP systems, always attempt to send unsent data if we have signal,
-    // even if HTTP fails or is not used.
+    // For FTP systems, always attempt to send unsent data if we have
+    // signal, even if HTTP fails or is not used.
     if (gprs_mode == eGprsSignalOk) {
       send_unsent_data();
     }
@@ -935,6 +974,11 @@ void send_http_data() {
 #endif
   }
 
+  // Ensure HTTP session is closed to free up modem/network resources
+  SerialSIT.println("AT+HTTPTERM");
+  waitForResponse("OK", 2000);
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
+
   //  CHECK FOR SMS
   sync_mode = eSMSStart;
   send_sms();
@@ -948,17 +992,11 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
   char fileName[50];
 
 #if SYSTEM == 1
-  // TWS_003655_250818_220000.kwd
-  // 003655;2025-08-18,19:45;+21.5;099.9;00.0;023;-079;13.13
-  // 00,2024-05-21,08:45,00.00,00.00,00.00,000,-111,00.0
   snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd",
            ftp_station, ftp_year, rf_cls_mm, rf_cls_dd, record_hr, record_min);
 #endif
 
 #if SYSTEM == 2
-  // TWSRF_000266_250818_170000.kwd
-  // 000266;2025-08-18,09:30;000.0;+23.1;097.0;00.1;349;-079;13.35
-  // 00,2024-05-21,08:45,0000.0,00.00,00.00,00.00,000,-111,00.0
   if (strstr(UNIT, "SPATIKA_GEN"))
     snprintf(fileName, sizeof(fileName),
              "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", ftp_station, ftp_year,
@@ -969,15 +1007,13 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
              rf_cls_mm, rf_cls_dd, record_hr, record_min);
 #endif
 
-  // 9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,0,1,2,3,4,5,6,7,8 -- Unsent
-  // data
-  // Aggressive Recovery: If it's a TWS/ADDON system and we have a backlog,
-  // try to send it regardless of sample number if it's currently an hourly mark
-  // OR if we just recovered from a signal failure.
-  bool is_hourly_mark = (sampleNo % 4 == 1) || (sampleNo == 95);
+  // Hourly Backlog Recovery
+  bool is_hourly_mark = (record_min == 0);
+  bool is_daily_slot = (sampleNo == 3 || sampleNo == 7);
 
-  // Hourly Backlog Recovery (Reduced frequency from 15m to 1h per USER request)
-  if (is_hourly_mark && SPIFFS.exists(ftpunsent_file)) {
+  // SKIP BACKLOG in Daily Slots: Prevents simultaneous FTP sessions that
+  // cause server locks
+  if (!is_daily_slot && is_hourly_mark && SPIFFS.exists(ftpunsent_file)) {
     debugln();
     debug("FTP Unsent check - File present: ");
     debugln(SPIFFS.exists(ftpunsent_file));
@@ -991,19 +1027,35 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
     debugln("Entering time bound FTP loop");
     snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
     if (SPIFFS.exists(ftpunsent_file)) {
-      copyFile(ftpunsent_file, fileName); // copyFile(source,destination);
-      debug("Retrieved file is ");
-      debugln(fileName);
-      esp_task_wdt_reset();
-      send_ftp_file(fileName);
+      debugln("[FTP] Checking Registration before backlog upload...");
+      // Re-verify registration status to prevent "Ghost Logins" on dropped
+      // links
+      get_registration();
+      if (gprs_mode == eGprsSignalOk) {
+        debugln("[FTP] Registration OK. Verifying IP (PDP Context)...");
+        get_a7672s(); // Ensure IP is assigned and context is ready
+
+        // STABILIZATION: Wait 10s for the tower to stabilize data
+        // throughput
+        debugln("[FTP] Assigned IP. Waiting 10s for tower stabilization...");
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
+        esp_task_wdt_reset();
+
+        copyFile(ftpunsent_file, fileName); // copyFile(source,destination);
+        debug("Retrieved file is ");
+        debugln(fileName);
+        esp_task_wdt_reset();
+        send_ftp_file(fileName);
+      } else {
+        debugln("[FTP] Skip: Registration lost. Retrying next hour.");
+      }
     } else {
       debugln("No ftpunsent.txt found. Skipping FTP.");
     }
   }
 
-  if (sampleNo == 3 ||
-      sampleNo ==
-          7) { // send previous day's data (96 data) if available through FTP
+  if (sampleNo == 3 || sampleNo == 7) { // send previous day's data (96
+                                        // data) if available through FTP
     if (current_hour == 8 && current_min > 45 && current_min < 59) {
       // Cleanup at start of 8:45 AM cycle
       snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
@@ -1023,6 +1075,23 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
     snprintf(temp_file, sizeof(temp_file), "/dailyftp_%04d%02d%02d.txt",
              previous_rfclose_year, previous_rfclose_month,
              previous_rfclose_day);
+
+    snprintf(temp_file, sizeof(temp_file), "/dailyftp_%04d%02d%02d.txt",
+             previous_rfclose_year, previous_rfclose_month,
+             previous_rfclose_day);
+
+    // Maintain original standard filename
+    int ftp_year = rf_cls_yy % 100;
+#if SYSTEM == 1
+    snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd",
+             ftp_station, ftp_year, rf_cls_mm, rf_cls_dd, record_hr,
+             record_min);
+#endif
+#if SYSTEM == 2
+    snprintf(fileName, sizeof(fileName),
+             "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", ftp_station, ftp_year,
+             rf_cls_mm, rf_cls_dd, record_hr, record_min);
+#endif
 
     if (SPIFFS.exists(temp_file)) {
       copyFile(temp_file, fileName); // copyFile(source,destination);
@@ -1052,7 +1121,8 @@ void send_ftp_file(char *fileName) {
   int success;
   const char *response_char;
   int total_no_of_bytes;
-  int s = 0, fileSize = 0; // Fixed shadowed and uninitialized local variables
+  int s = 0,
+      fileSize = 0; // Fixed shadowed and uninitialized local variables
   String content;
   String response1;
   int result = -1;
@@ -1150,9 +1220,8 @@ void send_ftp_file(char *fileName) {
 
         if (response1.indexOf("+CFTPSPUTFILE: 0") != -1) {
 
-          if (sampleNo == 3 ||
-              sampleNo ==
-                  7) { // If Daily FTP is successful, remove the dailyftp file.
+          if (sampleNo == 3 || sampleNo == 7) { // If Daily FTP is successful,
+                                                // remove the dailyftp file.
             SPIFFS.remove(temp_file);
             debug("Removed Daily FTP file: ");
             debugln(temp_file);
@@ -1191,7 +1260,6 @@ void send_ftp_file(char *fileName) {
             file = root.openNextFile();
           }
           file.close();
-          SPIFFS.remove(ftpunsent_file);
 
           // Success Cleanup: Remove the temporary file from cellular module
           // storage
@@ -1202,8 +1270,8 @@ void send_ftp_file(char *fileName) {
         } else {
           debugln("Did not succeed in FTP ..");
           // Failed: Clean up ONLY the temporary .swd/.kwd copies.
-          // DO NOT delete 'temp_file' or 'ftpunsent_file' (Source Data) so we
-          // can retry later.
+          // DO NOT delete 'temp_file' or 'ftpunsent_file' (Source Data) so
+          // we can retry later.
 
           // Remove the *.kwd / .swd files.
           const char *pattern;
@@ -1329,7 +1397,8 @@ int send_at_cmd_data(char *payload, String charArray) {
   debugln(); //    debugln("Length is " + String(i));
   vTaskDelay(100);
   SerialSIT.println(ht_data);
-  // Wait for DOWNLOAD prompt (typically > instead of OK) to speed up sending
+  // Wait for DOWNLOAD prompt (typically > instead of OK) to speed up
+  // sending
   response = waitForResponse("DOWNLOAD", 2000);
   SerialSIT.println(payload);
   response = waitForResponse("OK", 4000);
@@ -1341,13 +1410,12 @@ int send_at_cmd_data(char *payload, String charArray) {
   debug("Response of AT+HTTPACTION=1 is ");
   debugln(response);
 
-  if (response.indexOf("706") != -1) {
-    debugln("HTTP Stack Busy (706). Aggressive Reset...");
+  if (response.indexOf("706") != -1 || response.indexOf("713") != -1 ||
+      response.indexOf("714") != -1) {
+    debugln("HTTP Error (706/713/714). Clean stack requested.");
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 2000);
     vTaskDelay(500);
-    SerialSIT.println("AT+HTTPINIT"); // Quick re-init for the next attempt
-    waitForResponse("OK", 2000);
     return 0;
   }
 
@@ -1399,7 +1467,8 @@ void store_current_unsent_data() {
     debugln("Failed to open unsent.txt for appending (store_current)");
   }
   debug("************************");
-  debug("Storing data in unsent file due to SIM issue/REG issue/Signal issue ");
+  debug("Storing data in unsent file due to SIM issue/REG issue/Signal "
+        "issue ");
   debugln("************************");
   debug("unsent store_text is ");
   debugln(finalStringBuffer);
@@ -1670,7 +1739,8 @@ void get_registration() {
   retries = 0;
   bool is_registered = false;
 
-  // Enable registration reporting ONCE (not every retry - prevents BSNL issues)
+  // Enable registration reporting ONCE (not every retry - prevents BSNL
+  // issues)
   SerialSIT.println("AT+CREG=1");
   waitForResponse("OK", 500);
 
@@ -1703,6 +1773,7 @@ void get_registration() {
         registration = response.substring(commaIdx + 1).toInt();
         if (registration == 1 || registration == 5) {
           debugln("CEREG Registered");
+          isLTE = true; // High speed confirmed
           strcpy(reg_status,
                  (registration == 1) ? "LTE:Home:OK" : "LTE:Roam:OK");
           is_registered = true;
@@ -1723,6 +1794,7 @@ void get_registration() {
           registration = response.substring(commaIdx + 1).toInt();
           if (registration == 1 || registration == 5) {
             debugln("CGREG Registered");
+            isLTE = true; // GPRS/LTE mode
             strcpy(reg_status,
                    (registration == 1) ? "GPRS:Home:OK" : "GPRS:Roam:OK");
             is_registered = true;
@@ -1746,6 +1818,7 @@ void get_registration() {
           registration = response.substring(commaIdx + 1).toInt();
           if (registration == 1 || registration == 5 || registration == 11) {
             debugln("CREG Registered (GSM)");
+            isLTE = false; // Falling back to 2G
             strcpy(reg_status,
                    (registration == 1)
                        ? "GSM:Home:OK"
@@ -1784,7 +1857,6 @@ void get_registration() {
 
     gprs_mode = eGprsSignalOk;
     debugln("Registration Successful.");
-    // Reduced from 3s to 1s - APN activation logic now handles surgical delays
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   } else {
     diag_gprs_fails++;
@@ -2381,13 +2453,35 @@ int setup_ftp() {
   SerialSIT.println("AT+CFTPSSINGLEIP=1"); // FTP client context
   waitForResponse("OK", 5000);
 
-  SerialSIT.println(
-      "AT+CFTPSPASV=1"); // Force Passive Mode (essential for NAT/Cellular)
+  // Force plain FTP mode (Security level 0 = No SSL)
+  SerialSIT.println("AT+CFTPSCFG=\"security\",0");
+  waitForResponse("OK", 2000);
+
+  // Explicitly bind to GPRS context 1
+  SerialSIT.println("AT+CFTPSCFG=\"bindcid\",1");
+  waitForResponse("OK", 2000);
+
+  SerialSIT.println("AT+CFTPSPASV=1"); // Try Passive Mode
   waitForResponse("OK", 5000);
 
+  vTaskDelay(2000 / portTICK_PERIOD_MS); // Pre-login settling delay
   SerialSIT.println(gprs_xmit_buf);
-  response = waitForResponse("+CFTPSLOGIN:", 25000);
+  response = waitForResponse("+CFTPSLOGIN:", 60000); // Increased to 60s
   debugln(response);
+
+  // If login failed (Result 13 or similar), try one more time in ACTIVE mode
+  if (response.indexOf("+CFTPSLOGIN: 0") == -1) {
+    debugln("[FTP] Login Failed. Retrying in ACTIVE Mode...");
+    SerialSIT.println("AT+CFTPSSTOP");
+    vTaskDelay(500);
+    SerialSIT.println("AT+CFTPSSTART");
+    waitForResponse("+CFTPSSTART: 0", 5000);
+    SerialSIT.println("AT+CFTPSPASV=0"); // Disable Passive Mode
+    waitForResponse("OK", 5000);
+    SerialSIT.println(gprs_xmit_buf);
+    response = waitForResponse("+CFTPSLOGIN:", 60000);
+    debugln(response);
+  }
 
   rssiIndex = response.indexOf("+CFTPSLOGIN:"); // int
   if (rssiIndex != -1) {                        // #TRUEFIX
@@ -2867,8 +2961,8 @@ bool send_health_report(bool useJitter) {
 
   // ENSURE BEARER IS LIVE BEFORE STARTING HEALTH HTTP
   if (!verify_bearer_or_recover()) {
-    debugln(
-        "[Health] ABORT: No active bearer found even after recovery attempt.");
+    debugln("[Health] ABORT: No active bearer found even after recovery "
+            "attempt.");
     return false;
   }
 
@@ -2941,12 +3035,18 @@ bool send_health_report(bool useJitter) {
   debugln("Updating Google Sheet...");
   SerialSIT.println("AT+HTTPACTION=0");
   waitForResponse("OK", 500);
-  String response = waitForResponse("+HTTPACTION",
-                                    45000); // 45s for slow Google SSL handshake
+  String response = waitForResponse("+HTTPACTION", 60000); // 60s
 
-  // Google Sheets updates even if it returns a 302 Redir (though REDIR=1
-  // handled it)
   bool success = false;
+  if (response.indexOf(",715,") != -1) {
+    debugln("[Health] DNS Error (715). Attempting DNS Refresh...");
+    // Force reset modem's DNS stack to public 8.8.8.8/1.1.1.1
+    SerialSIT.println("AT+CDNSCFG=\"8.8.8.8\",\"1.1.1.1\"");
+    waitForResponse("OK", 1000);
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    // Note: We don't retry here to maintain "No Retry" discipline,
+    // but the next hour's attempt will benefit from the refreshed config.
+  }
   if (response.indexOf(",200,") != -1 || response.indexOf(",301,") != -1 ||
       response.indexOf(",302,") != -1) {
     debugln("[Health] Update Success.");
