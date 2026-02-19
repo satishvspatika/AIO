@@ -1,6 +1,8 @@
 #include "globals.h"
 
 void start_deep_sleep() {
+  debugln("[PWR] DEEP SLEEP DISABLED FOR THIS VERSION.");
+  return;
 
   if (wired == 1) {
     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
@@ -103,9 +105,10 @@ void validate_ulp_counters() {
     corrupted = true;
   }
 
-  // Calib count shouldn't exceed 1000
-  if (calib_count.val > 1000 || calib_count.val < 0) {
-    debugf1("[ULP] Calib count corrupted (%d), resetting\n", calib_count.val);
+  // Calib count safety limit: Support 1000ml tests (50,000 tips)
+  if (calib_count.val > 50000 || calib_count.val < 0) {
+    debugf1("[ULP] Calib count suspicious/corrupted (%d), resetting\n",
+            calib_count.val);
     calib_count.val = 0;
     corrupted = true;
   }

@@ -40,22 +40,22 @@ RTC_DATA_ATTR uint8_t ulp_code_reserve[512] = {0};
 
 // CHANGE THESE FOR DIFFERENT SYSTEMS
 /************************************************************************************************/
-#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "KSNDMC_TWS"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
+#define SYSTEM 0              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "KSNDMC_TRG"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
                               // KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.35"
+#define FIRMWARE_VERSION "C.2"
 
-#define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
+#define DEBUG 0 // Set to 1 for serial debug, 0 for production (Saves space)
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
 #define ENABLE_WEBSERVER                                                       \
   0 // Set to 0 to remove WebServer footprint (SAVES SPACE)
 
-#define DEFAULT_RF_RESOLUTION 0.5
+#define DEFAULT_RF_RESOLUTION 0.25
 float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
-#define ENABLE_CALIB_TEST 0 // 1 to enable CALIB TEST in UI, 0 for Field only
+#define ENABLE_CALIB_TEST 1 // 1 to enable CALIB TEST in UI, 0 for Field only
 
 // 1. SYSTEM ==0 and UNIT as KSNDMC_TRG or BIHAR_TRG or SPATIKA_GEN
 // 2. SYSTEM ==1 and UNIT as KSNDMC_TWS
@@ -383,7 +383,8 @@ uint8_t newMACAddress[] = {0xEC, 0x94, 0xCB,
                            0x6F, 0x99, 0x99}; // NewMac addressof this device
 volatile int espnow_start, lcdkeypad_start = 0;
 volatile int wakeup_reason_is;
-int temp_count_rf, calib_count_rf, calib_flag;
+RTC_DATA_ATTR int temp_count_rf, calib_count_rf, calib_flag, calib_mode;
+RTC_DATA_ATTR int calib_start_h, calib_start_m, calib_stop_h, calib_stop_m;
 int send_espnow = 0;
 int peer_added = 0;
 

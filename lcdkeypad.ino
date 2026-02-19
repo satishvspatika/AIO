@@ -436,9 +436,18 @@ void lcdkeypad(void *pvParameters) {
 
         // Calibration Running
         if (calib_flag == 1) {
-          // Timeout check for Field Calib (3 mins = 180000 ms)
-          if (calib_mode == 0 && (millis() - calib_start_time > 180000)) {
-            calib_flag = 2; // Auto-stop
+          // Safety: Refresh LCD timer to prevent timeout during active
+          // calibration The main loop() will also stay away from sleep due to
+          // calib_flag > 0
+          if (lcd_timer != NULL) {
+            timerWrite(lcd_timer, 0);
+          }
+
+          // Timeout check for Field Calib (5 mins)
+          // Test Mode (calib_mode == 1) has NO AUTO-TIMEOUT per user request
+          if (calib_mode == 0 && (millis() - calib_start_time > 300000)) {
+            calib_flag = 2; // Auto-stop Field Test
+            debugln("[UI] Field Calibration timeout reached.");
           }
 
 #if (SYSTEM == 0) || (SYSTEM == 2)
@@ -450,17 +459,29 @@ void lcdkeypad(void *pvParameters) {
           // Update Display with Tips/MM
           if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
               pdTRUE) {
-            if (calib_header_drawn == 0) {
-              lcd.setCursor(0, 0);
-              lcd.print("Count     RF(mm)");
-              calib_header_drawn = 1;
-            }
+            char line0[17], line1[17];
+
+            // Calculate elapsed minutes so far
+            int elapsed_mins = (current_hour * 60 + current_min) -
+                               (calib_start_h * 60 + calib_start_m);
+            if (elapsed_mins < 0)
+              elapsed_mins += 1440;
+
+            // Row 0: S:HH:MM D:XXXm
+            snprintf(line0, sizeof(line0), "S:%02d:%02d  D:%dm", calib_start_h,
+                     calib_start_m, elapsed_mins);
+
+            // Row 1: C:NNNNN  M:XXXX.X
+            snprintf(line1, sizeof(line1), "C:%-5d M:%-7.2f",
+                     (int)calib_count_rf, calib_rf_float);
+
+            lcd.setCursor(0, 0);
+            lcd.print(line0);
             lcd.setCursor(0, 1);
-            char bot[17];
-            snprintf(bot, sizeof(bot), "%-5d     %-6.2f", (int)calib_count_rf,
-                     calib_rf_float);
-            lcd.print(bot);
+            lcd.print(line1);
+
             xSemaphoreGive(i2cMutex);
+            calib_header_drawn = 1;
           }
         }
         // Calibration Process Result
@@ -501,13 +522,26 @@ void lcdkeypad(void *pvParameters) {
           // Display Result
           if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
               pdTRUE) {
+            char line0[17], line1[17];
+
+            int duration_mins = (calib_stop_h * 60 + calib_stop_m) -
+                                (calib_start_h * 60 + calib_start_m);
+            if (duration_mins < 0)
+              duration_mins += 1440;
+
+            snprintf(line0, sizeof(line0), "%02d:%02d-%02d:%02d", calib_start_h,
+                     calib_start_m, calib_stop_h, calib_stop_m);
+            snprintf(line1, sizeof(line1), "C:%-d M:%.2f (%dm)",
+                     (int)calib_count_rf, calib_rf_float, duration_mins);
+
             lcd.clear();
             lcd.setCursor(0, 0);
-            lcd.print(calib_mode == 0 ? "FIELD CALIB:" : "CALIB TEST:");
+            lcd.print(line0);
             lcd.setCursor(0, 1);
-            lcd.print(calib_text);
+            lcd.print(line1);
+
             xSemaphoreGive(i2cMutex);
-            vTaskDelay(3000); // Wait for user to see
+            vTaskDelay(7000); // 7 sec to see final result
 
             // Cleanup: Revert to standard timeout after showing result
             // User said: "Once the test completes after 5 mins or manually
@@ -944,28 +978,37 @@ void lcdkeypad(void *pvParameters) {
             }
           } else if (cur_fld_no == FLD_RF_CALIB) {
             if (calib_flag == 0) {
-              // Mode is now strictly defined by the global flag
-              calib_mode = 0; // ALWAYS Field Calibration (User Request)
+              // Ensure mode is set based on global setting
+              if (ENABLE_CALIB_TEST == 1)
+                calib_mode = 1;
 
               calib_start_time = millis();
+              calib_start_h = current_hour;
+              calib_start_m = current_min;
+              calib_stop_h = -1; // Reset stop time
+              calib_stop_m = -1;
+
               calib_count.val = 0; // PHYSICAL SEPARATION: Reset calib bucket
-              calib_mode_flag.val =
-                  1; // PHYSICAL SEPARATION: Start calib counting
+              calib_mode_flag.val = 1;
               calib_count_rf = 0;
               calib_flag = 1; // Start
               calib_header_drawn = 0;
 
-              // Set initial timeout based on mode
-              // Field Calib: 5 mins allowed for test
-              // Field Calib: 5 mins allowed (User Correction)
-              timerAlarm(lcd_timer, 300000000, false, 0); // 5 mins
-              timerWrite(lcd_timer, 0);                   // Reset count
-              timerRestart(lcd_timer);
+              // Timer will be kept alive by the 200ms refresh loop
+              if (lcd_timer != NULL)
+                timerWrite(lcd_timer, 0);
 
               lcd.clear();
               vTaskDelay(300);
             } else if (calib_flag == 1) {
               calib_flag = 2; // Stop
+              calib_stop_h = current_hour;
+              calib_stop_m = current_min;
+              // Reset to standard 2 min timeout
+              if (lcd_timer != NULL) {
+                timerWrite(lcd_timer, 0);
+                timerAlarm(lcd_timer, 120000000, false, 0);
+              }
               vTaskDelay(300);
             }
           } else if (cur_fld_no == FLD_SD_COPY) {
@@ -1322,6 +1365,13 @@ void lcdkeypad(void *pvParameters) {
                       lcd.clear();
                       lcd.print("COMPLETED!");
                       vTaskDelay(1000);
+                      if (ENABLE_CALIB_TEST == 1) {
+                        calib_mode = 1; // Force TEST MODE
+                        strcpy(ui_data[FLD_RF_CALIB].bottomRow, "TEST CALIB?");
+                      } else {
+                        calib_mode = 0; // Force FIELD MODE (10 tips)
+                        strcpy(ui_data[FLD_RF_CALIB].bottomRow, "Yes ?");
+                      }
                       strcpy(ui_data[FLD_DELETE_DATA].topRow, "DELETE DATA?");
                       strcpy(ui_data[FLD_DELETE_DATA].bottomRow, "Yes ?");
                       xSemaphoreGive(i2cMutex);

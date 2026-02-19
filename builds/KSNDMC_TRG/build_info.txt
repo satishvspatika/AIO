@@ -1,0 +1,6 @@
+Build Configuration
+===================
+Configuration: KSNDMC_TRG
+Firmware Version: C.2
+Build Date: Thu Feb 19 16:45:33 IST 2026
+Build Method: Manual (Arduino IDE)

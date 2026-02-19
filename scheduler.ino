@@ -193,7 +193,9 @@ void scheduler(void *pvParameters) {
          is_fresh_boot_entry) && // Allow entry if fresh boot, to handle "Late
                                  // Boot" sleep logic
         timeSyncRequired == false &&
-        (httpInitiated == false)) {
+        (httpInitiated == false) &&
+        (calib_flag ==
+         0)) { // CRITICAL: Skip all 15-min tasks during active calibration!
       // Mark this sample as processed
       last_processed_sample_idx = current_sample_idx;
 
