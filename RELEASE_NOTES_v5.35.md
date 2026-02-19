@@ -1,38 +1,43 @@
 # Release Notes: v5.35 (Feb 19, 2026)
 
 ## 🎯 Overview
-v5.35: Field Armor Update. Includes RTC RAM persistence for sensor diagnostics, 150KB SPIFFS backlog safety, and Universal ICCID/Smart APN recovery.
+Restoration of production baseline and stability fix for LCD log searching.
 
 ---
 
 ## ✨ New Features
 
-### 1. **Feature Name** 📝
-- Description of feature
-- Use case
+### 1. **Production Baseline Sync** ⚙️
+- Reverted all temporary calibration overrides from vC.4.
+- `SYSTEM` and `UNIT` definitions restored to production standards.
+- Deep sleep and standard task intervals fully re-enabled for power efficiency.
 
 ---
 
 ## 🔧 Bug Fixes
 
-### 1. **Fix Name** 🔧
-- **Problem:** Description
-- **Solution:** Description
-- **Impact:** Description
+### 1. **LCD Keypad Task Crash Fix** 🔧
+- **Problem:** The keypad task would terminate (making the UI unresponsive) if a user searched for a log file that did not exist on the SPIFFS.
+- **Solution:** Replaced logical `return` statements with skip-and-continue logic.
+- **Impact:** System UI remains responsive even if data is missing or files are corrupt.
+
+### 2. **Multi-File Compilation Correction** 🐛
+- **Problem:** A missing closing brace in `lcdkeypad.ino` caused legal functions in subsequent files (like `rtcRead.ino`) to be treated as nested definitions, leading to build failure.
+- **Solution:** Balanced all braces and validated semantic nesting.
+- **Impact:** Clean compilation for all 6 system configurations.
 
 ---
 
 ## 📋 Technical Details
 
 ### Modified Files
-- `file1.ino` - Description
-- `file2.h` - Description
+- `lcdkeypad.ino` - Structural fix for log search and brace balance.
+- `build_all_configs.py` - Standardized `fw_version.txt` format to include system/client prefix.
+- `globals.h` - Version increment to 5.35 and baseline verification.
 
 ### Code Size Impact
-- **Program:** TBD bytes
-- **RAM:** TBD bytes
-
----
+- **Program:** ~1.18 MB
+- **RAM:** ~53 KB (Stable)
 
 ---
 
@@ -54,23 +59,23 @@ This release includes pre-compiled binaries for all 6 system configurations:
 
 ### Each Configuration Folder Includes:
 - `firmware.bin` - Main application binary
-- `fw_version.txt` - Version verification file
+- `fw_version.txt` - Version verification file (Format: `TYPE9-CLIENT-5.35`)
 - `bootloader.bin`, `partitions.bin`, `boot_app0.bin` (in `flash_files/`)
 
 ---
 
 ## 🧪 Testing Recommendations
 
-1. ✅ Test feature 1
-2. ✅ Test feature 2
+1. ✅ Verify LCD "Search Logs" with a non-existent date (should show "NO LOG FILE" then return).
+2. ✅ Verify `fw_version.txt` content for TWS and TRG configs.
 
 ---
 
 ## 🔄 Upgrade Path
 
-### From v5.3:
-- **Direct upgrade** - Flash v5.35 firmware
-- **No configuration changes** required
+### From v5.34/vC.4:
+- **Direct upgrade** - Flash v5.35 firmware.
+- **No hardware changes required.**
 
 ---
 

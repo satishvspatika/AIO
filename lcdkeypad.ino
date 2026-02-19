@@ -1336,85 +1336,85 @@ void lcdkeypad(void *pvParameters) {
                     lcd.setCursor(0, 0);
                     lcd.print("SEARCHING...");
                     xSemaphoreGive(i2cMutex);
+                  }
 
-                    // dateTimeStr is "YYYYMMDD HH:MM"
-                    char dateTimeStr[17];
-                    strcpy(dateTimeStr, ui_data[FLD_LOG].bottomRow);
+                  // dateTimeStr is "YYYYMMDD HH:MM"
+                  char dateTimeStr[17];
+                  strcpy(dateTimeStr, ui_data[FLD_LOG].bottomRow);
 
-                    char year_s[5], month_s[3], day_s[3], hour_s[3], min_s[3];
-                    strncpy(year_s, dateTimeStr, 4);
-                    year_s[4] = 0;
-                    strncpy(month_s, dateTimeStr + 4, 2);
-                    month_s[2] = 0;
-                    strncpy(day_s, dateTimeStr + 6, 2);
-                    day_s[2] = 0;
-                    strncpy(hour_s, dateTimeStr + 9, 2);
-                    hour_s[2] = 0;
-                    strncpy(min_s, dateTimeStr + 12, 2);
-                    min_s[2] = 0;
+                  char year_s[5], month_s[3], day_s[3], hour_s[3], min_s[3];
+                  strncpy(year_s, dateTimeStr, 4);
+                  year_s[4] = 0;
+                  strncpy(month_s, dateTimeStr + 4, 2);
+                  month_s[2] = 0;
+                  strncpy(day_s, dateTimeStr + 6, 2);
+                  day_s[2] = 0;
+                  strncpy(hour_s, dateTimeStr + 9, 2);
+                  hour_s[2] = 0;
+                  strncpy(min_s, dateTimeStr + 12, 2);
+                  min_s[2] = 0;
 
-                    int hr = atoi(hour_s);
-                    int mn = atoi(min_s);
-                    int dy = atoi(day_s);
-                    int mo = atoi(month_s);
-                    int yr = atoi(year_s);
+                  int hr = atoi(hour_s);
+                  int mn = atoi(min_s);
+                  int dy = atoi(day_s);
+                  int mo = atoi(month_s);
+                  int yr = atoi(year_s);
 
-                    int sample = (hr * 4 + mn / 15 + 61) % 96;
+                  int sample = (hr * 4 + mn / 15 + 61) % 96;
 
-                    // RF Day Logic: Samples 0-60 (8:45 AM to Midnight) belong
-                    // to the NEXT day's file
-                    if (sample <= 60) {
-                      int no_of_days[13] = {0,  31, 28, 31, 30, 31, 30,
-                                            31, 31, 30, 31, 30, 31};
-                      dy++;
-                      int days_in_mo = no_of_days[mo];
-                      if (mo == 2 && yr % 4 == 0)
-                        days_in_mo = 29;
-                      if (dy > days_in_mo) {
-                        dy = 1;
-                        mo++;
-                        if (mo > 12) {
-                          mo = 1;
-                          yr++;
-                        }
+                  // RF Day Logic: Samples 0-60 (8:45 AM to Midnight) belong
+                  // to the NEXT day's file
+                  if (sample <= 60) {
+                    int no_of_days[13] = {0,  31, 28, 31, 30, 31, 30,
+                                          31, 31, 30, 31, 30, 31};
+                    dy++;
+                    int days_in_mo = no_of_days[mo];
+                    if (mo == 2 && yr % 4 == 0)
+                      days_in_mo = 29;
+                    if (dy > days_in_mo) {
+                      dy = 1;
+                      mo++;
+                      if (mo > 12) {
+                        mo = 1;
+                        yr++;
+                      }
+                    }
+                  }
+
+                  char log_filename[50];
+                  snprintf(log_filename, sizeof(log_filename),
+                           "/%s_%04d%02d%02d.txt", station_name, yr, mo, dy);
+
+                  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                    lcd.clear();
+                    if (!SPIFFS.exists(log_filename)) {
+                      // Fallback check for legacy "00" prefix or normalized
+                      // station ID
+                      char fallback_filename[50];
+                      if (strncmp(station_name, "00", 2) == 0) {
+                        snprintf(fallback_filename, sizeof(fallback_filename),
+                                 "/%s_%04d%02d%02d.txt", station_name + 2, yr,
+                                 mo, dy);
+                      } else {
+                        snprintf(fallback_filename, sizeof(fallback_filename),
+                                 "/00%s_%04d%02d%02d.txt", station_name, yr, mo,
+                                 dy);
+                      }
+
+                      if (SPIFFS.exists(fallback_filename)) {
+                        strcpy(log_filename, fallback_filename);
+                      } else {
+                        lcd.print("NO LOG FILE");
+                        debug("Search Failed. Searched for: ");
+                        debug(log_filename);
+                        debug(" and fallback: ");
+                        debugln(fallback_filename);
+                        // DO NOT return; - this would kill the keypad task!
                       }
                     }
 
-                    char log_filename[50];
-                    snprintf(log_filename, sizeof(log_filename),
-                             "/%s_%04d%02d%02d.txt", station_name, yr, mo, dy);
-
-                    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
-                        pdTRUE) {
-                      lcd.clear();
-                      if (!SPIFFS.exists(log_filename)) {
-                        // Fallback check for legacy "00" prefix or normalized
-                        // station ID
-                        char fallback_filename[50];
-                        if (strncmp(station_name, "00", 2) == 0) {
-                          snprintf(fallback_filename, sizeof(fallback_filename),
-                                   "/%s_%04d%02d%02d.txt", station_name + 2, yr,
-                                   mo, dy);
-                        } else {
-                          snprintf(fallback_filename, sizeof(fallback_filename),
-                                   "/00%s_%04d%02d%02d.txt", station_name, yr,
-                                   mo, dy);
-                        }
-
-                        if (SPIFFS.exists(fallback_filename)) {
-                          strcpy(log_filename, fallback_filename);
-                        } else {
-                          lcd.print("NO LOG FILE");
-                          debug("Search Failed. Searched for: ");
-                          debug(log_filename);
-                          debug(" and fallback: ");
-                          debugln(fallback_filename);
-                          xSemaphoreGive(i2cMutex);
-                          vTaskDelay(2000);
-                          return;
-                        }
-                      }
-
+                    // Only attempt to open if the file was found or exists
+                    if (SPIFFS.exists(log_filename)) {
                       File f = SPIFFS.open(log_filename, FILE_READ);
                       if (!f) {
                         lcd.print("OPEN FAILED");
@@ -1448,8 +1448,6 @@ void lcdkeypad(void *pvParameters) {
 
                           if (SYSTEM == 0) {
                             float instRF, cumRF;
-                            // sample,date,time,inst,cum
-                            // format: %*d,YYYY-MM-DD,HH:MM,inst,cum
                             sscanf(line_buf, "%*d,%*[^,],%*[^,],%f,%f", &instRF,
                                    &cumRF);
                             lcd.setCursor(0, 0);
@@ -1457,7 +1455,6 @@ void lcdkeypad(void *pvParameters) {
                             lcd.setCursor(0, 1);
                             lcd.print(cumRF, 2);
                           } else if (SYSTEM == 1) {
-                            // format: sample,date,time,temp,hum,aws,wd
                             sscanf(line_buf, "%*d,%*[^,],%*[^,],%f,%f,%f,%d",
                                    &temp, &hum, &aws, &wd);
                             lcd.setCursor(0, 0);
@@ -1469,11 +1466,9 @@ void lcdkeypad(void *pvParameters) {
                                      aws, wd);
                             lcd.print(dbuf2);
                           } else if (SYSTEM == 2) {
-                            // format: sample,date,time,cumrf,temp,hum,aws,wd
                             sscanf(line_buf, "%*d,%*[^,],%*[^,],%f,%f,%f,%f,%d",
                                    &rf, &temp, &hum, &aws, &wd);
                             lcd.setCursor(0, 0);
-                            // Optimized for 16 chars: RF:XX.X T:XX.X H:XX
                             snprintf(dbuf1, sizeof(dbuf1),
                                      "RF:%-3.1fT:%-4.1fH:%-2.0f", rf, temp,
                                      hum);
@@ -1589,7 +1584,8 @@ void lcdkeypad(void *pvParameters) {
 
     esp_task_wdt_reset();
 
-    // Adaptive polling: Fast when active, slower when idle (power optimization)
+    // Adaptive polling: Fast when active, slower when idle (power
+    // optimization)
     static bool recent_activity = false;
 
     if (lcdkeypad_start) {

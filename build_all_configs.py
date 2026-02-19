@@ -161,10 +161,26 @@ def build_config(system, unit, output_name):
             firmware_version = version_match.group(1) if version_match else "UNKNOWN"
             
             # Create fw_version.txt for legacy SD card updates
+            # Format: [TYPE]9-[CLIENT]-[VERSION]
+            # TYPE: TRG (0), TWS (1), TWSRF (2)
+            # CLIENT: Extracted from UNIT (e.g., KSNDMC_TRG -> DMC, BIHAR_TRG -> BIHAR)
+            
+            type_prefix = "TRG9" if system == 0 else ("TWS9" if system == 1 else "TWSRF9")
+            
+            client = "UNKNOWN"
+            if unit.startswith("KSNDMC"):
+                client = "DMC"
+            elif "_" in unit:
+                client = unit.split("_")[0]
+            else:
+                client = unit
+                
+            full_version = f"{type_prefix}-{client}-{firmware_version}"
+            
             fw_version_file = output_dir / "fw_version.txt"
             with open(fw_version_file, 'w') as f:
-                f.write(firmware_version)
-            print_success(f"Version file created: fw_version.txt ({firmware_version})")
+                f.write(full_version)
+            print_success(f"Version file created: fw_version.txt ({full_version})")
             
             # Create info file
             info_file = output_dir / "build_info.txt"
