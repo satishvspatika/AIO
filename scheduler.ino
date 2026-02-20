@@ -333,7 +333,7 @@ void scheduler(void *pvParameters) {
       debugln("Scheduler: Waiting for GPRS task...");
       wait_gprs_timeout = 0;
       while (gprs_mode == eGprsInitial &&
-             wait_gprs_timeout < 900) { // Wait up to 15 mins (900s)
+             wait_gprs_timeout < 180) { // Reduced from 900s (15m) to 180s (3m)
 
         // Poll for UI Request (EXT0) every 100ms
         for (int i = 0; i < 10; i++) {
@@ -963,36 +963,44 @@ void scheduler(void *pvParameters) {
                                     : last_cumRF;
 
               // Temperature Interpolation
-              fill_temp =
-                  start_t + ((temperature - start_t) * gap_idx / total_gaps);
-              // Clamp to realistic range 10-35 C
-              if (fill_temp < 10.0)
-                fill_temp = 10.0 + (random(0, 10) / 10.0);
-              if (fill_temp > 35.0)
-                fill_temp = 35.0 - (random(0, 10) / 10.0);
-              // Add Jitter
-              min_val = fill_temp - 0.2;
-              max_val = fill_temp + 0.2;
-              target_number =
-                  ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+              if (hdcType != HDC_UNKNOWN) {
+                fill_temp =
+                    start_t + ((temperature - start_t) * gap_idx / total_gaps);
+                // Clamp to realistic range 10-35 C
+                if (fill_temp < 9.0)
+                  fill_temp = 9.0 + (random(0, 10) / 10.0);
+                if (fill_temp > 50.0)
+                  fill_temp = 50.0 - (random(0, 10) / 10.0);
+                // Add Jitter
+                min_val = fill_temp - 0.2;
+                max_val = fill_temp + 0.2;
+                target_number =
+                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+              } else {
+                target_number = 0.0;
+              }
               snprintf(fill_inst_temp, sizeof(fill_inst_temp), "%05.1f",
                        target_number);
 
               // Humidity Interpolation
-              fill_hum =
-                  start_h + ((humidity - start_h) * gap_idx / total_gaps);
-              if (fill_hum < 10.0)
-                fill_hum = 10.0 + random(0, 5);
-              if (fill_hum > 100.0)
-                fill_hum = 100.0;
-              min_val = fill_hum - 1.5;
-              max_val = fill_hum + 1.5;
-              target_number =
-                  ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
-              if (target_number > 100.0)
-                target_number = 100.0;
-              if (target_number < 10.0)
-                target_number = 10.0;
+              if (hdcType != HDC_UNKNOWN) {
+                fill_hum =
+                    start_h + ((humidity - start_h) * gap_idx / total_gaps);
+                if (fill_hum < 10.0)
+                  fill_hum = 10.0 + random(0, 5);
+                if (fill_hum > 100.0)
+                  fill_hum = 100.0;
+                min_val = fill_hum - 1.5;
+                max_val = fill_hum + 1.5;
+                target_number =
+                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+                if (target_number > 100.0)
+                  target_number = 100.0;
+                if (target_number < 10.0)
+                  target_number = 10.0;
+              } else {
+                target_number = 0.0;
+              }
               snprintf(fill_inst_hum, sizeof(fill_inst_hum), "%05.1f",
                        target_number);
 

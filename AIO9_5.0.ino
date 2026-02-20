@@ -37,6 +37,8 @@ extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask,
 
 int wired = 1; // Integrated is 1 or Standalone LCD module is 0
 const int chipSelect = SS;
+bool ws_ok = true;
+bool wd_ok = false;
 
 TaskHandle_t scheduler_h;
 TaskHandle_t gprs_h; // http,sms,ftp,dota
@@ -79,6 +81,13 @@ void setup() {
   if (rr == DEEPSLEEP_RESET) {
     diag_reg_count_total_cycles++; // 15-min cycles
     diag_total_uptime_hrs = diag_reg_count_total_cycles / 4;
+  } else {
+    // POWER ON / WDT RESET: Initialize RTC safety variables if they look like
+    // junk
+    if (last_valid_temp < -20.0 || last_valid_temp > 60.0)
+      last_valid_temp = 26.0;
+    if (last_valid_hum < 0.0 || last_valid_hum > 100.0)
+      last_valid_hum = 65.0;
   }
 
   // Pre-load essential system data: Try NVS (Preferences) first for robustness
@@ -778,6 +787,9 @@ void initialize_hw() {
                                           (1 << portNUM_PROCESSORS) - 1,
                                       .trigger_panic = true};
   esp_task_wdt_init(&wdt_config);
+  // Re-register if not already (safeguard)
+  esp_task_wdt_add(NULL);
+  esp_task_wdt_reset();
 
   debugln("[BOOT] Hardware Initialized.");
 }
@@ -802,8 +814,12 @@ void loop() {
   if (((sync_mode == eHttpStop) || (sync_mode == eSMSStop) ||
        (sync_mode == eExceptionHandled)) &&
       (lcdkeypad_start == 0) && (wifi_active == false)) {
+    debugln("[PWR] All tasks done. Entering Deep Sleep...");
+    esp_task_wdt_reset(); // Final pet before sleep
     start_deep_sleep();
   }
+
+  esp_task_wdt_reset(); // Pet the watchdog for the loopTask
   delay(500);
 }
 

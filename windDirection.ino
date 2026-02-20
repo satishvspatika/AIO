@@ -22,14 +22,29 @@ void windDirection(void *pvParameters) {
     }
 
     int tempWindDir = sum / 10;
+    static int wd_fault_count = 0;
 
-    // Logic: Map 0-4095 to 0-359
-    int rawWindDir = (tempWindDir * 360) / 4096;
-    windDir = rawWindDir; // Use direct mapping
+    // Fault Detection: If railing at extremes (0-25 or 4090-4095) for 3s,
+    // marking as missing
+    if (tempWindDir <= 25 || tempWindDir >= 4090) {
+      wd_fault_count++;
+      if (wd_fault_count > 3)
+        wd_ok = false;
+    } else {
+      wd_fault_count = 0;
+      wd_ok = true;
+    }
+
+    // Logic: Map 0-4095 to 0-359 only if sensor is present
+    if (wd_ok) {
+      windDir = (tempWindDir * 360) / 4096;
+      snprintf(windDir_str, sizeof(windDir_str), "%03d deg", windDir);
+    } else {
+      windDir = 0;
+      strcpy(windDir_str, "NA");
+    }
 
     latestSensorData.windDirection = windDir;
-    snprintf(windDir_str, sizeof(windDir_str), "%03d deg",
-             windDir); // Added units
     vTaskDelay(1000);
   }
 }

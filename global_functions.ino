@@ -28,10 +28,13 @@ void start_deep_sleep() {
   calib_flag = 0; // Reset UI state too
 
   WiFi.disconnect();
-  WiFi.mode(WIFI_OFF);
-  vTaskDelay(100);
+  digitalWrite(32, LOW); // Turn off LCD (5V)
 
-  digitalWrite(26, LOW); // Turn off power to GPRS
+  // Ensure GPRS is shut down gracefully ALWAYS before cutting power
+  // We check the physical UART response rather than just a flag for reliability
+  esp_task_wdt_reset();
+  graceful_modem_shutdown();
+  esp_task_wdt_reset();
   delay(100);
 
   // Calculate time to sleep to target the NEXT exact 15-minute boundary

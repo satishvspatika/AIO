@@ -19,6 +19,15 @@
 #define RTC_DATA_ATTR __attribute__((section(".rtc.data")))
 #endif
 
+enum HDC_Type { // Sensor type enum
+  HDC_UNKNOWN,
+  HDC_1080,
+  HDC_2022
+};
+extern HDC_Type hdcType;
+extern bool ws_ok;
+extern bool wd_ok;
+
 // SAFETY BUFFER: Reserve 512 bytes at the start of RTC Memory to prevent
 // ULP Program Code (loaded at offset 0) from overwriting C variables.
 RTC_DATA_ATTR uint8_t ulp_code_reserve[512] = {0};
@@ -46,7 +55,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.35"
+#define FIRMWARE_VERSION "v5.36"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
@@ -190,9 +199,14 @@ enum {
   eSMSStop,
   eGPSStart,
   eStartupGPS
-};                                                               // sync_mode
-enum { eGprsInitial, eGprsSignalOk, eGprsSignalForStoringOnly }; // gprs_mode
-enum { eCurrentData, eClosingData, eUnsentData };                // for http
+}; // sync_mode
+enum {
+  eGprsInitial,
+  eGprsSignalOk,
+  eGprsSignalForStoringOnly,
+  eGprsSleepMode
+};                                                // gprs_mode
+enum { eCurrentData, eClosingData, eUnsentData }; // for http
 
 enum { eEditOff, eEditOn };                   // lcdkeypad
 enum { eCursorOff, eCursorUl, eCursorBlink }; // lcdkeypad
@@ -301,6 +315,14 @@ RTC_DATA_ATTR unsigned long diag_last_health_millis = 0;
 RTC_DATA_ATTR bool diag_rtc_battery_ok = true;
 RTC_DATA_ATTR int diag_consecutive_reg_fails =
     0; // Tracks slots with NO registration
+RTC_DATA_ATTR int diag_stored_apn_fails =
+    0; // Tracks consecutive failures of known good APN
+RTC_DATA_ATTR int diag_consecutive_sim_fails = 0; // Tracks CPIN failures
+
+// DNS IP Caching to prevent DNS lookup every 15 mins (Saves ~1.5 seconds
+// modem-on time)
+RTC_DATA_ATTR char cached_server_ip[32] = "";
+RTC_DATA_ATTR char cached_server_domain[64] = "";
 
 // Health Report Retry Logic (persists across deep sleep)
 RTC_DATA_ATTR int health_last_sent_hour =
@@ -348,6 +370,8 @@ RTC_DATA_ATTR int current_year, current_month, current_day, current_hour,
 RTC_DATA_ATTR int firmwareUpdated;
 RTC_DATA_ATTR int last_processed_sample_idx = -1;
 RTC_DATA_ATTR bool fresh_boot_check_done = false;
+RTC_DATA_ATTR float last_valid_temp = 26.0;
+RTC_DATA_ATTR float last_valid_hum = 65.0;
 
 // RF
 float rf_value, current_rf_value, calib_rf_float;

@@ -197,7 +197,7 @@ void gprs(void *pvParameters) {
                     "send...\n",
                     current_hour);
 
-            // Mark as attempted immediately in both RTC and SPIFFS
+            // Mark as attempted immediately
             health_last_sent_hour = current_hour;
             File h = SPIFFS.open("/health_sent.txt", FILE_WRITE);
             if (h) {
@@ -209,22 +209,17 @@ void gprs(void *pvParameters) {
             if (success) {
               debugln("[Health] ✅ Scheduled report sent successfully!");
             } else {
-              debugln(
-                  "[Health] ❌ Report failed. Skipping retries for this slot.");
+              debugln("[Health] ❌ Report failed.");
             }
             vTaskDelay(2000 / portTICK_PERIOD_MS);
           } else if (is_health_time) {
             debugln("[Health] Report already handled for this slot. Skipping.");
           }
 
-          if (solar_val < 3.5 && solar_val > 0.5) {
-            debugln("[BATT] 🚨 LOW GPRS BATTERY! Skipping heavy data task.");
-            sync_mode = eHttpStop;
-          } else {
-            debugln("[BATT] ✅ Battery OK. Proceeding with Spatika Upload.");
-            sync_mode = eHttpStarted;
-            send_http_data();
-          }
+          debugln("[BATT] Proceeding with Spatika Upload regardless of battery "
+                  "voltage.");
+          sync_mode = eHttpStarted;
+          send_http_data();
           httpInitiated = false;
         } else if (gprs_mode == eGprsSignalForStoringOnly) {
           store_current_unsent_data();
@@ -235,14 +230,8 @@ void gprs(void *pvParameters) {
     }
 
     // --- IDLE / STOP HANDLING ---
-    if (sync_mode == eHttpStop || sync_mode == eSMSStop) {
-      if (gprs_started) {
-        debugln("[GPRS] Stopping module (Stop requested/Idle)...");
-        digitalWrite(26, LOW); // Power OFF
-        gprs_started = false;
-        gprs_mode = eGprsInitial;
-      }
-    }
+    // Removed redundant shutdown call. System shutdown is managed exclusively
+    // by start_deep_sleep() to prevent state conflicts and WDT noise.
 
     esp_task_wdt_reset();
     vTaskDelay(1000); // Reduced from 2000 for faster state transitions
@@ -252,8 +241,29 @@ void gprs(void *pvParameters) {
 void start_gprs() {
   // Power ON GPRS
   digitalWrite(26, HIGH); // Power on GPRS module
-  vTaskDelay(200);
-  vTaskDelay(delay_val);
+  vTaskDelay(1000);       // 1-second physical power stability delay
+  debugln("[GPRS] Waiting for active UART...");
+
+  // Active fast-polling for Modem Boot instead of a blind 10-second wait
+  bool modem_ready = false;
+  for (int i = 0; i < 15; i++) {
+    SerialSIT.println("AT");
+    if (waitForResponse("OK", 500).indexOf("OK") != -1) {
+      modem_ready = true;
+      debugf1("[GPRS] Modem ready in %d seconds!\n", i + 1);
+      break;
+    }
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+
+  if (!modem_ready) {
+    debugln("[GPRS] AT Timeout, trying CPIN anyway...");
+  }
+  // SIM Initialize Delay: Even if the UART is awake and responding to 'AT',
+  // the physical SIM card usually takes an extra 1-3 seconds to fully power up.
+  // Missing this causes '+CME ERROR: 14' (SIM Busy).
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
+
   debugln();
   SerialSIT.println("AT+CPIN?");
   response = waitForResponse("+CPIN: READY", 5000);
@@ -264,13 +274,19 @@ void start_gprs() {
   waitForResponse("OK", 1000);
 
   if (strstr(char_resp, "+CME ERROR")) { // TRG8-3.0.5g
+    diag_consecutive_sim_fails++;
     signal_strength = -114;
-    debugln("SIM ERROR DETECTED");
+    debugln("[SIM] ERROR DETECTED.");
     strcpy(reg_status, "SIM ERROR");
-    gprs_mode =
-        eGprsSignalForStoringOnly; // It will be a trigger point for scheduler
-                                   // to enter into 15min and just store
+
+    if (diag_consecutive_sim_fails >= 6) {
+      debugln("[SIM] PERSISTENT ERROR. Final resort: ESP32 RESTART...");
+      vTaskDelay(1000);
+      ESP.restart();
+    }
+    gprs_mode = eGprsSignalForStoringOnly;
   } else {
+    diag_consecutive_sim_fails = 0;
     get_signal_strength();
     if (gprs_mode != eGprsSignalForStoringOnly) {
       get_network();
@@ -571,6 +587,9 @@ void prepare_data_and_send() {
       SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
       waitForResponse("OK", 1000);
 
+      // Removed custom Host header for retry as it causes 400 Bad Request on
+      // A7672S
+
       // 5. SEND DATA
       success_count = send_at_cmd_data(http_data, charArray);
       vTaskDelay(200);
@@ -754,28 +773,84 @@ void send_http_data() {
    * PREPARE HTTP PARAMS
    */
 
-  snprintf(httpPostRequest, sizeof(httpPostRequest),
-           "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"",
-           httpSet[http_no].serverName, httpSet[http_no].Port,
-           httpSet[http_no].Link);
-  debugln("[GPRS] Starting HTTP...");
-  debug("HTTP POST REQUEST IS ");
-  debugln(httpPostRequest);
-  vTaskDelay(50);
+  const char *domain = httpSet[http_no].serverName;
+  char target_ip[64] = {0};
 
-  // Hard reset IP stack to clear any half-open sessions
-  SerialSIT.println("AT+CIPSHUT");
-  waitForResponse("SHUT OK", 2000);
+  bool is_ip_format = true;
+  for (int i = 0; domain[i] != '\0'; i++) {
+    if (isalpha(domain[i])) {
+      is_ip_format = false;
+      break;
+    }
+  }
 
-  // Ensure PDP context is active
+  // Ensure PDP context is active before doing DNS lookups or HTTP
   SerialSIT.println("AT+CGACT?");
   response = waitForResponse("OK", 3000);
   if (response.indexOf("+CGACT: " + String(active_cid) + ",1") == -1) {
-    debugln("[GPRS] PDP context inactive. Activating...");
+    debugln("[GPRS] PDP context inactive. Activating for DNS/HTTP...");
     SerialSIT.print("AT+CGACT=1,");
     SerialSIT.println(active_cid);
     waitForResponse("OK", 10000);
   }
+
+  if (is_ip_format) {
+    strcpy(target_ip, domain);
+  } else if (strcmp(cached_server_domain, domain) == 0 &&
+             strlen(cached_server_ip) > 5) {
+    debugln("[DNS Cache] Using cached IP for " + String(domain) + ": " +
+            String(cached_server_ip));
+    strcpy(target_ip, cached_server_ip);
+  } else {
+    debugln("[DNS Cache] Resolving " + String(domain) + "...");
+    SerialSIT.print("AT+CDNSGIP=\"");
+    SerialSIT.print(domain);
+    SerialSIT.println("\"");
+    String resp = waitForResponse("+CDNSGIP: 1", 10000);
+
+    int ip_start = resp.lastIndexOf(",\"");
+    if (ip_start != -1) {
+      int ip_end = resp.indexOf("\"", ip_start + 2);
+      if (ip_end != -1) {
+        String ip_str = resp.substring(ip_start + 2, ip_end);
+        if (ip_str.length() > 5) {
+          strncpy(cached_server_ip, ip_str.c_str(),
+                  sizeof(cached_server_ip) - 1);
+          strncpy(cached_server_domain, domain,
+                  sizeof(cached_server_domain) - 1);
+          strcpy(target_ip, cached_server_ip);
+          debugln("[DNS Cache] Resolved: " + ip_str);
+        }
+      }
+    }
+    if (target_ip[0] == '\0') {
+      debugln("[DNS Cache] Resolution failed. Falling back to domain name.");
+      strcpy(target_ip, domain);
+    }
+  }
+
+  snprintf(httpPostRequest, sizeof(httpPostRequest),
+           "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", target_ip,
+           httpSet[http_no].Port, httpSet[http_no].Link);
+
+  // SMART BEARER CHECK: Avoid redundant CIPSHUT if connection is already live
+  // especially useful during combined Health + Main data slots.
+  SerialSIT.println("AT+CGACT?");
+  response = waitForResponse("OK", 3000);
+  if (response.indexOf("+CGACT: " + String(active_cid) + ",1") != -1) {
+    debugln("[GPRS] Bearer already live. Skipping CIPSHUT to save time.");
+  } else {
+    debugln("[GPRS] Starting HTTP...");
+    debug("HTTP POST REQUEST IS ");
+    debugln(httpPostRequest);
+    vTaskDelay(500);
+
+    // Hard reset IP stack to clear any half-open sessions
+    SerialSIT.println("AT+CIPSHUT");
+    waitForResponse("SHUT OK", 4000);
+  }
+
+  // IP Stack ready/cleared
 
   SerialSIT.println("AT+HTTPTERM");
   vTaskDelay(200);
@@ -1016,8 +1091,10 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
              rf_cls_mm, rf_cls_dd, record_hr, record_min);
 #endif
 
-  // Hourly Backlog Recovery
-  bool is_hourly_mark = (record_min == 0);
+  // Backlog Recovery: Changed from Hourly to Quad-Daily (Every 3 Hours) to
+  // avoid clashes Schedule: 00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00,
+  // 21:00
+  bool is_hourly_mark = (record_min == 0) && (record_hr % 3 == 0);
   bool is_daily_slot = (sampleNo == 3 || sampleNo == 7);
 
   // SKIP BACKLOG in Daily Slots: Prevents simultaneous FTP sessions that
@@ -1065,11 +1142,11 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
 
   if (sampleNo == 3 || sampleNo == 7) { // send previous day's data (96
                                         // data) if available through FTP
-    if (current_hour == 8 && current_min > 45 && current_min < 59) {
-      // Cleanup at start of 8:45 AM cycle
+    if (current_hour == 9 && current_min > 30 && current_min < 45) {
+      // Cleanup at start of 09:30 AM cycle
       snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
       SPIFFS.remove(ftpunsent_file);
-      debug("Cleaned up unsent file at start of new RF Day: ");
+      debug("Cleaned up unsent file at start of new Daily FTP (09:30): ");
       debugln(ftpunsent_file);
     }
     debugln();
@@ -1369,6 +1446,28 @@ void copyFile(const char *sourcePath, const char *destPath) {
   debugln("File copied successfully!");
 }
 
+void graceful_modem_shutdown() {
+  debugln("[GPRS] Checking modem for graceful shutdown...");
+
+  // Try to communicate. If modem is already off, this will timeout quickly.
+  SerialSIT.println("AT");
+  String resp = waitForResponse("OK", 500);
+
+  if (resp.indexOf("OK") != -1) {
+    debugln("[GPRS] Modem alive. Closing network session gracefully...");
+    SerialSIT.println("AT+CPOWD=1"); // Normal Power Down
+    waitForResponse("NORMAL POWER OFF", 3000);
+    vTaskDelay(500);
+  } else {
+    debugln("[GPRS] Modem already detached or unresponsive.");
+  }
+
+  debugln("[GPRS] Cutting physical VCC power (GPIO 26 -> LOW).");
+  digitalWrite(26, LOW);
+  gprs_started = false;
+  gprs_mode = eGprsSleepMode; // Prevent Ghost Restart during sleep entry
+}
+
 void send_sms() {
   vTaskDelay(500); // TRG8-3.0.5g reduced from 1min to 500ms
   int msg_no;
@@ -1387,12 +1486,7 @@ void send_sms() {
 
   vTaskDelay(200);
 
-  debugln("Turning off GPRS Module");
-  SerialSIT.println("AT+CPOF");
-  response = waitForResponse("OK", 9000);
-  debug("Response of AT+CPOF is ");
-  debugln(response);
-  vTaskDelay(200);
+  graceful_modem_shutdown();
 
   sync_mode = eSMSStop;
 }
@@ -1594,7 +1688,8 @@ void get_signal_strength() {
   retries = 0;
 
   int invalid_signal_count = 0;
-  while (((signal_lvl == 0) || (signal_lvl == -113)) &&
+  // rssi 0 = -113dBm. Continuous -113 is essentially no signal.
+  while (((signal_lvl == 0) || (signal_lvl <= -113)) &&
          (retries < 120)) { // 120 loops @ 500ms = 60s max timeout
     esp_task_wdt_reset();
     SerialSIT.println("AT+CSQ");
@@ -1622,12 +1717,11 @@ void get_signal_strength() {
       debugln(signal_lvl);
     } else {
       invalid_signal_count++;
-      // If we see "No Signal (85)" for 15s, move to registration
-      // Towers are often only found AFTER the registration process starts
-      // scanning.
-      if (invalid_signal_count > 30) {
-        debugln("Wait for signal timed out. Moving to Registration to trigger "
-                "search.");
+      // If we see "No Signal" (-113 or 85) for 30s (60 polls), move to
+      // registration. USER REQUEST: Increased to 30s for better antenna
+      // recovery.
+      if (invalid_signal_count > 60) {
+        debugln("[GPRS] Signal search timeout (30s). Moving to Registration.");
         break;
       }
     }
@@ -1652,14 +1746,10 @@ void get_network() {
   debugln("GETTING NETWORK ");
   debugln("************************");
 
-  // SMART CACHE LOGIC: Check if SIM is the same (Very fast check)
-  extern String get_ccid();
-  String current_iccid = get_ccid();
-
-  if (current_iccid != "" && current_iccid == String(cached_iccid) &&
-      String(sim_number) != "NA") {
-    debugln("[CACHE] Same SIM detected. Using cached carrier/number to save "
-            "power.");
+  // SMART CACHE LOGIC: Skip querying SIM info entirely if we already have it in
+  // RTC (We only need fresh IMSI/CCID on complete cold boot)
+  if (String(cached_iccid) != "" && String(sim_number) != "NA") {
+    debugln("[CACHE] Using cached carrier/number to save power.");
     // APN still needs to be determined for the modem to connect
     // (apn_str is NOT in RTC because it must be set every power-on)
     if (strstr(carrier, "Airtel"))
@@ -1675,6 +1765,9 @@ void get_network() {
 
     return; // SKIP the rest of discovery
   }
+
+  extern String get_ccid();
+  String current_iccid = get_ccid();
 
 full_discovery:
   // Not cached or SIM changed: Reset and perform full discovery
@@ -1774,7 +1867,8 @@ void get_registration() {
   debugln("GETTING REGISTRATION ");
   debugln("************************");
 
-  int no_of_retries = 60; // 60 Retries for ultra-slow registration
+  int no_of_retries =
+      20; // Reduced from 60 to preserve battery; will store locally if failed
   registration = 0;
   retries = 0;
   bool is_registered = false;
@@ -1796,6 +1890,7 @@ void get_registration() {
   String cops_response = waitForResponse("OK", 1000);
   debugln("[DIAG] Network: " + cops_response);
 
+  int consecutive_unreg = 0;
   while (!is_registered && (retries < no_of_retries)) {
     esp_task_wdt_reset();
 
@@ -1856,16 +1951,37 @@ void get_registration() {
         int commaIdx = response.indexOf(',', tagIdx);
         if (commaIdx != -1) {
           registration = response.substring(commaIdx + 1).toInt();
-          if (registration == 1 || registration == 5 || registration == 11) {
-            debugln("CREG Registered (GSM)");
-            isLTE = false; // Falling back to 2G
-            strcpy(reg_status,
-                   (registration == 1)
-                       ? "GSM:Home:OK"
-                       : (registration == 11 ? "GSM:LTE:EXT" : "GSM:Roam:OK"));
-            is_registered = true;
-            break;
+
+          // USER REQUEST: Fast Fail for Hanging/Denied SIMs
+          // Status 0: Not registered, not searching
+          // Status 3: Registration Denied
+          if (registration == 0 || registration == 3) {
+            consecutive_unreg++;
+          } else {
+            consecutive_unreg = 0;
           }
+        } else {
+          // Empty response/Timeout: Also count as a failure
+          consecutive_unreg++;
+        }
+
+        // Increased to 15 (approx 75s) to allow room for the Iter 10 Reset
+        if (consecutive_unreg >= 15) {
+          debugln("[GPRS] Persistent Unregistered/Denied/Timeout state (75s). "
+                  "Fast failing.");
+          break; // Exit loop to save power and store data locally
+        }
+
+        if (commaIdx != -1 &&
+            (registration == 1 || registration == 5 || registration == 11)) {
+          debugln("CREG Registered (GSM)");
+          isLTE = false; // Falling back to 2G
+          strcpy(reg_status,
+                 (registration == 1)
+                     ? "GSM:Home:OK"
+                     : (registration == 11 ? "GSM:LTE:EXT" : "GSM:Roam:OK"));
+          is_registered = true;
+          break;
         }
       }
     }
@@ -1873,17 +1989,41 @@ void get_registration() {
     if (!is_registered) {
       // Periodic Modem Wakeup every 5 tries
       if (retries % 5 == 0 && retries > 0) {
-        // If still not searching/registered, force an automatic search
+        // If stuck in "Not Searching" (0) or "Unknown" (4), kick the radio
+        // Highly critical for BSNL towers which leave IoT modems 'hanging'
         if (registration == 0 || registration == 4) {
-          SerialSIT.println("AT+COPS=0");
-          vTaskDelay(500);
+          if (retries == 10) {
+            // FULL RESET at Iter 10: Simulate physical SIM reinsertion
+            debugln("[GPRS] Stubborn search. Electronic Reset (CFUN=1,1)...");
+            SerialSIT.println("AT+CFUN=1,1");
+            consecutive_unreg = 0; // Reset counter for post-reboot window
+            // WATCHDOG SAFE DELAY (30s): Poll in 1s increments
+            for (int w = 0; w < 30; w++) {
+              vTaskDelay(1000 / portTICK_PERIOD_MS);
+              esp_task_wdt_reset(); // Pet the watchdog during long wait
+            }
+            debugln("[GPRS] Modem rebooted. Resuming search...");
+          } else {
+            // Standard Kick: Detach/Attach
+            debugln(
+                "[GPRS] Tower idle. Forcing Radio kick (AT+COPS=2 then 0)...");
+            SerialSIT.println("AT+COPS=2");
+            vTaskDelay(1000);
+            SerialSIT.println("AT+COPS=0");
+            vTaskDelay(1000);
+          }
         }
         SerialSIT.println("AT+CGACT=1,1");
         vTaskDelay(500);
       }
-      debugf2("Reg Search... Status:%d Iter:#%d\n", registration, retries + 1);
+
+      debugf2("Reg Search... Status:%d Iter:#%d/20\n", registration,
+              retries + 1);
       vTaskDelay(5000); // Reduced from 10s to 5s for faster handshake
       retries++;
+
+      if (retries >= 20)
+        break;
     }
   }
 
@@ -1892,6 +2032,7 @@ void get_registration() {
   if (is_registered) {
     diag_reg_time_total += time_taken;
     diag_reg_count++;
+    diag_consecutive_reg_fails = 0; // Reset on success
     if (time_taken > diag_reg_worst)
       diag_reg_worst = time_taken;
 
@@ -1900,8 +2041,18 @@ void get_registration() {
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   } else {
     diag_gprs_fails++;
+    diag_consecutive_reg_fails++;
     gprs_mode = eGprsSignalForStoringOnly;
-    debugln("Registration failed after all retries.");
+
+    debugf1("Registration failed. Consecutive fails: %d/10\n",
+            diag_consecutive_reg_fails);
+
+    if (diag_consecutive_reg_fails >= 10) {
+      debugln("[GPRS] PERSISTENT REG FAIL. Resetting system...");
+      vTaskDelay(1000);
+      ESP.restart();
+    }
+
     strcpy(reg_status, "REG FAIL");
   }
 }
@@ -1953,7 +2104,11 @@ void get_a7672s() {
     // JUDICIOUS STABILIZATION: Allow modem stack to settle after Registration
     vTaskDelay(1000 / portTICK_PERIOD_MS);
 
-    String ccid = get_ccid();
+    extern String get_ccid();
+    String ccid = String(cached_iccid);
+    if (ccid == "") {
+      ccid = get_ccid();
+    }
     char stored_apn[20] = {0}; // Match global apn_str size
 
     // 1. Try Stored APN
@@ -1961,7 +2116,21 @@ void get_a7672s() {
       debugln("Smart APN: Trying Stored -> " + String(stored_apn));
       if (try_activate_apn(stored_apn)) {
         strncpy(apn_str, stored_apn, sizeof(apn_str) - 1);
-        return; // Success!
+        diag_stored_apn_fails = 0; // Reset counter on success
+        return;                    // Success!
+      } else {
+        diag_stored_apn_fails++;
+        debugf1("Smart APN: Stored APN failed. Fail count: %d\n",
+                diag_stored_apn_fails);
+
+        // If it has failed 2+ times across wake cycles, the network data layer
+        // is down. Stop hunting to save power.
+        if (diag_stored_apn_fails >= 2) {
+          debugln("Smart APN: Tower is likely rejecting data calls. Halting "
+                  "search to save power.");
+          gprs_mode = eGprsSignalForStoringOnly;
+          return;
+        }
       }
     }
 
@@ -2014,6 +2183,7 @@ void get_a7672s() {
     }
 
     debugln("APN: All attempts failed even after reset.");
+    gprs_mode = eGprsSignalForStoringOnly;
   }
 }
 
@@ -2710,11 +2880,9 @@ void fetchFromFtpAndUpdate(char *fileName) {
 
   vTaskDelay(200);
 
-  debugln("Turning off GPRS Module");
-  SerialSIT.println("AT+CPOF");
-  response = waitForResponse("OK", 9000);
-  debug("Response of AT+CPOF is ");
-  debugln(response);
+  debugln("Turning off GPRS Module (Hard Cut)");
+  digitalWrite(26, LOW);
+  gprs_started = false;
 
   ESP.restart();
 }
@@ -2985,6 +3153,10 @@ bool send_health_report(bool useJitter) {
     status_summary = "BROWNOUT_RECOVERY";
   else if (diag_rtc_battery_ok == false)
     status_summary = "RTC_BATTERY_FAULT";
+  else if (hdcType == HDC_UNKNOWN)
+    status_summary = "HDC_SENSOR_FAULT"; // NEW: HDC missing
+  else if (wd_ok == false)
+    status_summary = "WIND_DIR_FAULT"; // NEW: WD Stuck/Missing
   else if (li_bat_val < 3.6)
     status_summary = "LOW_BATTERY";
   else if (current_hour >= 10 && current_hour <= 16 &&
@@ -3006,7 +3178,19 @@ bool send_health_report(bool useJitter) {
     return false;
   }
 
-  char healthURL[850]; // Increased for Status info
+  char sensor_info[64];
+  const char *hdc_s = (hdcType == HDC_UNKNOWN ? "FAIL" : "OK");
+  const char *ws_s =
+      (SYSTEM == 1 || SYSTEM == 2) ? (ws_ok ? "OK" : "FAIL") : "NA";
+  const char *wd_s =
+      (SYSTEM == 1 || SYSTEM == 2) ? (wd_ok ? "OK" : "FAIL") : "NA";
+  const char *rf_s = (SYSTEM == 0 || SYSTEM == 2) ? "OK" : "NA";
+
+  // Detailed Sensor string: HDC:OK,WS:OK,WD:OK,RF:OK
+  snprintf(sensor_info, sizeof(sensor_info), "HDC:%s,WS:%s,WD:%s,RF:%s", hdc_s,
+           ws_s, wd_s, rf_s);
+
+  char healthURL[900]; // Increased for Status info
   snprintf(
       healthURL, sizeof(healthURL),
       "AT+HTTPPARA=\"URL\",\"%s?Station=%s&SystemType=%d&UnitName=%s&"
@@ -3015,13 +3199,13 @@ bool send_health_report(bool useJitter) {
       "Latitude=%.6f&Longitude=%.6f&Reset=%d&RegAvg=%0.1f&RegWorst=%d&"
       "RegFails="
       "%d&Uptime=%d&SpiffsUsed=%u&SpiffsTotal=%u&SDOk=%d&RTCOk=%d&"
-      "HealthStatus="
+      "Sensors=%s&HealthStatus="
       "%s\"",
       GOOGLE_HEALTH_URL, cleanStn, SYSTEM, UNIT, UNIT_VER, solar_val,
       li_bat_val, signal_strength, sim_number, carrier, cached_iccid, clbInfo,
       lati, longi, diag_last_reset_reason, avg_reg, diag_reg_worst,
       diag_gprs_fails, (int)diag_total_uptime_hrs, (unsigned int)spiffs_used,
-      (unsigned int)spiffs_total, sd_card_ok, diag_rtc_battery_ok,
+      (unsigned int)spiffs_total, sd_card_ok, diag_rtc_battery_ok, sensor_info,
       status_summary);
 
   debugln("[Health] Sending Detailed Report...");

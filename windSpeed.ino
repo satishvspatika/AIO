@@ -21,6 +21,10 @@ void windSpeed(void *pvParameters) {
 #endif
 
   strcpy(windSpeedInst_str, "00.00");
+  if (!ws_ok) {
+    strcpy(windSpeedInst_str, "NA");
+    strcpy(prevWindSpeedAvg_str, "NA");
+  }
 
   // Initialize buffer with current value
   uint16_t initial_count = wind_count.val;
@@ -65,8 +69,21 @@ void windSpeed(void *pvParameters) {
       latestSensorData.windSpeed = 0;
     }
 
+    // CONSISTENCY: If the sensor is flagged as failed/disconnected, show NA
+    if (!ws_ok) {
+      strcpy(windSpeedInst_str, "NA");
+      latestSensorData.windSpeed = 0;
+    }
+
     // Move to next buffer slot
     bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
+
+    // CONSISTENCY: If the sensor is flagged as failed/disconnected, show NA
+    if (!ws_ok) {
+      strcpy(windSpeedInst_str, "NA");
+      strcpy(prevWindSpeedAvg_str, "NA");
+      latestSensorData.windSpeed = 0;
+    }
 
     vTaskDelay(1000 / portTICK_PERIOD_MS); // Sample every 1 second
   }

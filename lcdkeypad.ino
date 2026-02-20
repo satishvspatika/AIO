@@ -179,40 +179,8 @@ void lcdkeypad(void *pvParameters) {
 
     static int last_lcd_state = 0;
 
-    // Check for Deep Sleep conditions whenever LCD is OFF
-    if (lcdkeypad_start == 0) {
-      static unsigned long last_sleep_check = 0;
-      if (millis() - last_sleep_check > 30000) { // Check every 30s
-        last_sleep_check = millis();
-        bool task_active =
-            (sync_mode == eSMSStart || sync_mode == eGPSStart ||
-             sync_mode == eHttpTrigger || sync_mode == eHttpBegin ||
-             sync_mode == eHttpStarted);
-
-        int mins_into = current_min % 15;
-        // Strict Window: Sleep only between Min 6 and Min 12
-        // This avoids sleeping during upload (0-5) or prep (13-14)
-        // Strict Window: Sleep only between Min 6 and Min 12
-        // This avoids sleeping during upload (0-5) or prep (13-14)
-        bool safe_window = (mins_into > 5 && mins_into <= 12);
-
-        // EXTRA SAFETY: If we've been awake for more than 10 mins without task
-        // priority, force sleep
-        bool boot_timeout = (millis() > 600000);
-
-        if (task_active) {
-          debugln("[PWR] Idle but GPRS Task Active. Staying awake...");
-        } else if (!safe_window && !boot_timeout) {
-          debugln("[PWR] Outside safe window (" + String(mins_into) +
-                  "m). Waiting...");
-        } else {
-          // Check if Serial is active (USB connected)
-          // If No Serial activity for 30s, we sleep even if 'wired==1'
-          debugln("[PWR] Safe Window/Timeout Found. Forcing Deep Sleep...");
-          start_deep_sleep();
-        }
-      }
-    }
+    // Auto-Sleep logic removed from here as it conflicts with GPRS/Scheduler
+    // System sleep is now exclusively managed by loop() and scheduler()
 
     // Capture the transition for logging only
     if (last_lcd_state == 1 && lcdkeypad_start == 0) {
