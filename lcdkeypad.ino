@@ -1,7 +1,5 @@
 #include "globals.h"
 
-static int last_lcd_state = 0;
-
 /*
  * LCD - I2C based SCL,SDA,VCC,GND
  * KEYPAD
@@ -178,6 +176,8 @@ void lcdkeypad(void *pvParameters) {
     bool should_activate =
         (wakeup_reason_is == ext0) ||
         (wired == 1 && wakeup_reason_is == 0 && lcd_timer == NULL);
+
+    static int last_lcd_state = 0;
 
     // Auto-Sleep logic removed from here as it conflicts with GPRS/Scheduler
     // System sleep is now exclusively managed by loop() and scheduler()
