@@ -522,7 +522,13 @@ void prepare_data_and_send() {
   //       }
 
   if (success_count == 0) { // Failure to send the current data in 1st attempt
-    for (unsent_counter = 1; unsent_counter <= 3 && http_code != 200;
+    // ADAPTIVE: If signal is very poor (< -108), reduce retries to save battery
+    // (proactive)
+    int max_retries = (temp_sig < -108) ? 1 : 3;
+    if (max_retries < 3)
+      debugln("[ADAPTIVE] Weak signal detected. Reducing retries to 1.");
+
+    for (unsent_counter = 1; unsent_counter <= max_retries && http_code != 200;
          unsent_counter++) {
       esp_task_wdt_reset();
       debug("AG Retrying ");
@@ -595,7 +601,8 @@ void prepare_data_and_send() {
       vTaskDelay(200);
 
       if (success_count == 1) {
-        diag_consecutive_reg_fails = 0; // RESET counter on any success
+        diag_consecutive_reg_fails = 0;  // RESET counter on any success
+        diag_consecutive_http_fails = 0; // RESET HTTP failure counter
         if (unsent_counter > 0) {
           debug("Success in sending current data .. Attempt : ");
           debugln(unsent_counter);
@@ -606,10 +613,13 @@ void prepare_data_and_send() {
       }
     } // End of retry for loop
 
-    if (unsent_counter >= 4 && success_count == 0) { // Complete failure
+    if (success_count == 0) { // Complete failure
+      diag_consecutive_http_fails++;
+      debugf1("[RECOVERY] Consecutive HTTP Fails: %d\n",
+              diag_consecutive_http_fails);
+
       if (data_mode == eCurrentData) {
         char current_record[record_length + 1];
-        debugln();
         debugln("CURRENT DATA : Retries exceeded limit... Storing to backlog.");
 
         debugln();
@@ -761,10 +771,9 @@ void prepare_data_and_send() {
 
         debugln("Current/Closing data not sent to unsent.txt is ");
         debugln(current_record);
-
       } // closes if(data_mode == eCurrentData)
-    }   // closes if(unsent_counter >= 4 && success_count == 0)
-  }     // closes if(success_count == 0)
+    }   // closes if(success_count == 0)
+  }     // closes if(SPIFFS.exists(temp_file))
 } // closes prepare_data_and_send()
 
 void send_http_data() {
@@ -825,6 +834,9 @@ void send_http_data() {
     }
     if (target_ip[0] == '\0') {
       debugln("[DNS Cache] Resolution failed. Falling back to domain name.");
+      debugln("[DNS Cache] Setting explicit DNS: 8.8.8.8");
+      SerialSIT.println("AT+CDNSCFG=\"8.8.8.8\",\"1.1.1.1\"");
+      waitForResponse("OK", 1000);
       strcpy(target_ip, domain);
     }
   }
@@ -846,8 +858,19 @@ void send_http_data() {
     vTaskDelay(500);
 
     // Hard reset IP stack to clear any half-open sessions
-    SerialSIT.println("AT+CIPSHUT");
-    waitForResponse("SHUT OK", 4000);
+    // PROACTIVE: Force a hard shut if we've had consecutive HTTP failures
+    // (learning)
+    if (diag_consecutive_http_fails > 1) {
+      debugln(
+          "[PROACTIVE] Consecutive failures detected. Forcing deep CIPSHUT...");
+      SerialSIT.println("AT+CIPSHUT");
+      waitForResponse("SHUT OK", 5000);
+      SerialSIT.println("AT+CGACT=0,1");
+      waitForResponse("OK", 3000);
+    } else {
+      SerialSIT.println("AT+CIPSHUT");
+      waitForResponse("SHUT OK", 4000);
+    }
   }
 
   // IP Stack ready/cleared
@@ -1447,19 +1470,25 @@ void copyFile(const char *sourcePath, const char *destPath) {
 }
 
 void graceful_modem_shutdown() {
-  debugln("[GPRS] Checking modem for graceful shutdown...");
+  // SELF-HEALING: If we had registration fails or the sync_mode indicates a
+  // failure, skip the graceful part and go straight to hard power cut to reset
+  // the hardware.
+  bool session_unstable =
+      (diag_consecutive_reg_fails > 0 || sync_mode == eHttpStop);
 
-  // Try to communicate. If modem is already off, this will timeout quickly.
-  SerialSIT.println("AT");
-  String resp = waitForResponse("OK", 500);
-
-  if (resp.indexOf("OK") != -1) {
-    debugln("[GPRS] Modem alive. Closing network session gracefully...");
-    SerialSIT.println("AT+CPOWD=1"); // Normal Power Down
-    waitForResponse("NORMAL POWER OFF", 3000);
-    vTaskDelay(500);
+  if (!session_unstable) {
+    debugln("[GPRS] Session clean. Attempting graceful shutdown...");
+    SerialSIT.println("AT");
+    if (waitForResponse("OK", 500).indexOf("OK") != -1) {
+      debugln("[GPRS] Modem alive. Closing network session gracefully...");
+      SerialSIT.println("AT+CPOWD=1"); // Normal Power Down
+      waitForResponse("NORMAL POWER OFF", 3000);
+      vTaskDelay(500);
+    }
   } else {
-    debugln("[GPRS] Modem already detached or unresponsive.");
+    debugln(
+        "[GPRS] ⚠️ Session was unstable. Skipping graceful shutdown for "
+        "a Hard Hardware Reset.");
   }
 
   debugln("[GPRS] Cutting physical VCC power (GPIO 26 -> LOW).");
@@ -1483,10 +1512,6 @@ void send_sms() {
   SerialSIT.println("AT+CMGD=1,4");
   response = waitForResponse("OK", 5000);
   debugln("Removed READ messages");
-
-  vTaskDelay(200);
-
-  graceful_modem_shutdown();
 
   sync_mode = eSMSStop;
 }
@@ -1868,7 +1893,7 @@ void get_registration() {
   debugln("************************");
 
   int no_of_retries =
-      20; // Reduced from 60 to preserve battery; will store locally if failed
+      30; // Increased to 30 to allow room for post-reset stabilization (BSNL)
   registration = 0;
   retries = 0;
   bool is_registered = false;
@@ -1991,7 +2016,9 @@ void get_registration() {
       if (retries % 5 == 0 && retries > 0) {
         // If stuck in "Not Searching" (0) or "Unknown" (4), kick the radio
         // Highly critical for BSNL towers which leave IoT modems 'hanging'
-        if (registration == 0 || registration == 4) {
+        // If stuck in No Signal (0), Searching (2), Denied (3), or Unknown (4)
+        if (registration == 0 || registration == 2 || registration == 3 ||
+            registration == 4) {
           if (retries == 10) {
             // FULL RESET at Iter 10: Simulate physical SIM reinsertion
             debugln("[GPRS] Stubborn search. Electronic Reset (CFUN=1,1)...");
@@ -2022,7 +2049,7 @@ void get_registration() {
       vTaskDelay(5000); // Reduced from 10s to 5s for faster handshake
       retries++;
 
-      if (retries >= 20)
+      if (retries >= 30)
         break;
     }
   }
@@ -2674,7 +2701,18 @@ int setup_ftp() {
   SerialSIT.println("AT+CFTPSPASV=1"); // Try Passive Mode
   waitForResponse("OK", 5000);
 
-  vTaskDelay(2000 / portTICK_PERIOD_MS); // Pre-login settling delay
+  // DNS Warm-up: Force resolution of FTP server before login (Fixes Error 13)
+  debugln("[FTP] Warming up DNS...");
+  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CDNSGIP=\"%s\"",
+           ftpServer);
+  SerialSIT.println(gprs_xmit_buf);
+  waitForResponse("+CDNSGIP:", 5000);
+
+  vTaskDelay(3000 / portTICK_PERIOD_MS); // Pre-login settling delay (Increased)
+  // Re-prepare login command
+  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
+           "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",0", ftpServer, portName,
+           ftpUser, ftpPassword);
   SerialSIT.println(gprs_xmit_buf);
   response = waitForResponse("+CFTPSLOGIN:", 60000); // Increased to 60s
   debugln(response);
@@ -3153,9 +3191,9 @@ bool send_health_report(bool useJitter) {
     status_summary = "BROWNOUT_RECOVERY";
   else if (diag_rtc_battery_ok == false)
     status_summary = "RTC_BATTERY_FAULT";
-  else if (hdcType == HDC_UNKNOWN)
-    status_summary = "HDC_SENSOR_FAULT"; // NEW: HDC missing
-  else if (wd_ok == false)
+  else if (SYSTEM != 0 && hdcType == HDC_UNKNOWN)
+    status_summary = "TH_SENSOR_FAULT"; // Renamed from HDC to TH for clarity
+  else if (SYSTEM != 0 && wd_ok == false)
     status_summary = "WIND_DIR_FAULT"; // NEW: WD Stuck/Missing
   else if (li_bat_val < 3.6)
     status_summary = "LOW_BATTERY";
@@ -3179,16 +3217,19 @@ bool send_health_report(bool useJitter) {
   }
 
   char sensor_info[64];
-  const char *hdc_s = (hdcType == HDC_UNKNOWN ? "FAIL" : "OK");
-  const char *ws_s =
-      (SYSTEM == 1 || SYSTEM == 2) ? (ws_ok ? "OK" : "FAIL") : "NA";
-  const char *wd_s =
-      (SYSTEM == 1 || SYSTEM == 2) ? (wd_ok ? "OK" : "FAIL") : "NA";
-  const char *rf_s = (SYSTEM == 0 || SYSTEM == 2) ? "OK" : "NA";
-
-  // Detailed Sensor string: HDC:OK,WS:OK,WD:OK,RF:OK
-  snprintf(sensor_info, sizeof(sensor_info), "HDC:%s,WS:%s,WD:%s,RF:%s", hdc_s,
-           ws_s, wd_s, rf_s);
+  if (SYSTEM == 0) { // TRG
+    snprintf(sensor_info, sizeof(sensor_info), "RF:OK");
+  } else if (SYSTEM == 1) { // TWS
+    snprintf(sensor_info, sizeof(sensor_info), "HDC:%s,WS:%s,WD:%s",
+             (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"), (ws_ok ? "OK" : "FAIL"),
+             (wd_ok ? "OK" : "FAIL"));
+  } else if (SYSTEM == 2) { // TWS-RF
+    snprintf(sensor_info, sizeof(sensor_info), "HDC:%s,WS:%s,WD:%s,RF:OK",
+             (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"), (ws_ok ? "OK" : "FAIL"),
+             (wd_ok ? "OK" : "FAIL"));
+  } else {
+    strcpy(sensor_info, "NA");
+  }
 
   char healthURL[900]; // Increased for Status info
   snprintf(

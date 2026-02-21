@@ -3,8 +3,8 @@ Build Configuration
 SYSTEM: 2
 UNIT: KSNDMC_ADDON
 Output: KSNDMC_ADDON
-Firmware Version: 5.35
-Build Date: 2026-02-19 18:44:05.182398
+Firmware Version: v5.36
+Build Date: 2026-02-20 18:13:55.533928
 Binary Size: 1.10 MB
 Binary Path: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/KSNDMC_ADDON/firmware.bin
 Version File: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/KSNDMC_ADDON/fw_version.txt

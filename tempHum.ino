@@ -6,47 +6,52 @@ void tempHum(void *pvParameters) {
   if (!initHDC()) {
     debugln("****HDC sensor not initialized. Task will stay alive for WDT "
             "feeding.");
-    // We do NOT suspend anymore because this task is registered with TWDT.
-    // Instead, we let it enter the loop below where it will feed the watchdog.
   } else {
-    // debugln("------ HDC SENSOR INITIALIZED ------");
     strcpy(temp_str, "00.00");
     strcpy(hum_str, "00.00");
   }
 
+  static int failCount = 0;
   for (;;) {
     if (hdcType != HDC_UNKNOWN) {
       if (readHDC(temperature, humidity)) {
-        // REGIONAL BOUNDS: Loosened to catch total failures beyond 9.0C - 50.0C
+        failCount = 0; // Success
+        // Temperature Logic
         if ((temperature >= 9.0) && (temperature <= 50.0)) {
-          last_valid_temp = temperature; // Update last known good
+          last_valid_temp = temperature;
         } else {
-          // SENSOR OUTLIER/FAIL: Fallback to LAST KNOWN GOOD with +/- 2% jitter
-          float jitter = last_valid_temp * 0.02;
-          temperature = last_valid_temp +
-                        (((float)rand() / RAND_MAX) * (jitter * 2) - jitter);
-          debug("ADJUSTED TEMP VALUE (Based on last known good) is ");
-          debugln(temperature);
+          // If we have a last known good, use jitter. If not (boot), force 0.0
+          if (last_valid_temp > 0.1) {
+            float jitter = last_valid_temp * 0.02;
+            temperature = last_valid_temp +
+                          (((float)rand() / RAND_MAX) * (jitter * 2) - jitter);
+            debug("ADJUSTED TEMP (Last Good) is ");
+            debugln(temperature);
+          } else {
+            temperature = 0.0;
+          }
         }
-        snprintf(inst_temp, sizeof(inst_temp), "%05.2f", temperature);
 
+        // Humidity Logic
         if (humidity >= 10.0 && humidity <= 100.0) {
-          last_valid_hum = humidity; // Update last known good
+          last_valid_hum = humidity;
         } else {
-          // SENSOR FAIL: Fallback to LAST KNOWN GOOD with +/- 2% jitter
-          float jitter = last_valid_hum * 0.02;
-          humidity = last_valid_hum +
-                     (((float)rand() / RAND_MAX) * (jitter * 2) - jitter);
-          // Clamp humidity to realistic bounds
-          if (humidity < 10.0)
-            humidity = 10.0;
-          if (humidity > 100.0)
-            humidity = 100.0;
-          debug("ADJUSTED HUM VALUE (Based on last known good) is ");
-          debugln(humidity);
+          if (last_valid_hum > 0.1) {
+            float jitter = last_valid_hum * 0.02;
+            humidity = last_valid_hum +
+                       (((float)rand() / RAND_MAX) * (jitter * 2) - jitter);
+            if (humidity < 10.0)
+              humidity = 10.0;
+            if (humidity > 100.0)
+              humidity = 100.0;
+            debug("ADJUSTED HUM (Last Good) is ");
+            debugln(humidity);
+          } else {
+            humidity = 0.0;
+          }
         }
-        snprintf(inst_hum, sizeof(inst_hum), "%05.2f", humidity);
 
+        // UI Strings (ONLY) - Do not touch global production buffers
         snprintf(temp_str, sizeof(temp_str), "%.1f C", temperature);
         snprintf(hum_str, sizeof(hum_str), "%.1f %%", humidity);
 
@@ -57,13 +62,22 @@ void tempHum(void *pvParameters) {
           latestSensorData.humidity = humidity;
           xSemaphoreGive(i2cMutex);
         }
+      } else {
+        // readHDC Failed: Sensor likely unplugged
+        failCount++;
+        if (failCount >= 3) {
+          debugln("[HDC] Sensor disconnected during runtime.");
+          hdcType = HDC_UNKNOWN;
+        }
+        temperature = 0.0;
+        humidity = 0.0;
+        strcpy(temp_str, "NA");
+        strcpy(hum_str, "NA");
       }
     } else {
       // SENSOR MISSING: Enforce 0.0 and NA
       temperature = 0.0;
       humidity = 0.0;
-      strcpy(inst_temp, "00.00");
-      strcpy(inst_hum, "00.00");
       strcpy(temp_str, "NA");
       strcpy(hum_str, "NA");
 
@@ -72,6 +86,13 @@ void tempHum(void *pvParameters) {
         latestSensorData.temperature = 0.0;
         latestSensorData.humidity = 0.0;
         xSemaphoreGive(i2cMutex);
+      }
+
+      // Periodically attempt to re-init if gone
+      static uint32_t lastRetry = 0;
+      if (millis() - lastRetry > 30000) {
+        lastRetry = millis();
+        initHDC();
       }
     }
 
@@ -171,7 +192,10 @@ bool readHDC(float &tempC, float &humidity) {
       Wire.write(0x0F); // Measurement Configuration Register
       Wire.write(0x01); // Start measurement (Self-clearing bit)
     }
-    Wire.endTransmission();
+    if (Wire.endTransmission() != 0) {
+      xSemaphoreGive(i2cMutex);
+      return false; // Physical NACK means sensor is gone
+    }
     xSemaphoreGive(i2cMutex);
   }
 

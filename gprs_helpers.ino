@@ -179,6 +179,9 @@ bool try_activate_apn(const char *apn) {
     if (ip_resp.indexOf("+CGPADDR: 1,") != -1 &&
         ip_resp.indexOf("0.0.0.0") == -1 && ip_resp.indexOf(".") != -1) {
       debugln("APN Activation Success (Valid IP)!");
+      // Set explicit DNS to prevent DNS-related hangs (Error 713/715)
+      SerialSIT.println("AT+CDNSCFG=\"8.8.8.8\",\"1.1.1.1\"");
+      waitForResponse("OK", 500);
       return true;
     } else {
       debugln("APN Activation ERROR: No valid IP assigned (0.0.0.0).");

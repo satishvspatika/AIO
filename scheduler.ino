@@ -438,6 +438,9 @@ void scheduler(void *pvParameters) {
 
       prev_15min_hum = check_hum;
 
+      // --- START OF PRODUCTION SNAPSHOT ---
+      // These buffers are now PROTECTED. background tasks (tempHum) no longer
+      // write here.
       snprintf(inst_temp, sizeof(inst_temp), "%05.1f", check_temp);
       snprintf(inst_hum, sizeof(inst_hum), "%05.1f", check_hum);
       snprintf(avg_wind_speed, sizeof(avg_wind_speed), "%05.2f",
@@ -1150,8 +1153,8 @@ void scheduler(void *pvParameters) {
           snprintf(append_text, sizeof(append_text),
                    "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%04.1f\r\n",
                    sampleNo, current_year, current_month, current_day,
-                   record_hr, record_min, inst_rf, cum_rf, signal_strength,
-                   bat_val);
+                   record_hr, record_min, inst_rf, cum_rf, signal_lvl,
+                   bat_val); // Use signal_lvl (dBm) for graph consistency
 #endif
 
 // TWS
@@ -1160,12 +1163,12 @@ void scheduler(void *pvParameters) {
                    "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
                    sampleNo, current_year, current_month, current_day,
                    record_hr, record_min, inst_temp, inst_hum, avg_wind_speed,
-                   inst_wd, signal_strength, bat_val);
+                   inst_wd, signal_lvl, bat_val);
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
                    record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-                   signal_strength, bat_val);
+                   signal_lvl, bat_val);
 #endif
 
 #if SYSTEM == 2
@@ -1174,12 +1177,12 @@ void scheduler(void *pvParameters) {
               "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
               sampleNo, current_year, current_month, current_day, record_hr,
               record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-              signal_strength, bat_val);
+              signal_lvl, bat_val);
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
                    record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
-                   inst_wd, signal_strength, bat_val);
+                   inst_wd, signal_lvl, bat_val);
 #endif
 
           //                                            len =
@@ -2106,7 +2109,7 @@ void scheduler(void *pvParameters) {
                rf_cls_dd); // this is done earlier also, but now @
                            // every 15th min, do it based on sampleNo
       debug("[FILE] SD: ");
-      debug(cur_file);
+      debugln(cur_file);
       if (sd_card_ok) {
         File sd3 = SD.open(cur_file, FILE_READ);
         if (sd3) {

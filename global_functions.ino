@@ -31,11 +31,16 @@ void start_deep_sleep() {
   digitalWrite(32, LOW); // Turn off LCD (5V)
 
   // Ensure GPRS is shut down gracefully ALWAYS before cutting power
-  // We check the physical UART response rather than just a flag for reliability
   esp_task_wdt_reset();
   graceful_modem_shutdown();
   esp_task_wdt_reset();
   delay(100);
+
+  // SELF-HEALING: Force GPIO 26 and 32 to stay strictly LOW during sleep
+  // This prevents the modem from staying in a "zombie" state.
+  gpio_hold_en(GPIO_NUM_26);
+  gpio_hold_en(GPIO_NUM_32);
+  gpio_deep_sleep_hold_en();
 
   // Calculate time to sleep to target the NEXT exact 15-minute boundary
   // We calculate in SECONDS for precision using current_sec

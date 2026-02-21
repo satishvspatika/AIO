@@ -3,8 +3,8 @@ Build Configuration
 SYSTEM: 2
 UNIT: SPATIKA_GEN
 Output: SPATIKA_ADDON
-Firmware Version: 5.35
-Build Date: 2026-02-19 18:46:23.343002
+Firmware Version: v5.36
+Build Date: 2026-02-20 18:16:08.428953
 Binary Size: 1.10 MB
 Binary Path: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/SPATIKA_ADDON/firmware.bin
 Version File: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/SPATIKA_ADDON/fw_version.txt

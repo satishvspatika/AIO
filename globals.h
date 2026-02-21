@@ -48,6 +48,14 @@ RTC_DATA_ATTR uint8_t ulp_code_reserve[512] = {0};
 #include "soc/sens_reg.h"
 
 // CHANGE THESE FOR DIFFERENT SYSTEMS
+// Function Prototypes for Cross-File Visibility
+void graceful_modem_shutdown();
+void start_deep_sleep();
+void flushSerialSIT();
+bool verify_bearer_or_recover();
+int send_at_cmd_data(char *payload, String charArray);
+void get_signal_strength();
+
 /************************************************************************************************/
 #define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
 char UNIT[15] = "KSNDMC_TWS"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
@@ -55,7 +63,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "v5.36"
+#define FIRMWARE_VERSION "v5.37"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
@@ -318,6 +326,8 @@ RTC_DATA_ATTR int diag_consecutive_reg_fails =
 RTC_DATA_ATTR int diag_stored_apn_fails =
     0; // Tracks consecutive failures of known good APN
 RTC_DATA_ATTR int diag_consecutive_sim_fails = 0; // Tracks CPIN failures
+RTC_DATA_ATTR int diag_consecutive_http_fails =
+    0; // Tracks persistent 713/714 errors
 
 // DNS IP Caching to prevent DNS lookup every 15 mins (Saves ~1.5 seconds
 // modem-on time)

@@ -956,32 +956,41 @@ void lcdkeypad(void *pvParameters) {
             }
           } else {
             if (cur_mode == eEditOff) {
-              if ((cur_fld_no == FLD_RF_RES && rf_res_edit_state == 0) ||
-                  (cur_fld_no == FLD_DELETE_DATA)) {
-                if (cur_fld_no == FLD_RF_RES) {
-                  strcpy(ui_data[FLD_RF_RES].topRow, "ENTER PWD");
-                  rf_res_edit_state = 1;
-                  strcpy(input_buf, "0000");
-                } else {
-                  strcpy(ui_data[FLD_DELETE_DATA].topRow, "CONFIRM?");
-                  strcpy(input_buf, "Yes ");
-                }
-              } else {
-                // Special handling for Station ID: Start with cleared field
-                if (cur_fld_no == FLD_STATION) {
-                  strcpy(input_buf, "                "); // 16 spaces
-                } else {
-                  strcpy(input_buf, ui_data[cur_fld_no].bottomRow);
-                }
-              }
-              cur_mode = eEditOn;
-              cur_pos_no = 0;
-              cur_char_no = 0;
+              // Only allow entering Edit Mode for specific configuration fields
+              if (cur_fld_no == FLD_STATION || cur_fld_no == FLD_DATE ||
+                  cur_fld_no == FLD_TIME || cur_fld_no == FLD_RF_RES ||
+                  cur_fld_no == FLD_DELETE_DATA) {
 
-              char c[2] = {input_buf[0], 0};
-              char *ptr = strstr(inpCharSet[ui_data[cur_fld_no].fieldType], c);
-              if (ptr)
-                cur_char_no = ptr - inpCharSet[ui_data[cur_fld_no].fieldType];
+                if ((cur_fld_no == FLD_RF_RES && rf_res_edit_state == 0) ||
+                    (cur_fld_no == FLD_DELETE_DATA)) {
+                  if (cur_fld_no == FLD_RF_RES) {
+                    strcpy(ui_data[FLD_RF_RES].topRow, "ENTER PWD");
+                    rf_res_edit_state = 1;
+                    strcpy(input_buf, "0000");
+                  } else {
+                    strcpy(ui_data[FLD_DELETE_DATA].topRow, "CONFIRM?");
+                    strcpy(input_buf, "Yes ");
+                  }
+                } else {
+                  // Special handling for Station ID: Start with cleared field
+                  if (cur_fld_no == FLD_STATION) {
+                    strcpy(input_buf, "                "); // 16 spaces
+                  } else {
+                    strcpy(input_buf, ui_data[cur_fld_no].bottomRow);
+                  }
+                }
+                cur_mode = eEditOn;
+                cur_pos_no = 0;
+                cur_char_no = 0;
+
+                char c[2] = {input_buf[0], 0};
+                char *ptr =
+                    strstr(inpCharSet[ui_data[cur_fld_no].fieldType], c);
+                if (ptr)
+                  cur_char_no = ptr - inpCharSet[ui_data[cur_fld_no].fieldType];
+              } else {
+                debugln("Interaction ignored: Field is Read-Only.");
+              }
             } else {
               if (cur_fld_no == FLD_RF_RES) {
                 if (rf_res_edit_state == 1) {

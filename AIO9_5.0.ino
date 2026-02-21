@@ -64,6 +64,10 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n\n[BOOT] HELLO! System starting... (Debug Enabled)");
+
+  // Seed the random number generator using internal RNG for better jitter
+  srand(esp_random());
+
   delay(1000);
 
   // Initialize I2C Mutex first
@@ -765,6 +769,10 @@ void initialize_hw() {
   pinMode(32, OUTPUT);
   pinMode(26, OUTPUT);
   pinMode(27, INPUT_PULLUP);
+
+  // SELF-HEALING: Release GPIO holds from deep sleep
+  gpio_hold_dis(GPIO_NUM_26);
+  gpio_hold_dis(GPIO_NUM_32);
 
   if (!SPIFFS.begin(true)) {
     debugln("[BOOT] SPIFFS: FAILED");
