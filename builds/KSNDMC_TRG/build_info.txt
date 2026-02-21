@@ -3,8 +3,8 @@ Build Configuration
 SYSTEM: 0
 UNIT: KSNDMC_TRG
 Output: KSNDMC_TRG
-Firmware Version: v5.36
-Build Date: 2026-02-20 18:04:43.186789
+Firmware Version: v5.37
+Build Date: 2026-02-21 14:41:05.624296
 Binary Size: 1.09 MB
 Binary Path: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/KSNDMC_TRG/firmware.bin
 Version File: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/KSNDMC_TRG/fw_version.txt
