@@ -228,17 +228,22 @@ bool verify_bearer_or_recover() {
   vTaskDelay(500 / portTICK_PERIOD_MS);
   flushSerialSIT();
 
-  // 3. Bearer is dead or invalid. Attempt recovery using stored APN.
+  // 3. Bearer is dead or invalid. Attempt recovery using current runtime APN
+  // first. This avoids querying SIM CCID on a stressed modem, preventing
+  // delayed URCs.
+  if (strlen(apn_str) > 0) {
+    debug("AG Recovery: Attempting runtime APN -> ");
+    debugln(apn_str);
+    if (try_activate_apn(apn_str))
+      return true;
+  }
+
+  // 4. Fallback: Query CCID and load stored APN from NVS.
+  debugln("AG Recovery: Runtime APN failed/empty. Querying CCID...");
   String ccid = get_ccid();
   char stored_apn[20] = {0};
   if (load_apn_config(ccid, stored_apn, sizeof(stored_apn))) {
     if (try_activate_apn(stored_apn))
-      return true;
-  }
-
-  // Fallback to current runtime apn_str
-  if (strlen(apn_str) > 0) {
-    if (try_activate_apn(apn_str))
       return true;
   }
 

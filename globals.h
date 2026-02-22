@@ -57,8 +57,8 @@ int send_at_cmd_data(char *payload, String charArray);
 void get_signal_strength();
 
 /************************************************************************************************/
-#define SYSTEM 0              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "KSNDMC_TRG"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
+#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "KSNDMC_TWS"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
                               // KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 

@@ -335,19 +335,19 @@ void handleRoot() {
 
   String sysType = "";
 #if SYSTEM == 0
-  sysType = "TRG";
+  sysType = "<i>Varsha TRG</i>";
 #elif SYSTEM == 1
-  sysType = "TWS";
+  sysType = "<i>Varsha TWS</i>";
 #elif SYSTEM == 2
-  sysType = "TWS-ADDON";
+  sysType = "<i>Varsha TWS-RF</i>";
 #endif
 
-  char stationValue[150];
-  snprintf(stationValue, sizeof(stationValue),
-           "<h1 style='font-size: 1.8em;color:#333;margin-bottom:5px;'>%s</h1>"
-           "<div style='font-size: "
-           "1.0em;color:#666;font-weight:bold;margin-bottom:20px;'>(%s)</div>",
-           station_name, sysType.c_str());
+  String stationValue =
+      "<h1 style='font-size: 1.8em;color:#333;margin-bottom:5px;'>" +
+      String(station_name) + "</h1>" +
+      "<div style='font-size: "
+      "1.0em;color:#666;font-weight:bold;margin-bottom:20px;'>( " +
+      sysType + " )</div>";
 
   html +=
       "<h2 style='color:#007bff;font-size:1.5em;margin-bottom:5px;'>Spatika "
@@ -522,12 +522,8 @@ void handleRoot() {
   // File Mgmt
   html += "<div "
           "style='background:white;padding:20px;border-radius:8px;box-shadow:0 "
-          "1px 3px rgba(0,0,0,0.1);max-width:500px;margin:0 auto;'>";
-
-  html += "<a href='/files' class='btn' "
-          "style='display:block;width:100%;box-sizing:border-box;margin:0 0 "
-          "20px 0;'>" +
-          s_browse + "</a>";
+          "1px 3px rgba(0,0,0,0.1);max-width:500px;margin:0 "
+          "auto;margin-bottom:20px;'>";
 
   html +=
       "<h3 style='margin:10px 0;color:#555;font-size:1em;'>" + s_hist + "</h3>";
@@ -551,6 +547,16 @@ void handleRoot() {
           "' class='btn' "
           "style='width:90%;margin:0;background:#007bff;'>";
   html += "</form>";
+  html += "</div>";
+
+  html += "<div "
+          "style='background:white;padding:20px;border-radius:8px;box-shadow:0 "
+          "1px 3px rgba(0,0,0,0.1);max-width:500px;margin:0 auto;'>";
+
+  html += "<a href='/files' class='btn' "
+          "style='display:block;width:100%;box-sizing:border-box;margin:0 0 "
+          "0px 0;'>" +
+          s_browse + "</a>";
   html += "</div>";
 
   // Disconnect
@@ -645,10 +651,6 @@ void handleFileList() {
           "' "
           "style='margin-top:5px;background-color:#007bff;'>";
   html += "</form>";
-  html +=
-      "<br><a href='/' class='btn' "
-      "style='background:#17a2b8;display:inline-block;margin-bottom:20px;'>" +
-      s_bhome + "</a>";
 
   // --- Logic for Hierarchy vs Search ---
 
@@ -879,7 +881,8 @@ void handleFileView() {
       String s_copy = isKan ? "ಕಾಪಿ ಮಾಡಿ (Copy Content)" : "Copy Content";
       String s_tip = isKan ? "ಸಲಹೆ (Tip)" : "Tip";
       String s_tip_txt =
-          isKan ? "ವಾಟ್ಸಾಪ್‌ನಲ್ಲಿ ಕಳುಹಿಸಲು: "
+          isKan ? "ವಾಟ್ಸಾಪ್‌ನಲ್ಲಿ "
+                  "ಕಳುಹಿಸಲು: "
                   "ಫೈಲ್ "
                   "ಡೌನ್ಲೋಡ್ "
                   "ಮಾಡಿ, "
@@ -910,6 +913,26 @@ void handleFileView() {
         buf[len] = 0; // Null terminate
         server.sendContent(String(buf));
       }
+
+      // --- CSV LEGEND HEADER AT BOTTOM ---
+      String legend = "ಮೌಲ್ಯಗಳ ಅರ್ಥ (Values Meaning): ";
+#if SYSTEM == 0
+      legend += "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಮಳೆ (Cum RF), "
+                "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)";
+#elif SYSTEM == 1
+      legend += "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ತಾಪಮಾನ (Temp), "
+                "ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ (Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir), "
+                "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)";
+#elif SYSTEM == 2
+      legend +=
+          "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಸಂಚಿತ ಮಳೆ (Cum RF), "
+          "ತಾಪಮಾನ (Temp), ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ (Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು "
+          "(Wind Dir), ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)";
+#endif
+      server.sendContent("</pre>");
+      server.sendContent(
+          "<div style='font-size:12px;color:#666;margin-top:10px;'><strong>" +
+          legend + "</strong></div>");
 
       String s_blist =
           isKan
@@ -948,8 +971,44 @@ void handleViewLog() {
       isKan ? "ಹೋಮ್ ಪೇಜ್‌ಗೆ ಹೋಗಿ (Back to Home)"
             : "Back to Home";
 
-  String searchFileName = "/" + String(station_name) + "_" + dateInput + ".txt";
-  String result = s_dnf + " " + dateInput + " " + timeInput;
+  // --- Parse the input date and time ---
+  int qYear = dateInput.substring(0, 4).toInt();
+  int qMonth = dateInput.substring(4, 6).toInt();
+  int qDay = dateInput.substring(6, 8).toInt();
+
+  int qHour = 0;
+  int qMin = 0;
+  int colonIdx = timeInput.indexOf(':');
+  if (colonIdx != -1) {
+    qHour = timeInput.substring(0, colonIdx).toInt();
+    qMin = timeInput.substring(colonIdx + 1).toInt();
+  }
+
+  // --- Convert Real Date/Time to internal rf_close_date ---
+  // If time is 00:00 to 08:30, it belongs to today's rf_close_date.
+  // If time is 08:45 to 23:45, it belongs to tomorrow's rf_close_date.
+  int search_rf_year = qYear;
+  int search_rf_month = qMonth;
+  int search_rf_day = qDay;
+
+  bool goes_to_next_day = false;
+
+  if (qHour > 8 || (qHour == 8 && qMin > 30)) {
+    goes_to_next_day = true;
+  }
+
+  if (goes_to_next_day && search_rf_day > 0) {
+    next_date(&search_rf_day, &search_rf_month, &search_rf_year);
+  }
+
+  char rfFileDate[10];
+  snprintf(rfFileDate, sizeof(rfFileDate), "%04d%02d%02d", search_rf_year,
+           search_rf_month, search_rf_day);
+
+  String searchFileName =
+      "/" + String(station_name) + "_" + String(rfFileDate) + ".txt";
+  String result = s_dnf + " Date: " + dateInput + " Time: " + timeInput +
+                  " (Searched in: " + searchFileName + ")";
 
   if (SPIFFS.exists(searchFileName)) {
     File f = SPIFFS.open(searchFileName, FILE_READ);
@@ -959,9 +1018,105 @@ void handleViewLog() {
     while (f.available()) {
       String line = f.readStringUntil('\n');
       if (line.indexOf(searchPattern) != -1) {
-        result = "<b>" + s_rf + "</b><br><br>" + line;
-        // You could parse this line similar to lcdkeypad logic to confirm
-        // precise match or format it nicely. For now, raw line is useful.
+
+        // --- Parse CSV Line ---
+        int p = 0;
+        String tokens[15];
+        int tokenCount = 0;
+
+        for (int i = 0; i < 15; i++) {
+          int nextP = line.indexOf(',', p);
+          if (nextP == -1)
+            nextP = line.length();
+          String val = line.substring(p, nextP);
+          val.trim();
+          tokens[i] = val;
+          tokenCount++;
+          p = nextP + 1;
+          if (nextP == line.length())
+            break;
+        }
+
+        // Token 0: SampleNo
+        // Token 1: Date
+        // Token 2: Time
+
+        String parsedResult = "<b>" + s_rf + "</b><br><br>";
+
+        parsedResult += (isKan ? "ದಿನಾಂಕ (Date): " : "Date: ") +
+                        (tokenCount > 1 ? tokens[1] : "--") + "<br>";
+        parsedResult += (isKan ? "ಸಮಯ (Time): " : "Time: ") +
+                        (tokenCount > 2 ? tokens[2] : "--") + "<br>";
+
+        // Look for the index that holds the time to offset others (in case Date
+        // is missing or extra strings)
+        int d = 3; // default offset after Time
+        for (int i = 0; i < tokenCount; i++) {
+          if (tokens[i].indexOf(':') != -1) {
+            d = i + 1;
+            break;
+          }
+        }
+
+        bool isBihar = (strstr(station_name, "BIHAR_TRG") != NULL);
+
+#if SYSTEM == 0
+        String p_rf = (isBihar && tokenCount > d)
+                          ? tokens[d]
+                          : ((tokenCount > d + 1) ? tokens[d + 1] : "--");
+        parsedResult +=
+            (isKan ? "ಸಂಚಿತ ಮಳೆ (Cum RF): " : "Cum RF: ") + p_rf + " mm<br>";
+#elif SYSTEM == 1
+        String p_temp = (tokenCount > d) ? tokens[d] : "--";
+        String p_hum = (tokenCount > d + 1) ? tokens[d + 1] : "--";
+        String p_ws = (tokenCount > d + 2) ? tokens[d + 2] : "--";
+        String p_wd = (tokenCount > d + 3) ? tokens[d + 3] : "--";
+
+        parsedResult +=
+            (isKan ? "ತಾಪಮಾನ (Temp): " : "Temp: ") + p_temp + " &deg;C<br>";
+        parsedResult +=
+            (isKan ? "ತೇವಾಂಶ (Humidity): " : "Humidity: ") + p_hum + " %<br>";
+        parsedResult += (isKan ? "ಗಾಳಿಯ ವೇಗ (Wind Speed): " : "Wind Speed: ") +
+                        p_ws + " m/s<br>";
+        parsedResult += (isKan ? "ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir): " : "Wind Dir: ") +
+                        p_wd + " &deg;<br>";
+#elif SYSTEM == 2
+        String p_rf = (tokenCount > d) ? tokens[d] : "--";
+        String p_temp = (tokenCount > d + 1) ? tokens[d + 1] : "--";
+        String p_hum = (tokenCount > d + 2) ? tokens[d + 2] : "--";
+        String p_ws = (tokenCount > d + 3) ? tokens[d + 3] : "--";
+        String p_wd = (tokenCount > d + 4) ? tokens[d + 4] : "--";
+
+        parsedResult +=
+            (isKan ? "ಸಂಚಿತ ಮಳೆ (Cum RF): " : "Cum RF: ") + p_rf + " mm<br>";
+        parsedResult +=
+            (isKan ? "ತಾಪಮಾನ (Temp): " : "Temp: ") + p_temp + " &deg;C<br>";
+        parsedResult +=
+            (isKan ? "ತೇವಾಂಶ (Humidity): " : "Humidity: ") + p_hum + " %<br>";
+        parsedResult += (isKan ? "ಗಾಳಿಯ ವೇಗ (Wind Speed): " : "Wind Speed: ") +
+                        p_ws + " m/s<br>";
+        parsedResult += (isKan ? "ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir): " : "Wind Dir: ") +
+                        p_wd + " &deg;<br>";
+#endif
+
+        // Find Signal and Battery if they exist at the end of the line
+        // Usually: ..., Signal, BatV1 [, BatV2]
+        if (tokenCount >= d + 2) {
+          String p_bat = tokens[tokenCount - 1];
+          String p_sig = tokens[tokenCount - 2];
+          // Just double check we aren't grabbing sensor values instead of
+          // signal/bat if formatting is tight
+          if (p_sig.indexOf('-') != -1 || p_sig.length() <= 4) {
+            // Seems like a signal
+            parsedResult += String("<br>") +
+                            (isKan ? "ಸಿಗ್ನಲ್ (Signal): " : "Signal: ") + p_sig +
+                            " dBm<br>";
+            parsedResult += String(isKan ? "ಬ್ಯಾಟರಿ (Battery): " : "Battery: ") +
+                            p_bat + " V<br>";
+          }
+        }
+
+        result = parsedResult;
         break;
       }
     }
