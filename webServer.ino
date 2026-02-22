@@ -820,6 +820,12 @@ void handleFileDownload() {
       String downloadName = fileName;
       if (downloadName.startsWith("/"))
         downloadName = downloadName.substring(1);
+
+      // Prepend Station ID for external context
+      if (!downloadName.startsWith(String(station_name))) {
+        downloadName = String(station_name) + "_" + downloadName;
+      }
+
       server.sendHeader("Content-Disposition",
                         "attachment; filename=\"" + downloadName + "\"");
       server.streamFile(file, "text/plain"); // Send as text/plain
