@@ -549,10 +549,15 @@ void handleRoot() {
   html += "</form>";
   html += "</div>";
 
+  String s_fm = isKan ? "ಫೈಲ್ ನಿರ್ವಹಣೆ (File Management)" : "File Explorer";
+
   html += "<div "
           "style='background:white;padding:20px;border-radius:8px;box-shadow:0 "
-          "1px 3px rgba(0,0,0,0.1);max-width:500px;margin:0 auto;'>";
+          "1px 3px rgba(0,0,0,0.1);max-width:500px;margin:0 "
+          "auto;margin-bottom:20px;'>";
 
+  html += "<h3 style='margin:0 0 15px 0;color:#555;font-size:1em;'>" + s_fm +
+          "</h3>";
   html += "<a href='/files' class='btn' "
           "style='display:block;width:100%;box-sizing:border-box;margin:0 0 "
           "0px 0;'>" +
@@ -915,19 +920,28 @@ void handleFileView() {
       }
 
       // --- CSV LEGEND HEADER AT BOTTOM ---
-      String legend = "ಮೌಲ್ಯಗಳ ಅರ್ಥ (Values Meaning): ";
+      String legend =
+          isKan ? "ಮೌಲ್ಯಗಳ ಅರ್ಥ (Values Meaning): " : "Values Meaning: ";
 #if SYSTEM == 0
-      legend += "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಮಳೆ (Cum RF), "
-                "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)";
-#elif SYSTEM == 1
-      legend += "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ತಾಪಮಾನ (Temp), "
-                "ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ (Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir), "
-                "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)";
-#elif SYSTEM == 2
       legend +=
-          "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಸಂಚಿತ ಮಳೆ (Cum RF), "
-          "ತಾಪಮಾನ (Temp), ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ (Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು "
-          "(Wind Dir), ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)";
+          isKan ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಮಳೆ (Cum RF), "
+                  "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)"
+                : "SampleNo, Date, Time, Cum RF, Signal, Battery 1, Battery 2";
+#elif SYSTEM == 1
+      legend +=
+          isKan
+              ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ತಾಪಮಾನ (Temp), "
+                "ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ (Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir), "
+                "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)"
+              : "SampleNo, Date, Time, Temp, Humidity, Wind Spd, Wind Dir, "
+                "Signal, Battery 1, Battery 2";
+#elif SYSTEM == 2
+      legend += isKan ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಸಂಚಿತ ಮಳೆ "
+                        "(Cum RF), ತಾಪಮಾನ (Temp), ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ "
+                        "(Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir), ಸಿಗ್ನಲ್ (Signal), "
+                        "ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)"
+                      : "SampleNo, Date, Time, Cum RF, Temp, Humidity, Wind "
+                        "Spd, Wind Dir, Signal, Battery 1, Battery 2";
 #endif
       server.sendContent("</pre>");
       server.sendContent(
