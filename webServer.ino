@@ -105,7 +105,7 @@ void webServer(void *pvParameters) {
       vTaskDelete(NULL); // Kill this task
     }
 
-    vTaskDelay(100);
+    vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 }
 
