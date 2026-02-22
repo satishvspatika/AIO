@@ -196,21 +196,39 @@ bool try_activate_apn(const char *apn) {
 }
 
 bool verify_bearer_or_recover() {
-  // Check assigned IP
-  SerialSIT.println("AT+CGPADDR=1");
-  String ip_resp = waitForResponse("OK", 3000);
+  flushSerialSIT();
 
-  // 1. If IP is valid, we are good.
-  if (ip_resp.indexOf("+CGPADDR: 1,") != -1 &&
-      ip_resp.indexOf("0.0.0.0") == -1 && ip_resp.indexOf(".") != -1) {
-    debugln("Bearer Check: OK (Valid IP)");
-    return true;
+  // 1. First explicitly check if the context is Active via CGACT
+  SerialSIT.println("AT+CGACT?");
+  String cgact_resp = waitForResponse("OK", 3000);
+
+  bool context_active = false;
+  if (cgact_resp.indexOf("+CGACT: 1,1") != -1) {
+    context_active = true;
   }
 
-  // 2. Bearer is dead or invalid. Attempt recovery using stored APN.
-  debugf1("Bearer Check: FAILED (%s). Recovering...\n", ip_resp.c_str());
+  // 2. If context is active, verify assigned IP is valid
+  if (context_active) {
+    SerialSIT.println("AT+CGPADDR=1");
+    String ip_resp = waitForResponse("OK", 3000);
 
-  // Try cached APN search first
+    if (ip_resp.indexOf("+CGPADDR: 1,") != -1 &&
+        ip_resp.indexOf("0.0.0.0") == -1 && ip_resp.indexOf(".") != -1) {
+      debugln("Bearer Check: OK (Context Active & Valid IP)");
+      return true;
+    } else {
+      debugln("Bearer Check: FAILED (Context Active but Invalid IP). "
+              "Recovering...");
+    }
+  } else {
+    debugln("Bearer Check: FAILED (Context Not Active). Recovering...");
+  }
+
+  // Clear serial buffers explicitly before fetching CCID to drop dirty URCs
+  vTaskDelay(500 / portTICK_PERIOD_MS);
+  flushSerialSIT();
+
+  // 3. Bearer is dead or invalid. Attempt recovery using stored APN.
   String ccid = get_ccid();
   char stored_apn[20] = {0};
   if (load_apn_config(ccid, stored_apn, sizeof(stored_apn))) {

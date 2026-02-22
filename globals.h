@@ -57,18 +57,18 @@ int send_at_cmd_data(char *payload, String charArray);
 void get_signal_strength();
 
 /************************************************************************************************/
-#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "KSNDMC_TWS"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
+#define SYSTEM 0              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "KSNDMC_TRG"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
                               // KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.37"
+#define FIRMWARE_VERSION "5.38"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
 #define ENABLE_WEBSERVER                                                       \
-  0 // Set to 0 to remove WebServer footprint (SAVES SPACE)
+  1 // Set to 0 to remove WebServer footprint (SAVES SPACE)
 
 #define DEFAULT_RF_RESOLUTION 0.5
 float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;

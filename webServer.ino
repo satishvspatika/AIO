@@ -100,7 +100,9 @@ void webServer(void *pvParameters) {
       wifi_active = false;
       webServerStarted = false; // Allow re-creation if logic permits (though
                                 // this kills the task)
-      vTaskDelete(NULL);        // Kill this task
+      esp_task_wdt_delete(
+          NULL);         // Unsubscribe from the Task Watchdog to prevent panic
+      vTaskDelete(NULL); // Kill this task
     }
 
     vTaskDelay(100);
@@ -247,8 +249,9 @@ void handleRoot() {
       snprintf(timeStr, sizeof(timeStr), "%02d:%02d", last_recorded_hr,
                last_recorded_min);
   }
-  String html = "<!DOCTYPE html><html><head><meta name='viewport' "
-                "content='width=device-width, initial-scale=1.0'>";
+  String html =
+      "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' "
+      "content='width=device-width, initial-scale=1.0'>";
   html += "<title>SPATIKA SENSOR DATA</title>";
   html +=
       "<style>body{font-family:Helvetica,Arial,sans-serif;text-align:center;"
@@ -258,25 +261,27 @@ void handleRoot() {
           "24px;text-align:center;text-decoration:none;display:inline-block;"
           "font-size:15px;margin:10px "
           "5px;cursor:pointer;border-radius:5px;border:none;transition:"
-          "background 0.2s;}";
+          "background 0.2s;white-space:nowrap;}";
   html += ".btn:hover{opacity:0.9;}";
   html += ".btn-danger{background-color:#dc3545;}";
   html += "input[type=submit]{background-color:#007bff;color:white;border:none;"
           "padding:10px "
           "20px;border-radius:5px;cursor:pointer;font-size:15px;transition:"
-          "background 0.2s;}";
+          "background 0.2s;white-space:nowrap;}";
   html += "input[type=submit]:hover{opacity:0.9;}";
   html += ".card{background:white;border-radius:8px;box-shadow:0 2px 4px "
-          "rgba(0,0,0,0.05);padding:10px;margin:5px;display:inline-block;min-"
-          "width:90px;vertical-align:top;width:30%;box-sizing:border-box;}";
+          "rgba(0,0,0,0.05);padding:10px;margin:5px;display:flex;flex-"
+          "direction:column;justify-content:center;min-"
+          "width:140px;flex:1 1 "
+          "45%;box-sizing:border-box;word-wrap:break-word;white-space:normal;}";
   html +=
       ".value{font-size:1.2em;font-weight:700;color:#007bff;margin-top:5px;}";
   html += ".label{font-size:0.85em;color:#6c757d;text-transform:uppercase;"
-          "letter-spacing:0.5px;}";
+          "letter-spacing:0.5px;line-height:1.2;}";
   html += ".section-title{font-size:1.1em;color:#555;margin:20px 0 "
           "10px;font-weight:bold;text-align:left;border-bottom:2px solid "
           "#ddd;padding-bottom:5px;}";
-  html += "@media (max-width: 400px) { .card { width: 45%; } }";
+  html += "@media (max-width: 400px) { .card { min-width: 45%; } }";
   html += ".warning-modal "
           "{display:none;position:fixed;top:0;left:0;width:100%;height:100%;"
           "background:rgba(0,0,0,0.8);z-index:999;text-align:center;padding-"
@@ -328,22 +333,44 @@ void handleRoot() {
 
   html += "</head><body>";
 
-  char stationValue[100];
-  snprintf(
-      stationValue, sizeof(stationValue),
-      "<h1 style='font-size: 1.8em;color:#333;margin-bottom:20px;'>%s</h1>",
-      station_name);
+  String sysType = "";
+#if SYSTEM == 0
+  sysType = "TRG";
+#elif SYSTEM == 1
+  sysType = "TWS";
+#elif SYSTEM == 2
+  sysType = "TWS-ADDON";
+#endif
+
+  char stationValue[150];
+  snprintf(stationValue, sizeof(stationValue),
+           "<h1 style='font-size: 1.8em;color:#333;margin-bottom:5px;'>%s</h1>"
+           "<div style='font-size: "
+           "1.0em;color:#666;font-weight:bold;margin-bottom:20px;'>(%s)</div>",
+           station_name, sysType.c_str());
 
   html +=
       "<h2 style='color:#007bff;font-size:1.5em;margin-bottom:5px;'>Spatika "
       "Web Portal</h2>";
   html += stationValue;
 
+  // Kannada Translation Setup
+  bool isKan = (strstr(UNIT, "KSNDMC") != NULL);
+  String s_live = isKan ? "ಲೈವ್ ಮಾಹಿತಿ (Live Monitor)" : "Live Monitor";
+  String s_rf = isKan ? "ಮಳೆ (Instant RF)" : "Instant RF";
+  String s_t = isKan ? "ತಾಪಮಾನ (Temp)" : "Temp";
+  String s_h = isKan ? "ತೇವಾಂಶ (Humidity)" : "Humidity";
+  String s_ws = isKan ? "ಗಾಳಿಯ ವೇಗ (Wind Spd)" : "Wind Spd";
+  String s_wd = isKan ? "ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir)" : "Wind Dir";
+  String s_lrf = isKan ? "ರೆಕಾರ್ಡ್ ಆದ ಮಳೆ (Logged RF)" : "Logged RF";
+  String s_ll = isKan ? "ಕೊನೆಯ ಲಾಗ್ (Last Logged)" : "Last Logged";
+
   // Main Container
   html += "<div class='container'>";
 
   // --- SECTION 1: LIVE MONITOR ---
-  html += "<div class='section-title'>Live Monitor <span "
+  html += "<div class='section-title'>" + s_live +
+          " <span "
           "style='font-size:0.6em;color:#28a745;vertical-align:middle;'>&#9679;"
           " updating</span></div>";
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
@@ -352,49 +379,59 @@ void handleRoot() {
             "'>"; // Flex container
 
 #if SYSTEM == 0
-    html += "<div class='card'><div class='label'>Instant RF</div><div "
+    html += "<div class='card'><div class='label'>" + s_rf +
+            "</div><div "
             "id='live_rf' class='value'>" +
             String((float)rf_count.val * RF_RESOLUTION, 2) +
             " <span style='font-size:0.6em'>mm</span></div></div>";
 #endif
 
 #if SYSTEM == 1
-    html += "<div class='card'><div class='label'>Temp</div><div "
+    html += "<div class='card'><div class='label'>" + s_t +
+            "</div><div "
             "id='live_temp' class='value'>" +
             String(temperature, 1) +
             " <span style='font-size:0.6em'>&deg;C</span></div></div>";
-    html += "<div class='card'><div class='label'>Humidity</div><div "
+    html += "<div class='card'><div class='label'>" + s_h +
+            "</div><div "
             "id='live_hum' class='value'>" +
             String(humidity, 1) +
             " <span style='font-size:0.6em'>%</span></div></div>";
-    html += "<div class='card'><div class='label'>Wind Spd</div><div "
+    html += "<div class='card'><div class='label'>" + s_ws +
+            "</div><div "
             "id='live_ws' class='value'>" +
             String(cur_wind_speed, 2) +
             " <span style='font-size:0.6em'>m/s</span></div></div>";
-    html += "<div class='card'><div class='label'>Wind Dir</div><div "
+    html += "<div class='card'><div class='label'>" + s_wd +
+            "</div><div "
             "id='live_wd' class='value'>" +
             String(windDir) +
             " <span style='font-size:0.6em'>&deg;</span></div></div>";
 #endif
 
 #if SYSTEM == 2
-    html += "<div class='card'><div class='label'>Instant RF</div><div "
+    html += "<div class='card'><div class='label'>" + s_rf +
+            "</div><div "
             "id='live_rf' class='value'>" +
             String((float)rf_count.val * RF_RESOLUTION, 2) +
             " <span style='font-size:0.6em'>mm</span></div></div>";
-    html += "<div class='card'><div class='label'>Temp</div><div "
+    html += "<div class='card'><div class='label'>" + s_t +
+            "</div><div "
             "id='live_temp' class='value'>" +
             String(temperature, 1) +
             " <span style='font-size:0.6em'>&deg;C</span></div></div>";
-    html += "<div class='card'><div class='label'>Humidity</div><div "
+    html += "<div class='card'><div class='label'>" + s_h +
+            "</div><div "
             "id='live_hum' class='value'>" +
             String(humidity, 1) +
             " <span style='font-size:0.6em'>%</span></div></div>";
-    html += "<div class='card'><div class='label'>Wind Spd</div><div "
+    html += "<div class='card'><div class='label'>" + s_ws +
+            "</div><div "
             "id='live_ws' class='value'>" +
             String(cur_wind_speed, 2) +
             " <span style='font-size:0.6em'>m/s</span></div></div>";
-    html += "<div class='card'><div class='label'>Wind Dir</div><div "
+    html += "<div class='card'><div class='label'>" + s_wd +
+            "</div><div "
             "id='live_wd' class='value'>" +
             String(windDir) +
             " <span style='font-size:0.6em'>&deg;</span></div></div>";
@@ -405,9 +442,6 @@ void handleRoot() {
   }
 
   // --- SECTION 2: LAST RECORDED ---
-  // Note: timeStr was already populated during parsing above if a record was
-  // found. If no record was found, we default to the global last_recorded
-  // variables.
   if (rec_rf == "--" && rec_temp == "--") {
     if (last_recorded_hr == 0 && last_recorded_min == 0)
       snprintf(timeStr, sizeof(timeStr), "--:--");
@@ -416,29 +450,35 @@ void handleRoot() {
                last_recorded_min);
   }
 
-  html +=
-      "<div class='section-title'>Last Logged @ " + String(timeStr) + "</div>";
+  html += "<div class='section-title'>" + s_ll +
+          "<br><span style='font-size:0.85em;color:#777;'>@ " +
+          String(timeStr) + "</span></div>";
   html += "<div "
           "style='display:flex;flex-wrap:wrap;justify-content:center;gap:5px;'"
           ">"; // Flex container
 
 #if SYSTEM == 0
-  html += "<div class='card'><div class='label'>Logged RF</div><div "
+  html += "<div class='card'><div class='label'>" + s_lrf +
+          "</div><div "
           "class='value' style='color:#666'>" +
           rec_rf + " <span style='font-size:0.6em'>mm</span></div></div>";
 #endif
 
 #if SYSTEM == 1
-  html += "<div class='card'><div class='label'>Temp</div><div class='value' "
+  html += "<div class='card'><div class='label'>" + s_t +
+          "</div><div class='value' "
           "style='color:#666'>" +
           rec_temp + " <span style='font-size:0.6em'>&deg;C</span></div></div>";
-  html += "<div class='card'><div class='label'>Humidity</div><div "
+  html += "<div class='card'><div class='label'>" + s_h +
+          "</div><div "
           "class='value' style='color:#666'>" +
           rec_hum + " <span style='font-size:0.6em'>%</span></div></div>";
-  html += "<div class='card'><div class='label'>Wind Spd</div><div "
+  html += "<div class='card'><div class='label'>" + s_ws +
+          "</div><div "
           "class='value' style='color:#666'>" +
           rec_ws + " <span style='font-size:0.6em'>m/s</span></div></div>";
-  html += "<div class='card'><div class='label'>Wind Dir</div><div "
+  html += "<div class='card'><div class='label'>" + s_wd +
+          "</div><div "
           "class='value' style='color:#666'>" +
           rec_wd + " <span style='font-size:0.6em'>&deg;</span></div></div>";
 #endif
@@ -462,8 +502,22 @@ void handleRoot() {
 #endif
   html += "</div>"; // End Flex
 
+  String s_act = isKan ? "ಆಯ್ಕೆಗಳು (Actions & History)" : "Actions & History";
+  String s_browse =
+      isKan ? "ಲಾಗ್ ಫೈಲ್ಸ್ ನೋಡಿ (Browse Log Files)" : "Browse Log Files";
+  String s_hist = isKan ? "ಹಳೆಯ ಮಾಹಿತಿ ಹುಡುಕಿ (Search History)" : "Search History";
+  String s_date = isKan ? "ದಿನಾಂಕ (Date YYYYMMDD):" : "Date (YYYYMMDD):";
+  String s_time = isKan ? "ಸಮಯ (Time HH:MM):" : "Time (HH:MM):";
+  String s_srec = isKan ? "ರೆಕಾರ್ಡ್ ಹುಡುಕಿ (Search Record)" : "Search Record";
+  String s_disc = isKan ? "ವೈ-ಫೈ ಆಫ್ ಮಾಡಿ (Disconnect WiFi)" : "Disconnect WiFi";
+  String s_stay =
+      isKan ? "ವೈ-ಫೈ ಆನ್ ಇರಬೇಕಾ? (Stay with Wifi?)" : "Stay with Wifi?";
+  String s_close = isKan ? "ಈಗ ಆಫ್ ಮಾಡಿ (Close Now)" : "Close Now";
+  String s_conf = isKan ? "ವೈ-ಫೈ ಆಫ್ ಮಾಡಬೇಕೇ? (Disconnect WiFi?)"
+                        : "Are you sure you want to disconnect WiFi?";
+
   // --- SECTION 3: ACTIONS ---
-  html += "<div class='section-title'>Actions & History</div>";
+  html += "<div class='section-title'>" + s_act + "</div>";
 
   // File Mgmt
   html += "<div "
@@ -472,13 +526,14 @@ void handleRoot() {
 
   html += "<a href='/files' class='btn' "
           "style='display:block;width:100%;box-sizing:border-box;margin:0 0 "
-          "20px 0;'>Browse Log Files</a>";
+          "20px 0;'>" +
+          s_browse + "</a>";
 
-  html += "<h3 style='margin:10px 0;color:#555;font-size:1em;'>Search "
-          "History</h3>";
+  html +=
+      "<h3 style='margin:10px 0;color:#555;font-size:1em;'>" + s_hist + "</h3>";
   html += "<form action='/view' method='GET' style='margin-bottom:0;'>";
   html += "<div style='text-align:left;margin-bottom:10px;'>";
-  html += "<label style='font-size:0.9em;color:#777;'>Date (YYYYMMDD):</label>";
+  html += "<label style='font-size:0.9em;color:#777;'>" + s_date + "</label>";
   html += "<input type='text' name='date' value='" + String(last_recorded_yy) +
           String(last_recorded_mm < 10 ? "0" : "") + String(last_recorded_mm) +
           String(last_recorded_dd < 10 ? "0" : "") + String(last_recorded_dd) +
@@ -487,29 +542,38 @@ void handleRoot() {
           "border:1px solid #ddd;border-radius:4px;'>";
   html += "</div>";
   html += "<div style='text-align:left;margin-bottom:15px;'>";
-  html += "<label style='font-size:0.9em;color:#777;'>Time (HH:MM):</label>";
+  html += "<label style='font-size:0.9em;color:#777;'>" + s_time + "</label>";
   html += "<input type='text' name='time' value='12:00' maxlength='5' "
           "style='width:100%;padding:8px;margin-top:5px;box-sizing:border-box;"
           "border:1px solid #ddd;border-radius:4px;'>";
   html += "</div>";
-  html += "<input type='submit' value='Search Record' class='btn' "
+  html += "<input type='submit' value='" + s_srec +
+          "' class='btn' "
           "style='width:90%;margin:0;background:#007bff;'>";
   html += "</form>";
   html += "</div>";
 
   // Disconnect
-  html += "<br><a href='/disconnect' class='btn btn-danger' "
-          "style='width:auto;padding:10px 20px;'>Disconnect WiFi</a><br><br>";
+  html += "<br><a href='#' onclick=\"if(confirm('" + s_conf +
+          "')) window.location='/disconnect';\" class='btn btn-danger' "
+          "style='width:auto;padding:10px 20px;'>" +
+          s_disc + "</a><br><br>";
 
   html += "</div>"; // End Main Container
   html += "<div id='warnModal' class='warning-modal'>"
           "<div class='warning-box'>"
-          "<h2 style='color:#dc3545;'>WiFi Disconnecting!</h2>"
+          "<h2 style='color:#dc3545;'>" +
+          s_stay +
+          "</h2>"
           "<p>Closing in <b id='timeLeft'></b> seconds...</p>"
           "<button class='btn' style='background:#28a745;width:80%;' "
-          "onclick='extendInfo()'>Extend Time (Keep On)</button>"
+          "onclick='extendInfo()'>" +
+          s_stay +
+          "</button>"
           "<br><a href='/disconnect' class='btn btn-danger' "
-          "style='width:80%;'>Close Now</a>" // Explicit close option
+          "style='width:80%;'>" +
+          s_close +
+          "</a>" // Explicit close option
           "</div></div>";
   html += "</body></html>";
   server.send(200, "text/html", html);
@@ -521,8 +585,9 @@ void handleFileList() {
   String month = server.arg("month");
   String query = server.arg("search");
 
-  String html = "<!DOCTYPE html><html><head><meta name='viewport' "
-                "content='width=device-width, initial-scale=1.0'>";
+  String html =
+      "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' "
+      "content='width=device-width, initial-scale=1.0'>";
   html += "<title>LOG FILES</title>";
   html +=
       "<style>body{font-family:Helvetica,Arial,sans-serif;background:#f0f8ff;"
@@ -554,18 +619,39 @@ void handleFileList() {
       "display:inline-block; margin:5px 5px 0 0; } }"
       "</style></head><body>";
 
-  html += "<h2>Log Files</h2>";
+  bool isKan = (strstr(UNIT, "KSNDMC") != NULL);
+  String s_lf = isKan ? "ಲಾಗ್ ಫೈಲ್ಸ್ (Log Files)" : "Log Files";
+  String s_sy = isKan ? "ವರ್ಷ ಆಯ್ಕೆ ಮಾಡಿ (Select Year)" : "Select Year";
+  String s_sm = isKan ? "ತಿಂಗಳು ಆಯ್ಕೆ ಮಾಡಿ (Select Month)" : "Select Month";
+  String s_sr = isKan ? "ಫಲಿತಾಂಶಗಳು (Search Results for)" : "Search Results for";
+  String s_nf = isKan ? "ಫೈಲ್ಸ್ ಸಿಗಲಿಲ್ಲ (No matching files found)"
+                      : "No matching files found.";
+  String s_filter = isKan ? "ಹುಡುಕಿ (Filter)" : "Filter";
+  String s_bhome =
+      isKan ? "ಹೋಮ್ ಪೇಜ್‌ಗೆ ಹೋಗಿ (Back to Home)"
+            : "Back to Home";
+  String s_view = isKan ? "ನೋಡಿ (View)" : "View";
+  String s_dl = isKan ? "ಡೌನ್ಲೋಡ್ (Download)" : "Download";
+  String s_byears = isKan ? "ವರ್ಷಗಳಿಗೆ ಹಿಂತಿರುಗಿ (Back to Years)" : "Back to Years";
+
+  html += "<h2>" + s_lf + "</h2>";
 
   // Search Form
   html += "<form action='/files' method='GET'>";
   html += "<input type='text' name='search' placeholder='Global Search (e.g. "
           "20260125)' value='" +
           query + "'>";
-  html += "<input type='submit' value='Filter' "
+  html += "<input type='submit' value='" + s_filter +
+          "' "
           "style='margin-top:5px;background-color:#007bff;'>";
   html += "</form>";
+  html +=
+      "<br><a href='/' class='btn' "
+      "style='background:#17a2b8;display:inline-block;margin-bottom:20px;'>" +
+      s_bhome + "</a>";
 
   // --- Logic for Hierarchy vs Search ---
+
   File root = SPIFFS.open("/");
   File file = root.openNextFile();
   int count = 0;
@@ -587,20 +673,20 @@ void handleFileList() {
         html += "<strong>" + fileName + "</strong> (" + String(file.size()) +
                 " B)<br><br>";
         html += "<a href='/viewfile?file=" + fileName +
-                "' class='btn btn-view'>View</a>";
+                "' class='btn btn-view'>" + s_view + "</a>";
         html += "<a href='/download?file=" + fileName +
-                "' class='btn btn-dl'>Download</a>";
+                "' class='btn btn-dl'>" + s_dl + "</a>";
         html += "</div>";
         count++;
       }
       file = root.openNextFile();
     }
     if (count == 0)
-      html += "<p>No matching files found.</p>";
+      html += "<p>" + s_nf + "</p>";
 
   } else if (year == "") {
     // --- MODE: YEAR LIST (ROOT) ---
-    html += "<h3>Select Year</h3>";
+    html += "<h3>" + s_sy + "</h3>";
     bool years[100] = {0}; // 2000-2099 map
 
     while (file) {
@@ -627,11 +713,11 @@ void handleFileList() {
       }
     }
     if (count == 0)
-      html += "<p>No logs found.</p>";
+      html += "<p>" + s_nf + "</p>";
 
   } else if (month == "") {
     // --- MODE: MONTH LIST (YEAR SELECTED) ---
-    html += "<h3>" + year + " > Select Month</h3>";
+    html += "<h3>" + year + " > " + s_sm + "</h3>";
     bool months[13] = {0}; // 1-12
 
     while (file) {
@@ -682,9 +768,9 @@ void handleFileList() {
         html += "<strong>" + fileName + "</strong> (" + String(file.size()) +
                 " B)<br><br>";
         html += "<a href='/viewfile?file=" + fileName +
-                "' class='btn btn-view'>View</a>";
+                "' class='btn btn-view'>" + s_view + "</a>";
         html += "<a href='/download?file=" + fileName +
-                "' class='btn btn-dl'>Download</a>";
+                "' class='btn btn-dl'>" + s_dl + "</a>";
         html += "</div>";
         count++;
       }
@@ -695,15 +781,19 @@ void handleFileList() {
   }
 
   html += "<br>";
-  if (month != "")
+  if (month != "") {
+    String btn_back_year =
+        isKan ? "ಹಿಂದಕ್ಕೆ ಹೋಗಿ (Back to " + year + ")" : "Back to " + year;
     html += "<a href='/files?year=" + year +
-            "' class='btn' style='background-color:#17a2b8;'>Back to " + year +
+            "' class='btn' style='background-color:#17a2b8;'>" + btn_back_year +
             "</a> ";
+  }
   if (year != "")
     html += "<a href='/files' class='btn' "
-            "style='background-color:#007bff;'>Back to Years</a> ";
-  html += "<a href='/' class='btn' style='background-color:#28a745;'>Back to "
-          "Home</a>";
+            "style='background-color:#007bff;'>" +
+            s_byears + "</a> ";
+  html += "<a href='/' class='btn' style='background-color:#28a745;'>" +
+          s_bhome + "</a>";
 
   html += "</body></html>";
   server.send(200, "text/html", html);
@@ -747,7 +837,8 @@ void handleFileView() {
       server.setContentLength(CONTENT_LENGTH_UNKNOWN);
       server.send(200, "text/html", "");
       server.sendContent(
-          "<!DOCTYPE html><html><head><meta name='viewport' "
+          "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta "
+          "name='viewport' "
           "content='width=device-width, initial-scale=1.0'>"
           "<style>"
           "body{font-family:Helvetica,Arial,sans-serif;padding:20px;"
@@ -782,19 +873,33 @@ void handleFileView() {
           "</script>"
           "</head><body>");
 
+      bool isKan = (strstr(UNIT, "KSNDMC") != NULL);
+      String s_dl =
+          isKan ? "ಫೈಲ್ ಡೌನ್ಲೋಡ್ (Download File)" : "Download File (Save)";
+      String s_copy = isKan ? "ಕಾಪಿ ಮಾಡಿ (Copy Content)" : "Copy Content";
+      String s_tip = isKan ? "ಸಲಹೆ (Tip)" : "Tip";
+      String s_tip_txt =
+          isKan ? "ವಾಟ್ಸಾಪ್‌ನಲ್ಲಿ ಕಳುಹಿಸಲು: "
+                  "ಫೈಲ್ "
+                  "ಡೌನ್ಲೋಡ್ "
+                  "ಮಾಡಿ, "
+                  "ವೈ-ಫೈ ಆಫ್ ಮಾಡಿ, ಆಮೇಲೆ ಶೇರ್ ಮಾಡಿ."
+                : "To attach this file in WhatsApp: Download it, disconnect "
+                  "WiFi (to enable Internet), then share it from your "
+                  "Downloads folder.";
+
       server.sendContent("<h3>" + fileName + "</h3>");
 
       server.sendContent("<div>");
       server.sendContent("<a href='/download?file=" + fileName +
-                         "' class='btn btn-dl'>Download File (Save)</a>");
+                         "' class='btn btn-dl'>" + s_dl + "</a>");
       server.sendContent("<button onclick='copyContent()' class='btn "
-                         "btn-copy'>Copy Content</button>");
+                         "btn-copy'>" +
+                         s_copy + "</button>");
       server.sendContent("</div>");
 
-      server.sendContent(
-          "<div class='tip'><strong>Tip:</strong> To attach this file in "
-          "WhatsApp: Download it, disconnect WiFi (to enable Internet), then "
-          "share it from your Downloads folder.</div><hr>");
+      server.sendContent("<div class='tip'><strong>" + s_tip + ":</strong> " +
+                         s_tip_txt + "</div><hr>");
 
       server.sendContent("<pre id='fileContent'>");
 
@@ -806,11 +911,22 @@ void handleFileView() {
         server.sendContent(String(buf));
       }
 
+      String s_blist =
+          isKan
+              ? "ಲಿಸ್ಟ್‌ಗೆ ಹಿಂತಿರುಗಿ (Back "
+                "to "
+                "List)"
+              : "Back to List";
+      String s_bhome =
+          isKan
+              ? "ಹೋಮ್ ಪೇಜ್‌ಗೆ ಹೋಗಿ (Back to Home)"
+              : "Back to Home";
+
       server.sendContent("</pre>");
-      server.sendContent(
-          "<hr><a href='/files' class='btn btn-back'>Back to List</a>");
-      server.sendContent(" <a href='/' class='btn btn-back'>Back to "
-                         "Home</a></body></html>");
+      server.sendContent("<hr><a href='/files' class='btn btn-back'>" +
+                         s_blist + "</a>");
+      server.sendContent(" <a href='/' class='btn btn-back'>" + s_bhome +
+                         "</a></body></html>");
       file.close();
       return;
     }
@@ -823,8 +939,17 @@ void handleViewLog() {
   String dateInput = server.arg("date"); // YYYYMMDD
   String timeInput = server.arg("time"); // HH:MM
 
+  bool isKan = (strstr(UNIT, "KSNDMC") != NULL);
+  String s_sres = isKan ? "ಫಲಿತಾಂಶ (Search Result)" : "Search Result";
+  String s_dnf =
+      isKan ? "ಮಾಹಿತಿ ಸಿಗಲಿಲ್ಲ (Data not found for)" : "Data not found for";
+  String s_rf = isKan ? "ರೆಕಾರ್ಡ್ ಸಿಕ್ಕಿದೆ (Record Found):" : "Record Found:";
+  String s_bhome =
+      isKan ? "ಹೋಮ್ ಪೇಜ್‌ಗೆ ಹೋಗಿ (Back to Home)"
+            : "Back to Home";
+
   String searchFileName = "/" + String(station_name) + "_" + dateInput + ".txt";
-  String result = "Data not found for " + dateInput + " " + timeInput;
+  String result = s_dnf + " " + dateInput + " " + timeInput;
 
   if (SPIFFS.exists(searchFileName)) {
     File f = SPIFFS.open(searchFileName, FILE_READ);
@@ -834,7 +959,7 @@ void handleViewLog() {
     while (f.available()) {
       String line = f.readStringUntil('\n');
       if (line.indexOf(searchPattern) != -1) {
-        result = "<b>Record Found:</b><br><br>" + line;
+        result = "<b>" + s_rf + "</b><br><br>" + line;
         // You could parse this line similar to lcdkeypad logic to confirm
         // precise match or format it nicely. For now, raw line is useful.
         break;
@@ -843,33 +968,54 @@ void handleViewLog() {
     f.close();
   }
 
-  String html = "<!DOCTYPE html><html><head><meta name='viewport' "
-                "content='width=device-width, initial-scale=1.0'>"
-                "<style>"
-                "body{font-family:Helvetica,Arial,sans-serif;padding:20px;"
-                "background:#f8f9fa;color:#333;}"
-                ".btn{background-color:#17a2b8;color:white;padding:12px "
-                "24px;text-decoration:none;display:inline-block;border-radius:"
-                "5px;font-size:15px;margin-top:20px;}"
-                ".btn:hover{background-color:#138496;}"
-                "</style></head><body>";
-  html += "<h2>Search Result</h2>";
+  String html =
+      "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' "
+      "content='width=device-width, initial-scale=1.0'>"
+      "<style>"
+      "body{font-family:Helvetica,Arial,sans-serif;padding:20px;"
+      "background:#f8f9fa;color:#333;}"
+      ".btn{background-color:#17a2b8;color:white;padding:12px "
+      "24px;text-decoration:none;display:inline-block;border-radius:"
+      "5px;font-size:15px;margin-top:20px;}"
+      ".btn:hover{background-color:#138496;}"
+      "</style></head><body>";
+  html += "<h2>" + s_sres + "</h2>";
   html += "<p>" + result + "</p>";
-  html += "<br><a href='/' class='btn' style='background:#17a2b8;'>Back to "
-          "Home</a>";
+  html += "<br><a href='/' class='btn' style='background:#17a2b8;'>" + s_bhome +
+          "</a>";
   html += "</body></html>";
   server.send(200, "text/html", html);
 }
 
 // --- Handle Disconnect ---
 void handleDisconnect() {
-  server.send(
-      200, "text/html",
-      "<h1>WiFi Disconnecting...</h1><p>You can now close this tab.</p>");
-  delay(100);
+  bool isKan = (strstr(UNIT, "KSNDMC") != NULL);
+  String dmsg = isKan ? "ವೈ-ಫೈ ಆಫ್ ಆಗುತ್ತಿದೆ... (WiFi Disconnecting!)"
+                      : "WiFi Disconnecting...";
+  server.send(200, "text/html",
+              "<!DOCTYPE html><html><head><meta charset='UTF-8'></head><body>"
+              "<h1>" +
+                  dmsg +
+                  "</h1><p>You can now close this "
+                  "tab.</p><script>setTimeout(function(){window.close();}, "
+                  "2000);</script></body></html>");
+
+  delay(1000); // Allow HTTP response to flush
   WiFi.softAPdisconnect(true);
   wifi_active = false;
   webServerStarted = false;
+
+  // Update LCD directly so it jumps back to Station ID
+  strcpy(ui_data[FLD_WIFI_ENABLE].bottomRow, "ENABLE WIFI     ");
+  extern int cur_fld_no;
+  extern char show_now;
+  extern volatile int lcdkeypad_start;
+  cur_fld_no = 0; // FLD_STATION
+  show_now = 1;
+  lcdkeypad_start = 1; // Wake up UI loop if it was snoozing
+
+  esp_task_wdt_delete(
+      NULL); // Unsubscribe from the Task Watchdog to prevent panic
   vTaskDelete(NULL);
 }
 

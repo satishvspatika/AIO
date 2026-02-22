@@ -161,7 +161,13 @@ void lcdkeypad(void *pvParameters) {
 
     esp_task_wdt_reset();
 
+    // Keep LCD awake symmetrically as long as WiFi is active
+    if (lcdkeypad_start == 1 && wifi_active) {
+      timerWrite(lcd_timer, 0);
+    }
+
     // Fallback: If LCD timed out but device is awake (e.g. GPRS active),
+
     // poll keypad manually to detect user wake-up attempt.
     if (lcdkeypad_start == 0) {
       char wakeupKey = keypad.getKey();
@@ -859,6 +865,15 @@ void lcdkeypad(void *pvParameters) {
             lcdkeypad_start = 0;
             digitalWrite(32, LOW);
 
+            // Link Wi-Fi shutdown to manual LCD shutdown
+            if (wifi_active) {
+              WiFi.softAPdisconnect(true);
+              wifi_active = false;
+              webServerStarted = false;
+              debugln("LCD Manually OFF -> Wi-Fi Disabled");
+              strcpy(ui_data[FLD_WIFI_ENABLE].bottomRow, "ENABLE WIFI     ");
+            }
+
             // Check if we can go to deep sleep
             bool task_running =
                 (sync_mode == eSMSStart || sync_mode == eGPSStart ||
@@ -959,7 +974,7 @@ void lcdkeypad(void *pvParameters) {
               // Only allow entering Edit Mode for specific configuration fields
               if (cur_fld_no == FLD_STATION || cur_fld_no == FLD_DATE ||
                   cur_fld_no == FLD_TIME || cur_fld_no == FLD_RF_RES ||
-                  cur_fld_no == FLD_DELETE_DATA) {
+                  cur_fld_no == FLD_DELETE_DATA || cur_fld_no == FLD_LOG) {
 
                 if ((cur_fld_no == FLD_RF_RES && rf_res_edit_state == 0) ||
                     (cur_fld_no == FLD_DELETE_DATA)) {
@@ -1578,7 +1593,8 @@ void lcdkeypad(void *pvParameters) {
         }
       }
     } else {
-      vTaskDelay(100);
+      vTaskDelay(50); // Faster polling (50ms) to ensure EXT0 manual wakeups are
+                      // cleanly caught
     }
 
   } // End of forever loop

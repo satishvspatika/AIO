@@ -535,6 +535,17 @@ void prepare_data_and_send() {
       debug(unsent_counter);
       debugln(" times");
 
+      // POWER-SAFE RECOVERY: Force reset the Data Bearer on persistent errors
+      // (Iter 2+) BEFORE checking the bearer
+      if (unsent_counter >= 2) {
+        debugln("[RECOVERY] HTTP Error persistent. Forcing Data Bearer reset "
+                "(CGACT)...");
+        SerialSIT.println("AT+CGACT=0,1");
+        waitForResponse("OK", 3000);
+        vTaskDelay(1000);
+        flushSerialSIT();
+      }
+
       // 1. Bearer Verification & Recovery (The Core Fix)
       if (!verify_bearer_or_recover()) {
         debugln("AG Recovery: Failed to restore PDP context. Skipping retry "
@@ -542,23 +553,10 @@ void prepare_data_and_send() {
         continue; // Try again in next iteration
       }
 
-      // 1. Full Reset of HTTP stack to clear jams
+      // 2. Full Reset of HTTP stack to clear jams
       SerialSIT.println("AT+HTTPTERM");
       vTaskDelay(1000);
       flushSerialSIT(); // Clear any pending +CGEV or +HTTPACTION notifications
-
-      // 2. POWER-SAFE RECOVERY: Only reset the Data Bearer on persistent errors
-      // (Iter 2+)
-      if (unsent_counter >= 2) {
-        debugln("[RECOVERY] HTTP Error persistent. Resetting Data Bearer "
-                "(CGACT)...");
-        SerialSIT.println("AT+CGACT=0,1");
-        waitForResponse("OK", 3000);
-        vTaskDelay(1000);
-        SerialSIT.println("AT+CGACT=1,1");
-        waitForResponse("OK", 5000);
-        flushSerialSIT();
-      }
 
       // 3. RE-INITIALIZE HTTP Stack
       SerialSIT.println("AT+HTTPINIT");
