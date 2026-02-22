@@ -1027,18 +1027,13 @@ void scheduler(void *pvParameters) {
                        "%05.2f", fill_AvgWS);
 
 #if (SYSTEM == 0 || SYSTEM == 2)
-              // Cumulative Rainfall Interpolation with Resolution Rounding
-              if (total_gaps > 0) {
-                fill_crf = start_crf + ((new_current_cumRF - start_crf) *
-                                        gap_idx / total_gaps);
-              } else {
-                fill_crf = new_current_cumRF;
-              }
-              // Round to nearest RF_RESOLUTION (e.g. 0.5 or 0.25)
-              if (RF_RESOLUTION > 0) {
-                fill_crf =
-                    floor((fill_crf / RF_RESOLUTION) + 0.5) * RF_RESOLUTION;
-              }
+              // Cumulative Rainfall Flatline
+              // Do NOT interpolate Cumulative RF because gap Instantaneous RF
+              // is logged as 000.00. All ULP tips that accumulated throughout
+              // the offline period are safely lumped into the final recovery
+              // sample's Instantaneous RF instead.
+              fill_crf = start_crf;
+
               snprintf(fill_cum_rf, sizeof(fill_cum_rf), "%06.2f", fill_crf);
               snprintf(fill_ftpcum_rf, sizeof(fill_ftpcum_rf), "%05.2f",
                        fill_crf);
