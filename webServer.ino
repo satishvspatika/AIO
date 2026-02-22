@@ -117,6 +117,9 @@ void handleRoot() {
     return;
   }
 
+  // Kannada Translation Setup
+  bool isKan = (strstr(UNIT, "KSNDMC") != NULL);
+
   // --- Parse Last Recorded Log Data ---
   String rec_rf = "--", rec_temp = "--", rec_hum = "--", rec_ws = "--",
          rec_wd = "--";
@@ -320,6 +323,18 @@ void handleRoot() {
       "      } else {"
       "         document.getElementById('warnModal').style.display='none';"
       "      }"
+      "    } else if (this.readyState == 4 && (this.status == 0 || this.status "
+      "== 500)) {"
+      // Server abruptly died (or user killed it from LCD)
+      "      document.body.innerHTML = '<div "
+      "style=\"text-align:center;margin-top:20vh;\"><h1 "
+      "style=\"color:#dc3545;\">" +
+      String(isKan ? "ವೈ-ಫೈ ಆಫ್ ಆಗಿದೆ (WiFi Disabled)" : "WiFi Disabled") +
+      "</h1><p>" +
+      String(isKan ? "ನೀವು ಟ್ಯಾಬ್ ಮುಚ್ಚಬಹುದು (You can close this tab)"
+                   : "Device was shut down from LCD. You can safely close this "
+                     "tab.") +
+      "</p></div>';"
       "    }"
       "  };"
       "  xhttp.open('GET', '/data?t=' + Date.now(), true);"
@@ -355,7 +370,6 @@ void handleRoot() {
   html += stationValue;
 
   // Kannada Translation Setup
-  bool isKan = (strstr(UNIT, "KSNDMC") != NULL);
   String s_live = isKan ? "ಲೈವ್ ಮಾಹಿತಿ (Live Monitor)" : "Live Monitor";
   String s_rf = isKan ? "ಮಳೆ (Instant RF)" : "Instant RF";
   String s_t = isKan ? "ತಾಪಮಾನ (Temp)" : "Temp";

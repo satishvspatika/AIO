@@ -811,14 +811,8 @@ void loop() {
    * inside rtcTask
    */
 
-  if ((wakeup_reason_is == ext0) && (webServerStarted == false)) {
-#if ENABLE_WEBSERVER == 1
-    debugln("EXT0 Wakeup: Manual UI access triggered. Starting WebServer...");
-    xTaskCreatePinnedToCore(webServer, "webServerTask", 8192, NULL, 3,
-                            &webServer_h, 0); // Core 0
-    webServerStarted = true;
-#endif
-  }
+  // WiFi is now manually triggered via the LCD menu.
+  // We no longer aggressively auto-start the Access Point here on EXT0 wakeups.
   if (((sync_mode == eHttpStop) || (sync_mode == eSMSStop) ||
        (sync_mode == eExceptionHandled)) &&
       (lcdkeypad_start == 0) && (wifi_active == false)) {
