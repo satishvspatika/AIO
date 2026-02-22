@@ -940,8 +940,9 @@ void scheduler(void *pvParameters) {
             } else { // Gap Filling with Linear Interpolation
               float target_number, min_val, max_val;
               char fill_inst_temp[7], fill_inst_hum[7], fill_avg_wind_speed[7],
-                  fill_inst_wd[7], fill_cum_rf[10], fill_ftpcum_rf[10];
-              float fill_temp, fill_hum, fill_AvgWS, fill_crf;
+                  fill_inst_wd[7], fill_cum_rf[10], fill_ftpcum_rf[10],
+                  fill_inst_rf[10];
+              float fill_temp, fill_hum, fill_AvgWS, fill_crf, fill_irf;
               int fill_WD;
               int fill_sig;
 
@@ -1027,16 +1028,32 @@ void scheduler(void *pvParameters) {
                        "%05.2f", fill_AvgWS);
 
 #if (SYSTEM == 0 || SYSTEM == 2)
-              // Cumulative Rainfall Flatline
-              // Do NOT interpolate Cumulative RF because gap Instantaneous RF
-              // is logged as 000.00. All ULP tips that accumulated throughout
-              // the offline period are safely lumped into the final recovery
-              // sample's Instantaneous RF instead.
-              fill_crf = start_crf;
+              // Gap Interpolation for Rainfall (Bresenham Distribution)
+              int num_gap_slots = total_gaps > 1 ? total_gaps - 1 : 1;
+              int missing_tips = 0;
+              float calc_missing_rf = new_current_cumRF - start_crf - rf_value;
+
+              if (calc_missing_rf > 0 && RF_RESOLUTION > 0) {
+                missing_tips = round(calc_missing_rf / RF_RESOLUTION);
+              }
+
+              // Mathematical gap distribution of missing rain
+              int tips_assigned = 0;
+              if (missing_tips > 0) {
+                int prev_accum = ((gap_idx - 1) * missing_tips) / num_gap_slots;
+                int curr_accum = (gap_idx * missing_tips) / num_gap_slots;
+                tips_assigned = curr_accum - prev_accum;
+              }
+
+              fill_crf =
+                  start_crf + ((((gap_idx * missing_tips) / num_gap_slots) *
+                                RF_RESOLUTION));
+              fill_irf = tips_assigned * RF_RESOLUTION;
 
               snprintf(fill_cum_rf, sizeof(fill_cum_rf), "%06.2f", fill_crf);
               snprintf(fill_ftpcum_rf, sizeof(fill_ftpcum_rf), "%05.2f",
                        fill_crf);
+              snprintf(fill_inst_rf, sizeof(fill_inst_rf), "%06.2f", fill_irf);
 #endif
 
               // Wind Direction (Simple random around current/last midpoint)
@@ -1055,11 +1072,10 @@ void scheduler(void *pvParameters) {
 
 // RF
 #if SYSTEM == 0
-              snprintf(
-                  append_text, sizeof(append_text),
-                  "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,%04d,%04.1f\r\n", q,
-                  temp_year, temp_month, temp_day, temp_hr, temp_min,
-                  fill_cum_rf, fill_sig, bat_val);
+              snprintf(append_text, sizeof(append_text),
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%04.1f\r\n", q,
+                       temp_year, temp_month, temp_day, temp_hr, temp_min,
+                       fill_inst_rf, fill_cum_rf, fill_sig, bat_val);
 #endif
 
 // TWS
