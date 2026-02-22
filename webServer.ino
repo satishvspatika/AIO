@@ -869,7 +869,9 @@ void handleFileView() {
           "function copyContent() {"
           "  var temp = document.createElement('textarea');"
           "  var pre = document.getElementById('fileContent');"
-          "  temp.value = pre.innerText;"
+          "  temp.value = 'Station ID: " +
+          String(station_name) +
+          "\\n\\n' + pre.innerText;"
           "  document.body.appendChild(temp);"
           "  temp.select();"
           "  try { document.execCommand('copy'); alert('Content Copied! "
