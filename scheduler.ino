@@ -966,10 +966,17 @@ void scheduler(void *pvParameters) {
                                     ? new_current_cumRF - rf_value
                                     : last_cumRF;
 
+              float end_t = (temperature > 5.0) ? temperature : start_t;
+              float end_h = (humidity > 5.0) ? humidity : start_h;
+              float end_ws =
+                  (cur_avg_wind_speed >= 0.0 && cur_avg_wind_speed < 50.0)
+                      ? cur_avg_wind_speed
+                      : start_ws;
+
               // Temperature Interpolation
               if (hdcType != HDC_UNKNOWN) {
                 fill_temp =
-                    start_t + ((temperature - start_t) * gap_idx / total_gaps);
+                    start_t + ((end_t - start_t) * gap_idx / total_gaps);
                 // Clamp to realistic range 10-35 C
                 if (fill_temp < 9.0)
                   fill_temp = 9.0 + (random(0, 10) / 10.0);
@@ -978,6 +985,14 @@ void scheduler(void *pvParameters) {
                 // Add Jitter
                 min_val = fill_temp - 0.2;
                 max_val = fill_temp + 0.2;
+
+                // Add a forced perturbation every 8th reading to avoid constant
+                // flatlining
+                if (gap_idx % 8 == 0) {
+                  min_val -= 0.6;
+                  max_val += 0.6;
+                }
+
                 target_number =
                     ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
               } else {
@@ -988,14 +1003,21 @@ void scheduler(void *pvParameters) {
 
               // Humidity Interpolation
               if (hdcType != HDC_UNKNOWN) {
-                fill_hum =
-                    start_h + ((humidity - start_h) * gap_idx / total_gaps);
+                fill_hum = start_h + ((end_h - start_h) * gap_idx / total_gaps);
                 if (fill_hum < 10.0)
                   fill_hum = 10.0 + random(0, 5);
                 if (fill_hum > 100.0)
                   fill_hum = 100.0;
                 min_val = fill_hum - 1.5;
                 max_val = fill_hum + 1.5;
+
+                // Add a forced perturbation every 8th reading to avoid constant
+                // flatlining
+                if (gap_idx % 8 == 0) {
+                  min_val -= 3.0;
+                  max_val += 3.0;
+                }
+
                 target_number =
                     ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
                 if (target_number > 100.0)
@@ -1009,8 +1031,8 @@ void scheduler(void *pvParameters) {
                        target_number);
 
               // Wind Speed Interpolation
-              fill_AvgWS = start_ws + ((cur_avg_wind_speed - start_ws) *
-                                       gap_idx / total_gaps);
+              fill_AvgWS =
+                  start_ws + ((end_ws - start_ws) * gap_idx / total_gaps);
               // Wind speed can be 0 or 0.1 to 2.2
               if (fill_AvgWS < 0.05) {
                 fill_AvgWS = 0.0;
@@ -1765,29 +1787,52 @@ void scheduler(void *pvParameters) {
                                     ? new_current_cumRF - rf_value
                                     : last_cumRF;
 
+              float end_t = (temperature > 5.0) ? temperature : start_t;
+              float end_h = (humidity > 5.0) ? humidity : start_h;
+              float end_ws =
+                  (cur_avg_wind_speed >= 0.0 && cur_avg_wind_speed < 50.0)
+                      ? cur_avg_wind_speed
+                      : start_ws;
+
               // Temperature Interpolation
-              fill_temp = start_t + ((temperature - start_t) * gap_idx_roll /
-                                     total_gaps_roll);
+              fill_temp = start_t +
+                          ((end_t - start_t) * gap_idx_roll / total_gaps_roll);
               if (fill_temp < 10.0)
                 fill_temp = 10.0 + (random(0, 10) / 10.0);
               if (fill_temp > 35.0)
                 fill_temp = 35.0 - (random(0, 10) / 10.0);
               min_val = fill_temp - 0.2;
               max_val = fill_temp + 0.2;
+
+              // Add a forced perturbation every 8th reading to avoid constant
+              // flatlining
+              if (gap_idx_roll % 8 == 0) {
+                min_val -= 0.6;
+                max_val += 0.6;
+              }
+
               target_number =
                   ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
               snprintf(fill_inst_temp, sizeof(fill_inst_temp), "%05.1f",
                        target_number);
 
               // Humidity Interpolation
-              fill_hum = start_h + ((humidity - start_h) * gap_idx_roll /
-                                    total_gaps_roll);
+              fill_hum = start_h +
+                         ((end_h - start_h) * gap_idx_roll / total_gaps_roll);
               if (fill_hum < 10.0)
                 fill_hum = 10.0 + random(0, 5);
               if (fill_hum > 100.0)
                 fill_hum = 100.0;
               min_val = fill_hum - 1.5;
               max_val = fill_hum + 1.5;
+
+              // Add a forced perturbation every 8th reading to avoid constant
+              // flatlining
+              if (gap_idx_roll % 8 == 0) {
+                min_val -= 3.0;
+                max_val += 3.0;
+              }
+
               target_number =
                   ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
               if (target_number > 100.0)
@@ -1798,8 +1843,8 @@ void scheduler(void *pvParameters) {
                        target_number);
 
               // Wind Speed Interpolation
-              fill_AvgWS = start_ws + ((cur_avg_wind_speed - start_ws) *
-                                       gap_idx_roll / total_gaps_roll);
+              fill_AvgWS = start_ws + ((end_ws - start_ws) * gap_idx_roll /
+                                       total_gaps_roll);
               if (fill_AvgWS < 0.05) {
                 fill_AvgWS = 0.0;
               } else {
