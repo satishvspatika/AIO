@@ -1345,18 +1345,48 @@ void send_ftp_file(char *fileName) {
         debugln(response);
         vTaskDelay(1000);
 
-        esp_task_wdt_reset();
+        int ftp_put_retries = 0;
+        const int MAX_FTP_PUT_RETRIES = 1;
+        bool upload_success = false;
 
         snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
                  "AT+CFTPSPUTFILE=\"%s\",1", modulePath);
-        debugln("About to send CFTPSPUTFILE ...");
-        SerialSIT.println(gprs_xmit_buf); // FTP client context
-        response1 = waitForResponse("+CFTPSPUTFILE: 0",
-                                    180000); // 180s timeout
-        debug("Response of AT+CFTPSPUTFILE ");
-        debugln(response1);
 
-        if (response1.indexOf("+CFTPSPUTFILE: 0") != -1) {
+        while (ftp_put_retries <= MAX_FTP_PUT_RETRIES) {
+          esp_task_wdt_reset();
+          debug("About to send CFTPSPUTFILE ... Attempt: ");
+          debugln(ftp_put_retries + 1);
+
+          SerialSIT.println(gprs_xmit_buf); // FTP client context
+          response1 = waitForResponse("+CFTPSPUTFILE: 0",
+                                      180000); // 180s timeout
+          debug("Response of AT+CFTPSPUTFILE ");
+          debugln(response1);
+
+          if (response1.indexOf("+CFTPSPUTFILE: 0") != -1) {
+            upload_success = true;
+            break;
+          } else {
+            debugln("FTP PUT failed. Checking recovery...");
+            if (ftp_put_retries < MAX_FTP_PUT_RETRIES) {
+              debugln("Attempting active recovery for FTP...");
+              SerialSIT.println("AT+CFTPSLOGOUT");
+              waitForResponse("OK", 5000);
+              vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+              send_daily = 2;
+              if (setup_ftp() == 1) {
+                SerialSIT.println("AT+FSCD=C:/");
+                waitForResponse("OK", 5000);
+              } else {
+                debugln("FTP Login Recovery failed.");
+              }
+            }
+            ftp_put_retries++;
+          }
+        }
+
+        if (upload_success) {
           diag_consecutive_reg_fails =
               0; // RESET counter on any successful data upload
 
