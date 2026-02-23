@@ -2103,7 +2103,7 @@ void get_registration() {
         vTaskDelay(500);
       }
 
-      debugf2("Reg Search... Status:%d Iter:#%d/20\n", registration,
+      debugf2("Reg Search... Status:%d Iter:#%d/30\n", registration,
               retries + 1);
       vTaskDelay(5000); // Reduced from 10s to 5s for faster handshake
       retries++;
