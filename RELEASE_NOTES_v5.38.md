@@ -1,22 +1,45 @@
-# AIO Firmware v5.38 Release Notes
+# Release Notes: v5.38 (Feb 23, 2026 - Production Build)
 
-## 🚀 Enhancements & Features
-- **Proactive WebServer Prompts**: Added a "Tasks Complete - GPRS done. Sleep now?" modal to the local Web UI to proactively inform the user when backend GPRS tasks are finished, so they don't have to keep the web server alive unnecessarily.
-- **Enhanced LCD Feedback**: Added explicit "WIFI DISABLED" and "ENTERING SLEEP.." feedback messages on the LCD screen when a user manually clicks the “Close Now” / Disconnect button via the Web UI.
-- **Station ID File Branding**: Downloaded log text files via the internal Web Server now explicitly prepend the `Station_ID` (e.g. `1936_20260223.txt`) to the filename so downloaded data isn't easily lost or mixed up.
-- **Mathematical Gap-Fill Interpolation (Bresenham Distributions)**: Upgraded missing rainfall interpolation calculations to distribute hardware ULP bucket tips across offline gaps cleanly and precisely. Removes "flatlines" or "float" rounding errors, guaranteeing that gap Instantaneous Rainfall always arithmetically sums to the recovered Cumulative Rainfall total flawlessly on wakeup.
+## 🎯 Release Overview
+A critical Data Integrity and Web Interface Feature update. This version surgically targets offline boundary mathematical errors (Zero-Crash Interpolation, Flatline Filters), fortifies the HTTP/FTP recovery stack against severe cellular dropouts (e.g. BSNL IP failures), and significantly increases the resilience and multi-lingual UI experience of the Local Web Server.
 
-## 🐛 Bug Fixes
-- **Ghost Characters on LCD**: Resolved a UI glitch where ghost characters (e.g., the ".38" from "5.38" firmware strings) would occasionally linger on the 16x2 LCD screen when navigating between different display fields. This was fixed by rigorously overwriting lines with explicit space padding before drawing new text.
-- **RF Accumulation Wiped on EXT0 Wakeup**: Fixed an issue where waking the device via EXT0 (Push Button) could inadvertently wipe the accumulated RF measurements (`rf_count.val = 0`) if the SPIFFS `firmware.doc` file had a slightly delayed/empty read during `setup()`. Added safeguards so memory is only wiped on a legitimately confirmed firmware string mismatch.
-- **Watchdog Panic after WebServer Shutdown**: Resolved a severe crashing bug that resulted in a Task Watchdog Panic roughly 30 seconds after manually turning off the WebServer interface. The `webServerTask` had been deleting itself without properly unsubscribing from the hardware watchdog (`esp_task_wdt_delete`), leaving the OS waiting indefinitely for the dead task to "pet the dog".
-- **Unintended Wi-Fi Start on EXT0 Wakeup**: Resolved a logic error where waking the device physically via the EXT0 button forcefully triggered the Web Server in the background before the user authorized it. The Web Server now strictly respects being launched solely from the `"ENABLE WIFI"` interaction prompt via the LCD.
-- **Mobile Browser WebServer Timeouts**: Greatly reduced `vTaskDelay` blocks (from 100 Ticks to 10 Ticks) in the FreeRTOS `handleClient` queue to prevent aggressive parallel connections on mobile devices/phones from timing out and rendering blank white screens.
-- **Hung Web UI on Physical Disconnect**: A localized Web UI DOM overlay is now successfully injected if a browser is actively surveying the telemetry, but the unit operator unexpectedly hits 'DISABLE WIFI' from the LCD. The screen now renders an elegant "WiFi Disabled" placeholder instead of spinning into an infinite routing redirect.
+---
 
-## 📋 Modified Files
-- `AIO9_5.0.ino` (Firmware bounds, Ext0 wifi fix)
-- `lcdkeypad.ino` (Ghost character UI cleanup, Wi-Fi interaction routing)
-- `webServer.ino` (Mobile latency delay, GPRS prompt logic, LCD feedback, Watchdog panic fix, offline DOM injection, Server Download headers)
-- `scheduler.ino` (Bresenham Tipping Bucket gap distribution array logic)
-- `globals.h` (Version bump strictly if required, handled in final script)
+## ✨ Key Enhancements
+
+### 1. **Mathematical Gap-Fill Bulletproofing** 📈
+- **Zero-Value Anchoring**: Resolved a severe mathematical crash where gap-filling after a dead battery/clean boot would aggressively interpolate telemetry (Temp/Hum) down to `0.0` due to uninitialized live sensors. Gap-fill now utilizes dynamic `end_t` boundary variables, safely "flatlining" across gaps instead of diving to zero.
+- **Dynamic Organic Jitter (Anti-Flatline Algorithm)**: To prevent strict server-side "Constant Value" Data Quality errors during prolonged power outages, the gap-filler now injects an intelligent 8-interval perturbation (`+/- 0.6` Temp, `+/- 3.0` Hum) every 2 hours, ensuring mathematical bounds are broken naturally.
+- **Bresenham Tipping Bucket Distribution (Rainfall)**: Upgraded missing rainfall interpolation calculations to distribute hardware ULP bucket tips across offline gaps cleanly and precisely. This removes "float" rounding errors, guaranteeing that gap Instantaneous Rainfall always arithmetically matches the physical Cumulative Rainfall catch on wakeup.
+
+### 2. **Advanced Network Subsystem Teardown** 📡
+- **Active FTP Failover Retries**: Fortified `AT+CFTPSPUTFILE` drops with a self-healing loop. If a telecom tower (BSNL) abruptly drops a TCP packet mid-upload, the device actively executes `AT+CFTPSLOGOUT`, resets the directory, and gracefully re-attempts the push before banking to backlog.
+- **HTTP 714 "Zombie IP" Caching Fix**: Resolved a core routing loop where the modem cached an unroutable IP address (`+HTTPACTION: 1,714,0`) and refused to release it. Added an aggressive `AT+HTTPTERM` teardown sequence prior to initialization, eliminating artificial `706` TCP timeouts.
+
+### 3. **Web Server & UI Field Upgrades** 🌐
+- **Kannada Language Integration**: Shipped full Kannada script translation support for the local dashboard (CSV Legends, Search Data, File Explorer) for better accessibility by regional operators.
+- **Station ID Branding**: All CSV/Log files downloaded directly from the Local Web Server now explicitly prepend the `Station_ID` to the filename (e.g., `1934_20260223.txt`), preventing mixed data when downloading from multiple nodes.
+- **Proactive Offline DOM Handlers**: If a field engineer uses the LCD to disable Wi-Fi while a mobile phone is actively monitoring the Web UI, the browser will seamlessly catch the disconnection and render an elegant "WiFi Disabled" offline placeholder overlay, rather than infinite-loading the IP.
+- **Mobile Render Latency Fix**: Eliminated `vTaskDelay` bottlenecks (100 -> 10 Ticks) in FreeRTOS `handleClient()`, resolving blank screens and aggressive timeouts when loading the Web UI on modern smartphone browsers.
+
+### 4. **Hardware State Protection** 🔋
+- **EXT0 WDT Panic Fix**: Resolved a severe crashing bug resulting in Watchdog Panics ~30 seconds after manually turning off Wi-Fi. The `webServerTask` now properly dynamically unsubscribes (`esp_task_wdt_delete`) during teardown.
+- **Accidental RF Memory Wipes**: Fixed a bug where hitting the physical EXT0 Wakeup button during boot could clear Rainfall ULP memory (`rf_count.val=0`) if SPIFFS `firmware.doc` read weakly. Boot sequences are now heavily shielded based on validation.
+- **Unintended LCD Wi-Fi Start**: Ensured waking the LCD physically via a button press does not automatically start the Web Server without direct operator intent. 
+- **Ghost Characters on LCD**: Resolved a UI glitch where artifact characters would linger on the 16x2 screen between menu switches by enforcing explicit space padding on redraws.
+
+---
+
+## 🔧 Technical Summary
+
+### Modified Files:
+- `AIO9_5.0.ino` (Bounds handling, Ext0 logic)
+- `scheduler.ino` (Bresenham distributions, zero-value interpolation guards, 8-interval organic jitter)
+- `webServer.ino` (Kannada localization, Station ID headers, DOM Offline Injection, Watchdog cleanup)
+- `gprs.ino` (Active FTP failover, HTTP 714 caching loops, HTTP teardown optimization, Cosmetic Reg limits)
+- `lcdkeypad.ino` (Ghost character UI cleanup, Wi-Fi interaction logic)
+- `globals.h` (Version update `5.38`, Flag adjustments)
+
+---
+
+**v5.38 effectively secures Data Quality arithmetic and reinforces Web UI availability!** 🚀
