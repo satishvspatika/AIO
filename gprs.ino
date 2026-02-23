@@ -1001,6 +1001,37 @@ void send_http_data() {
 
         while (unsent_pointer_count < fileSize) {
           vTaskDelay(100); // iter10
+
+          // FAST PIPELINING RESET: Pre-emptively tear down and rebuild the HTTP
+          // session. The remote server usually replies with "Connection: close"
+          // which breaks the A7672S state machine if we pipeline directly.
+          // This 1.5s overhead PREVENTS the massive ~30-second error timeouts
+          // of the '706' fault.
+          SerialSIT.println("AT+HTTPTERM");
+          waitForResponse("OK", 1000);
+          vTaskDelay(100);
+
+          SerialSIT.println("AT+HTTPINIT");
+          waitForResponse("OK", 1500);
+
+          SerialSIT.print("AT+HTTPPARA=\"CID\",");
+          SerialSIT.println(active_cid);
+          waitForResponse("OK", 500);
+
+          SerialSIT.println(httpPostRequest);
+          waitForResponse("OK", 500);
+
+          if (!strcmp(httpSet[http_no].Format, "json")) {
+            SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+          } else {
+            SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/"
+                              "x-www-form-urlencoded\"");
+          }
+          waitForResponse("OK", 500);
+
+          SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
+          waitForResponse("OK", 500);
+
           debugln();
           debug("Line Number ");
           debugln((unsent_pointer_count + record_length) / record_length);
