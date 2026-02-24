@@ -461,6 +461,13 @@ void scheduler(void *pvParameters) {
       debug("Wind Dir    : ");
       debug(windDir);
       debugln(" deg");
+      if (pressure > 300.0) {
+        debug("Pressure    : ");
+        debug(pressure, 2);
+        debug(" | ");
+        debug(sea_level_pressure, 2);
+        debugln(" hPa (STN|SLP)");
+      }
       debug("Wind Pulses : ");
       debugln(totalWindPulses);
 #if SYSTEM == 2
@@ -1102,12 +1109,13 @@ void scheduler(void *pvParameters) {
 
 // TWS
 #if SYSTEM == 1
-              snprintf(
-                  append_text, sizeof(append_text),
-                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
-                  q, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                  fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
-                  fill_inst_wd, SIGNAL_STRENGTH_GAP_FILLED, bat_val);
+              snprintf(append_text, sizeof(append_text),
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04."
+                       "1f\r\n",
+                       q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                       fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
+                       fill_inst_wd, String(pressure, 1).c_str(),
+                       SIGNAL_STRENGTH_GAP_FILLED, bat_val);
 
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
@@ -1119,13 +1127,15 @@ void scheduler(void *pvParameters) {
 
 // TWS-RF
 #if SYSTEM == 2
-              snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04."
-                       "1f\r\n",
-                       q, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                       fill_cum_rf, fill_inst_temp, fill_inst_hum,
-                       fill_avg_wind_speed, fill_inst_wd,
-                       SIGNAL_STRENGTH_GAP_FILLED, bat_val);
+              snprintf(
+                  append_text, sizeof(append_text),
+                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%s,%04d,%04."
+                  "1f\r\n",
+                  q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  fill_cum_rf, fill_inst_temp, fill_inst_hum,
+                  fill_avg_wind_speed, fill_inst_wd,
+                  String(pressure, 1).c_str(), SIGNAL_STRENGTH_GAP_FILLED,
+                  bat_val);
 
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
@@ -1483,11 +1493,12 @@ void scheduler(void *pvParameters) {
 
 // TWS
 #if SYSTEM == 1
-          snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
-                   sampleNo, current_year, current_month, current_day,
-                   record_hr, record_min, inst_temp, inst_hum, avg_wind_speed,
-                   inst_wd, signal_strength, bat_val);
+          snprintf(
+              append_text, sizeof(append_text),
+              "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
+              sampleNo, current_year, current_month, current_day, record_hr,
+              record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+              pres_str, signal_strength, bat_val);
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
@@ -1499,10 +1510,10 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 2
           snprintf(
               append_text, sizeof(append_text),
-              "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
+              "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
               sampleNo, current_year, current_month, current_day, record_hr,
               record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-              signal_strength, bat_val);
+              pres_str, signal_strength, bat_val);
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,

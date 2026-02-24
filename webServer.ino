@@ -316,7 +316,12 @@ void handleRoot() {
       "      if(document.getElementById('live_wd')) "
       "document.getElementById('live_wd').innerHTML = data.windDir + ' <span "
       "style=\"font-size:0.6em\">&deg;</span>';"
-      ""
+      "      if(data.pressure && document.getElementById('live_pres')) {"
+      "         var val = data.pressure.toFixed(2);"
+      "         if(data.mslp) val += ' | ' + data.mslp.toFixed(2);"
+      "         document.getElementById('live_pres').innerHTML = val + ' <span "
+      "style=\"font-size:0.6em\">hPa</span>';"
+      "      }"
       "      if(data.wifi_left < 15) {"
       "         document.getElementById('warnModal').style.display='block';"
       "         document.getElementById('timeLeft').innerText = data.wifi_left;"
@@ -376,6 +381,7 @@ void handleRoot() {
   String s_h = isKan ? "ತೇವಾಂಶ (Humidity)" : "Humidity";
   String s_ws = isKan ? "ಗಾಳಿಯ ವೇಗ (Wind Spd)" : "Wind Spd";
   String s_wd = isKan ? "ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir)" : "Wind Dir";
+  String s_p = isKan ? "ವಾತಾವರಣದ ಒತ್ತಡ (Pressure)" : "Pressure";
   String s_lrf = isKan ? "ರೆಕಾರ್ಡ್ ಆದ ಮಳೆ (Logged RF)" : "Logged RF";
   String s_ll = isKan ? "ಕೊನೆಯ ಲಾಗ್ (Last Logged)" : "Last Logged";
 
@@ -421,6 +427,19 @@ void handleRoot() {
             "id='live_wd' class='value'>" +
             String(windDir) +
             " <span style='font-size:0.6em'>&deg;</span></div></div>";
+    // #14 & #15: Always show pressure card. Show placeholder if BME absent.
+    if (bmeType != BME_UNKNOWN && pressure > 300.0) {
+      html += "<div class='card'><div class='label'>" + s_p +
+              "</div><div "
+              "id='live_pres' class='value'>" +
+              String(pressure, 2) + " | " + String(sea_level_pressure, 2) +
+              " <span style='font-size:0.6em'> hPa</span></div></div>";
+    } else {
+      html += "<div class='card'><div class='label'>" + s_p +
+              "</div><div id='live_pres' class='value' "
+              "style='font-size:0.7em;color:#aaa;'>" +
+              "BME: No Sensor</div></div>";
+    }
 #endif
 
 #if SYSTEM == 2
@@ -449,6 +468,19 @@ void handleRoot() {
             "id='live_wd' class='value'>" +
             String(windDir) +
             " <span style='font-size:0.6em'>&deg;</span></div></div>";
+    // #14 & #15: Always show pressure card. Show placeholder if BME absent.
+    if (bmeType != BME_UNKNOWN && pressure > 300.0) {
+      html += "<div class='card'><div class='label'>" + s_p +
+              "</div><div "
+              "id='live_pres' class='value'>" +
+              String(pressure, 2) + " | " + String(sea_level_pressure, 2) +
+              " <span style='font-size:0.6em'> hPa</span></div></div>";
+    } else {
+      html += "<div class='card'><div class='label'>" + s_p +
+              "</div><div id='live_pres' class='value' "
+              "style='font-size:0.7em;color:#aaa;'>" +
+              "BME: No Sensor</div></div>";
+    }
 #endif
 
     html += "</div>"; // End Flex
@@ -610,9 +642,9 @@ void handleFileList() {
   String month = server.arg("month");
   String query = server.arg("search");
 
-  String html =
-      "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' "
-      "content='width=device-width, initial-scale=1.0'>";
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta "
+                "name='viewport' "
+                "content='width=device-width, initial-scale=1.0'>";
   html += "<title>LOG FILES</title>";
   html +=
       "<style>body{font-family:Helvetica,Arial,sans-serif;background:#f0f8ff;"
@@ -951,12 +983,12 @@ void handleFileView() {
                 : "SampleNo, Date, Time, Cum RF, Signal, Battery 1, Battery 2";
 #elif SYSTEM == 1
       legend +=
-          isKan
-              ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ತಾಪಮಾನ (Temp), "
-                "ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ (Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir), "
-                "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)"
-              : "SampleNo, Date, Time, Temp, Humidity, Wind Spd, Wind Dir, "
-                "Signal, Battery 1, Battery 2";
+          isKan ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ತಾಪಮಾನ (Temp), "
+                  "ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ (Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು (Wind "
+                  "Dir), "
+                  "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)"
+                : "SampleNo, Date, Time, Temp, Humidity, Wind Spd, Wind Dir, "
+                  "Signal, Battery 1, Battery 2";
 #elif SYSTEM == 2
       legend += isKan ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಸಂಚಿತ ಮಳೆ "
                         "(Cum RF), ತಾಪಮಾನ (Temp), ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ "
@@ -971,15 +1003,15 @@ void handleFileView() {
           legend + "</strong></div>");
 
       String s_blist =
-          isKan
-              ? "ಲಿಸ್ಟ್‌ಗೆ ಹಿಂತಿರುಗಿ (Back "
-                "to "
-                "List)"
-              : "Back to List";
+          isKan ? "ಲಿಸ್ಟ್‌ಗೆ ಹಿಂತಿರುಗಿ "
+                  "(Back "
+                  "to "
+                  "List)"
+                : "Back to List";
       String s_bhome =
-          isKan
-              ? "ಹೋಮ್ ಪೇಜ್‌ಗೆ ಹೋಗಿ (Back to Home)"
-              : "Back to Home";
+          isKan ? "ಹೋಮ್ ಪೇಜ್‌ಗೆ ಹೋಗಿ (Back to "
+                  "Home)"
+                : "Back to Home";
 
       server.sendContent("</pre>");
       server.sendContent("<hr><a href='/files' class='btn btn-back'>" +
@@ -1084,8 +1116,8 @@ void handleViewLog() {
         parsedResult += (isKan ? "ಸಮಯ (Time): " : "Time: ") +
                         (tokenCount > 2 ? tokens[2] : "--") + "<br>";
 
-        // Look for the index that holds the time to offset others (in case Date
-        // is missing or extra strings)
+        // Look for the index that holds the time to offset others (in case
+        // Date is missing or extra strings)
         int d = 3; // default offset after Time
         for (int i = 0; i < tokenCount; i++) {
           if (tokens[i].indexOf(':') != -1) {
@@ -1116,6 +1148,11 @@ void handleViewLog() {
                         p_ws + " m/s<br>";
         parsedResult += (isKan ? "ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir): " : "Wind Dir: ") +
                         p_wd + " &deg;<br>";
+        if (pressure > 300.0) {
+          parsedResult +=
+              (isKan ? "ವಾತಾವರಣದ ಒತ್ತಡ (Pressure): " : "Pressure: ") +
+              String(pressure, 2) + " hPa<br>";
+        }
 #elif SYSTEM == 2
         String p_rf = (tokenCount > d) ? tokens[d] : "--";
         String p_temp = (tokenCount > d + 1) ? tokens[d + 1] : "--";
@@ -1159,17 +1196,17 @@ void handleViewLog() {
     f.close();
   }
 
-  String html =
-      "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' "
-      "content='width=device-width, initial-scale=1.0'>"
-      "<style>"
-      "body{font-family:Helvetica,Arial,sans-serif;padding:20px;"
-      "background:#f8f9fa;color:#333;}"
-      ".btn{background-color:#17a2b8;color:white;padding:12px "
-      "24px;text-decoration:none;display:inline-block;border-radius:"
-      "5px;font-size:15px;margin-top:20px;}"
-      ".btn:hover{background-color:#138496;}"
-      "</style></head><body>";
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta "
+                "name='viewport' "
+                "content='width=device-width, initial-scale=1.0'>"
+                "<style>"
+                "body{font-family:Helvetica,Arial,sans-serif;padding:20px;"
+                "background:#f8f9fa;color:#333;}"
+                ".btn{background-color:#17a2b8;color:white;padding:12px "
+                "24px;text-decoration:none;display:inline-block;border-radius:"
+                "5px;font-size:15px;margin-top:20px;}"
+                ".btn:hover{background-color:#138496;}"
+                "</style></head><body>";
   html += "<h2>" + s_sres + "</h2>";
   html += "<p>" + result + "</p>";
   html += "<br><a href='/' class='btn' style='background:#17a2b8;'>" + s_bhome +
@@ -1225,6 +1262,10 @@ void handleData() {
             ", \"humidity\": " + String(humidity, 1) +
             ", \"windSpeed\": " + String(cur_wind_speed, 2) +
             ", \"windDir\": " + String(windDir);
+    if (bmeType != BME_UNKNOWN && pressure > 300.0) {
+      json += ", \"pressure\": " + String(pressure, 2) +
+              ", \"mslp\": " + String(sea_level_pressure, 2);
+    }
 #endif
 
 #if SYSTEM == 2
@@ -1234,6 +1275,11 @@ void handleData() {
             ", \"humidity\": " + String(humidity, 1) +
             ", \"windSpeed\": " + String(cur_wind_speed, 2) +
             ", \"windDir\": " + String(windDir);
+    // #5: Only include pressure if BME280 is detected and reading valid data
+    if (bmeType != BME_UNKNOWN && pressure > 300.0) {
+      json += ", \"pressure\": " + String(pressure, 2) +
+              ", \"mslp\": " + String(sea_level_pressure, 2);
+    }
 #endif
 
     unsigned long elapsed = millis() - last_wifi_activity_time;

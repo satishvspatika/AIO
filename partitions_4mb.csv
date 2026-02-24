@@ -1,6 +1,19 @@
-# Name,   Type, SubType, Offset,  Size, Flags
-nvs,      data, nvs,     0x9000,  0x5000,
-otadata,  data, ota,     0xe000,  0x2000,
-app0,     app,  ota_0,   0x10000, 0x140000,
-app1,     app,  ota_1,   0x150000,0x140000,
-spiffs,   data, spiffs,  0x290000,0x160000,
+# AIO9 Partition Table for 4MB Flash ESP32
+# Flash size: 4MB (0x400000)
+# App slot: 0x140000 = 1,310,720 bytes = 1.25MB
+# NOTE: WebServer (ENABLE_WEBSERVER) is disabled for 4MB builds to fit within this limit.
+#       Current firmware without WebServer: ~1.1MB
+#
+# Memory Map:
+#   0x09000 : NVS         (20KB)
+#   0x0e000 : OTA Data    (8KB)
+#   0x10000 : App0/OTA_0  (1.25MB) <-- Active firmware
+#   0x150000: App1/OTA_1  (1.25MB) <-- OTA staging
+#   0x290000: SPIFFS       (~1.4MB) <-- Data storage
+#
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xe000,   0x2000,
+app0,     app,  ota_0,   0x10000,  0x140000,
+app1,     app,  ota_1,   0x150000, 0x140000,
+spiffs,   data, spiffs,  0x290000, 0x170000,

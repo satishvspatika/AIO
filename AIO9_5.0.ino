@@ -47,6 +47,7 @@ TaskHandle_t espnow_h; // tx,rx from UI
 #endif
 TaskHandle_t lcdkeypad_h; // UI
 TaskHandle_t tempHum_h;
+TaskHandle_t bmeTask_h;
 TaskHandle_t windSpeed_h;
 TaskHandle_t windDirection_h;
 TaskHandle_t rtcRead_h;
@@ -278,6 +279,28 @@ void setup() {
     }
   }
 
+  // Station Altitude Load (for MSLP calculation) - #1 Fix
+#if (SYSTEM == 1) || (SYSTEM == 2)
+  if (SPIFFS.exists("/station_alt.txt")) {
+    File altF = SPIFFS.open("/station_alt.txt", FILE_READ);
+    float loaded_alt = altF.readString().toFloat();
+    altF.close();
+    if (loaded_alt >= 0.0 && loaded_alt <= 5000.0) {
+      station_altitude_m = loaded_alt;
+    }
+  } else {
+    // First boot: create file with default value
+    File altF = SPIFFS.open("/station_alt.txt", FILE_WRITE);
+    altF.print(station_altitude_m);
+    altF.close();
+  }
+  // Update LCD field display with loaded value
+  snprintf(ui_data[FLD_ALTITUDE].bottomRow,
+           sizeof(ui_data[FLD_ALTITUDE].bottomRow), "%.0f", station_altitude_m);
+  debug("[BOOT] Station Altitude: ");
+  debugln(station_altitude_m);
+#endif
+
   // RF Resolution Parameterization Logic
   bool rf_res_changed = false;
   float active_res = 0.5; // Final resolved resolution
@@ -331,7 +354,8 @@ void setup() {
 
   if ((strstr(UNIT, "KSNDMC_OLD") && (SYSTEM == 0))) {
     strcpy(universalNumber, "9980945474");
-    strcpy(UNIT_VER, "TRG8-DMC-4.0.2");
+    snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG8-DMC-%s",
+             FIRMWARE_VERSION); // #16: Single source of truth
     strcpy(NETWORK, "KSNDMC");
     strcpy(STATION_TYPE, "TRG");
     debug("[BOOT] Unit: ");
@@ -379,7 +403,11 @@ void setup() {
     http_no = 3;
   } else if ((strstr(UNIT, "KSNDMC_TWS") && (SYSTEM == 1))) {
     strcpy(universalNumber, "9980945474");
-    snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-DMC-%s", FIRMWARE_VERSION);
+    if (strstr(UNIT, "-AP")) {
+      snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-AP-DMC-%s", FIRMWARE_VERSION);
+    } else {
+      snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-DMC-%s", FIRMWARE_VERSION);
+    }
     strcpy(NETWORK, "KSNDMC");
     strcpy(STATION_TYPE, "TWS");
     debug("[BOOT] Unit: ");
@@ -639,6 +667,14 @@ void setup() {
 #if (SYSTEM == 1) || (SYSTEM == 2)
   xTaskCreatePinnedToCore(tempHum, "tempHumTask", 4096, NULL, 2, &tempHum_h,
                           1); // Core 1
+  // #7: Only create bmeTask if BME280 is physically present at boot
+  if (bmeType == BME_280) {
+    xTaskCreatePinnedToCore(bmeTask, "bmeTask", 4096, NULL, 2, &bmeTask_h,
+                            1); // Core 1
+  } else {
+    bmeTask_h = NULL;
+    debugln("[BOOT] BME280 not found. bmeTask NOT created (saves RAM).");
+  }
   xTaskCreatePinnedToCore(windSpeed, "windSpeedTask", 4096, NULL, 2,
                           &windSpeed_h,
                           1); // Core 1
@@ -747,6 +783,9 @@ void initialize_hw() {
   Wire.setTimeOut(I2C_TIMEOUT_MS);
   delay(300);
 
+  // Early init for sensor detection status
+  initBME();
+
   // DISABLE Watchdog during long mount/format operations
   esp_task_wdt_deinit();
 
@@ -798,6 +837,12 @@ void initialize_hw() {
   // Re-register if not already (safeguard)
   esp_task_wdt_add(NULL);
   esp_task_wdt_reset();
+
+  if (bmeType == BME_280) {
+    debugln("[BOOT] BME280: OK");
+  } else {
+    debugln("[BOOT] BME280: NOT FOUND");
+  }
 
   debugln("[BOOT] Hardware Initialized.");
 }

@@ -23,8 +23,10 @@ void tempHum(void *pvParameters) {
           // If we have a last known good, use jitter. If not (boot), force 0.0
           if (last_valid_temp > 0.1) {
             float jitter = last_valid_temp * 0.02;
-            temperature = last_valid_temp +
-                          (((float)rand() / RAND_MAX) * (jitter * 2) - jitter);
+            temperature =
+                last_valid_temp +
+                (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter * 2) -
+                 jitter);
             debug("ADJUSTED TEMP (Last Good) is ");
             debugln(temperature);
           } else {
@@ -38,8 +40,10 @@ void tempHum(void *pvParameters) {
         } else {
           if (last_valid_hum > 0.1) {
             float jitter = last_valid_hum * 0.02;
-            humidity = last_valid_hum +
-                       (((float)rand() / RAND_MAX) * (jitter * 2) - jitter);
+            humidity =
+                last_valid_hum +
+                (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter * 2) -
+                 jitter);
             if (humidity < 10.0)
               humidity = 10.0;
             if (humidity > 100.0)

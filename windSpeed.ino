@@ -69,21 +69,15 @@ void windSpeed(void *pvParameters) {
       latestSensorData.windSpeed = 0;
     }
 
-    // CONSISTENCY: If the sensor is flagged as failed/disconnected, show NA
-    if (!ws_ok) {
-      strcpy(windSpeedInst_str, "NA");
-      latestSensorData.windSpeed = 0;
-    }
-
-    // Move to next buffer slot
-    bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
-
-    // CONSISTENCY: If the sensor is flagged as failed/disconnected, show NA
+    // #3 FIX: Single consolidated guard - if sensor is marked failed, override
     if (!ws_ok) {
       strcpy(windSpeedInst_str, "NA");
       strcpy(prevWindSpeedAvg_str, "NA");
       latestSensorData.windSpeed = 0;
     }
+
+    // Move to next buffer slot
+    bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
 
     vTaskDelay(1000 / portTICK_PERIOD_MS); // Sample every 1 second
   }

@@ -2430,7 +2430,8 @@ void prepare_and_send_status(char *gsm_no) {
 
   //        if((strstr(UNIT, "KSNDMC_OLD")) || (strstr(UNIT, "KSNDMC_TRG")) ||
   //        (strstr(UNIT, "KSNDMC_TWS"))){
-  //                  strcpy(NETWORK,"KSNDMC");
+  //                  snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG8-DMC-%s",
+  //                  FIRMWARE_VERSION); // #16: Use FIRMWARE_VERSION
   //                  vTaskDelay(300);
   //                  debug("NETWORK is ");debugln(NETWORK);//TRG8-3.0.5
   //        } else if((strstr(UNIT, "BIHAR_ORG")) || (strstr(UNIT,
@@ -3253,14 +3254,24 @@ bool send_health_report(bool useJitter) {
   else if (SYSTEM != 0 && hdcType == HDC_UNKNOWN)
     status_summary = "TH_SENSOR_FAULT"; // Renamed from HDC to TH for clarity
   else if (SYSTEM != 0 && wd_ok == false)
-    status_summary = "WIND_DIR_FAULT"; // NEW: WD Stuck/Missing
+    status_summary = "WIND_DIR_FAULT";
   else if (li_bat_val < 3.6)
     status_summary = "LOW_BATTERY";
   else if (current_hour >= 10 && current_hour <= 16 &&
            solar_val < (li_bat_val + 2.0))
     status_summary = "SOLAR_CHARGING_FAULT";
-  else if (diag_gprs_fails > 0)
+  // #11: HTTP upload failures now tracked separately from registration fails
+  else if (diag_consecutive_http_fails >= 6)
+    status_summary = "HTTP_UPLOAD_CRITICAL";
+  else if (diag_consecutive_http_fails >= 3)
+    status_summary = "HTTP_UPLOAD_ISSUE";
+  // #13: Registration failures are now graduated for better field triage
+  else if (diag_gprs_fails >= 6)
+    status_summary = "NETWORK_CRITICAL";
+  else if (diag_gprs_fails >= 3)
     status_summary = "NETWORK_STABILITY_ISSUE";
+  else if (diag_gprs_fails >= 1)
+    status_summary = "NETWORK_MINOR_ISSUE";
   else if (diag_reg_worst > 150)
     status_summary = "POOR_SIGNAL_LOCATION";
   else if (spiffs_used > (spiffs_total * 0.9))
@@ -3275,16 +3286,19 @@ bool send_health_report(bool useJitter) {
     return false;
   }
 
-  char sensor_info[64];
-  if (SYSTEM == 0) { // TRG
+  char sensor_info[80]; // #6: Increased buffer for full sensor status string
+  if (SYSTEM == 0) {    // TRG
     snprintf(sensor_info, sizeof(sensor_info), "RF:OK");
   } else if (SYSTEM == 1) { // TWS
-    snprintf(sensor_info, sizeof(sensor_info), "HDC:%s,WS:%s,WD:%s",
-             (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"), (ws_ok ? "OK" : "FAIL"),
+    snprintf(sensor_info, sizeof(sensor_info), "HDC:%s,BME:%s,WS:%s,WD:%s",
+             (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"),
+             (bmeType == BME_UNKNOWN ? "FAIL" : "OK"), (ws_ok ? "OK" : "FAIL"),
              (wd_ok ? "OK" : "FAIL"));
   } else if (SYSTEM == 2) { // TWS-RF
-    snprintf(sensor_info, sizeof(sensor_info), "HDC:%s,WS:%s,WD:%s,RF:OK",
-             (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"), (ws_ok ? "OK" : "FAIL"),
+    snprintf(sensor_info, sizeof(sensor_info),
+             "HDC:%s,BME:%s,WS:%s,WD:%s,RF:OK",
+             (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"),
+             (bmeType == BME_UNKNOWN ? "FAIL" : "OK"), (ws_ok ? "OK" : "FAIL"),
              (wd_ok ? "OK" : "FAIL"));
   } else {
     strcpy(sensor_info, "NA");

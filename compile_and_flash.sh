@@ -1,10 +1,13 @@
 #!/bin/bash
-
 # AIO ESP32 Build and Quick Flash Script
-# Automates: Compilation -> Finding Port -> App-only Flash
+# Automates: Compile -> Find Port -> App-only Flash
+# Usage: ./compile_and_flash.sh [PORT] [4mb|8mb|16mb]
+#   Default flash size: 8mb
 
-# 1. Compile the code
-./compile.sh
+FLASH_SIZE=${2:-8mb}
+
+# 1. Compile for the correct flash target
+./compile.sh "$FLASH_SIZE"
 if [ $? -ne 0 ]; then
     echo "❌ Compilation failed. Aborting flash."
     exit 1
@@ -13,39 +16,34 @@ fi
 # 2. Determine Port
 PORT=$1
 if [ -z "$PORT" ]; then
-    # Try your preferred port first
     MY_PORT="/dev/cu.usbserial-A50285BI"
     if [ -e "$MY_PORT" ]; then
         PORT="$MY_PORT"
     else
-        # Intelligent Auto-detection
-        PORT=$(ls /dev/cu.usbserial-* 2>/dev/null | head -1) # Try any usbserial
+        PORT=$(ls /dev/cu.usbserial-* 2>/dev/null | head -1)
         if [ -z "$PORT" ]; then
-            PORT=$(ls /dev/cu.usbmodem* 2>/dev/null | head -1) # Try any usbmodem
+            PORT=$(ls /dev/cu.usbmodem* 2>/dev/null | head -1)
         fi
     fi
 fi
 
 if [ -z "$PORT" ]; then
-    echo "❌ Error: Could not find your ESP32. Please connect it or specify port manually."
-    echo "Usage: ./build_and_flash.sh [PORT]"
+    echo "❌ Error: Could not find your ESP32. Connect it or specify port manually."
+    echo "Usage: ./compile_and_flash.sh [PORT] [4mb|8mb|16mb]"
     exit 1
 fi
 
-# New: Auto-release the port if it's busy (kills existing serial monitors)
+# 3. Release port if busy
 echo "🔍 Checking if $PORT is busy..."
-# On macOS, lsof is more reliable for finding serial port usage
 PID=$(lsof -t "$PORT")
 if [ -n "$PID" ]; then
     echo "⚠️  Port $PORT is being used by PID: $PID. Releasing..."
     kill -9 $PID
-    sleep 1 # Give it a moment to release
+    sleep 1
 else
-    # Fallback for other environments or if lsof didn't catch it
     fuser -k "$PORT" 2>/dev/null || true
 fi
 
-# Specifically check for any arduino-cli monitor processes that might be lingering
 ARDUINO_PID=$(ps aux | grep "arduino-cli monitor" | grep "$PORT" | grep -v grep | awk '{print $2}')
 if [ -n "$ARDUINO_PID" ]; then
     echo "⚠️  Found active arduino-cli monitor for $PORT. Killing PID: $ARDUINO_PID"
@@ -53,6 +51,6 @@ if [ -n "$ARDUINO_PID" ]; then
     sleep 1
 fi
 
-# 3. Flash the app
-echo "🚀 Target Port Detected: $PORT"
-./quick_flash.sh "$PORT"
+# 4. Flash app only (quick flash - no bootloader/partition overwrite)
+echo "🚀 Target Port: $PORT | Flash: $FLASH_SIZE"
+./quick_flash.sh "$PORT" "$FLASH_SIZE"

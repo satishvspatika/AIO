@@ -44,7 +44,7 @@ void windDirection(void *pvParameters) {
       strcpy(windDir_str, "NA");
     }
 
-    latestSensorData.windDirection = windDir;
+    // windDir global is the canonical source; no need to copy to struct
     vTaskDelay(1000);
   }
 }

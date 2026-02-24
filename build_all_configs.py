@@ -7,6 +7,7 @@ Requires: arduino-cli (install: brew install arduino-cli)
 
 import os
 import sys
+import argparse
 import subprocess
 import shutil
 from pathlib import Path
@@ -24,9 +25,19 @@ CONFIGS = [
     (0, "BIHAR_TRG", "BIHAR_TRG"),
     (0, "SPATIKA_GEN", "SPATIKA_TRG"),
     (1, "KSNDMC_TWS", "KSNDMC_TWS"),
+    (1, "KSNDMC_TWS-AP", "KSNDMC_TWS_AP"),
     (2, "KSNDMC_ADDON", "KSNDMC_ADDON"),
     (2, "SPATIKA_GEN", "SPATIKA_ADDON"),
 ]
+
+# Flash size variants available:
+# Use --flash 4mb or --flash 16mb on CLI to include those variants.
+# Default (no flag): 8mb only (current production hardware).
+ALL_FLASH_VARIANTS = {
+    "4mb":  ("4M",  "partitions_4mb.csv"),   # Legacy / older ESP32 units
+    "8mb":  ("8M",  "partitions.csv"),        # Current production hardware
+    "16mb": ("16M", "partitions_16mb.csv"),   # Future 16MB units
+}
 
 # External Release Path
 EXTERNAL_RELEASE_BASE = Path("/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5/AIO9_5.0")
@@ -63,9 +74,9 @@ def restore_globals():
     print_info("Restoring original globals.h...")
     shutil.copy(BACKUP_GLOBALS, GLOBALS_H)
 
-def update_globals(system, unit):
+def update_globals(system, unit, disable_webserver=False):
     """Update globals.h with new SYSTEM and UNIT values"""
-    print_info(f"Configuring: SYSTEM={system}, UNIT={unit}")
+    print_info(f"Configuring: SYSTEM={system}, UNIT={unit}" + (" [WebServer OFF]" if disable_webserver else ""))
     
     # Restore backup first
     shutil.copy(BACKUP_GLOBALS, GLOBALS_H)
@@ -83,6 +94,10 @@ def update_globals(system, unit):
 
     # Force DEBUG 0 for official builds
     content = re.sub(r'#define DEBUG \d+', '#define DEBUG 0', content)
+
+    # 4MB builds: disable WebServer to fit within 1.25MB slot
+    if disable_webserver:
+        content = re.sub(r'#define ENABLE_WEBSERVER \d+', '#define ENABLE_WEBSERVER 0', content)
     
     # Write back
     with open(GLOBALS_H, 'w') as f:
@@ -104,41 +119,43 @@ def check_arduino_cli():
         print("Or download from: https://arduino.github.io/arduino-cli/")
         return False
 
-def build_config(system, unit, output_name):
-    """Build a specific configuration"""
-    print_header(f"Building: {output_name}")
-    
-    # Update configuration
-    update_globals(system, unit)
-    
+def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", partition_csv="partitions.csv"):
+    """Build a specific configuration for a specific flash hardware"""
+    # Tagged output name includes flash size
+    tagged_name = f"{output_name}_{flash_size}"
+    print_header(f"Building: {tagged_name}")
+
+    # Update globals (disable WebServer for 4MB builds to fit within 1.25MB slot)
+    update_globals(system, unit, disable_webserver=(flash_size == "4mb"))
+
+
     # Create output directory
-    output_dir = OUTPUT_BASE / output_name
+    output_dir = OUTPUT_BASE / tagged_name
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Unique build directory for this specific config
-    config_build_dir = SKETCH_DIR / "build" / f"config_{output_name}"
+
+    # Unique build directory for this specific config + flash size
+    config_build_dir = SKETCH_DIR / "build" / f"config_{tagged_name}"
     config_build_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Compile
-    print_info(f"Compiling... (Build path: {config_build_dir.name})")
+    print_info(f"Compiling for {flash_size} flash... (Build path: {config_build_dir.name})")
     log_file = output_dir / "build.log"
-    
-    # Use custom partition scheme from partitions.csv
-    partitions_file = SKETCH_DIR / "partitions.csv"
-    
+
+    partitions_file = SKETCH_DIR / partition_csv
+
     cmd = [
         'arduino-cli', 'compile',
-        '--fqbn', 'esp32:esp32:esp32:PartitionScheme=custom',
+        '--fqbn', f'esp32:esp32:esp32:FlashSize={flash_fqbn},PartitionScheme=custom',
         '--build-property', 'build.partitions=custom',
         '--build-property', f'build.custom_partitions={partitions_file}',
         '--build-path', str(config_build_dir),
         '--export-binaries',
         str(SKETCH_DIR)
     ]
-    
+
     with open(log_file, 'w') as log:
         result = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT)
-    
+
     if result.returncode == 0:
         print_success("Compilation successful")
         
@@ -206,7 +223,24 @@ def build_config(system, unit, output_name):
         return False
 
 def main():
-    print_header("AIO9_5.0 Multi-Configuration Builder")
+    parser = argparse.ArgumentParser(description="AIO9_5.0 Multi-Configuration Builder")
+    parser.add_argument(
+        "--flash", nargs="+", default=["8mb"],
+        choices=["4mb", "8mb", "16mb"],
+        help="Flash size variant(s) to build. Default: 8mb. Example: --flash 8mb 4mb"
+    )
+    args = parser.parse_args()
+
+    # Build active flash variant list
+    FLASH_VARIANTS = []
+    for size in args.flash:
+        fqbn, csv = ALL_FLASH_VARIANTS[size]
+        FLASH_VARIANTS.append((size, fqbn, csv))
+
+    print_header(f"AIO9_5.0 Multi-Configuration Builder")
+    print(f"  Flash targets: {', '.join(args.flash).upper()}")
+    print(f"  Configurations: {len(CONFIGS)}")
+    print(f"  Total builds: {len(FLASH_VARIANTS) * len(CONFIGS)}")
     
     # Check arduino-cli
     if not check_arduino_cli():
@@ -221,15 +255,17 @@ def main():
     # Backup globals.h
     backup_globals()
     
-    # Build all configurations
+    # Build all configurations × all flash variants
     success_count = 0
     fail_count = 0
-    
-    for system, unit, output_name in CONFIGS:
-        if build_config(system, unit, output_name):
-            success_count += 1
-        else:
-            fail_count += 1
+
+    for flash_size, flash_fqbn, partition_csv in FLASH_VARIANTS:
+        print_header(f"=== Flash Variant: {flash_size.upper()} ===")
+        for system, unit, output_name in CONFIGS:
+            if build_config(system, unit, output_name, flash_size, flash_fqbn, partition_csv):
+                success_count += 1
+            else:
+                fail_count += 1
     
     # Restore globals.h
     restore_globals()

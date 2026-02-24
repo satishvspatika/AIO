@@ -24,7 +24,11 @@ enum HDC_Type { // Sensor type enum
   HDC_1080,
   HDC_2022
 };
+
+enum BME_Type { BME_UNKNOWN, BME_280 };
+
 extern HDC_Type hdcType;
+extern BME_Type bmeType;
 extern bool ws_ok;
 extern bool wd_ok;
 
@@ -32,7 +36,8 @@ extern bool wd_ok;
 // ULP Program Code (loaded at offset 0) from overwriting C variables.
 RTC_DATA_ATTR uint8_t ulp_code_reserve[512] = {0};
 
-#include <esp_now.h>
+// ESP-NOW permanently disabled (v5.40+) - includes removed
+// #include <esp_now.h>
 #include <esp_task_wdt.h>
 #include <esp_wifi.h>
 #include <hulp_arduino.h>
@@ -57,18 +62,18 @@ int send_at_cmd_data(char *payload, String charArray);
 void get_signal_strength();
 
 /************************************************************************************************/
-#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "KSNDMC_TWS"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
-                              // KSNDMC_ADDON SPATIKA_GEN
+#define SYSTEM 1                 // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "KSNDMC_TWS-AP"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
+                                 // KSNDMC_TWS-AP KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.38"
+#define FIRMWARE_VERSION "5.40"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
 #define ENABLE_WEBSERVER                                                       \
-  0 // Set to 0 to remove WebServer footprint (SAVES SPACE)
+  1 // Set to 0 to remove WebServer footprint (SAVES SPACE)
 
 #define DEFAULT_RF_RESOLUTION 0.5
 float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
@@ -154,6 +159,12 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 #define WIND_DIR_MAX_VALID 350
 #define WIND_DIR_RANGE 5
 #define WIND_DIR_MAX 360
+
+// Station altitude for Sea Level Pressure correction
+// Default: 900.0m (Mahalakshmipuram, Bengaluru)
+// This value is loaded from SPIFFS at boot and can be changed via LCD menu
+float station_altitude_m = 900.0; // Runtime configurable (meters)
+#define SEALEVEL_CALC_FACTOR 44330.769
 
 // Fill signal strength constants
 #define FILL_SIG_MIN 115
@@ -392,10 +403,12 @@ float avg_cumRF, new_current_cumRF, new_current_instRF;
 
 // T/H , WS and WD
 int prev_wind_count = 0;
-float temperature, humidity, windSpCount, cur_wind_speed;
+float temperature, humidity, windSpCount, cur_wind_speed, pressure;
 float cur_avg_wind_speed;
 int windDir;
+float sea_level_pressure;
 char inst_hum[7], avg_wind_speed[7], inst_wd[7];
+char pres_str[20] = "NA";
 
 // RTC
 volatile bool rtcReady = false;
@@ -409,17 +422,14 @@ char signature[20]; // 2023-02-23,11:15
 volatile bool rtcTimeChanged = false;
 bool signature_valid = false;
 
-//  ESPNOW
-uint8_t destinationAddress[] = {
-    0xEC, 0x94, 0xCB,
-    0x6F, 0x11, 0x11}; // REPLACE WITH YOUR RECEIVER MAC Address
-uint8_t newMACAddress[] = {0xEC, 0x94, 0xCB,
-                           0x6F, 0x99, 0x99}; // NewMac addressof this device
-volatile int espnow_start, lcdkeypad_start = 0;
-volatile int wakeup_reason_is;
+// ESP-NOW permanently disabled - peer fields removed
+// See espnow.ino stub for restoration notes
+volatile int espnow_start = 0; // Legacy - unused
+volatile int wakeup_reason_is; // ACTIVE: used by all wakeup logic
+volatile int lcdkeypad_start = 0;
 int temp_count_rf, calib_count_rf, calib_flag;
-int send_espnow = 0;
-int peer_added = 0;
+int send_espnow = 0; // Legacy - unused
+int peer_added = 0;  // Legacy - unused
 
 char rf_str[10], calib_rf[10], temp_str[16], hum_str[16], windSpeedInst_str[16],
     prevWindSpeedAvg_str[7], windDir_str[16];
@@ -442,17 +452,18 @@ void lcdkeypad(void *pvParameters);
 void gprs(void *pvParameters);
 void espnow(void *pvParameters);
 void tempHum(void *pvParameters);
+void bmeTask(void *pvParameters);
 void windSpeed(void *pvParameters);
 void windDirection(void *pvParameters);
 void rtcRead(void *pvParameters);
 
 // Function Prototypes
 void initialize_hw();
+bool initBME();
 void set_rtc_time();
 void set_wakeup_reason();
-void initiate_espnow();
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status);
-void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len);
+// initiate_espnow(), OnDataSent(), OnDataRecv() removed - ESP-NOW disabled
+// (v5.40+)
 void send_at_cmd(char *cmd, char *check, char *spl);
 void resync_time();
 char *parse_http_head(char *response, char *check);
@@ -515,7 +526,7 @@ struct SensorData {
   float temperature;
   float humidity;
   float windSpeed;
-  int windDirection;
+  // windDirection is intentionally excluded - always use the global `windDir`
 };
 
 SensorData latestSensorData;
@@ -544,6 +555,8 @@ enum UI_FIELD_ID {
   FLD_AVG_WS,
   FLD_TEMP,
   FLD_HUMIDITY,
+  FLD_PRESSURE,
+  FLD_ALTITUDE, // #1: Station altitude for MSLP correction (BME only)
   FLD_LCD_OFF,
   FLD_COUNT // Total count
 };
@@ -555,31 +568,7 @@ typedef struct {
   char fieldType;
 } ui_data_t;
 
-esp_now_peer_info_t peerInfo;
-
-//        ui_data_t ui_data[22] = {
-//          {1,"STATION","SIT099",eAlphaNum}, //
-//          {2,"DATE(dd-mm-yyyy)","08-03-2023",eNumeric},//
-//          {3,"TIME 24hr:mm","00:00",eNumeric},//
-//          {4,"RF","0.0",eLive},
-//          {5,"VERSION","TRG23 0.1",eDisplayOnly},
-//          {6,"SEND STATUS","YES ?",eDisplayOnly},
-//          {7,"RF CALIBRATION","Yes?",eLive},
-//          {8,"SIGNAL LVL(dBm)","0",eLive},
-//          {9,"REGISTRATION","NA",eLive},
-//          {10,"LAST LOGGED AT","0",eNumeric},//
-//          {11,"DELETE DATA?","YES?",eNumeric},//
-//          {12,"COPY TO SDCARD?","YES?",eDisplayOnly},
-//          {13,"BATTERY VOLTAGE","0",eLive},
-//          {14,"SOLAR VOLTAGE","0",eLive},
-//          {15,"SEND LAT/LONG","YES ?",eDisplayOnly}, //13->14
-//          {16,"Wind Direction","NA",eLive},//14->15
-//          {17,"INST WND SP(m/s)","NA",eLive},//15->16
-//          {18,"AVG WND SP(m/s)","NA",eLive},//16->17
-//          {19,"Temperature (C)","NA",eLive},//17->18
-//          {20,"Humidity (%)","NA",eLive},//18->19
-//          {21,"TURN OFF LCD","YES?",eDisplayOnly}
-//         };
+// esp_now_peer_info_t peerInfo; // Removed - ESP-NOW disabled (v5.40+)
 
 // Unified Layout for ALL Systems
 ui_data_t ui_data[FLD_COUNT] = {
@@ -606,7 +595,9 @@ ui_data_t ui_data[FLD_COUNT] = {
     {18, "AVG WND SP(m/s)", "NA", eLive},            // 20
     {19, "Temperature (C)", "NA", eLive},            // 21
     {20, "Humidity (%)", "NA", eLive},               // 22
-    {22, "TURN OFF LCD", "YES?", eDisplayOnly}       // 23
+    {24, "Pressure (hPa)", "NA", eLive},             // 23
+    {26, "Station Alt (m)", "900", eNumeric},        // 24 BME only
+    {22, "TURN OFF LCD", "YES?", eDisplayOnly}       // 25
 };
 
 extern TaskHandle_t webServer_h;

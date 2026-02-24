@@ -40,10 +40,18 @@ bool isFieldVisible(int fld_id) {
 
 #if SYSTEM == 0 // TRG ONLY
   if (fld_id == FLD_WIND_DIR || fld_id == FLD_INST_WS || fld_id == FLD_AVG_WS ||
-      fld_id == FLD_TEMP || fld_id == FLD_HUMIDITY)
+      fld_id == FLD_TEMP || fld_id == FLD_HUMIDITY || fld_id == FLD_PRESSURE ||
+      fld_id == FLD_ALTITUDE)
     return false;
 #elif SYSTEM == 1 // TWS ONLY (Weather)
   if (fld_id == FLD_RF_ML || fld_id == FLD_RF_CALIB || fld_id == FLD_RF_RES)
+    return false;
+  // #1: Hide altitude field if BME280 is not installed
+  if (fld_id == FLD_ALTITUDE && bmeType == BME_UNKNOWN)
+    return false;
+#elif SYSTEM == 2 // TWS-RF
+  // #1: Hide altitude field if BME280 is not installed
+  if (fld_id == FLD_ALTITUDE && bmeType == BME_UNKNOWN)
     return false;
 #endif
   return true;
@@ -396,6 +404,7 @@ void lcdkeypad(void *pvParameters) {
         strcpy(ui_data[FLD_AVG_WS].bottomRow, prevWindSpeedAvg_str);
         strcpy(ui_data[FLD_TEMP].bottomRow, temp_str);
         strcpy(ui_data[FLD_HUMIDITY].bottomRow, hum_str);
+        strcpy(ui_data[FLD_PRESSURE].bottomRow, pres_str);
 
         // Update WiFi status menu item based on actual state
         strcpy(ui_data[FLD_WIFI_ENABLE].bottomRow,
@@ -974,7 +983,8 @@ void lcdkeypad(void *pvParameters) {
               // Only allow entering Edit Mode for specific configuration fields
               if (cur_fld_no == FLD_STATION || cur_fld_no == FLD_DATE ||
                   cur_fld_no == FLD_TIME || cur_fld_no == FLD_RF_RES ||
-                  cur_fld_no == FLD_DELETE_DATA || cur_fld_no == FLD_LOG) {
+                  cur_fld_no == FLD_DELETE_DATA || cur_fld_no == FLD_LOG ||
+                  cur_fld_no == FLD_ALTITUDE) {
 
                 if ((cur_fld_no == FLD_RF_RES && rf_res_edit_state == 0) ||
                     (cur_fld_no == FLD_DELETE_DATA)) {
@@ -990,6 +1000,36 @@ void lcdkeypad(void *pvParameters) {
                   // Special handling for Station ID: Start with cleared field
                   if (cur_fld_no == FLD_STATION) {
                     strcpy(input_buf, "                "); // 16 spaces
+                  } else if (cur_fld_no == FLD_ALTITUDE) {
+                    // Auto-detect altitude from BME280, then ask to confirm
+                    if (bmeType != BME_UNKNOWN && pressure > 300.0) {
+                      // Hypsometric formula: h = 44330.76 * (1 -
+                      // (P/1013.25)^0.1903)
+                      float isa_sl = 1013.25f;
+                      float bme_alt =
+                          44330.769f * (1.0f - pow(pressure / isa_sl, 0.1903f));
+                      if (bme_alt < 0.0f)
+                        bme_alt = 0.0f;
+                      if (bme_alt > 5000.0f)
+                        bme_alt = 5000.0f;
+                      snprintf(input_buf, sizeof(input_buf), "%.0f", bme_alt);
+                      strcpy(ui_data[FLD_ALTITUDE].topRow, "AUTO DETECTED");
+                      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
+                          pdTRUE) {
+                        lcd.clear();
+                        lcd.setCursor(0, 0);
+                        lcd.print("AUTO DETECTED:");
+                        lcd.setCursor(0, 1);
+                        lcd.print((int)bme_alt);
+                        lcd.print("m  SET=Save");
+                        xSemaphoreGive(i2cMutex);
+                      }
+                    } else {
+                      // No BME or invalid - go to manual entry
+                      snprintf(input_buf, sizeof(input_buf), "%.0f",
+                               station_altitude_m);
+                      strcpy(ui_data[FLD_ALTITUDE].topRow, "MANUAL (0-5000)");
+                    }
                   } else {
                     strcpy(input_buf, ui_data[cur_fld_no].bottomRow);
                   }
@@ -1081,7 +1121,46 @@ void lcdkeypad(void *pvParameters) {
                 strcpy(ui_data[cur_fld_no].bottomRow, input_buf);
                 cur_mode = eEditOff;
 
-                if (cur_fld_no == FLD_STATION) {
+                if (cur_fld_no == FLD_ALTITUDE) {
+                  // Step 2: User confirmed the auto-detected or manually
+                  // entered value
+                  float new_alt = atof(input_buf);
+                  if (new_alt >= 0.0 && new_alt <= 5000.0) {
+                    station_altitude_m = new_alt;
+                    File altF = SPIFFS.open("/station_alt.txt", FILE_WRITE);
+                    if (altF) {
+                      altF.print(station_altitude_m);
+                      altF.close();
+                    }
+                    snprintf(ui_data[FLD_ALTITUDE].bottomRow,
+                             sizeof(ui_data[FLD_ALTITUDE].bottomRow), "%.0f m",
+                             station_altitude_m);
+                    strcpy(ui_data[FLD_ALTITUDE].topRow, "Station Alt (m)");
+                    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
+                        pdTRUE) {
+                      lcd.clear();
+                      lcd.setCursor(0, 0);
+                      lcd.print("Alt SAVED:");
+                      lcd.print((int)station_altitude_m);
+                      lcd.print("m");
+                      lcd.setCursor(0, 1);
+                      lcd.print("RESTARTING...");
+                      xSemaphoreGive(i2cMutex);
+                    }
+                    vTaskDelay(3000);
+                    ESP.restart();
+                  } else {
+                    strcpy(ui_data[FLD_ALTITUDE].topRow, "Station Alt (m)");
+                    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
+                        pdTRUE) {
+                      lcd.clear();
+                      lcd.setCursor(0, 0);
+                      lcd.print("0 to 5000m only");
+                      xSemaphoreGive(i2cMutex);
+                    }
+                    vTaskDelay(2000);
+                  }
+                } else if (cur_fld_no == FLD_STATION) {
                   // Store old station name before changing
                   char old_station[16];
                   strcpy(old_station, station_name);
@@ -1195,8 +1274,28 @@ void lcdkeypad(void *pvParameters) {
                     debugln("[UI] Station Changed: Scheduling Automatic GPS & "
                             "Health Report");
                     sync_mode = eStartupGPS;
-                    cur_fld_no = FLD_SEND_GPS; // Switch view to GPS Status
+                    cur_fld_no = FLD_SEND_GPS;
                     strcpy(ui_data[FLD_SEND_GPS].bottomRow, "INITIALIZING...");
+
+                    // Auto-compute altitude from BME280 when station ID changes
+                    if (bmeType != BME_UNKNOWN && pressure > 300.0) {
+                      float isa_sl = 1013.25f;
+                      float bme_alt =
+                          44330.769f * (1.0f - pow(pressure / isa_sl, 0.1903f));
+                      if (bme_alt >= 0.0f && bme_alt <= 5000.0f) {
+                        station_altitude_m = bme_alt;
+                        File altF = SPIFFS.open("/station_alt.txt", FILE_WRITE);
+                        if (altF) {
+                          altF.print(station_altitude_m);
+                          altF.close();
+                        }
+                        snprintf(ui_data[FLD_ALTITUDE].bottomRow,
+                                 sizeof(ui_data[FLD_ALTITUDE].bottomRow),
+                                 "%.0f m", station_altitude_m);
+                        debugf1("[UI] Alt auto-updated from BME: %.0f m\n",
+                                bme_alt);
+                      }
+                    }
                   }
                 } else if (cur_fld_no == FLD_DATE) {
                   sscanf(ui_data[FLD_DATE].bottomRow, "%02d-%02d-%04d",
