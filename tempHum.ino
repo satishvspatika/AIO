@@ -3,12 +3,13 @@ HDC_Type hdcType = HDC_UNKNOWN;
 void tempHum(void *pvParameters) {
   esp_task_wdt_add(NULL);
 
-  if (!initHDC()) {
-    debugln("****HDC sensor not initialized. Task will stay alive for WDT "
-            "feeding.");
-  } else {
+  // Note: initHDC() is now called in setup() to decide if this task runs.
+  if (hdcType != HDC_UNKNOWN) {
     strcpy(temp_str, "00.00");
     strcpy(hum_str, "00.00");
+  } else {
+    strcpy(temp_str, "NA");
+    strcpy(hum_str, "NA");
   }
 
   static int failCount = 0;
@@ -87,16 +88,49 @@ void tempHum(void *pvParameters) {
 
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
           pdTRUE) {
-        latestSensorData.temperature = 0.0;
-        latestSensorData.humidity = 0.0;
+        // Fallback to BME if HDC is missing
+        if (bmeType != BME_UNKNOWN) {
+          float bmeTemp = bme.readTemperature();
+          float bmeHum = bme.readHumidity();
+
+          if (!isnan(bmeTemp) && bmeTemp > -40.0 && bmeTemp < 85.0) {
+            latestSensorData.temperature = bmeTemp;
+            temperature = bmeTemp;
+            snprintf(temp_str, sizeof(temp_str), "%.1f C(B)", temperature);
+          } else {
+            latestSensorData.temperature = 0.0;
+            temperature = 0.0;
+            strcpy(temp_str, "NA");
+          }
+
+          if (!isnan(bmeHum) && bmeHum >= 0.0 && bmeHum <= 100.0) {
+            latestSensorData.humidity = bmeHum;
+            humidity = bmeHum;
+            snprintf(hum_str, sizeof(hum_str), "%.1f %%(B)", humidity);
+          } else {
+            latestSensorData.humidity = 0.0;
+            humidity = 0.0;
+            strcpy(hum_str, "NA");
+          }
+        } else {
+          latestSensorData.temperature = 0.0;
+          latestSensorData.humidity = 0.0;
+          strcpy(temp_str, "NA");
+          strcpy(hum_str, "NA");
+        }
         xSemaphoreGive(i2cMutex);
       }
 
       // Periodically attempt to re-init if gone
       static uint32_t lastRetry = 0;
-      if (millis() - lastRetry > 30000) {
+      if (millis() - lastRetry > 60000) { // Every 60s
+        debugln("[HDC] Retrying sensor initialization...");
         lastRetry = millis();
-        initHDC();
+        if (initHDC()) {
+          debugln("[HDC] Sensor Recovery: SUCCESS");
+        } else {
+          debugln("[HDC] Sensor Recovery: FAILED");
+        }
       }
     }
 
@@ -139,10 +173,12 @@ uint16_t readRegister16(uint8_t reg) {
 bool initHDC() {
   // 1. Check for HDC1080 (Big-Endian IDs)
   uint16_t devID1080 = readRegister16(0xFF); // Device ID Register
+  debug("[HDC] Checking 1080 ID (Reg 0xFF): 0x");
+  debugln(devID1080, HEX);
 
   if (devID1080 == 0x1050) {
     hdcType = HDC_1080;
-    debugln("[HDC] Init: HDC1080");
+    debugln("[HDC] Init: SUCCESS (HDC1080)");
 
     // Configure HDC1080 for 14-bit Temp & Hum
     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
@@ -161,9 +197,12 @@ bool initHDC() {
   // Device ID is 0x07D0. In little-endian registers, readRegister16(0xFE)
   // returns 0xD007.
   uint16_t devID2022 = readRegister16(0xFE);
+  debug("[HDC] Checking 2022 ID (Reg 0xFE): 0x");
+  debugln(devID2022, HEX);
+
   if (devID2022 == 0xD007 || devID2022 == 0x07D0) {
     hdcType = HDC_2022;
-    debugln("[HDC] Init: HDC2022");
+    debugln("[HDC] Init: SUCCESS (HDC2022)");
 
     // Configure HDC2022 for 14-bit resolution & manual trigger mode
     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
@@ -179,7 +218,7 @@ bool initHDC() {
 
   // Not 1080, Not 2022. It is disconnected or broken.
   hdcType = HDC_UNKNOWN;
-  debugln("[HDC] Init: NO SENSOR FOUND!");
+  debugln("[HDC] Init: NO SENSOR FOUND! (ID Mismatch)");
   return false;
 }
 

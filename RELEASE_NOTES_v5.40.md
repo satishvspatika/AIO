@@ -39,6 +39,11 @@ A major sensor expansion and code footprint optimization update. v5.40 introduce
 ### 6. **TRNG-Based Jitter (Anti-Flatline Improvement)** 🎲
 - Organic jitter algorithm upgraded from `rand()` to `esp_random()` (hardware True Random Number Generator) for statistically unpredictable perturbations.
 
+### 7. **Maintenance & Optimization (Production Polish)** 🛠️
+- **TRG Probe Suppression**: Units configured as TRG (SYSTEM 0) now skip I2C probing for BME/HDC sensors, resulting in a cleaner boot log and faster startup.
+- **CSV Legend Standardization**: Kannada and English CSV legends in the Web UI were standardized to match the exact record lengths for all three system types.
+- **GPRS Power Efficiency**: SIM polling replaced fixed delays, saving ~1.5 seconds of active modem power per session.
+
 ---
 
 ## 🔧 Technical Summary
@@ -54,4 +59,4 @@ A major sensor expansion and code footprint optimization update. v5.40 introduce
 
 ---
 
-**v5.41 restores CSV record length consistency while providing live Barometric Pressure via the Web UI!** 🚀
+**v5.40 restores CSV record length consistency while providing live Barometric Pressure via the Web UI!** 🚀

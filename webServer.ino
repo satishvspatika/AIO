@@ -977,25 +977,28 @@ void handleFileView() {
       String legend =
           isKan ? "ಮೌಲ್ಯಗಳ ಅರ್ಥ (Values Meaning): " : "Values Meaning: ";
 #if SYSTEM == 0
-      legend +=
-          isKan ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಮಳೆ (Cum RF), "
-                  "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)"
-                : "SampleNo, Date, Time, Cum RF, Signal, Battery 1, Battery 2";
+      legend += isKan
+                    ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಇನ್ಸ್ಟ್ ಮಳೆ "
+                      "(Inst RF), "
+                      "ಸಂಚಿತ ಮಳೆ (Cum RF), ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ (Battery)"
+                    : "SampleNo, Date, Time, Inst RF, Cum RF, Signal, Battery";
 #elif SYSTEM == 1
-      legend +=
-          isKan ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ತಾಪಮಾನ (Temp), "
-                  "ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ (Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು (Wind "
-                  "Dir), "
-                  "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)"
-                : "SampleNo, Date, Time, Temp, Humidity, Wind Spd, Wind Dir, "
-                  "Signal, Battery 1, Battery 2";
+      legend += isKan
+                    ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಮಳೆ "
+                      "(Rainfall), ತಾಪಮಾನ (Temp), "
+                      "ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ (Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು (Wind "
+                      "Dir), "
+                      "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ (Battery)"
+                    : "SampleNo, Date, Time, Rainfall, Temp, Humidity, Wind "
+                      "Spd, Wind Dir, "
+                      "Signal, Battery";
 #elif SYSTEM == 2
       legend += isKan ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಸಂಚಿತ ಮಳೆ "
                         "(Cum RF), ತಾಪಮಾನ (Temp), ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ "
                         "(Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir), ಸಿಗ್ನಲ್ (Signal), "
-                        "ಬ್ಯಾಟರಿ 1 (Battery 1), ಬ್ಯಾಟರಿ 2 (Battery 2)"
+                        "ಬ್ಯಾಟರಿ (Battery)"
                       : "SampleNo, Date, Time, Cum RF, Temp, Humidity, Wind "
-                        "Spd, Wind Dir, Signal, Battery 1, Battery 2";
+                        "Spd, Wind Dir, Signal, Battery";
 #endif
       server.sendContent("</pre>");
       server.sendContent(

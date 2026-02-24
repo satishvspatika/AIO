@@ -248,35 +248,44 @@ void start_gprs() {
   bool modem_ready = false;
   for (int i = 0; i < 15; i++) {
     SerialSIT.println("AT");
-    if (waitForResponse("OK", 500).indexOf("OK") != -1) {
+    if (waitForResponse("OK", 400).indexOf("OK") != -1) {
       modem_ready = true;
-      debugf1("[GPRS] Modem ready in %d seconds!\n", i + 1);
+      debugf1("[GPRS] Modem ready in %d iterations!\n", i + 1);
       break;
     }
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    vTaskDelay(400 / portTICK_PERIOD_MS);
   }
 
   if (!modem_ready) {
     debugln("[GPRS] AT Timeout, trying CPIN anyway...");
   }
-  // SIM Initialize Delay: Even if the UART is awake and responding to 'AT',
-  // the physical SIM card usually takes an extra 1-3 seconds to fully power up.
-  // Missing this causes '+CME ERROR: 14' (SIM Busy).
-  vTaskDelay(2000 / portTICK_PERIOD_MS);
+  // PROACTIVE SIM POLLING: Instead of a blind 2-second wait, poll for SIM
+  // readiness. This allows us to proceed as soon as the SIM is ready, saving
+  // significant active power.
+  bool sim_ready = false;
+  debugln("[GPRS] Polling for SIM (CPIN)...");
+  for (int i = 0; i < 10; i++) {
+    SerialSIT.println("AT+CPIN?");
+    String cpin_resp = waitForResponse("+CPIN: READY", 1000);
+    if (cpin_resp.indexOf("+CPIN: READY") != -1) {
+      sim_ready = true;
+      debugf1("[GPRS] SIM ready in %d ms!\n", (i + 1) * 1000);
+      break;
+    }
+    if (cpin_resp.indexOf("+CME ERROR") != -1) {
+      debugln("[GPRS] SIM Error detected during polling.");
+      break;
+    }
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+  }
 
-  debugln();
-  SerialSIT.println("AT+CPIN?");
-  response = waitForResponse("+CPIN: READY", 5000);
-  debug("HTTP response of AT+CPIN? ");
-  debugln(response);
-  const char *char_resp = response.c_str();
   SerialSIT.println("ATE0"); // Echo OFF to prevent parsing races
-  waitForResponse("OK", 1000);
+  waitForResponse("OK", 500);
 
-  if (strstr(char_resp, "+CME ERROR")) { // TRG8-3.0.5g
+  if (!sim_ready) {
     diag_consecutive_sim_fails++;
     signal_strength = -114;
-    debugln("[SIM] ERROR DETECTED.");
+    debugln("[SIM] ERROR DETECTED (Timeout or CME).");
     strcpy(reg_status, "SIM ERROR");
 
     if (diag_consecutive_sim_fails >= 6) {
@@ -372,12 +381,14 @@ void prepare_data_and_send() {
          &temp_min, &temp_instrf, &temp_crf, &temp_sig, &temp_bat);
 #endif
 #if SYSTEM == 1
-  sscanf(charArray, "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%f,%03d,%04d,%f",
+  // TWS: 13 components (Filler RF at field 7)
+  sscanf(charArray, "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%f,%f,%03d,%04d,%f",
          &temp_sampleNo, &temp_year, &temp_month, &temp_day, &temp_hr,
-         &temp_min, &temp_temp, &temp_hum, &temp_avg_ws, &temp_dir, &temp_sig,
-         &temp_bat);
+         &temp_min, &temp_instrf, &temp_temp, &temp_hum, &temp_avg_ws,
+         &temp_dir, &temp_sig, &temp_bat);
 #endif
 #if SYSTEM == 2
+  // TWS-RF: 13 components
   sscanf(charArray, "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%f,%f,%03d,%04d,%f",
          &temp_sampleNo, &temp_year, &temp_month, &temp_day, &temp_hr,
          &temp_min, &temp_crf, &temp_temp, &temp_hum, &temp_avg_ws, &temp_dir,

@@ -16,15 +16,14 @@ bool initBME() {
     if (success) {
       bmeType = BME_280;
       debugln("[BME] Init: SUCCESS! BME280 Found.");
-      // Standard sampling for weather monitoring
+      // Forced mode for low-power weather monitoring (sensor sleeps after
+      // reading)
       bme.setSampling(
-          Adafruit_BME280::MODE_NORMAL,
-          Adafruit_BME280::SAMPLING_X2,  // Temp
-          Adafruit_BME280::SAMPLING_X16, // Pressure
-          Adafruit_BME280::SAMPLING_X1,  // Humidity (not used, but part of
-                                         // config)
-          Adafruit_BME280::FILTER_X4, // Reduced filtering for faster response
-          Adafruit_BME280::STANDBY_MS_500);
+          Adafruit_BME280::MODE_FORCED,
+          Adafruit_BME280::SAMPLING_X1, // Temp: 1x is enough for weather
+          Adafruit_BME280::SAMPLING_X1, // Pressure: 1x is enough
+          Adafruit_BME280::SAMPLING_X1, // Humidity
+          Adafruit_BME280::FILTER_OFF); // Faster response, less processing
     } else {
       // Diagnostic check
       debugln("[BME] Init: SENSOR NOT FOUND!");
@@ -47,6 +46,10 @@ void bmeTask(void *pvParameters) {
     if (bmeType != BME_UNKNOWN) {
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
           pdTRUE) {
+
+        // Trigger measurement (Forced Mode)
+        bme.takeForcedMeasurement();
+
         float pres_pa = bme.readPressure(); // Read pressure in Pascals
 
         if (!isnan(pres_pa) && pres_pa > 30000.0) { // Valid range > 300 hPa

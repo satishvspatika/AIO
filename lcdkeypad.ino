@@ -215,13 +215,18 @@ void lcdkeypad(void *pvParameters) {
 
       // If LCD is not started OR the timer hasn't been initialized yet
       if (lcdkeypad_start == 0 || lcd_timer == NULL) {
-        debugln("Turning LCD_CTRL to HIGH (Activation)...");
+        debugln("[UI] Activating LCD Power (GPIO 32)...");
         digitalWrite(32, HIGH); // Turn ON power to LCD (5V)
-        vTaskDelay(500); // Wait for power stabilization (Increased to 500ms)
+        vTaskDelay(1000); // Wait for power stabilization (Increased to 1s)
 
         if (lcd_timer == NULL) {
+          debugln("[UI] Initializing LCD Timer...");
           lcd_timer = timerBegin(1000000); // 1MHz timer frequency
-          timerAttachInterrupt(lcd_timer, &lcdTimer);
+          if (lcd_timer == NULL) {
+            debugln("[UI] ERROR: Timer creation failed!");
+          } else {
+            timerAttachInterrupt(lcd_timer, &lcdTimer);
+          }
         }
         // Force Keypad Pin Configuration to override JTAG/Defaults
         pinMode(4, INPUT_PULLUP);
@@ -230,21 +235,30 @@ void lcdkeypad(void *pvParameters) {
         pinMode(14, OUTPUT);
         pinMode(15, OUTPUT);
 
-        timerAlarm(lcd_timer, 120000000, false, 0); // 2 mins (120 seconds)
-        timerWrite(lcd_timer, 0); // Reset timer count to avoid immediate firing
-        lcdkeypad_start = 1;
-        vTaskDelay(300);
+        if (lcd_timer) {
+          debugln("[UI] Starting LCD idle alarm (2 mins)");
+          timerAlarm(lcd_timer, 120000000, false, 0); // 2 mins (120 seconds)
+          timerWrite(lcd_timer, 0);                   // Reset timer count
+        }
 
+        lcdkeypad_start = 1;
+        vTaskDelay(200);
+
+        debugln("[UI] Requesting I2C Mutex for LCD Init...");
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
             pdTRUE) {
-          debugln("[UI] LCD Mutex Take: Success. Initializing...");
+          debugln("[UI] I2C Mutex Acquired. Initializing LCD hardware...");
+
+          // Re-assert I2C pins with consistent frequency
+          Wire.begin(I2C_SDA, I2C_SCL, 100000);
+
           lcd.init();
-          lcd.display();   // Ensure display is on
-          lcd.backlight(); // Turn on backlight
+          lcd.display();   // Ensure display is active
+          lcd.backlight(); // Ensure backlight is on
           lcd.clear();
           lcd.noCursor();
           lcd.noBlink();
-          debugln("[UI] LCD hardware initialized.");
+          debugln("[UI] LCD hardware initialization sequence complete.");
 
           // Pre-populate Station ID immediately so first display is complete
           cur_fld_no = 0;

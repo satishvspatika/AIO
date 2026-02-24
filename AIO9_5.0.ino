@@ -665,9 +665,16 @@ void setup() {
   //    #endif
 
 #if (SYSTEM == 1) || (SYSTEM == 2)
-  xTaskCreatePinnedToCore(tempHum, "tempHumTask", 4096, NULL, 2, &tempHum_h,
-                          1); // Core 1
-  // #7: Only create bmeTask if BME280 is physically present at boot
+  // #7: Smart Task Creation - Only spawn tasks if sensors were found in
+  // initialize_hw
+  if (hdcType != HDC_UNKNOWN || bmeType != BME_UNKNOWN) {
+    xTaskCreatePinnedToCore(tempHum, "tempHumTask", 4096, NULL, 2, &tempHum_h,
+                            1); // Core 1
+  } else {
+    tempHum_h = NULL;
+    debugln("[BOOT] No T/H sensor (HDC or BME). tempHumTask NOT created.");
+  }
+
   if (bmeType == BME_280) {
     xTaskCreatePinnedToCore(bmeTask, "bmeTask", 4096, NULL, 2, &bmeTask_h,
                             1); // Core 1
@@ -675,6 +682,7 @@ void setup() {
     bmeTask_h = NULL;
     debugln("[BOOT] BME280 not found. bmeTask NOT created (saves RAM).");
   }
+
   xTaskCreatePinnedToCore(windSpeed, "windSpeedTask", 4096, NULL, 2,
                           &windSpeed_h,
                           1); // Core 1
@@ -779,12 +787,19 @@ void initialize_hw() {
   Serial.begin(115200);
   SerialSIT.begin(115200, SERIAL_8N1, 16, 17, false);
 
-  Wire.begin(21, 22, 25000);
-  Wire.setTimeOut(I2C_TIMEOUT_MS);
-  delay(300);
+  setCpuFrequencyMhz(80); // Step down early to save power during boot init
+  WiFi.mode(WIFI_OFF);    // Ensure WiFi radio is OFF
+  btStop();               // Ensure Bluetooth is OFF
 
+  Wire.begin(21, 22, 100000); // Increased to 100kHz for efficiency
+  Wire.setTimeOut(I2C_TIMEOUT_MS);
+  delay(100); // Reduced from 300ms as 100ms is sufficient for bus stability
+
+#if (SYSTEM == 1 || SYSTEM == 2)
   // Early init for sensor detection status
   initBME();
+  initHDC();
+#endif
 
   // DISABLE Watchdog during long mount/format operations
   esp_task_wdt_deinit();
@@ -821,8 +836,9 @@ void initialize_hw() {
 
   SPI.begin(18, 19, 23, 5);
   if (!SD.begin(5, SPI, 2000000)) {
-    debugln("[BOOT] SD Card: FAILED");
+    debugln("[BOOT] SD Card: FAILED (Not Inserted/Hardware)");
     sd_card_ok = 0;
+    SPI.end(); // Save power by releasing SPI peripheral if SD is missing
   } else {
     debugln("[BOOT] SD Card: OK");
     sd_card_ok = 1;
@@ -842,6 +858,12 @@ void initialize_hw() {
     debugln("[BOOT] BME280: OK");
   } else {
     debugln("[BOOT] BME280: NOT FOUND");
+  }
+
+  if (hdcType != HDC_UNKNOWN) {
+    debugln("[BOOT] HDC Sensor: OK");
+  } else {
+    debugln("[BOOT] HDC Sensor: NOT FOUND");
   }
 
   debugln("[BOOT] Hardware Initialized.");

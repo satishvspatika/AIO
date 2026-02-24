@@ -58,8 +58,8 @@ void rtcRead(void *pvParameters) {
         debugln("[RTC] I2C Failure. Attempting Bus Reset...");
         Wire.end();
         delay(100);
-        Wire.begin(21, 22, 25000);
-        Wire.setTimeOut(I2C_TIMEOUT_MS); // Restore timeout after reset
+        Wire.begin(I2C_SDA, I2C_SCL, 100000);
+        Wire.setTimeOut(I2C_TIMEOUT_MS);
         delay(100);
       }
       if (fail_count > 60) {

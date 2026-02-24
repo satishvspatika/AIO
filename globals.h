@@ -62,9 +62,9 @@ int send_at_cmd_data(char *payload, String charArray);
 void get_signal_strength();
 
 /************************************************************************************************/
-#define SYSTEM 1                 // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "KSNDMC_TWS-AP"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
-                                 // KSNDMC_TWS-AP KSNDMC_ADDON SPATIKA_GEN
+#define SYSTEM 0              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "KSNDMC_TRG"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
+                              // KSNDMC_TWS-AP KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
@@ -117,7 +117,7 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 
 // Record length constants for different systems
 #define RECORD_LENGTH_RF 45    // SYSTEM == 0
-#define RECORD_LENGTH_TWS 53   // SYSTEM == 1
+#define RECORD_LENGTH_TWS 60   // SYSTEM == 1 (Standardized to 10 fields)
 #define RECORD_LENGTH_TWSRF 60 // SYSTEM == 2
 
 // Sample number constants
