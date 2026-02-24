@@ -217,7 +217,7 @@ void lcdkeypad(void *pvParameters) {
       if (lcdkeypad_start == 0 || lcd_timer == NULL) {
         debugln("Turning LCD_CTRL to HIGH (Activation)...");
         digitalWrite(32, HIGH); // Turn ON power to LCD (5V)
-        vTaskDelay(300);        // Wait for power stabilization
+        vTaskDelay(500); // Wait for power stabilization (Increased to 500ms)
 
         if (lcd_timer == NULL) {
           lcd_timer = timerBegin(1000000); // 1MHz timer frequency
@@ -237,11 +237,14 @@ void lcdkeypad(void *pvParameters) {
 
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
             pdTRUE) {
+          debugln("[UI] LCD Mutex Take: Success. Initializing...");
           lcd.init();
+          lcd.display();   // Ensure display is on
+          lcd.backlight(); // Turn on backlight
           lcd.clear();
           lcd.noCursor();
           lcd.noBlink();
-          lcd.backlight();
+          debugln("[UI] LCD hardware initialized.");
 
           // Pre-populate Station ID immediately so first display is complete
           cur_fld_no = 0;
@@ -255,6 +258,11 @@ void lcdkeypad(void *pvParameters) {
           show_now = 1; // Trigger immediate full-screen draw
 
           xSemaphoreGive(i2cMutex);
+        } else {
+          debugln("[UI] LCD Mutex Take: FAILED! Cannot init LCD.");
+          // If mutex fails, we'll try again next iteration if interaction
+          // persists
+          lcdkeypad_start = 0;
         }
       } else {
         debugln("EXT0 pressed while LCD already ON. Resetting timer.");
