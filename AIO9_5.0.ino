@@ -42,6 +42,8 @@ bool wd_ok = false;
 
 TaskHandle_t scheduler_h;
 TaskHandle_t gprs_h; // http,sms,ftp,dota
+bool primary_data_delivered = false;
+bool health_in_progress = false;
 #if ENABLE_ESPNOW == 1
 TaskHandle_t espnow_h; // tx,rx from UI
 #endif
@@ -675,12 +677,20 @@ void setup() {
     debugln("[BOOT] No T/H sensor (HDC or BME). tempHumTask NOT created.");
   }
 
-  if (bmeType == BME_280) {
+  // v5.50: Only spawn bmeTask if Pressure is enabled AND this is a TWS-AP unit
+  bool pressure_supported =
+      (SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP") != NULL);
+  if (bmeType == BME_280 && ENABLE_PRESSURE_SENSOR == 1 && pressure_supported) {
     xTaskCreatePinnedToCore(bmeTask, "bmeTask", 4096, NULL, 2, &bmeTask_h,
                             1); // Core 1
   } else {
     bmeTask_h = NULL;
-    debugln("[BOOT] BME280 not found. bmeTask NOT created (saves RAM).");
+    if (bmeType == BME_280) {
+      debugln("[BOOT] BME280 found but Pressure Task DISABLED per "
+              "configuration/unit type.");
+    } else {
+      debugln("[BOOT] BME280 not found. bmeTask NOT created.");
+    }
   }
 
   xTaskCreatePinnedToCore(windSpeed, "windSpeedTask", 4096, NULL, 2,
@@ -882,7 +892,8 @@ void loop() {
   // We no longer aggressively auto-start the Access Point here on EXT0 wakeups.
   if (((sync_mode == eHttpStop) || (sync_mode == eSMSStop) ||
        (sync_mode == eExceptionHandled)) &&
-      (lcdkeypad_start == 0) && (wifi_active == false)) {
+      (lcdkeypad_start == 0) && (wifi_active == false) &&
+      (health_in_progress == false)) {
     debugln("[PWR] All tasks done. Entering Deep Sleep...");
     esp_task_wdt_reset(); // Final pet before sleep
     start_deep_sleep();

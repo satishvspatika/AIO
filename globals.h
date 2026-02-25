@@ -29,8 +29,11 @@ enum BME_Type { BME_UNKNOWN, BME_280 };
 
 extern HDC_Type hdcType;
 extern BME_Type bmeType;
-extern bool ws_ok;
-extern bool wd_ok;
+extern bool httpInitiated;
+extern bool health_in_progress;
+extern bool timeSyncRequired;
+extern bool
+    primary_data_delivered; // v5.51: Track session success for backlog gating
 
 // SAFETY BUFFER: Reserve 512 bytes at the start of RTC Memory to prevent
 // ULP Program Code (loaded at offset 0) from overwriting C variables.
@@ -60,20 +63,30 @@ void flushSerialSIT();
 bool verify_bearer_or_recover();
 int send_at_cmd_data(char *payload, String charArray);
 void get_signal_strength();
+void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
+                       bool *hasUnresolvedNDM);
+void reconstructSentMasks();
+void markFileAsDelivered(const char *fileName);
 
 /************************************************************************************************/
-#define SYSTEM 0              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "KSNDMC_TRG"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
-                              // KSNDMC_TWS-AP KSNDMC_ADDON SPATIKA_GEN
+#define SYSTEM 2               // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "SPATIKA_GEN"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
+                               // KSNDMC_TWS-AP KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.40"
+#define FIRMWARE_VERSION "5.39"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
+
+#define ENABLE_WEBSERVER 0       // Set to 0 to remove WebServer
+#define ENABLE_PRESSURE_SENSOR 0 // Set to 0 to disable BMP/BME
+#define ENABLE_HEALTH_REPORT                                                   \
+  0 // Master Switch: Set to 0 to disable automated health reporting
+#define TEST_HEALTH_EVERY_SLOT                                                 \
+  1 // (Gated by ENABLE_HEALTH_REPORT) 1 for 15-min testing, 0 for daily.
+
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
-#define ENABLE_WEBSERVER                                                       \
-  1 // Set to 0 to remove WebServer footprint (SAVES SPACE)
 
 #define DEFAULT_RF_RESOLUTION 0.5
 float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
@@ -87,10 +100,10 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 
 #define FILLGAP 1
 
-// Google Sheets Health Monitor (Standard URL)
+// Google Sheets Health Monitor (5.41 Test Dashboard)
 #define GOOGLE_HEALTH_URL                                                      \
   "https://script.google.com/macros/s/"                                        \
-  "AKfycbx1HFoaTQVSUygYgu0WVj_P8jMImfRnnLxJQWT3GE2M3Ub8jNIilvDxp0V1J7_KTOOBWQ" \
+  "AKfycbxj2U07Eq7F1ciYraccvXwUC1UVAaNkKZuRE_zmgr_PYs9zFX939XXuudGC7Yr_QBe_"   \
   "/exec"
 
 #define HDC_ADDR 0x40 // Default I2C address for both HDC1080 and HDC2022
@@ -291,8 +304,8 @@ int send_daily = 0;
 float solar_val, solar;
 float li_bat, li_bat_val;
 
-float lati, longi;
-float gps_latitude, gps_longitude;
+RTC_DATA_ATTR float lati, longi;
+RTC_DATA_ATTR float gps_latitude, gps_longitude;
 
 char httpPostRequest[125], httpContent[12];
 char append_text[100],
@@ -332,22 +345,54 @@ RTC_DATA_ATTR int diag_reg_count_total_cycles = 0;
 RTC_DATA_ATTR uint32_t diag_total_uptime_hrs = 0;
 RTC_DATA_ATTR unsigned long diag_last_health_millis = 0;
 RTC_DATA_ATTR bool diag_rtc_battery_ok = true;
-RTC_DATA_ATTR int diag_consecutive_reg_fails =
-    0; // Tracks slots with NO registration
-RTC_DATA_ATTR int diag_stored_apn_fails =
-    0; // Tracks consecutive failures of known good APN
-RTC_DATA_ATTR int diag_consecutive_sim_fails = 0; // Tracks CPIN failures
-RTC_DATA_ATTR int diag_consecutive_http_fails =
-    0; // Tracks persistent 713/714 errors
+RTC_DATA_ATTR int diag_consecutive_reg_fails = 0;
+RTC_DATA_ATTR int diag_stored_apn_fails = 0;
+RTC_DATA_ATTR int diag_consecutive_sim_fails = 0;
+
+// Golden Summary Diagnostic Flags (v5.43)
+RTC_DATA_ATTR int diag_ws_same_count = 0;
+RTC_DATA_ATTR bool diag_temp_cv = false;
+RTC_DATA_ATTR bool diag_hum_cv = false;
+RTC_DATA_ATTR bool diag_ws_cv = false;
+RTC_DATA_ATTR bool diag_temp_erv = false;
+RTC_DATA_ATTR bool diag_hum_erv = false;
+RTC_DATA_ATTR bool diag_ws_erv = false;
+RTC_DATA_ATTR bool diag_temp_erz = false;
+RTC_DATA_ATTR bool diag_hum_erz = false;
+RTC_DATA_ATTR bool diag_rain_jump = false;
+RTC_DATA_ATTR float diag_last_rf_val = 0;
+RTC_DATA_ATTR bool diag_rain_calc_invalid = false;
+RTC_DATA_ATTR bool diag_rain_reset = false;
+RTC_DATA_ATTR int diag_consecutive_http_fails = 0;
+
+// v5.49 Splitted Diagnostic Trackers for Golden Data Reporting
+RTC_DATA_ATTR int diag_ndm_count = 0;      // Today
+RTC_DATA_ATTR int diag_ndm_count_prev = 0; // Reported at 09:45
+RTC_DATA_ATTR char diag_cdm_status[10] = "OK";
+RTC_DATA_ATTR int diag_pd_count = 0;      // Today
+RTC_DATA_ATTR int diag_pd_count_prev = 0; // Reported at 09:45
+RTC_DATA_ATTR int diag_first_http_count = 0;
+RTC_DATA_ATTR int diag_first_http_count_prev = 0;
+RTC_DATA_ATTR int diag_net_data_count = 0;
+RTC_DATA_ATTR int diag_net_data_count_prev = 0;
+
+RTC_DATA_ATTR uint32_t diag_http_time_total = 0; // Total ms spent in HTTP POST
+RTC_DATA_ATTR uint32_t diag_sent_mask_cur[3] = {0, 0, 0};
+RTC_DATA_ATTR uint32_t diag_sent_mask_prev[3] = {0, 0, 0};
+RTC_DATA_ATTR int diag_http_success_count = 0; // Total successful HTTP attempts
+RTC_DATA_ATTR char diag_reg_fail_type[16] = "NONE";
+RTC_DATA_ATTR char diag_http_fail_reason[16] = "NONE";
 
 // DNS IP Caching to prevent DNS lookup every 15 mins (Saves ~1.5 seconds
 // modem-on time)
 RTC_DATA_ATTR char cached_server_ip[32] = "";
 RTC_DATA_ATTR char cached_server_domain[64] = "";
+RTC_DATA_ATTR uint32_t diag_sent_mask[3] = {0, 0,
+                                            0}; // 96 bits for sample delivery
 
 // Health Report Retry Logic (persists across deep sleep)
-RTC_DATA_ATTR int health_last_sent_hour =
-    -1; // Track last successful or attempted hour
+RTC_DATA_ATTR int health_last_sent_hour = -1;
+RTC_DATA_ATTR int health_last_sent_day = -1;
 
 String response;
 String rssiStr;

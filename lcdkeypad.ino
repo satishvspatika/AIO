@@ -38,6 +38,17 @@ bool isFieldVisible(int fld_id) {
     return false;
 #endif
 
+#if ENABLE_PRESSURE_SENSOR == 1
+  if (fld_id == FLD_PRESSURE || fld_id == FLD_ALTITUDE) {
+    if (SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP"))
+      return true;
+    return false;
+  }
+#else
+  if (fld_id == FLD_PRESSURE || fld_id == FLD_ALTITUDE)
+    return false;
+#endif
+
 #if SYSTEM == 0 // TRG ONLY
   if (fld_id == FLD_WIND_DIR || fld_id == FLD_INST_WS || fld_id == FLD_AVG_WS ||
       fld_id == FLD_TEMP || fld_id == FLD_HUMIDITY || fld_id == FLD_PRESSURE ||

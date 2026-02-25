@@ -165,6 +165,9 @@ void scheduler(void *pvParameters) {
       continue;
     }
 
+    // v5.49 Reconstruction: Recover sent mask from SPIFFS on cold boot
+    reconstructSentMasks();
+
     //             Serial.printf("Task Sch : %d\n",
     //             uxTaskGetStackHighWaterMark(NULL));
 
@@ -312,14 +315,29 @@ void scheduler(void *pvParameters) {
       cur_avg_wind_speed =
           WS_CALIBRATION_FACTOR *
           avgPulsesPerSecond; // factor is 2*pi*r (r is 7cms) //
-                              // Asked for 30% reduction in value
-      //                            if (cur_avg_wind_speed < 3.0 &&
-      //                            cur_avg_wind_speed >= 0.0) { // To
-      //                            compensate for friction at low speeds :
-      //                            empirical formula
-      //                              cur_avg_wind_speed = cur_avg_wind_speed ;
-      //                              // correction at low speeds
-      //                            }
+      cur_avg_wind_speed =
+          totalWindPulses * WS_CALIBRATION_FACTOR / 1.0 / (15 * 60);
+
+      // --- Golden Summary WS & Rain Checks ---
+      if (cur_avg_wind_speed < 0 || cur_avg_wind_speed > 72.0)
+        diag_ws_erv = true;
+
+      static float prev_ws = -1.0;
+      if (abs(cur_avg_wind_speed - prev_ws) < 0.01) {
+        diag_ws_same_count++;
+        if (diag_ws_same_count >= 40)
+          diag_ws_cv = true;
+      } else {
+        diag_ws_same_count = 0;
+      }
+      prev_ws = cur_avg_wind_speed;
+
+#if (SYSTEM == 0) || (SYSTEM == 2)
+      if (rf_value > 10.0)
+        diag_rain_jump = true;
+      diag_last_rf_val = rf_value;
+#endif
+
       if (cur_avg_wind_speed < 0) {
         cur_avg_wind_speed = 0;
       }
@@ -385,47 +403,42 @@ void scheduler(void *pvParameters) {
       if (check_hum > 100)
         check_hum = 100;
 
-      // Ensure stable values if sensor is not missing
-      if (check_temp == 0.0 && temp_read != 0.0) {
-        if (prev_15min_temp > INVALID_PREV_VALUE_THRESHOLD)
-          check_temp = prev_15min_temp;
-        else
-          check_temp = 0.1;
-      }
-      if (check_hum == 0.0 && hum_read != 0.0) {
-        if (prev_15min_hum > INVALID_PREV_VALUE_THRESHOLD)
-          check_hum = prev_15min_hum;
-        else
-          check_hum = 0.1;
-      }
+      // --- Golden Summary Multi-Fault Detection (v5.43) ---
+      // 1. Temperature Checks
+      if (check_temp < 2.0 || check_temp > 45.0)
+        diag_temp_erv = true;
+      if (check_temp == 0.0)
+        diag_temp_erz = true;
 
-      if (prev_15min_temp > INVALID_PREV_VALUE_THRESHOLD) {
-        if (check_temp - prev_15min_temp > 1.0)
-          check_temp = prev_15min_temp + 0.4;
-        else if (prev_15min_temp - check_temp > 1.0)
-          check_temp = prev_15min_temp - 0.4;
-      }
-
-      if (abs(check_temp - prev_15min_temp) < 0.01)
+      if (abs(check_temp - prev_15min_temp) < 0.01) {
         temp_same_count++;
-      else
+        if (temp_same_count >= 40)
+          diag_temp_cv = true;
+      } else {
         temp_same_count = 0;
+      }
 
+      // 2. Humidity Checks
+      if (check_hum < 1.0 || check_hum > 100.0)
+        diag_hum_erv = true;
+      if (check_hum == 0.0)
+        diag_hum_erz = true;
+
+      if (abs(check_hum - prev_15min_hum) < 0.01) {
+        hum_same_count++;
+        if (hum_same_count >= 40)
+          diag_hum_cv = true;
+      } else {
+        hum_same_count = 0;
+      }
+
+      // Jittering Logic (Matches AIO9_3.0 requirement for KSNDMC)
       if (temp_same_count >= TEMP_SAME_COUNT_THRESHOLD) {
         float jitter = (random((int)(TEMP_JITTER_MIN * 10),
                                (int)(TEMP_JITTER_MAX * 10) + 1) /
                         10.0);
         check_temp += jitter;
-        temp_same_count = 0;
       }
-
-      prev_15min_temp = check_temp;
-
-      if (abs(check_hum - prev_15min_hum) < 0.01)
-        hum_same_count++;
-      else
-        hum_same_count = 0;
-
       if (hum_same_count >= HUM_SAME_COUNT_THRESHOLD) {
         float jitter = (random((int)(HUM_JITTER_MIN * 10),
                                (int)(HUM_JITTER_MAX * 10) + 1) /
@@ -434,13 +447,9 @@ void scheduler(void *pvParameters) {
           check_hum -= jitter;
         else
           check_hum += jitter;
-        if (check_hum > 100.0)
-          check_hum = 100.0;
-        if (check_hum < 0.0)
-          check_hum = 0.0;
-        hum_same_count = 0;
       }
 
+      prev_15min_temp = check_temp;
       prev_15min_hum = check_hum;
 
       // --- START OF PRODUCTION SNAPSHOT ---
@@ -664,7 +673,28 @@ void scheduler(void *pvParameters) {
         debug("Last recorded cumRF: ");
         debugln(last_cumRF);
 
+        if (last_sampleNo > 0 && last_cumRF == 0) {
+#if DEBUG == 1
+          Serial.println(
+              "[Rain] Integrity Issue: last_cumRF is 0 but sampleNo > 0.");
+#endif
+          diag_rain_reset = true;
+          // Note: Healing here requires re-scanning the file, covered by
+          // post-integrity check
+        }
+
         new_current_cumRF = last_cumRF + rf_value;
+
+        // Self-Healing Alignment: Cumulative should NEVER decrease within a day
+        if (sampleNo > 0 && new_current_cumRF < last_cumRF) {
+#if DEBUG == 1
+          Serial.printf("[Rain] RESET Detected: Aligning %.2f to %.2f\n",
+                        new_current_cumRF, last_cumRF + rf_value);
+#endif
+          new_current_cumRF = last_cumRF + rf_value;
+          diag_rain_reset = true;
+        }
+
         snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(new_current_cumRF));
         snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f",
                  float(new_current_cumRF));
@@ -788,7 +818,26 @@ void scheduler(void *pvParameters) {
         debug(" H=");
         debugln(last_instHum);
 
+        if (last_sampleNo > 0 && last_cumRF == 0) {
+#if DEBUG == 1
+          Serial.println("[Rain-TWS] Integrity Issue: last_cumRF is 0 but "
+                         "sampleNo > 0.");
+#endif
+          diag_rain_reset = true;
+        }
+
         new_current_cumRF = last_cumRF + rf_value;
+
+        // Self-Healing Alignment: Cumulative should NEVER decrease within a day
+        if (sampleNo > 0 && new_current_cumRF < last_cumRF) {
+#if DEBUG == 1
+          Serial.printf("[Rain-TWS] RESET Detected: Aligning %.2f to %.2f\n",
+                        new_current_cumRF, last_cumRF + rf_value);
+#endif
+          new_current_cumRF = last_cumRF + rf_value;
+          diag_rain_reset = true;
+        }
+
         snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(new_current_cumRF));
         snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f",
                  float(new_current_cumRF));
@@ -849,7 +898,9 @@ void scheduler(void *pvParameters) {
 
           // Fill the gaps starting from last_recorded sampleNo+1 to current
           // sampleNo including current sampleNo
-          for (int q = last_sampleNo + 1; q <= sampleNo; q++) {
+          debugln("Gap filling for loop started... ");
+          diag_pd_count++; // Increment gap detection counter
+          for (int q = last_sampleNo + 1; q < sampleNo; q++) {
             temp_min += MINUTES_PER_SAMPLE;
             if (temp_min == 60) {
               temp_hr += 1;
@@ -1519,11 +1570,38 @@ void scheduler(void *pvParameters) {
 
           // Reset Daily Diagnostics at start of new rainfall day (8:45 AM)
           if (sampleNo == 0) {
+            // v5.49 Capture Snapshots for 09:45 AM report BEFORE resetting
+            diag_pd_count_prev = diag_pd_count;
+            diag_ndm_count_prev = diag_ndm_count;
+            diag_first_http_count_prev = diag_first_http_count;
+
+            // Capture mask
+            diag_sent_mask_prev[0] = diag_sent_mask_cur[0];
+            diag_sent_mask_prev[1] = diag_sent_mask_cur[1];
+            diag_sent_mask_prev[2] = diag_sent_mask_cur[2];
+
+            // Now perform Resets for the New Day
             diag_reg_time_total = 0;
             diag_reg_count = 0;
             diag_reg_worst = 0;
             diag_gprs_fails = 0;
-            debugln("[Diag] Daily performance counters reset for new day.");
+            diag_pd_count = 0;
+            diag_ndm_count = 0;
+            diag_first_http_count = 0;
+            diag_net_data_count = 0;
+            diag_http_time_total = 0;
+            diag_http_success_count = 0;
+            strcpy(diag_cdm_status, "OK");
+            strcpy(diag_reg_fail_type, "NONE");
+            strcpy(diag_http_fail_reason, "NONE");
+
+            diag_rain_reset = false;
+
+            diag_sent_mask_cur[0] = 0;
+            diag_sent_mask_cur[1] = 0;
+            diag_sent_mask_cur[2] = 0;
+
+            debugln("[Diag] v5.49 Captured snapshot & reset for new day.");
           }
         }
 
@@ -2120,6 +2198,7 @@ void scheduler(void *pvParameters) {
 
         file5.print(append_text);
         file5.close();
+        strcpy(diag_cdm_status, "PENDING"); // Mark CDM as ready to send
         vTaskDelay(200);
       }
 
@@ -2253,6 +2332,14 @@ void scheduler(void *pvParameters) {
         sync_mode = eHttpBegin;
         httpInitiated = true;
         data_writing_initiated = 0;
+
+        // v5.41 Test Mode: Send Health Report every slot
+#if ENABLE_HEALTH_REPORT == 1
+        if (TEST_HEALTH_EVERY_SLOT == 1) {
+          debugln("[SCHEDULER] Test Mode: Queuing Health Report (every slot)");
+          // The health report will be called in the GPRS task after data upload
+        }
+#endif
       }
       vTaskDelay(300);
     } // %15 loop
