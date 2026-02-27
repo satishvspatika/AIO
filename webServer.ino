@@ -983,15 +983,13 @@ void handleFileView() {
                       "ಸಂಚಿತ ಮಳೆ (Cum RF), ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ (Battery)"
                     : "SampleNo, Date, Time, Inst RF, Cum RF, Signal, Battery";
 #elif SYSTEM == 1
-      legend += isKan
-                    ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಮಳೆ "
-                      "(Rainfall), ತಾಪಮಾನ (Temp), "
-                      "ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ (Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು (Wind "
-                      "Dir), "
-                      "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ (Battery)"
-                    : "SampleNo, Date, Time, Rainfall, Temp, Humidity, Wind "
-                      "Spd, Wind Dir, "
-                      "Signal, Battery";
+      legend +=
+          isKan
+              ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ತಾಪಮಾನ (Temp), "
+                "ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ (Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir), "
+                "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ (Battery)"
+              : "SampleNo, Date, Time, Temp, Humidity, Wind Spd, Wind Dir, "
+                "Signal, Battery";
 #elif SYSTEM == 2
       legend += isKan ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಸಂಚಿತ ಮಳೆ "
                         "(Cum RF), ತಾಪಮಾನ (Temp), ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ "

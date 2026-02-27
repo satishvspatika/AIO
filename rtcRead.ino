@@ -9,7 +9,7 @@ int sec, mi, hr, dy, mo, yr;
 int bcdToDec(byte val) { return ((val >> 4) * 10) + (val & 0x0F); }
 
 int timeToMinutes(int years, int months, int dd, int hr, int mins) {
-  return (((yr - 2000) * 365 + (months - 1) * 30 + (dd - 1)) * 24 * 60) +
+  return (((years - 2000) * 365 + (months - 1) * 30 + (dd - 1)) * 24 * 60) +
          (hr * 60 + mins);
 }
 
@@ -103,11 +103,10 @@ void rtcRead(void *pvParameters) {
       }
 
       if (mi != current_min) {
-        // debugln();
-        debug("[RTC] Time: ");
-        debug(hr);
-        debug(":");
-        debugln(mi);
+        if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+          Serial.printf("[RTC] Time: %02d:%02d\n", hr, mi);
+          xSemaphoreGive(serialMutex);
+        }
       }
       // Update global time
       current_year = yr;
@@ -228,8 +227,8 @@ void parse_and_convert_clbs_response(const char *response, int year1,
   printf("Converted IST Time: %s", asctime(&timeinfo));
 
   if ((timeinfo.tm_mon + 1) <= 12 && (timeinfo.tm_mday <= 31) &&
-      (timeinfo.tm_year + 1900 <= 2099) && (timeinfo.tm_hour <= 24) &&
-      (timeinfo.tm_min <= 60)) { // Basic check
+      (timeinfo.tm_year + 1900 <= 2099) && (timeinfo.tm_hour < 24) &&
+      (timeinfo.tm_min < 60)) { // Strict bounds: hour 0-23, minute 0-59
     // This is only when there is a resync of RTC that requires storing
     // last_recorded date to NVRAM, otherwise hr:min will be 00:00 and sampleNo
     // will be calculated wrongly
@@ -252,9 +251,10 @@ void parse_and_convert_clbs_response(const char *response, int year1,
     debug('/');
     debug(last_recorded_yy);
     debug(" , Time : ");
-    debug(last_recorded_hr);
-    debug(':');
-    debugln(last_recorded_min);
+    if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      Serial.printf("%02d:%02d\n", last_recorded_hr, last_recorded_min);
+      xSemaphoreGive(serialMutex);
+    }
     debugln();
     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
         pdTRUE) {
@@ -286,10 +286,10 @@ void parse_and_convert_clbs_response(const char *response, int year1,
     fileTemp2.print(signature);
     fileTemp2.close();
     vTaskDelay(500);
-    debug("[RTC] Time: ");
-    debug(current_hour);
-    debug(":");
-    debugln(current_min);
+    if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      Serial.printf("[RTC] Time: %02d:%02d\n", current_hour, current_min);
+      xSemaphoreGive(serialMutex);
+    }
     vTaskDelay(1000);
     sync_mode = eExceptionHandled;
 

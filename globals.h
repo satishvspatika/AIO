@@ -70,12 +70,14 @@ void markFileAsDelivered(const char *fileName);
 
 /************************************************************************************************/
 #define SYSTEM 2               // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "SPATIKA_GEN"; // UNIT :  KSNDMC_TRG  BIHAR_TRG  KSNDMC_TWS
-                               // KSNDMC_TWS-AP KSNDMC_ADDON SPATIKA_GEN
+char UNIT[15] = "SPATIKA_GEN"; // UNIT :
+//                                0:  KSNDMC_TRG  BIHAR_TRG
+//                                1:  KSNDMC_TWS KSNDMC_TWS-AP
+//                                2:  KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.39"
+#define FIRMWARE_VERSION "5.40"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
@@ -103,7 +105,7 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 // Google Sheets Health Monitor (5.41 Test Dashboard)
 #define GOOGLE_HEALTH_URL                                                      \
   "https://script.google.com/macros/s/"                                        \
-  "AKfycbxj2U07Eq7F1ciYraccvXwUC1UVAaNkKZuRE_zmgr_PYs9zFX939XXuudGC7Yr_QBe_"   \
+  "AKfycbxj2U07Eq7F1ciYraccvXwUC1UVAaNkKZuRE_zmgr_PYs9zFX939XXUudGC7Yr_QBe_"   \
   "/exec"
 
 #define HDC_ADDR 0x40 // Default I2C address for both HDC1080 and HDC2022
@@ -130,7 +132,7 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 
 // Record length constants for different systems
 #define RECORD_LENGTH_RF 45    // SYSTEM == 0
-#define RECORD_LENGTH_TWS 60   // SYSTEM == 1 (Standardized to 10 fields)
+#define RECORD_LENGTH_TWS 53   // SYSTEM == 1 (Standardized without rainfall)
 #define RECORD_LENGTH_TWSRF 60 // SYSTEM == 2
 
 // Sample number constants
@@ -189,6 +191,7 @@ LiquidCrystal_I2C
     lcd(0x27, 16,
         2); // set the LCD address to 0x27 for a 16 chars and 2 line display
 SemaphoreHandle_t i2cMutex;
+SemaphoreHandle_t serialMutex;
 // SemaphoreHandle_t dataMutex;
 
 RTC_DS1307 rtc; //  RTC
@@ -209,12 +212,18 @@ int cur_file_found = 0;
 #define debugf1(a, x) Serial.printf(a, x)
 #define debugf2(a, x, y) Serial.printf(a, x, y)
 #define debugf3(a, x, y, z) Serial.printf(a, x, y, z)
+#define debugf4(a, x, y, z, p) Serial.printf(a, x, y, z, p)
+#define debugf5(a, x, y, z, p, q) Serial.printf(a, x, y, z, p, q)
+#define debugf(a, ...) Serial.printf(a, ##__VA_ARGS__)
 #else
 #define debug(...)
 #define debugln(...)
 #define debugf1(a, x)
 #define debugf2(a, x, y)
 #define debugf3(a, x, y, z)
+#define debugf4(a, x, y, z, p)
+#define debugf5(a, x, y, z, p, q)
+#define debugf(a, ...)
 #endif
 
 // ENUMS
@@ -436,6 +445,8 @@ RTC_DATA_ATTR int current_year, current_month, current_day, current_hour,
 RTC_DATA_ATTR int firmwareUpdated;
 RTC_DATA_ATTR int last_processed_sample_idx = -1;
 RTC_DATA_ATTR bool fresh_boot_check_done = false;
+RTC_DATA_ATTR bool apn_saved_this_sim =
+    false; // v5.55: Guard APN SPIFFS write per SIM lifecycle
 RTC_DATA_ATTR float last_valid_temp = 26.0;
 RTC_DATA_ATTR float last_valid_hum = 65.0;
 
@@ -620,7 +631,7 @@ ui_data_t ui_data[FLD_COUNT] = {
     {1, "STATION", "SIT099", eAlphaNum},             // 0
     {2, "DATE(dd-mm-yyyy)", "08-03-2023", eNumeric}, // 1
     {3, "TIME 24hr:mm", "00:00", eNumeric},          // 2
-    {5, "VERSION", "5.1", eDisplayOnly},             // 3
+    {5, "VERSION", FIRMWARE_VERSION, eDisplayOnly},  // 3
     {4, "RF (mm)", "000.0", eLive},                  // 4
     {8, "SIM STATUS", "0", eLive},                   // 5
     {9, "REGISTRATION", "NA", eLive},                // 6

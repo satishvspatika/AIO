@@ -115,14 +115,22 @@ String get_ccid() {
   if (ccid.length() < 10) {
     ccid = ""; // Reset
     flushSerialSIT();
-    vTaskDelay(200);
+    vTaskDelay(300); // Extra settle time on stressed modem
     SerialSIT.println("AT+CCID");
-    resp = waitForResponse("+CCID:", 3000);
+    // v5.53 fix: modem may respond with +ICCID: (not +CCID:) when stressed.
+    // Wait for "OK" to capture the full response regardless of URC prefix.
+    resp = waitForResponse("OK", 3000);
     debug("Raw CCID Resp: ");
     debugln(resp);
+    // Check BOTH +CCID: and +ICCID: in the response
     startIdx = resp.indexOf("+CCID:");
+    int hdLen2 = 6;
+    if (startIdx == -1) {
+      startIdx = resp.indexOf("+ICCID:");
+      hdLen2 = 7;
+    }
     if (startIdx != -1) {
-      for (int i = startIdx + 6; i < resp.length(); i++) {
+      for (int i = startIdx + hdLen2; i < resp.length(); i++) {
         if (isdigit(resp[i]))
           ccid += resp[i];
         else if (ccid.length() > 0)
@@ -198,39 +206,95 @@ bool try_activate_apn(const char *apn) {
 bool verify_bearer_or_recover() {
   flushSerialSIT();
 
-  // 1. First explicitly check if the context is Active via CGACT
+  // 1. Determine which CID is active (Support CID 1, 5, or 8)
+  // Use the global active_cid if set, otherwise query.
+  int check_cid = (active_cid > 0) ? active_cid : 1;
+
   SerialSIT.println("AT+CGACT?");
   String cgact_resp = waitForResponse("OK", 3000);
 
   bool context_active = false;
-  if (cgact_resp.indexOf("+CGACT: 1,1") != -1) {
+  // Check for the specific CID that we configured
+  String cid_check = "+CGACT: " + String(check_cid) + ",1";
+  if (cgact_resp.indexOf(cid_check) != -1) {
     context_active = true;
   }
 
-  // 2. If context is active, verify assigned IP is valid
+  // 2. If context is active, verify assigned IP is valid AND APN matches
   if (context_active) {
-    SerialSIT.println("AT+CGPADDR=1");
+    String paddr_cmd = "AT+CGPADDR=" + String(check_cid);
+    SerialSIT.println(paddr_cmd);
     String ip_resp = waitForResponse("OK", 3000);
 
-    if (ip_resp.indexOf("+CGPADDR: 1,") != -1 &&
-        ip_resp.indexOf("0.0.0.0") == -1 && ip_resp.indexOf(".") != -1) {
-      debugln("Bearer Check: OK (Context Active & Valid IP)");
+    String paddr_prefix = "+CGPADDR: " + String(check_cid) + ",";
+    bool ip_ok =
+        (ip_resp.indexOf(paddr_prefix) != -1 &&
+         ip_resp.indexOf("0.0.0.0") == -1 && ip_resp.indexOf(".") != -1);
+
+    if (ip_ok) {
+      // v5.52: Extra check - is the APN actually what we expect?
+      // Only check if we have a known target APN (avoids breaking new SIMs)
+      if (strlen(apn_str) > 0) {
+        String rdp_cmd = "AT+CGCONTRDP=" + String(check_cid);
+        SerialSIT.println(rdp_cmd);
+        String rdp_resp = waitForResponse("OK", 3000);
+        if (rdp_resp.indexOf('"' + String(apn_str) + '"') == -1) {
+          debugln("Bearer Check: FAILED (APN Mismatch/Ghost Session). Force "
+                  "re-activating...");
+          String deact_cmd = "AT+CGACT=0," + String(check_cid);
+          SerialSIT.println(deact_cmd);
+          waitForResponse("OK", 3000);
+          // Fall through to recovery with the correct apn_str
+          goto bearer_recovery;
+        }
+      }
+      debugln("Bearer Check: OK (Context Active & Valid IP/APN)");
       return true;
     } else {
       debugln("Bearer Check: FAILED (Context Active but Invalid IP). "
               "Recovering...");
+      // Context is active but no IP - deactivate cleanly
+      String deact_cmd = "AT+CGACT=0," + String(check_cid);
+      SerialSIT.println(deact_cmd);
+      waitForResponse("OK", 2000);
     }
   } else {
     debugln("Bearer Check: FAILED (Context Not Active). Recovering...");
   }
 
+bearer_recovery: // Label used for ghost-session fallthrough
   // Clear serial buffers explicitly before fetching CCID to drop dirty URCs
   vTaskDelay(500 / portTICK_PERIOD_MS);
   flushSerialSIT();
 
+  // v5.53: CRITICAL — Check if modem is still registered BEFORE trying APN.
+  // If deregistered (+CREG: 0), PDP activation will always fail.
+  // Wait up to 20 seconds for re-registration before proceeding.
+  {
+    bool is_registered = false;
+    debugln("AG Recovery: Checking network registration before APN attempt...");
+    for (int r = 0; r < 10; r++) {
+      SerialSIT.println("AT+CREG?");
+      String creg = waitForResponse("OK", 2000);
+      // Registered: ,1 (home) or ,5 (roaming)
+      if (creg.indexOf(",1") != -1 || creg.indexOf(",5") != -1) {
+        is_registered = true;
+        break;
+      }
+      debugln("AG Recovery: Not registered yet, waiting...");
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
+      esp_task_wdt_reset();
+    }
+    if (!is_registered) {
+      debugln("AG Recovery: Modem deregistered after 20s wait. Cannot "
+              "activate PDP. Aborting.");
+      return false;
+    }
+    debugln("AG Recovery: Registered. Proceeding with APN activation.");
+  }
+
   // 3. Bearer is dead or invalid. Attempt recovery using current runtime APN
-  // first. This avoids querying SIM CCID on a stressed modem, preventing
-  // delayed URCs.
+  // first. This avoids querying SIM CCID on a stressed modem.
   if (strlen(apn_str) > 0) {
     debug("AG Recovery: Attempting runtime APN -> ");
     debugln(apn_str);
@@ -238,7 +302,7 @@ bool verify_bearer_or_recover() {
       return true;
   }
 
-  // 4. Fallback: Query CCID and load stored APN from NVS.
+  // 4. Fallback: Query CCID and load stored APN from SPIFFS.
   debugln("AG Recovery: Runtime APN failed/empty. Querying CCID...");
   String ccid = get_ccid();
   char stored_apn[20] = {0};

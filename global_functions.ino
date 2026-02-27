@@ -97,23 +97,25 @@ void validate_ulp_counters() {
   bool corrupted = false;
 
   // RF count shouldn't exceed 10000 (2500mm at 0.25mm resolution = unrealistic)
-  if (rf_count.val > 10000 || rf_count.val < 0) {
-    debugf1("[ULP] RF count corrupted (%d), resetting\n", rf_count.val);
+  // Note: ulp_var_t.val is unsigned - check for wrap-around (very large values)
+  // which is how corruption manifests (val wraps from 0 to ~65535)
+  if (rf_count.val > 10000) {
+    debugf1("[ULP] RF count corrupted (%u), resetting\n", rf_count.val);
     rf_count.val = 0;
     corrupted = true;
   }
 
-  // Wind count shouldn't exceed 1 million (unrealistic in any reasonable
-  // timeframe)
-  if (wind_count.val > 1000000 || wind_count.val < 0) {
-    debugf1("[ULP] Wind count corrupted (%d), resetting\n", wind_count.val);
+  // Wind count shouldn't exceed 65000 pulses per 15 min (unrealistic)
+  // 65000 pulses / 4 teeth / 900 sec * 0.4398 = ~7.9 m/s continuous — cap at 2x
+  if (wind_count.val > 130000) {
+    debugf1("[ULP] Wind count corrupted (%u), resetting\n", wind_count.val);
     wind_count.val = 0;
     corrupted = true;
   }
 
   // Calib count shouldn't exceed 1000
-  if (calib_count.val > 1000 || calib_count.val < 0) {
-    debugf1("[ULP] Calib count corrupted (%d), resetting\n", calib_count.val);
+  if (calib_count.val > 1000) {
+    debugf1("[ULP] Calib count corrupted (%u), resetting\n", calib_count.val);
     calib_count.val = 0;
     corrupted = true;
   }

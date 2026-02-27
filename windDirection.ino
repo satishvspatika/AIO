@@ -14,37 +14,49 @@ void windDirection(void *pvParameters) {
   for (;;) {
     esp_task_wdt_reset();
 
-    // Take 10 samples and use average for stability
+    // Take 10 samples, tracking min and max for stuck detection
     long sum = 0;
+    int minVal = 4095, maxVal = 0;
     for (int i = 0; i < 10; i++) {
-      sum += adc1_get_raw(ADC1_CHANNEL_3);
+      int raw = adc1_get_raw(ADC1_CHANNEL_3);
+      sum += raw;
+      if (raw < minVal)
+        minVal = raw;
+      if (raw > maxVal)
+        maxVal = raw;
       vTaskDelay(10);
     }
-
     int tempWindDir = sum / 10;
-    static int wd_fault_count = 0;
+    int spread = maxVal - minVal;
 
-    // Fault Detection: If railing at extremes (0-25 or 4090-4095) for 3s,
-    // marking as missing
-    if (tempWindDir <= 25 || tempWindDir >= 4090) {
+    // v5.67 Disconnection Detection using ADC spread:
+    // - A real sensor at 0° (North) always has slight noise → spread >= 2
+    // - A disconnected cable stuck at GND is perfectly flat → spread == 0 AND
+    // mean == 0
+    // - We require 30 consecutive flat-zero readings (~30 sec) before marking
+    // as fault
+    static int wd_fault_count = 0;
+    if (tempWindDir == 0 && spread == 0) {
       wd_fault_count++;
-      if (wd_fault_count > 3)
+      if (wd_fault_count > 30)
         wd_ok = false;
     } else {
       wd_fault_count = 0;
       wd_ok = true;
     }
 
-    // Logic: Map 0-4095 to 0-359 only if sensor is present
+    // Smooth 0-4095 → 0-359 mapping (mathematical - 359 naturally rolls to 0)
     if (wd_ok) {
       windDir = (tempWindDir * 360) / 4096;
-      snprintf(windDir_str, sizeof(windDir_str), "%03d deg", windDir);
+      if (windDir > 359)
+        windDir = 0; // Safety clamp
     } else {
+      // Disconnected: report 000 (numeric, server-safe — not NA)
       windDir = 0;
-      strcpy(windDir_str, "NA");
+      debugf2("[WD] ADC:%d spread:%d -> Disconnected\n", tempWindDir, spread);
     }
+    snprintf(windDir_str, sizeof(windDir_str), "%03d deg", windDir);
 
-    // windDir global is the canonical source; no need to copy to struct
     vTaskDelay(1000);
   }
 }

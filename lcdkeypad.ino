@@ -94,6 +94,8 @@ void lcdkeypad(void *pvParameters) {
   esp_task_wdt_add(NULL);
   static int calib_mode = 0;  // 0=Field, 1=Test
   static char calib_text[40]; // Result buffer
+  static int last_lcd_state =
+      0; // v5.57: Moved to top to avoid declaration order issues
 
   // Configure keypad for better responsiveness
   configure_keypad();
@@ -201,8 +203,6 @@ void lcdkeypad(void *pvParameters) {
     bool should_activate =
         (wakeup_reason_is == ext0) ||
         (wired == 1 && wakeup_reason_is == 0 && lcd_timer == NULL);
-
-    static int last_lcd_state = 0;
 
     // Auto-Sleep logic removed from here as it conflicts with GPRS/Scheduler
     // System sleep is now exclusively managed by loop() and scheduler()

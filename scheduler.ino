@@ -720,9 +720,9 @@ void scheduler(void *pvParameters) {
         }
 
         char *p = content_buf;
-        // Fields: sampleNo(0), date(1), time(2), fillerRF(3), temp(4), hum(5),
-        // ws(6), wd(7)
-        for (int i = 0; i < 4 && p; i++)
+        // Fields: sampleNo(0), date(1), time(2), temp(3), hum(4),
+        // ws(5), wd(6)
+        for (int i = 0; i < 3 && p; i++)
           p = strchr(p + 1, ',');
         if (p) {
           last_instTemp = atof(p + 1);
@@ -945,13 +945,13 @@ void scheduler(void *pvParameters) {
 // TWS
 #if SYSTEM == 1
               snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,%s,%s,%s,%04d,%"
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%"
                        "04.1f\r\n",
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                        inst_temp, inst_hum, avg_wind_speed, inst_wd,
                        signal_strength, bat_val);
               snprintf(ftpappend_text, sizeof(ftpappend_text),
-                       "%s;%04d-%02d-%02d,%02d:%02d;000.00;%s;%s;%s;%s;%04d;%"
+                       "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%"
                        "04.1f\r\n",
                        stnId, temp_year, temp_month, temp_day, temp_hr,
                        temp_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
@@ -1076,7 +1076,7 @@ void scheduler(void *pvParameters) {
               // Wind Speed Interpolation
               fill_AvgWS =
                   start_ws + ((end_ws - start_ws) * gap_idx / total_gaps);
-              // Wind speed can be 0 or 0.1 to 2.2
+              // Wind speed can go up normally based on start and end
               if (fill_AvgWS < 0.05) {
                 fill_AvgWS = 0.0;
               } else {
@@ -1086,8 +1086,7 @@ void scheduler(void *pvParameters) {
                     ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
                 if (fill_AvgWS < 0.1)
                   fill_AvgWS = 0.1;
-                if (fill_AvgWS > 2.2)
-                  fill_AvgWS = 2.2;
+                // Removed the artificial 2.2 cap
               }
               snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
                        "%05.2f", fill_AvgWS);
@@ -1146,14 +1145,14 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 1
               // TWS: Standardize to 10 fields (Filler Rainfall at field 4)
               snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,%s,%s,%s,%04d,%"
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%"
                        "04.1f\r\n",
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                        fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
                        fill_inst_wd, SIGNAL_STRENGTH_GAP_FILLED, bat_val);
 
               snprintf(ftpappend_text, sizeof(ftpappend_text),
-                       "%s;%04d-%02d-%02d,%02d:%02d;000.00;%s;%s;%s;%s;%04d;%"
+                       "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%"
                        "04.1f\r\n",
                        stnId, temp_year, temp_month, temp_day, temp_hr,
                        temp_min, fill_inst_temp, fill_inst_hum,
@@ -1238,17 +1237,15 @@ void scheduler(void *pvParameters) {
 // TWS
 #if SYSTEM == 1
           snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,%s,%s,%s,%04d,%04."
-                   "1f\r\n",
+                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
                    sampleNo, current_year, current_month, current_day,
                    record_hr, record_min, inst_temp, inst_hum, avg_wind_speed,
                    inst_wd, signal_lvl, bat_val);
-          snprintf(
-              ftpappend_text, sizeof(ftpappend_text),
-              "%s;%04d-%02d-%02d,%02d:%02d;000.00;%s;%s;%s;%s;%04d;%04.1f\r\n",
-              stnId, current_year, current_month, current_day, record_hr,
-              record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-              signal_lvl, bat_val);
+          snprintf(ftpappend_text, sizeof(ftpappend_text),
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
+                   stnId, current_year, current_month, current_day, record_hr,
+                   record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                   signal_lvl, bat_val);
 #endif
 
 #if SYSTEM == 2
@@ -1342,17 +1339,15 @@ void scheduler(void *pvParameters) {
 // TWS
 #if SYSTEM == 1
           snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,%s,%s,%s,%04d,%04."
-                   "1f\r\n",
+                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
                    sampleNo, current_year, current_month, current_day,
                    record_hr, record_min, inst_temp, inst_hum, avg_wind_speed,
                    inst_wd, signal_strength, bat_val);
-          snprintf(
-              ftpappend_text, sizeof(ftpappend_text),
-              "%s;%04d-%02d-%02d,%02d:%02d;000.00;%s;%s;%s;%s;%04d;%04.1f\r\n",
-              stnId, current_year, current_month, current_day, record_hr,
-              record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-              signal_strength, bat_val);
+          snprintf(ftpappend_text, sizeof(ftpappend_text),
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
+                   stnId, current_year, current_month, current_day, record_hr,
+                   record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                   signal_strength, bat_val);
 #endif
 
 // TWS-RF
@@ -1472,12 +1467,14 @@ void scheduler(void *pvParameters) {
 // TWS
 #if SYSTEM == 1
             snprintf(append_text, sizeof(append_text),
-                     "%02d,%04d-%02d-%02d,%02d:%02d,000.00,000.0,000.0,00.00,"
+                     "%02d,%04d-%02d-%02d,%02d:%02d,000.0,000.0,00.00,"
                      "000,%04d,%04.1f\r\n",
                      i, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                     SIGNAL_STRENGTH_NO_DATA, bat_val);
+                     SIGNAL_STRENGTH_NO_DATA,
+                     bat_val); // Changed from 000.00 to 00.00 to keep exactly
+                               // 53 bytes
             snprintf(ftpappend_text, sizeof(ftpappend_text),
-                     "%s;%04d-%02d-%02d,%02d:%02d;000.00;000.0;000.0;00.00;000;"
+                     "%s;%04d-%02d-%02d,%02d:%02d;000.0;000.0;00.00;000;"
                      "%04d;%04.1f\r\n",
                      stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
@@ -1530,17 +1527,15 @@ void scheduler(void *pvParameters) {
 // TWS
 #if SYSTEM == 1
           snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,%s,%s,%s,%04d,%04."
-                   "1f\r\n",
+                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
                    sampleNo, current_year, current_month, current_day,
                    record_hr, record_min, inst_temp, inst_hum, avg_wind_speed,
                    inst_wd, signal_lvl, bat_val);
-          snprintf(
-              ftpappend_text, sizeof(ftpappend_text),
-              "%s;%04d-%02d-%02d,%02d:%02d;000.00;%s;%s;%s;%s;%04d;%04.1f\r\n",
-              stnId, current_year, current_month, current_day, record_hr,
-              record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-              signal_lvl, bat_val);
+          snprintf(ftpappend_text, sizeof(ftpappend_text),
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
+                   stnId, current_year, current_month, current_day, record_hr,
+                   record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                   signal_lvl, bat_val);
 #endif
 
 // TWS-RF
@@ -1695,40 +1690,36 @@ void scheduler(void *pvParameters) {
             // = 53 temp,hum,avg_ws,wd
 
 #if SYSTEM == 1
-            // subString0 = content.substring(0, 2);
-            strncpy(tmp_parse, content_buf, 2);
-            tmp_parse[2] = 0;
-            last_sampleNo = atoi(tmp_parse);
+            // Robust parsing using commas
+            last_sampleNo = atoi(content_buf);
             debug("Last sample No stored : ");
             debugln(last_sampleNo);
 
-            // subString1 = content.substring(20, 25);
-            strncpy(tmp_parse, content_buf + 20, 5);
-            tmp_parse[5] = 0;
-            last_instTemp = atof(tmp_parse);
-            debug("Last recorded instTemp is : ");
-            debugln(last_instTemp);
+            char *p = content_buf;
+            // Fields: sampleNo(0), Date(1), Time(2), Temp(3), Hum(4), WS(5),
+            // WD(6)
+            for (int i = 0; i < 3 && p; i++)
+              p = strchr(p + 1, ','); // Skip to Temp (comma 3)
+            if (p)
+              last_instTemp = atof(p + 1);
 
-            // subString2 = content.substring(26, 31);
-            strncpy(tmp_parse, content_buf + 26, 5);
-            tmp_parse[5] = 0;
-            last_instHum = atof(tmp_parse);
-            debug("Last recorded instHum is : ");
-            debugln(last_instHum);
+            if (p)
+              p = strchr(p + 1, ','); // Hum (comma 4)
+            if (p)
+              last_instHum = atof(p + 1);
 
-            // subString3 = content.substring(32, 37);
-            strncpy(tmp_parse, content_buf + 32, 5);
-            tmp_parse[5] = 0;
-            last_AvgWS = atof(tmp_parse);
-            debug("Last recorded AvgWS is : ");
+            if (p)
+              p = strchr(p + 1, ','); // WS (comma 5)
+            if (p)
+              last_AvgWS = atof(p + 1);
+
+            if (p)
+              p = strchr(p + 1, ','); // WD (comma 6)
+            if (p)
+              last_instWD = atof(p + 1);
+
+            debug("Gap Search: Last WS found: ");
             debugln(last_AvgWS);
-
-            // subString4 = content.substring(38, 41);
-            strncpy(tmp_parse, content_buf + 38, 3);
-            tmp_parse[3] = 0;
-            last_instWD = atof(tmp_parse);
-            debug("Last recorded instWD is : ");
-            debugln(last_instWD);
 #endif
 
             // TWS-RF
@@ -1736,27 +1727,34 @@ void scheduler(void *pvParameters) {
             // : 58+2 = 60 rf,temp,hum,avg_ws,wd
 
 #if SYSTEM == 2
-            // Robust parsing for semicolon format (e.g.,
-            // WS1923;2026...;Rainfall;Temp;Hum...)
-            char *p = strchr(content_buf, ';'); // Skip Station
-            if (p) {
-              p = strchr(p + 1, ';'); // Skip DateTime
-              if (p) {
-                last_cumRF = atof(p + 1);
-                p = strchr(p + 1, ';');
-                if (p)
-                  last_instTemp = atof(p + 1);
-                p = strchr(p + 1, ';');
-                if (p)
-                  last_instHum = atof(p + 1);
-                p = strchr(p + 1, ';');
-                if (p)
-                  last_AvgWS = atof(p + 1);
-                p = strchr(p + 1, ';');
-                if (p)
-                  last_instWD = atof(p + 1);
-              }
-            }
+            // Robust parsing using commas (append_text uses commas, not
+            // semicolons) Fields: sampleNo(0), Date(1), Time(2), RF(3),
+            // Temp(4), Hum(5), WS(6), WD(7)
+            char *p = content_buf;
+            for (int i = 0; i < 3 && p; i++)
+              p = strchr(p + 1, ','); // Skip to RF (comma 3)
+            if (p)
+              last_cumRF = atof(p + 1);
+
+            if (p)
+              p = strchr(p + 1, ','); // Temp (comma 4)
+            if (p)
+              last_instTemp = atof(p + 1);
+
+            if (p)
+              p = strchr(p + 1, ','); // Hum (comma 5)
+            if (p)
+              last_instHum = atof(p + 1);
+
+            if (p)
+              p = strchr(p + 1, ','); // WS (comma 6)
+            if (p)
+              last_AvgWS = atof(p + 1);
+
+            if (p)
+              p = strchr(p + 1, ','); // WD (comma 7)
+            if (p)
+              last_instWD = atof(p + 1);
             debug("Lastrecorded (TWS-RF) CRF: ");
             debugln(last_cumRF);
             snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(last_cumRF));
@@ -1929,8 +1927,7 @@ void scheduler(void *pvParameters) {
                     ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
                 if (fill_AvgWS < 0.1)
                   fill_AvgWS = 0.1;
-                if (fill_AvgWS > 2.2)
-                  fill_AvgWS = 2.2;
+                // Removed the artificial 2.2 cap
               }
               snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
                        "%05.2f", fill_AvgWS);
@@ -1970,7 +1967,7 @@ void scheduler(void *pvParameters) {
 
 #if SYSTEM == 1
               snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,%s,%s,%s,%04d,%"
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%"
                        "04.1f\r\n",
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                        fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
@@ -2180,12 +2177,11 @@ void scheduler(void *pvParameters) {
 #endif
 
 #if SYSTEM == 1
-        snprintf(
-            append_text, sizeof(append_text),
-            "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,%s,%s,%s,%04d,%04.1f\r\n",
-            sampleNo, current_year, current_month, current_day, record_hr,
-            record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-            signal_strength, bat_val);
+        snprintf(append_text, sizeof(append_text),
+                 "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
+                 sampleNo, current_year, current_month, current_day, record_hr,
+                 record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                 signal_strength, bat_val);
 #endif
 
 #if SYSTEM == 2

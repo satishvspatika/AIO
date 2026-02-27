@@ -73,10 +73,14 @@ void setup() {
 
   delay(1000);
 
-  // Initialize I2C Mutex first
+  // Initialize Mutexes first
   i2cMutex = xSemaphoreCreateMutex();
   if (i2cMutex != NULL)
     xSemaphoreGive(i2cMutex);
+
+  serialMutex = xSemaphoreCreateMutex();
+  if (serialMutex != NULL)
+    xSemaphoreGive(serialMutex);
 
   initialize_hw();
   delay(300);
@@ -186,8 +190,12 @@ void setup() {
           debug("Loaded Station ID from SD: ");
           debugln(station_name);
 
-          // Save to NVS/SPIFFS for future boots
-          prefs.putString("station", station_name);
+          // Save to NVS and SPIFFS for future boots
+          // Re-open NVS here (prefs.end() was called above)
+          Preferences prefs2;
+          prefs2.begin("sys-config", false);
+          prefs2.putString("station", station_name);
+          prefs2.end();
           File sFile = SPIFFS.open("/station.doc", FILE_WRITE);
           if (sFile) {
             sFile.print(station_name);
@@ -443,6 +451,18 @@ void setup() {
     debug(" | Type: ");
     debugln(STATION_TYPE);
     http_no = 6; // 8(SPATIKA SERVER)
+  } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 1))) {
+    strcpy(universalNumber, "9980945474");
+    snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-GEN-%s", FIRMWARE_VERSION);
+    strcpy(NETWORK, "SPATIKA");
+    strcpy(STATION_TYPE, "TWS");
+    debug("[BOOT] Unit: ");
+    debug(UNIT_VER);
+    debug(" | Network: ");
+    debug(NETWORK);
+    debug(" | Type: ");
+    debugln(STATION_TYPE);
+    http_no = 8; // Spatika Server for TWS
   } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 2))) { // EMPRII
     strcpy(universalNumber, "9980945474"); //"9980945474"); // Universal number
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TWSRF9-GEN-%s", FIRMWARE_VERSION);
@@ -454,7 +474,7 @@ void setup() {
     debug(NETWORK);
     debug(" | Type: ");
     debugln(STATION_TYPE);
-    http_no = 10; // 8(SPATIKA SERVER)
+    http_no = 10; // 10 (SPATIKA SERVER)
   } else {
     debugln("********** NO SYSTEM FOUND **********");
   }
