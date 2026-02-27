@@ -3586,67 +3586,40 @@ bool send_health_report(bool useJitter) {
   bool success = false;
 
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
-    debugf1("[Health] Sending JSON POST Report (Attempt %d)...\n", attempt);
+    debugf1("[Health] Sending JSON POST to Contabo (Attempt %d)...\n", attempt);
 
-    // 4. HTTP POST Execution
+    // v5.42: Plain HTTP POST to Contabo VPS — no SSL needed, far more
+    // reliable on A7672S than the HTTPS/Google Sheets path.
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 1000);
-    vTaskDelay(1000); // BREATHER: Critical for modem to clear stack state
+    vTaskDelay(500);
+    flushSerialSIT();
+
     SerialSIT.println("AT+HTTPINIT");
     if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
+      debugln("[Health] HTTPINIT failed.");
       if (attempt < max_attempts)
         continue;
       return false;
     }
 
-    // v5.49 Enhanced DNS & SSL Robustness
-    debugln("[Health] Configuring DNS (8.8.8.8)...");
-    SerialSIT.println("AT+CDNSCFG=\"8.8.8.8\",\"8.8.4.4\"");
-    waitForResponse("OK", 1000);
-
-    debugln("[Health] Warming up DNS for script.google.com...");
-    SerialSIT.println("AT+CDNSGIP=\"script.google.com\"");
-    String dnsRes = waitForResponse("OK", 5000);
-    debugf1("[Health] DNS Prep Res: %s\n", dnsRes.c_str());
-
     SerialSIT.print("AT+HTTPPARA=\"CID\",");
     SerialSIT.println(active_cid != 0 ? active_cid : 1);
     waitForResponse("OK", 500);
 
-    SerialSIT.println("AT+HTTPPARA=\"HTTPS\",1");
-    waitForResponse("OK", 500);
-
-    // Link HTTP to SSL context 0
-    SerialSIT.println("AT+HTTPPARA=\"SSLCFG\",0");
-    waitForResponse("OK", 500);
-
-    // Set TLS version 1.2
-    SerialSIT.println("AT+CSSLCFG=\"sslversion\",0,4");
-    waitForResponse("OK", 500);
-
-    // authmode=0 (No check), ignorecerc=1
-    SerialSIT.println("AT+CSSLCFG=\"authmode\",0,0");
-    waitForResponse("OK", 500);
-    SerialSIT.println("AT+CSSLCFG=\"ignorecerc\",0,1");
-    waitForResponse("OK", 500);
-
-    // Add SNI for Google
-    SerialSIT.println("AT+CSSLCFG=\"sni\",0,\"script.google.com\"");
-    waitForResponse("OK", 500);
-
-    SerialSIT.println(
-        "AT+HTTPPARA=\"CID\",1"); // v5.58: Lock HTTP for BSNL stability
-    waitForResponse("OK", 500);
-    SerialSIT.println("AT+HTTPPARA=\"URL\",\"" GOOGLE_HEALTH_URL "\"");
+    // Plain HTTP URL — no HTTPS, no SSL config
+    char healthUrl[64];
+    snprintf(healthUrl, sizeof(healthUrl),
+             "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_IP,
+             HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
+    SerialSIT.println(healthUrl);
     waitForResponse("OK", 1000);
+    debugln("[Health] URL set: " + String(healthUrl));
 
     SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
     waitForResponse("OK", 500);
 
-    SerialSIT.println("AT+HTTPPARA=\"REDIR\",1");
-    waitForResponse("OK", 500);
-
-    // Send JSON Data
+    // Send JSON body
     int bodyLen = strlen(jsonBody);
     SerialSIT.print("AT+HTTPDATA=");
     SerialSIT.print(bodyLen);
@@ -3655,7 +3628,7 @@ bool send_health_report(bool useJitter) {
       SerialSIT.print(jsonBody);
       waitForResponse("OK", 5000);
     } else {
-      debugln("[Health] HTTP Download Failed.");
+      debugln("[Health] HTTPDATA DOWNLOAD prompt not received.");
       SerialSIT.println("AT+HTTPTERM");
       waitForResponse("OK", 500);
       if (attempt < max_attempts)
@@ -3664,47 +3637,25 @@ bool send_health_report(bool useJitter) {
     }
 
     SerialSIT.println("AT+HTTPACTION=1"); // POST
-    String res = waitForResponse("+HTTPACTION", 60000);
+    String res =
+        waitForResponse("+HTTPACTION", 30000); // 30s (plain HTTP is fast)
+    debugln("[Health] HTTPACTION response: " + res);
 
-    if (res.indexOf(",200,") != -1 || res.indexOf(",302,") != -1) {
-      debugln("[Health] POST Success.");
+    if (res.indexOf(",200,") != -1) {
+      debugln("[Health] POST Success (HTTP 200).");
       success = true;
       SerialSIT.println("AT+HTTPTERM");
       waitForResponse("OK", 500);
-      break; // EXIT LOOP
+      break;
     } else {
-      debugln("[Health] POST Failed: " + res);
-      // RECOVERY: If 715 (DNS), 612 (Socket), or 706 (Busy)
-      if (res.indexOf(",715,") != -1 || res.indexOf(",706,") != -1 ||
-          res.indexOf(",612,") != -1) {
-        debugln("[Health] Network/Stack Error. Attempting Deep Recovery...");
-        if (attempt < max_attempts) {
-          SerialSIT.println("AT+HTTPTERM");
-          waitForResponse("OK", 500);
-
-          if (res.indexOf(",715,") != -1) {
-            // DNS Specific Kick: Clear DNS Cache and Bearer
-            SerialSIT.println("AT+CDNSCFG=\"\""); // Reset to defaults
-            waitForResponse("OK", 500);
-          }
-
-          if (attempt == 2) {
-            // Last ditch: Full IP Shutdown
-            SerialSIT.println("AT+CIPSHUT");
-            waitForResponse("SHUT OK", 2000);
-          }
-
-          verify_bearer_or_recover(); // Force bearer re-activation
-          vTaskDelay(3000);
-          continue;
-        }
+      debugln("[Health] POST failed: " + res);
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 500);
+      if (attempt < max_attempts) {
+        verify_bearer_or_recover();
+        vTaskDelay(2000);
       }
     }
-
-    SerialSIT.println("AT+HTTPTERM");
-    waitForResponse("OK", 500);
-    if (success)
-      break;
   }
 
   return success;

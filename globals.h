@@ -69,22 +69,22 @@ void reconstructSentMasks();
 void markFileAsDelivered(const char *fileName);
 
 /************************************************************************************************/
-#define SYSTEM 2               // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "SPATIKA_GEN"; // UNIT :
+#define SYSTEM 0              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "KSNDMC_TRG"; // UNIT :
 //                                0:  KSNDMC_TRG  BIHAR_TRG
 //                                1:  KSNDMC_TWS KSNDMC_TWS-AP
 //                                2:  KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.41"
+#define FIRMWARE_VERSION "5.42"
 
-#define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
+#define DEBUG 0 // Set to 1 for serial debug, 0 for production (Saves space)
 
 #define ENABLE_WEBSERVER 0       // Set to 0 to remove WebServer
 #define ENABLE_PRESSURE_SENSOR 0 // Set to 0 to disable BMP/BME
 #define ENABLE_HEALTH_REPORT                                                   \
-  0 // Master Switch: Set to 0 to disable automated health reporting
+  1 // Master Switch: Set to 1 to enable automated health reporting
 #define TEST_HEALTH_EVERY_SLOT                                                 \
   1 // (Gated by ENABLE_HEALTH_REPORT) 1 for 15-min testing, 0 for daily.
 
@@ -102,11 +102,10 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 
 #define FILLGAP 1
 
-// Google Sheets Health Monitor (5.41 Test Dashboard)
-#define GOOGLE_HEALTH_URL                                                      \
-  "https://script.google.com/macros/s/"                                        \
-  "AKfycbxj2U07Eq7F1ciYraccvXwUC1UVAaNkKZuRE_zmgr_PYs9zFX939XXUudGC7Yr_QBe_"   \
-  "/exec"
+// Spatika Health Server (Contabo VPS — plain HTTP, no SSL needed)
+#define HEALTH_SERVER_IP "75.119.148.192"
+#define HEALTH_SERVER_PATH "/health"
+#define HEALTH_SERVER_PORT "80"
 
 #define HDC_ADDR 0x40 // Default I2C address for both HDC1080 and HDC2022
 #define I2C_SDA 21    // Explicit definition for I2C bus in ESP32
