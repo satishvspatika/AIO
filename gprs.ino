@@ -1,6 +1,7 @@
 #include "globals.h"
 
-int active_cid = 1; // Default to 1
+int active_cid = 1;      // Default to 1
+bool http_ready = false; // v5.42: Track if HTTPINIT succeeded for this cycle
 
 // Helper to clear UART buffer to prevent stale data contamination between tasks
 void flushSerialSIT() {
@@ -602,9 +603,12 @@ void prepare_data_and_send() {
 
     // ─────────────────────────────────────────────────────────────────────
     // v5.64 Fast-Retry: Skip bearer reset for transient 706/713 errors
+    // v5.42: TIMEOUT = HTTPACTION URC never arrived (network drop/server slow).
+    // Treat it as transient — don't tear down the bearer, just reinit HTTP.
     bool transientErr = (String(diag_http_fail_reason) == "706" ||
                          String(diag_http_fail_reason) == "713" ||
-                         String(diag_http_fail_reason) == "714");
+                         String(diag_http_fail_reason) == "714" ||
+                         String(diag_http_fail_reason) == "TIMEOUT");
 
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 500);
@@ -636,6 +640,7 @@ void prepare_data_and_send() {
 
     SerialSIT.println("AT+HTTPINIT");
     if (waitForResponse("OK", 5000).indexOf("OK") != -1) {
+      http_ready = true; // v5.42: Session live for retry attempt
       // Restore all parameters
       SerialSIT.println("AT+HTTPPARA=\"CID\",1"); // v5.58: Hard-lock
       waitForResponse("OK", 1000);
@@ -946,16 +951,31 @@ void send_http_data() {
   SerialSIT.println("AT+CGACT=0,8"); // Explicitly kill secondary context
   waitForResponse("OK", 1000);
   SerialSIT.println("AT+HTTPTERM");
+  waitForResponse("OK", 1000); // v5.42: Properly consume HTTPTERM response
   vTaskDelay(200);
+  flushSerialSIT();   // v5.42: Clear stale UART bytes before HTTPINIT
+  http_ready = false; // v5.42: Reset session flag
 
   SerialSIT.println("AT+HTTPINIT");
   response = waitForResponse("OK", 5000);
   if (response.indexOf("OK") == -1) {
     debugln("[GPRS] HTTPINIT Failed. Trying TERM then INIT...");
     SerialSIT.println("AT+HTTPTERM");
+    waitForResponse("OK", 1000);
     vTaskDelay(500);
+    flushSerialSIT();
     SerialSIT.println("AT+HTTPINIT");
-    waitForResponse("OK", 5000);
+    // v5.42: CHECK the return value — if this also fails, mark session as not
+    // ready so send_at_cmd_data() fast-fails instead of burning 47s on timeouts
+    if (waitForResponse("OK", 5000).indexOf("OK") != -1) {
+      http_ready = true;
+      debugln("[GPRS] HTTPINIT recovered on 2nd attempt.");
+    } else {
+      debugln(
+          "[GPRS] HTTPINIT failed on both attempts. Will store to backlog.");
+    }
+  } else {
+    http_ready = true;
   }
 
   // Restore CID Setting (Quiet)
@@ -1684,6 +1704,15 @@ void send_sms() {
 int send_at_cmd_data(char *payload, String charArray) {
   unsigned long start = millis();
   esp_task_wdt_reset();
+
+  // v5.42: Fast-fail if HTTP session was never successfully initialized.
+  // Prevents burning ~47s on back-to-back HTTPDATA + HTTPACTION timeouts
+  // when the modem's HTTP stack is in a dead/stuck state.
+  if (!http_ready) {
+    debugln("[HTTP] HTTP session not ready. Fast-fail to backlog.");
+    return 0;
+  }
+
   int i;
   for (i = 0; payload[i] != '\0'; ++i)
     ;
@@ -1712,6 +1741,12 @@ int send_at_cmd_data(char *payload, String charArray) {
       String errCode = response.substring(comma1 + 1, comma2);
       strncpy(diag_http_fail_reason, errCode.c_str(),
               sizeof(diag_http_fail_reason) - 1);
+    } else {
+      // v5.42: Blank response = +HTTPACTION: URC never arrived = timeout.
+      // Label it so the retry path skips the bearer teardown (SAPBR=0,1).
+      strncpy(diag_http_fail_reason, "TIMEOUT",
+              sizeof(diag_http_fail_reason) - 1);
+      debugln("[HTTP] HTTPACTION timed out — no URC received from modem.");
     }
 
     if (response.indexOf("706") != -1 || response.indexOf("713") != -1 ||
