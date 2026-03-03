@@ -2317,7 +2317,7 @@ void get_registration() {
   // - Adaptive wait replaces blind vTaskDelay(5000): poll CGREG every 1s
   //   and exit immediately on success. No wasted sleep.
   bool isBSNL = (strstr(carrier, "BSNL") != nullptr);
-  int no_of_retries = isBSNL ? 35 : 30;
+  int no_of_retries = isBSNL ? 35 : 35;
   registration = 0;
   retries = 0;
   bool is_registered = false;
@@ -2345,6 +2345,8 @@ void get_registration() {
   waitForResponse("OK", 5000);
   SerialSIT.println("AT+CREG=1");
   waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CNETLIGHT=0"); // Reset LED driver
+  waitForResponse("OK", 500);
   SerialSIT.println("AT+CNETLIGHT=1"); // Ensure LED blinks
   waitForResponse("OK", 1000);
   vTaskDelay(1000 / portTICK_PERIOD_MS); // Let it settle
@@ -2461,14 +2463,24 @@ void get_registration() {
       // Periodic Recovery Logic
       if (retries > 0 && retries % 5 == 0) {
         if (registration == 0 || registration == 3 || registration == 4) {
-          if (retries == 5) {
-            // First Level: Soft Kick
-            debugln("[GPRS] Stubborn Denied/Idle. Forced Radio kick "
-                    "(COPS=2,0)...");
-            SerialSIT.println("AT+COPS=2");
-            waitForResponse("OK", 5000);
+          if (retries == 5 || (retries >= 5 && registration == 3)) {
+            // First Level: HARD HARDWARE RESET (Now triggered early if Denied)
+            debugln("[GPRS] Stubborn Denied/Idle. FORCING PHYSICAL POWER CYCLE "
+                    "(GPIO 26)...");
+            digitalWrite(26, LOW); // Kill power
+            vTaskDelay(1500);
+            digitalWrite(26, HIGH); // Restore power
+            vTaskDelay(3000);       // Wait for boot
+            SerialSIT.println("AT");
+            waitForResponse("OK", 2000);
+            SerialSIT.println("ATE0");
+            waitForResponse("OK", 1000);
+            SerialSIT.println("AT+CREG=1");
+            waitForResponse("OK", 1000);
+            SerialSIT.println("AT+CNETLIGHT=1");
+            waitForResponse("OK", 500);
             SerialSIT.println("AT+COPS=0");
-            waitForResponse("OK", 12000);
+            waitForResponse("OK", 5000);
           } else if (retries == 10) {
             // Second Level: Full Modem Software Reboot
             debugln("[GPRS] Stubborn Denied/Idle. Trying full Software Reboot "
@@ -2485,21 +2497,12 @@ void get_registration() {
             SerialSIT.println("AT+COPS=0");
             waitForResponse("OK", 5000);
           } else if (retries == 15) {
-            // Third Level: HARD HARDWARE RESET (Physical Power Cut)
-            debugln("[GPRS] Stubborn Denied/Idle. FORCING PHYSICAL POWER CYCLE "
-                    "(GPIO 26)...");
-            digitalWrite(26, LOW); // Kill power
-            vTaskDelay(1500);
-            digitalWrite(26, HIGH); // Restore power
-            vTaskDelay(3000);       // Wait for boot
-            SerialSIT.println("AT");
-            waitForResponse("OK", 2000);
-            SerialSIT.println("ATE0");
-            waitForResponse("OK", 1000);
-            SerialSIT.println("AT+CREG=1");
-            waitForResponse("OK", 1000);
-            SerialSIT.println("AT+COPS=0");
+            // Third Level: Forced Radio kick (COPS=2,0) as a light nudge
+            debugln("[GPRS] Stubborn search. Forced Radio kick (COPS=2,0)...");
+            SerialSIT.println("AT+COPS=2");
             waitForResponse("OK", 5000);
+            SerialSIT.println("AT+COPS=0");
+            waitForResponse("OK", 12000);
           }
         }
       }
