@@ -2349,7 +2349,7 @@ void get_registration() {
   SerialSIT.println("AT+CEREG=2"); // Enhanced LTE reporting
   waitForResponse("OK", 1000);
   SerialSIT.println(
-      "AT+CEMODE=0"); // Combined Mode (More compatible for Airtel)
+      "AT+CEMODE=2"); // PS Only (Data Only) - Essential for many IoT SIMs
   waitForResponse("OK", 1000);
   SerialSIT.println("AT+CPSMS=0"); // Disable Power Saving Mode
   waitForResponse("OK", 1000);
@@ -2504,13 +2504,18 @@ void get_registration() {
 
             SerialSIT.println("AT&F"); // Reset
             waitForResponse("OK", 1000);
-            // v6.75: WIPE FORBIDDEN PLMN FILE ON SIM (6F7B)
-            debugln("[GPRS] Wiping Forbidden PLMN list on SIM...");
+
+            // v6.76: DEEP SIM SCRUB (Wipe 2G & 4G Forbidden Lists)
+            debugln("[GPRS] Performing Deep SIM Scrub (FPLMN)...");
+            // Wipe 6F7B (Forbidden PLMNs)
             SerialSIT.println(
                 "AT+CRSM=214,28539,0,0,12,\"FFFFFFFFFFFFFFFFFFFFFFFF\"");
             waitForResponse("OK", 2000);
+
             SerialSIT.println("AT+COPS=0");
             waitForResponse("OK", 5000);
+            SerialSIT.println("AT+CGATT=1"); // Force Attach
+            waitForResponse("OK", 2000);
           } else if (retries == 15) {
             // Tier 2: Force GSM Only (Diagnostic)
             debugln(
