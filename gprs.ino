@@ -2345,6 +2345,8 @@ void get_registration() {
   waitForResponse("OK", 5000);
   SerialSIT.println("AT+CREG=1");
   waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CEREG=2"); // Enhanced registration info
+  waitForResponse("OK", 1000);
   SerialSIT.println("AT+CNETLIGHT=0"); // Reset LED driver
   waitForResponse("OK", 500);
   SerialSIT.println("AT+CNETLIGHT=1"); // Ensure LED blinks
@@ -2433,6 +2435,13 @@ void get_registration() {
           }
         }
 
+        if (registration == 3) {
+          debugln("[DIAG] Registration Denied. Querying error (AT+CEER)...");
+          SerialSIT.println("AT+CEER");
+          String ceer = waitForResponse("OK", 2000);
+          debugln("[CEER] Response: " + ceer);
+        }
+
         if (consecutive_unreg >= 45) {
           debugln("[GPRS] Persistent Unreg status. Final fail.");
           break;
@@ -2484,7 +2493,7 @@ void get_registration() {
             SerialSIT.begin(115200, SERIAL_8N1, 16, 17, false);
             vTaskDelay(2000);
 
-            SerialSIT.println("AT");
+            SerialSIT.println("AT&F"); // Factory Reset internal settings
             waitForResponse("OK", 2000);
             SerialSIT.println("ATE0");
             waitForResponse("OK", 1000);
