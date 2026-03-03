@@ -34,6 +34,18 @@ extern bool health_in_progress;
 extern bool timeSyncRequired;
 extern bool
     primary_data_delivered; // v5.51: Track session success for backlog gating
+extern volatile bool
+    force_ftp; // v5.68: Command piggyback — FTP_BACKLOG (unsent backlog)
+extern volatile bool force_ftp_daily; // v5.80: Command piggyback — FTP_DAILY
+                                      // (specific date file)
+extern char
+    ftp_daily_date[12]; // v5.80: Date string for FTP_DAILY e.g. "20260228"
+extern volatile bool force_reboot;       // v5.68: Command piggyback
+extern volatile bool force_ota;          // v5.68: Command piggyback
+extern volatile bool ota_writing_active; // v6.88: Prevent FS collision
+extern int ota_fail_count;
+extern char ota_fail_reason[48];
+extern char ota_cmd_param[128]; // v75: Target binary name from dashboard
 
 // SAFETY BUFFER: Reserve 512 bytes at the start of RTC Memory to prevent
 // ULP Program Code (loaded at offset 0) from overwriting C variables.
@@ -69,17 +81,17 @@ void reconstructSentMasks();
 void markFileAsDelivered(const char *fileName);
 
 /************************************************************************************************/
-#define SYSTEM 0              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "KSNDMC_TRG"; // UNIT :
+#define SYSTEM 2               // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "SPATIKA_GEN"; // UNIT :
 //                                0:  KSNDMC_TRG  BIHAR_TRG
 //                                1:  KSNDMC_TWS KSNDMC_TWS-AP
 //                                2:  KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.42"
+#define FIRMWARE_VERSION "5.45"
 
-#define DEBUG 0 // Set to 1 for serial debug, 0 for production (Saves space)
+#define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
 #define ENABLE_WEBSERVER 0       // Set to 0 to remove WebServer
 #define ENABLE_PRESSURE_SENSOR 0 // Set to 0 to disable BMP/BME
@@ -141,9 +153,9 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 #define MINUTES_PER_SAMPLE 15
 
 // Signal strength constants
-#define SIGNAL_STRENGTH_NO_DATA -111
-#define SIGNAL_STRENGTH_GAP_FILLED -112
-#define SIGNAL_STRENGTH_PREV_DAY_GAP -110
+#define SIGNAL_STRENGTH_NO_DATA -87
+#define SIGNAL_STRENGTH_GAP_FILLED -88
+#define SIGNAL_STRENGTH_PREV_DAY_GAP -89
 #define SIGNAL_STRENGTH_MIN_RANGE -130
 #define SIGNAL_STRENGTH_MAX_RANGE -110
 
@@ -191,6 +203,8 @@ LiquidCrystal_I2C
         2); // set the LCD address to 0x27 for a 16 chars and 2 line display
 SemaphoreHandle_t i2cMutex;
 SemaphoreHandle_t serialMutex;
+SemaphoreHandle_t fsMutex; // v6.78: Mutex to prevent corruption between OTA
+                           // write and Scheduler write
 // SemaphoreHandle_t dataMutex;
 
 RTC_DS1307 rtc; //  RTC
@@ -302,13 +316,11 @@ int unsent_count, success_count;
 int s, fileSize;
 int unsent_counter = 0;
 int http_code = -1;
-int delay_val =
-    10000; // Delay before starting GPRS (Reduced from 15s for A7672)
+int delay_val = 10000; // Delay before starting GPRS (Reduced from 15s)
 int signal_strength = 0;
 int signal_lvl = 0;
 int sd_card_ok = 0;
 int send_daily = 0;
-
 float solar_val, solar;
 float li_bat, li_bat_val;
 
@@ -328,7 +340,7 @@ char http_data[300]; // AG1
 char sample_cum_rf[7], sample_inst_rf[7], sample_temp[7], sample_hum[7],
     sample_avgWS[7], sample_WD[4], sample_bat[5], ftpsample_avgWS[6],
     ftpsample_cum_rf[6];
-char ht_data[40]; // AG1
+char ht_data[80]; // AG1
 char apn_str[20];
 char reg_status[16];
 RTC_DATA_ATTR char carrier[20] = "";
@@ -372,6 +384,9 @@ RTC_DATA_ATTR float diag_last_rf_val = 0;
 RTC_DATA_ATTR bool diag_rain_calc_invalid = false;
 RTC_DATA_ATTR bool diag_rain_reset = false;
 RTC_DATA_ATTR int diag_consecutive_http_fails = 0;
+RTC_DATA_ATTR int diag_daily_http_fails = 0; // Total failures today
+RTC_DATA_ATTR int diag_rejected_count =
+    0; // Track consecutive "Rejected" (Time) errors
 
 // v5.49 Splitted Diagnostic Trackers for Golden Data Reporting
 RTC_DATA_ATTR int diag_ndm_count = 0;      // Today
@@ -388,6 +403,7 @@ RTC_DATA_ATTR uint32_t diag_http_time_total = 0; // Total ms spent in HTTP POST
 RTC_DATA_ATTR uint32_t diag_sent_mask_cur[3] = {0, 0, 0};
 RTC_DATA_ATTR uint32_t diag_sent_mask_prev[3] = {0, 0, 0};
 RTC_DATA_ATTR int diag_http_success_count = 0; // Total successful HTTP attempts
+RTC_DATA_ATTR int diag_http_success_count_prev = 0;
 RTC_DATA_ATTR char diag_reg_fail_type[16] = "NONE";
 RTC_DATA_ATTR char diag_http_fail_reason[16] = "NONE";
 
@@ -401,6 +417,7 @@ RTC_DATA_ATTR uint32_t diag_sent_mask[3] = {0, 0,
 // Health Report Retry Logic (persists across deep sleep)
 RTC_DATA_ATTR int health_last_sent_hour = -1;
 RTC_DATA_ATTR int health_last_sent_day = -1;
+RTC_DATA_ATTR bool diag_fw_just_updated = false; // v5.76: Post-OTA Trigger
 
 String response;
 String rssiStr;
@@ -533,7 +550,7 @@ void start_gprs();
 void send_sms();
 void process_sms(char msg_no);
 int setup_ftp();
-void fetchFromFtpAndUpdate(char *fileName);
+void fetchFromHttpAndUpdate(char *fileName);
 void copyFromSPIFFSToFS(char *dateFile);
 String waitForResponse(String expectedResponse, int timeout);
 void disableWDT();

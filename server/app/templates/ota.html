@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}OTA Deployment — Spatika Health{% endblock %}
+{% set active = 'ota' %}
+
+{% block content %}
+
+<div class="mb-4">
+    <h2 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Fleet Firmware Deployment</h2>
+    <p class="text-xs text-slate-600">Deploy new firmware to a group or individual station. Progress bars show how many
+        stations have converted to the target version.</p>
+</div>
+
+<!-- Deployment Table -->
+<div class="card overflow-hidden overflow-x-auto no-scrollbar">
+    <table class="w-full text-left text-xs min-w-[800px] md:min-w-0">
+        <thead>
+            <tr class="text-slate-500 uppercase text-[10px] tracking-widest">
+                <th class="p-4">ID</th>
+                <th class="p-4">Display Name</th>
+                <th class="p-4">Unit Type</th>
+                <th class="p-4">Mode</th>
+                <th class="p-4">Target Ver</th>
+                <th class="p-4">Progress</th>
+                <th class="p-4">Deploy New Firmware</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-800">
+            {% for fw in fws %}
+            {% set pct = ((fw.converted / fw.total_stations) * 100)|int if fw.total_stations > 0 else 0 %}
+            <tr class="hover:bg-slate-800/30 transition">
+                <td class="p-4 font-mono text-slate-500">S{{ fw.category_id }}</td>
+                <td class="p-4 font-bold text-green-300">{{ fw.display_name or fw.name }}</td>
+                <td class="p-4 text-slate-400">{{ fw.unit_type }}</td>
+                <td class="p-4 text-slate-500">{{ fw.system_mode }}</td>
+                <td class="p-4"><span class="badge-ver">{{ fw.current_ver }}</span></td>
+                <td class="p-4">
+                    <span
+                        class="font-bold {% if pct==100 %}text-green-400{% elif pct>0 %}text-blue-400{% else %}text-slate-500{% endif %}">
+                        {{ fw.converted }}/{{ fw.total_stations }}
+                    </span>
+                    <div class="w-20 bg-slate-700 rounded-full h-1 mt-1">
+                        <div class="h-1 rounded-full {% if pct==100 %}bg-green-500{% elif pct>0 %}bg-blue-500{% else %}bg-slate-600{% endif %}"
+                            style="width:{{ pct }}%"></div>
+                    </div>
+                </td>
+                <td class="p-4">
+                    <div class="flex items-center space-x-3 flex-wrap gap-y-2">
+                        <form action="/ota/upload/{{ fw.category_id }}" method="post" enctype="multipart/form-data"
+                            class="flex items-center space-x-2">
+                            <input type="text" name="ver" placeholder="e.g. 5.80"
+                                class="bg-slate-800 border-slate-500 px-2 py-1.5 rounded text-white text-xs w-16"
+                                style="color: white !important; background-color: #1e293b !important" required>
+                            <div class="flex flex-col min-w-[120px]">
+                                <input type="file" name="file" accept=".bin" class="text-[10px] text-slate-400">
+                                {% if fw.file_exists %}
+                                <span class="text-[9px] text-green-400 mt-0.5">✓ File uploaded</span>
+                                {% endif %}
+                            </div>
+                            <button type="submit" class="btn-sm btn-grn whitespace-nowrap">DEPLOY</button>
+                        </form>
+
+                        {% if request.state.user and (request.state.user.role == 'supervisor' or
+                        request.state.user.get('role') == 'supervisor') %}
+                        <form action="/ota/delete/{{ fw.category_id }}" method="post" class="inline-block"
+                            onsubmit="return confirm('WARNING: Are you sure you want to revert firmware target to blank and delete uploaded .bin for this group?');">
+                            <button type="submit"
+                                class="btn-sm bg-red-900/40 hover:bg-red-700 text-red-200 border border-red-700/50 whitespace-nowrap"
+                                title="Delete firmware and reset target version">🗑
+                                Revert</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}

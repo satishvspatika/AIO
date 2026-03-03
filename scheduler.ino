@@ -206,6 +206,18 @@ void scheduler(void *pvParameters) {
         sync_mode = eSyncModeInitial;
       }
 
+      // v6.88: FS Collision Guard - Wait if OTA is writing to SPIFFS
+      if (ota_writing_active) {
+        debugln("[SCHED] OTA download in progress. Pausing data recording...");
+        int ota_wait_limit = 0;
+        while (ota_writing_active && ota_wait_limit < 300) {
+          vTaskDelay(1000 / portTICK_PERIOD_MS);
+          ota_wait_limit++;
+          esp_task_wdt_reset();
+        }
+        debugln("[SCHED] OTA write complete or timeout. Proceeding.");
+      }
+
       // Hoisted Declarations for Scope Safety (Must happen before early sensor
       // reading)
       float totalWindPulses = 0.0, temp_read = 0.0, hum_read = 0.0;
@@ -315,8 +327,6 @@ void scheduler(void *pvParameters) {
       cur_avg_wind_speed =
           WS_CALIBRATION_FACTOR *
           avgPulsesPerSecond; // factor is 2*pi*r (r is 7cms) //
-      cur_avg_wind_speed =
-          totalWindPulses * WS_CALIBRATION_FACTOR / 1.0 / (15 * 60);
 
       // --- Golden Summary WS & Rain Checks ---
       if (cur_avg_wind_speed < 0 || cur_avg_wind_speed > 72.0)
@@ -686,7 +696,8 @@ void scheduler(void *pvParameters) {
         new_current_cumRF = last_cumRF + rf_value;
 
         // Self-Healing Alignment: Cumulative should NEVER decrease within a day
-        if (sampleNo > 0 && new_current_cumRF < last_cumRF) {
+        if (sampleNo > 0 && last_sampleNo < sampleNo &&
+            new_current_cumRF < last_cumRF) {
 #if DEBUG == 1
           Serial.printf("[Rain] RESET Detected: Aligning %.2f to %.2f\n",
                         new_current_cumRF, last_cumRF + rf_value);
@@ -829,7 +840,8 @@ void scheduler(void *pvParameters) {
         new_current_cumRF = last_cumRF + rf_value;
 
         // Self-Healing Alignment: Cumulative should NEVER decrease within a day
-        if (sampleNo > 0 && new_current_cumRF < last_cumRF) {
+        if (sampleNo > 0 && last_sampleNo < sampleNo &&
+            new_current_cumRF < last_cumRF) {
 #if DEBUG == 1
           Serial.printf("[Rain-TWS] RESET Detected: Aligning %.2f to %.2f\n",
                         new_current_cumRF, last_cumRF + rf_value);
@@ -900,7 +912,7 @@ void scheduler(void *pvParameters) {
           // sampleNo including current sampleNo
           debugln("Gap filling for loop started... ");
           diag_pd_count++; // Increment gap detection counter
-          for (int q = last_sampleNo + 1; q < sampleNo; q++) {
+          for (int q = last_sampleNo + 1; q <= sampleNo; q++) {
             temp_min += MINUTES_PER_SAMPLE;
             if (temp_min == 60) {
               temp_hr += 1;
@@ -1084,9 +1096,12 @@ void scheduler(void *pvParameters) {
                 max_val = fill_AvgWS + 0.2;
                 fill_AvgWS =
                     ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+
+                // Keep wind speed between 0.1 and 1.93 during gap fill
                 if (fill_AvgWS < 0.1)
                   fill_AvgWS = 0.1;
-                // Removed the artificial 2.2 cap
+                if (fill_AvgWS > 1.93)
+                  fill_AvgWS = 1.93;
               }
               snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
                        "%05.2f", fill_AvgWS);
@@ -1149,7 +1164,10 @@ void scheduler(void *pvParameters) {
                        "04.1f\r\n",
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                        fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
-                       fill_inst_wd, SIGNAL_STRENGTH_GAP_FILLED, bat_val);
+                       fill_inst_wd,
+                       (q == sampleNo) ? signal_lvl
+                                       : SIGNAL_STRENGTH_GAP_FILLED,
+                       bat_val);
 
               snprintf(ftpappend_text, sizeof(ftpappend_text),
                        "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%"
@@ -1157,7 +1175,9 @@ void scheduler(void *pvParameters) {
                        stnId, temp_year, temp_month, temp_day, temp_hr,
                        temp_min, fill_inst_temp, fill_inst_hum,
                        fill_avg_wind_speed, fill_inst_wd,
-                       SIGNAL_STRENGTH_GAP_FILLED, bat_val);
+                       (q == sampleNo) ? signal_lvl
+                                       : SIGNAL_STRENGTH_GAP_FILLED,
+                       bat_val);
 #endif
 
 // TWS-RF
@@ -1169,14 +1189,17 @@ void scheduler(void *pvParameters) {
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                        fill_cum_rf, fill_inst_temp, fill_inst_hum,
                        fill_avg_wind_speed, fill_inst_wd,
-                       SIGNAL_STRENGTH_GAP_FILLED, bat_val);
+                       (q == sampleNo) ? signal_lvl
+                                       : SIGNAL_STRENGTH_GAP_FILLED,
+                       bat_val);
 
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   fill_ftpcum_rf, fill_inst_temp, fill_inst_hum,
-                  fill_avg_wind_speed, fill_inst_wd, SIGNAL_STRENGTH_GAP_FILLED,
+                  fill_avg_wind_speed, fill_inst_wd,
+                  (q == sampleNo) ? signal_lvl : SIGNAL_STRENGTH_GAP_FILLED,
                   bat_val);
 #endif
             }
@@ -1374,7 +1397,13 @@ void scheduler(void *pvParameters) {
           //                                          len = strlen(append_text);
           //                                          append_text[len] = '\0';
 
-          file1.print(append_text);
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            file1.print(append_text);
+            xSemaphoreGive(fsMutex);
+          } else {
+            debugln("[SCHED] ❌ FS Mutex Timeout on 8:45 write.");
+            file1.print(append_text);
+          }
           if (sd_card_ok && sd1) {
             sd1.print(append_text);
           }
@@ -1499,7 +1528,12 @@ void scheduler(void *pvParameters) {
             //                                                    append_text[len]
             //                                                    = '\0';
 
-            file1.print(append_text);
+            if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+              file1.print(append_text);
+              xSemaphoreGive(fsMutex);
+            } else {
+              file1.print(append_text);
+            }
             if (sd_card_ok && sd1) {
               sd1.print(append_text);
             }
@@ -1556,15 +1590,24 @@ void scheduler(void *pvParameters) {
           //                                          len = strlen(append_text);
           //                                          append_text[len] = '\0';
 
-          file1.print(append_text);
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            file1.print(append_text);
+            xSemaphoreGive(fsMutex);
+          } else {
+            file1.print(append_text);
+          }
           if (sd_card_ok && sd1) {
             sd1.print(append_text);
           }
           // debugln(); // Removed extra debugln()
           debugln(append_text);
 
-          // Reset Daily Diagnostics at start of new rainfall day (8:45 AM)
-          if (sampleNo == 0) {
+          // Robust Rollover Detection (v5.81): Handles missed 8:45 AM slots
+          bool is_rollover_slot = (sampleNo == 0);
+          bool missed_rollover =
+              (sampleNo > 0 && sampleNo < 10 && last_processed_sample_idx > 80);
+
+          if (is_rollover_slot || missed_rollover) {
             // v5.49 Capture Snapshots for 09:45 AM report BEFORE resetting
             diag_pd_count_prev = diag_pd_count;
             diag_ndm_count_prev = diag_ndm_count;
@@ -1574,6 +1617,8 @@ void scheduler(void *pvParameters) {
             diag_sent_mask_prev[0] = diag_sent_mask_cur[0];
             diag_sent_mask_prev[1] = diag_sent_mask_cur[1];
             diag_sent_mask_prev[2] = diag_sent_mask_cur[2];
+
+            diag_http_success_count_prev = diag_http_success_count;
 
             // Now perform Resets for the New Day
             diag_reg_time_total = 0;
@@ -1586,6 +1631,7 @@ void scheduler(void *pvParameters) {
             diag_net_data_count = 0;
             diag_http_time_total = 0;
             diag_http_success_count = 0;
+            diag_daily_http_fails = 0;
             strcpy(diag_cdm_status, "OK");
             strcpy(diag_reg_fail_type, "NONE");
             strcpy(diag_http_fail_reason, "NONE");
@@ -1730,6 +1776,10 @@ void scheduler(void *pvParameters) {
             // Robust parsing using commas (append_text uses commas, not
             // semicolons) Fields: sampleNo(0), Date(1), Time(2), RF(3),
             // Temp(4), Hum(5), WS(6), WD(7)
+            last_sampleNo = atoi(content_buf);
+            debug("Last sample No stored (TWS-RF): ");
+            debugln(last_sampleNo);
+
             char *p = content_buf;
             for (int i = 0; i < 3 && p; i++)
               p = strchr(p + 1, ','); // Skip to RF (comma 3)
@@ -2321,8 +2371,6 @@ void scheduler(void *pvParameters) {
           sync_mode = eHttpStop;
         }
       } else {
-        debugln();
-        debugln("[SCHEDULER] Triggering HTTP Upload (eHttpBegin)...");
         debugln();
         // Trigger HTTP after manual task is done
         sync_mode = eHttpBegin;

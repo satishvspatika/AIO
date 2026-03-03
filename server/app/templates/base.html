@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Spatika Health{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    body {
+      background: #0c1220;
+      color: #e2e8f0;
+      font-family: 'Inter', system-ui, sans-serif;
+    }
+
+    .glass {
+      background: rgba(15, 23, 42, 0.90);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      backdrop-filter: blur(8px);
+      transition: all 0.4s ease;
+    }
+
+    /* Page & Filter Backgrounds */
+    body {
+      transition: background 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    body.page-dashboard {
+      background: #0c1220;
+    }
+
+    body.page-summary {
+      background: #0c1d1a;
+    }
+
+    body.page-ota {
+      background: #1d1a0c;
+    }
+
+    body.page-help {
+      background: #1a0c1d;
+    }
+
+    body.filter-alarm {
+      background: #2d0a0a !important;
+    }
+
+    body.filter-ota {
+      background: #2d260a !important;
+    }
+
+    body.filter-lowbat {
+      background: #2d180a !important;
+    }
+
+    .nav-active {
+      color: #60a5fa !important;
+      border-bottom: 2px solid #3b82f6;
+    }
+
+    /* Filter Themes */
+    body.filter-all {
+      background: #0c1220;
+    }
+
+    body.filter-alarm .glass {
+      background: rgba(30, 10, 10, 0.95);
+    }
+
+    body.filter-ota .glass {
+      background: rgba(30, 25, 10, 0.95);
+    }
+
+    body.filter-lowbat .glass {
+      background: rgba(30, 20, 10, 0.95);
+    }
+
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+    }
+
+    .badge-ok {
+      background: #064e3b;
+      color: #6ee7b7;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 0.70rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .badge-fail {
+      background: #7f1d1d;
+      color: #fca5a5;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 0.70rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .badge-ver {
+      background: #1e3a5f;
+      color: #93c5fd;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 0.70rem;
+      font-family: monospace;
+    }
+
+    .badge-ota {
+      background: #78350f;
+      color: #fcd34d;
+      padding: 2px 6px;
+      border-radius: 9999px;
+      font-size: 0.65rem;
+      font-weight: 700;
+      margin-left: 4px;
+    }
+
+    .badge-cmd {
+      background: #3b0764;
+      color: #d8b4fe;
+      padding: 2px 6px;
+      border-radius: 9999px;
+      font-size: 0.65rem;
+      font-weight: 700;
+    }
+
+    .btn-sm {
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.70rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: inline-block;
+      text-decoration: none;
+    }
+
+    .btn-red {
+      background: #7f1d1d;
+      color: #fca5a5;
+    }
+
+    .btn-red:hover {
+      background: #991b1b;
+    }
+
+    .btn-grn {
+      background: #14532d;
+      color: #6ee7b7;
+    }
+
+    .btn-grn:hover {
+      background: #166534;
+    }
+
+    .btn-blu {
+      background: #1e3a5f;
+      color: #93c5fd;
+    }
+
+    .btn-blu:hover {
+      background: #1d4ed8;
+    }
+
+    .btn-yel {
+      background: #78350f;
+      color: #fcd34d;
+    }
+
+    .btn-yel:hover {
+      background: #92400e;
+    }
+
+    .btn-pur {
+      background: #3b0764;
+      color: #d8b4fe;
+    }
+
+    .btn-pur:hover {
+      background: #4c1d95;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #0f172a;
+      z-index: 10;
+      white-space: nowrap;
+    }
+
+    tr:hover td {
+      background: rgba(51, 65, 85, 0.3);
+    }
+
+    .tbl-wrap {
+      border-radius: 12px;
+      margin-top: 10px;
+    }
+
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    .nav-link {
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding-bottom: 4px;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .nav-link.active {
+      color: #fff;
+      border-bottom: 2px solid currentColor;
+    }
+
+    .nav-link:not(.active) {
+      color: #94a3b8;
+    }
+
+    .nav-link:not(.active):hover {
+      color: #fff;
+    }
+
+    /* Used by toggleDropdown in templates */
+    .dropdown-content {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 100%;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      min-width: 160px;
+      z-index: 1000;
+      padding: 4px 0;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+    }
+
+    .dropdown-content.show {
+      display: block;
+    }
+
+    /* Used by top nav dropdown */
+    .dropdown {
+      position: relative;
+      display: inline-block;
+    }
+
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 110%;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      min-width: 200px;
+      z-index: 100;
+      padding: 4px 0;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+    }
+
+    .dropdown:hover .dropdown-menu {
+      display: block;
+    }
+
+    .dropdown-item {
+      display: block;
+      padding: 8px 14px;
+      font-size: 0.75rem;
+      color: #94a3b8;
+      white-space: nowrap;
+      text-decoration: none !important;
+    }
+
+    .dropdown-item:hover {
+      background: #334155;
+      color: #fff;
+    }
+
+    .dropdown-sep {
+      border-top: 1px solid #334155;
+      margin: 4px 0;
+    }
+
+    .map-container {
+      height: 340px;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #334155;
+      margin-bottom: 20px;
+    }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+
+<body>
+
+  <!-- Sticky Navigation -->
+  <nav
+    class="glass border-b border-slate-700/50 px-4 md:px-6 py-3 flex flex-col md:flex-row justify-between items-center sticky top-0 z-50 gap-3 md:gap-0">
+    <div class="flex flex-wrap items-center justify-center md:justify-start gap-4 md:space-x-6">
+      <a href="/dashboard" class="text-base font-black text-blue-400 tracking-tight">📡 SPATIKA</a>
+      <a href="/dashboard" class="nav-link {% if active == 'dashboard' %}nav-active{% endif %}">DASHBOARD</a>
+      <a href="/summary" class="nav-link {% if active == 'summary' %}nav-active{% endif %}">FLEET</a>
+      <a href="/ota" class="nav-link {% if active == 'ota' %}nav-active{% endif %}">OTA</a>
+      <a href="/help" class="nav-link {% if active == 'help' %}nav-active{% endif %}">HELP</a>
+    </div>
+    <div
+      class="flex items-center justify-center space-x-3 w-full md:w-auto border-t md:border-t-0 border-slate-800 md:pt-0 pt-3">
+      <!-- CSV Download Dropdown -->
+      <div class="dropdown">
+        <button class="btn-sm btn-blu">📥 Export ▾</button>
+        <div class="dropdown-menu">
+          <div class="px-4 py-2 text-[10px] text-slate-500 uppercase tracking-wider">Historical Fleet Reports</div>
+          <a href="/csv/summary" class="dropdown-item">📋 Latest Snapshot</a>
+          <a href="/csv/full_history" class="dropdown-item">📂 Full History</a>
+        </div>
+      </div>
+      {% if request.state.user %}
+      <div class="flex items-center space-x-3 text-[10px] md:text-xs">
+        <span class="text-slate-400">👤 <b>{{ request.state.user.username }}</b></span>
+        <a href="/logout"
+          class="text-red-400 hover:text-red-300 ml-2 border border-red-900/50 bg-red-900/30 px-2 py-1 rounded">Logout</a>
+      </div>
+      {% endif %}
+      <span class="hidden md:inline text-xs text-slate-600 pl-3 border-l border-slate-700" id="clock"></span>
+    </div>
+  </nav>
+
+  <main class="p-3 md:p-6">{% block content %}{% endblock %}</main>
+
+  <script>
+    function tick() {
+      const el = document.getElementById('clock');
+      if (el) el.textContent = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' IST';
+    }
+    tick();
+    setInterval(tick, 1000);
+  </script>
+  {% block extra_js %}{% endblock %}
+</body>
+
+</html>

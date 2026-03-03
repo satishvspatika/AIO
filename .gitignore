@@ -15,3 +15,21 @@ Thumbs.db
 # Keep credentials out of repo if any
 auth.h
 secrets.h
+
+# Python / Server junk
+__pycache__/
+*.py[cod]
+*$py.class
+auth_config.json
+*.db
+*.sqlite3
+.env
+.venv/
+env/
+venv/
+builds/*.bin
+builds/*.elf
+builds/*.map
+builds/*.txt
+!builds/v6.00/
+!builds/Golden/

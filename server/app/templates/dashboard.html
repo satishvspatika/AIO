@@ -1,0 +1,401 @@
+{% extends "base.html" %}
+{% block title %}Fleet Dashboard — Spatika Health{% endblock %}
+{% set active = 'dashboard' %}
+
+{% block content %}
+
+<!-- Summary Cards -->
+<div class="grid grid-cols-4 gap-4 mb-6">
+    <div onclick="applyFilter('all')"
+        class="card p-5 cursor-pointer hover:bg-slate-800 transition active-card border-blue-500/50" id="card-all">
+        <div class="text-3xl font-black text-blue-400">{{ total }}</div>
+        <div class="text-xs text-slate-400 uppercase tracking-wider mt-1">Total Stations</div>
+    </div>
+    <div onclick="applyFilter('alarm')" class="card p-5 cursor-pointer hover:bg-slate-800 transition" id="card-alarm">
+        <div class="text-3xl font-black text-red-400">{{ alarms }}</div>
+        <div class="text-xs text-slate-400 uppercase tracking-wider mt-1">⚠️ Alarms</div>
+    </div>
+    <div onclick="applyFilter('ota')" class="card p-5 cursor-pointer hover:bg-slate-800 transition" id="card-ota">
+        <div class="text-3xl font-black text-yellow-400">{{ ota_pending }}</div>
+        <div class="text-xs text-slate-400 uppercase tracking-wider mt-1">🚀 OTA Pending</div>
+    </div>
+    <div onclick="applyFilter('lowbat')" class="card p-5 cursor-pointer hover:bg-slate-800 transition" id="card-lowbat">
+        <div class="text-3xl font-black text-orange-400">{{ low_bat }}</div>
+        <div class="text-xs text-slate-400 uppercase tracking-wider mt-1">🔋 Low Battery</div>
+    </div>
+</div>
+
+<!-- Toolbar -->
+<div class="flex items-center justify-between mb-4">
+    <div class="flex items-center space-x-3">
+        <h2 class="text-xs font-bold text-slate-500 uppercase tracking-widest" id="table-title">
+            Fleet: All Stations
+        </h2>
+        <span id="filter-badge"
+            class="hidden px-2 py-0.5 rounded bg-blue-900/50 text-blue-300 text-[10px] uppercase font-bold border border-blue-700/50">Filtered</span>
+    </div>
+    <div class="flex space-x-2">
+        <button onclick="exportVisibleCSV()" class="btn-sm btn-pur">📥 Export Filtered CSV</button>
+        <button onclick="toggleMap()" class="btn-sm btn-blu" id="map-btn">🗺️ Show Map</button>
+        <a href="/csv/summary" class="btn-sm btn-grn">📊 Export All CSV</a>
+        {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') ==
+        'supervisor') %}
+        <button onclick="deleteSelectedStations()"
+            class="btn-sm bg-red-900/80 hover:bg-red-700 text-red-200 border border-red-600/50 shadow-lg hidden"
+            id="bulk-del-btn">🗑 Delete Selected</button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Map (hidden by default) -->
+<div id="map-wrap" class="map-container hidden">
+    <div id="map" style="height:100%;"></div>
+</div>
+
+<!-- Main Fleet Table -->
+<div class="card tbl-wrap">
+    <table class="w-full text-left text-xs">
+        <thead>
+            <tr class="text-slate-500 uppercase text-[10px] tracking-widest">
+                {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role')
+                == 'supervisor') %}
+                <th class="p-3 w-8"><input type="checkbox" onclick="toggleAllStations(this)"></th>
+                {% else %}
+                <th class="p-3 w-8"></th>
+                {% endif %}
+                <th class="p-3">Station</th>
+                <th class="p-3">Group</th>
+                <th class="p-3">Status</th>
+                <th class="p-3">Firmware</th>
+                <th class="p-3">Batt / Sol</th>
+                <th class="p-3 text-center">Tdy Sent/Stored</th>
+                <th class="p-3 text-center">Ydy Sent/Stored</th>
+                <th class="p-3 text-center">HTTP / Retry FTP/HTTP</th>
+                <th class="p-3">Reg Fails</th>
+                <th class="p-3">Last Seen</th>
+                {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role')
+                == 'supervisor') %}
+                <th class="p-3 text-right">Delete</th>
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-800">
+            {% for r in reports %}
+            <tr class="transition cursor-pointer row-item" data-stn="{{ r.stn_id }}"
+                data-status="{% if r.health_sts != 'OK' %}alarm{% else %}ok{% endif %}"
+                data-ota="{{ 'true' if r.ota_needed else 'false' }}"
+                data-lowbat="{{ 'true' if r.bat_v and r.bat_v < 3.6 else 'false' }}"
+                onclick="window.location='/station/{{ r.stn_id }}'">
+                <td class="p-3" onclick="event.stopPropagation()">
+                    {% if request.state.user and (request.state.user.role == 'supervisor' or
+                    request.state.user.get('role') == 'supervisor') %}
+                    <input type="checkbox" class="stn-checkbox" value="{{ r.stn_id }}" onchange="updateBulkDeleteBtn()">
+                    {% endif %}
+                </td>
+                <td class="p-3 font-bold text-blue-300">{{ r.stn_id }}</td>
+                <td class="p-3 text-slate-400 text-[10px] leading-tight">
+                    {{ r.fw_group.display_name if r.fw_group else (r.unit_type or '?')|truncate(15) }}
+                </td>
+                <td class="p-3">
+                    {% if r.health_sts == 'OK' %}
+                    <span class="badge-ok">✓ OK</span>
+                    {% else %}
+                    <span class="badge-fail" title="{{ r.health_sts }}">
+                        ✗ {{ (r.health_sts or 'FAIL')[:14] }}
+                    </span>
+                    {% endif %}
+                </td>
+                <td class="p-3">
+                    <span class="badge-ver">{{ r.ver or '?' }}</span>
+                    {% if r.is_exempt %}
+                    <span class="text-[10px] text-orange-500 ml-1" title="OTA Disabled (Locked)">🔒</span>
+                    {% elif r.ota_needed %}
+                    <span class="badge-ota">OTA↑</span>
+                    {% endif %}
+                    {% if r.ota_fails and r.ota_fails > 0 %}
+                    <span class="text-[10px] bg-red-900/40 text-red-400 px-1 rounded ml-1"
+                        title="Last Fail: {{ r.ota_fail_reason }}">⚠ {{ r.ota_fails }}</span>
+                    {% endif %}
+                </td>
+                <td class="p-3">
+                    <span
+                        class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}">
+                        {{ '%.2f'|format(r.bat_v or 0) }}V
+                    </span>
+                    <span class="text-slate-500"> / {{ '%.1f'|format(r.sol_v or 0) }}V</span>
+                </td>
+                <td class="p-3 font-mono text-center text-slate-300">
+                    {{ r.net_cnt or 0 }} / {{ r.cur_stored or 0 }}
+                </td>
+                <td class="p-3 font-mono text-center text-slate-300">
+                    {{ r.net_cnt_prev or 0 }} / {{ r.prev_stored or 0 }}
+                </td>
+                <td class="p-3 font-mono text-center text-blue-300">
+                    {% set http = r.http_suc_cnt or 0 %}
+                    {% set ftp = (r.net_cnt or 0) - http %}
+                    {{ http }} / {{ ftp if ftp > 0 else 0 }}
+                </td>
+                <td
+                    class="p-3 {% if r.reg_fails and r.reg_fails > 3 %}text-red-400 font-bold{% else %}text-slate-400{% endif %}">
+                    {{ r.reg_fails or 0 }}
+                </td>
+                <td class="p-3 text-slate-500 text-[11px]" title="{{ r.reported_at }}">
+                    {{ r.time_ago }}
+                </td>
+                {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role')
+                == 'supervisor') %}
+                <td class="p-3 text-right" onclick="event.stopPropagation()">
+                    <a href="/delete/{{ r.stn_id }}"
+                        class="btn-sm text-slate-600 hover:text-red-500 transition hover:bg-red-900/30 px-2 py-1"
+                        title="Delete Station"
+                        onclick="return confirm('WARNING: Permanently destroy ALL records and clear the command queue for {{ r.stn_id }}?')">
+                        🗑
+                    </a>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<!-- Add an explicit check to confirm script is running -->
+<div id="js-debug-indicator"
+    style="position:fixed; bottom:10px; right:10px; background:rgba(0,0,0,0.8); color:#00ff00; padding:4px 8px; border-radius:4px; font-size:10px; z-index:10000; display:none;">
+    ✓ Dashboard Script Active
+</div>
+
+<!-- Data for Map (Safely passed via JSON) -->
+<script id="map-data-json" type="application/json">
+[
+    {% for r in reports if r.gps and ',' in r.gps %}
+    { 
+        "id": "{{ r.stn_id }}", 
+        "gps": "{{ r.gps }}", 
+        "ok": {{ 'true' if r.health_sts == 'OK' else 'false' }}, 
+        "ver": "{{ r.ver or '' }}" 
+    }{{ "," if not loop.last }}
+    {% endfor %}
+]
+</script>
+
+<script>
+    // 1. Force Global Accessibility for Filters
+    window.applyFilter = function (type) {
+        console.log("!!! Global Filter Called:", type);
+        // alert("Filter Clicked: " + type); // Uncomment for extreme debugging
+
+        try {
+            const body = document.body;
+            body.classList.remove('filter-all', 'filter-alarm', 'filter-ota', 'filter-lowbat');
+            body.classList.add('filter-' + type);
+
+            // Highlight cards - target the summary cards by ID or class to be safe
+            document.querySelectorAll('#card-all, #card-alarm, #card-ota, #card-lowbat').forEach(c => {
+                c.classList.remove('active-card', 'ring-4', 'ring-blue-500/50', 'border-white');
+            });
+
+            const card = document.getElementById('card-' + type);
+            if (card) {
+                card.classList.add('active-card', 'ring-4', 'ring-blue-500/50', 'border-white');
+            }
+
+            // Filter table rows
+            const rows = document.querySelectorAll('.row-item');
+            let count = 0;
+            rows.forEach(row => {
+                let show = false;
+                if (type === 'all') show = true;
+                else if (type === 'alarm') show = (row.dataset.status === 'alarm');
+                else if (type === 'ota') show = (row.dataset.ota === 'true');
+                else if (type === 'lowbat') show = (row.dataset.lowbat === 'true');
+
+                row.style.display = show ? '' : 'none';
+                if (show) count++;
+            });
+
+            // Update Title
+            const title = document.getElementById('table-title');
+            if (title) {
+                const labels = {
+                    'all': 'ALL STATIONS',
+                    'alarm': 'ALARM STATIONS',
+                    'ota': 'OTA PENDING',
+                    'lowbat': 'LOW BATTERY'
+                };
+                title.innerHTML = `Fleet: ${labels[type]} <span class="bg-blue-500/20 text-blue-400 px-2 rounded ml-2">${count}</span>`;
+            }
+
+            // Update Filter Badge
+            const badge = document.getElementById('filter-badge');
+            if (badge) {
+                if (type === 'all') badge.classList.add('hidden');
+                else badge.classList.remove('hidden');
+            }
+        } catch (e) {
+            console.error("Filter Error:", e);
+        }
+    };
+
+    // 2. Map & Utils
+    window.mapInit = false;
+    window.toggleMap = function () {
+        const wrap = document.getElementById('map-wrap');
+        const btn = document.getElementById('map-btn');
+        if (!wrap) return;
+
+        if (wrap.classList.contains('hidden')) {
+            wrap.classList.remove('hidden');
+            btn.textContent = '🗺️ Hide Map';
+            if (!window.mapInit) {
+                window.mapInit = true;
+                const map = L.map('map').setView([20.5937, 78.9629], 5);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+
+                // Load station data from the JSON script tag
+                try {
+                    const stations = JSON.parse(document.getElementById('map-data-json').textContent);
+                    stations.forEach(s => {
+                        const parts = s.gps.split(',');
+                        if (parts.length === 2) {
+                            const lat = parseFloat(parts[0]), lon = parseFloat(parts[1]);
+                            if (!isNaN(lat) && !isNaN(lon) && lat !== 0) {
+                                const color = s.ok ? '#22c55e' : '#ef4444';
+                                const icon = L.divIcon({
+                                    className: '',
+                                    html: `<div style="width:12px;height:12px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.5);"></div>`
+                                });
+                                L.marker([lat, lon], { icon }).addTo(map)
+                                    .bindPopup(`<b>Station: ${s.id}</b><br>${s.ok ? '✅ OK' : '❌ ALARM'}<br>Ver: ${s.ver}`);
+                            }
+                        }
+                    });
+                } catch (err) {
+                    console.error("Map Data Error:", err);
+                }
+            }
+        } else {
+            wrap.classList.add('hidden');
+            btn.textContent = '🗺️ Show Map';
+        }
+    };
+
+    window.exportVisibleCSV = function () {
+        console.log("Exporting visible rows...");
+        const rows = Array.from(document.querySelectorAll('.row-item')).filter(r => r.style.display !== 'none');
+        if (rows.length === 0) { alert('No filtered data to export.'); return; }
+
+        let csv = 'Station,Group,Status,Firmware,Battery_V,Solar_V,Today_Packets,Yesterday_Packets,RegFails,LastSeen\n';
+        rows.forEach(r => {
+            try {
+                const cells = r.cells;
+                const data = [
+                    cells[1].innerText.trim(), // Station
+                    cells[2].innerText.trim(), // Group
+                    cells[3].innerText.replace('✓', '').replace('✗', '').trim(), // Status
+                    cells[4].innerText.replace('OTA↑', '').trim(), // Firmware
+                    (cells[5].innerText.split('/')[0] || "").replace('V', '').trim(), // Batt
+                    (cells[5].innerText.split('/')[1] || "").replace('V', '').trim(), // Solar
+                    (cells[6].innerText.split('/')[0] || "").trim(), // Today
+                    (cells[6].innerText.split('/')[1] || "").trim(), // Yesterday
+                    cells[7].innerText.trim(), // Reg Fails
+                    cells[8].innerText.trim()  // Last Seen
+                ];
+                // Escape for CSV (quotes around fields, escape existing quotes)
+                const cleanData = data.map(val => `"${String(val).replace(/"/g, '""')}"`);
+                csv += cleanData.join(',') + '\n';
+            } catch (err) {
+                console.warn("Row Export Error:", err);
+            }
+        });
+
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `fleet_filtered_${new Date().toISOString().split('T')[0]}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    // 3. Page Initialization
+    document.addEventListener('DOMContentLoaded', () => {
+        console.log("Dashboard Script Active - v3.1");
+        const dbg = document.getElementById('js-debug-indicator');
+        if (dbg) dbg.style.display = 'block';
+
+        // Set initial active state for Total Stations
+        const firstCard = document.getElementById('card-all');
+        if (firstCard) firstCard.classList.add('active-card', 'ring-4', 'ring-blue-500/50');
+    });
+
+    // 4. Bulk Delete Logic
+    window.toggleAllStations = function (source) {
+        const checkboxes = document.querySelectorAll('.stn-checkbox');
+        checkboxes.forEach(cb => {
+            const row = cb.closest('tr');
+            if (row.style.display !== 'none') {
+                cb.checked = source.checked;
+            }
+        });
+        updateBulkDeleteBtn();
+    };
+
+    window.updateBulkDeleteBtn = function () {
+        const btn = document.getElementById('bulk-del-btn');
+        if (!btn) return;
+        const anyChecked = document.querySelectorAll('.stn-checkbox:checked').length > 0;
+        if (anyChecked) {
+            btn.classList.remove('hidden');
+        } else {
+            btn.classList.add('hidden');
+        }
+    };
+
+    window.deleteSelectedStations = function () {
+        const checkboxes = document.querySelectorAll('.stn-checkbox:checked');
+        const stn_ids = Array.from(checkboxes).map(cb => cb.value);
+        if (stn_ids.length === 0) return;
+        if (!confirm(`WARNING: Permanently delete ${stn_ids.length} selected station(s)? This cannot be undone.`)) return;
+
+        fetch('/delete/bulk-stations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stn_ids: stn_ids })
+        })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    window.location.reload();
+                } else {
+                    alert('Error deleting stations');
+                }
+            })
+            .catch(err => alert("Failed to communicate with server."));
+    };
+</script>
+
+<style>
+    .active-card {
+        background: #0f172a !important;
+        border-color: #3b82f6 !important;
+        transform: translateY(-4px) scale(1.02);
+        box-shadow: 0 10px 30px -5px rgba(59, 130, 246, 0.4);
+        z-index: 50;
+    }
+
+    .card {
+        position: relative;
+        overflow: visible;
+    }
+
+    .row-item {
+        transition: all 0.2s;
+    }
+</style>
+{% endblock %}

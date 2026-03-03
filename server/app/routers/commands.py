@@ -1,0 +1,110 @@
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import RedirectResponse
+from sqlalchemy.orm import Session
+from app.database import SessionLocal
+from app.models import CommandQueue, StationSettings, HealthReport
+from pydantic import BaseModel
+from typing import List
+
+router = APIRouter()
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@router.get("/cmd/{stn_id}/{command}")
+def queue_command(
+    stn_id:  str,
+    command: str,
+    param:   str = "",
+    db:      Session = Depends(get_db)
+):
+    """
+    Queue a remote command for a station.
+    It will be piggybacked on the station's next health check-in response.
+
+    Supported commands:
+        REBOOT       — Powers off GPRS then calls ESP.restart()
+        FTP_BACKLOG  — Forces an immediate sync of unsent data files (unsent.txt)
+        FTP_DAILY    — Forces upload of a specific daily file. 'param' must be YYYYMMDD
+        OTA_CHECK    — (auto-set by OTA router)
+    """
+    db.add(CommandQueue(stn_id=stn_id, cmd=command, cmd_param=param))
+    db.commit()
+    return RedirectResponse(url=f"/station/{stn_id}")
+
+
+@router.get("/clear-queue/{stn_id}")
+def clear_queue(stn_id: str, db: Session = Depends(get_db)):
+    """Deletes all pending commands (like queued OTAs) for a station."""
+    db.query(CommandQueue).filter_by(stn_id=stn_id, executed_at=None).delete()
+    db.commit()
+    return RedirectResponse(url=f"/station/{stn_id}")
+
+@router.get("/clear-ota-queue/{stn_id}")
+def clear_ota_queue(stn_id: str, db: Session = Depends(get_db)):
+    """Deletes ONLY pending OTA_CHECK commands for a station."""
+    db.query(CommandQueue).filter_by(stn_id=stn_id, cmd="OTA_CHECK", executed_at=None).delete()
+    db.commit()
+    return RedirectResponse(url=f"/station/{stn_id}")
+
+
+@router.get("/toggle-ota-lock/{stn_id}")
+def toggle_ota_lock(stn_id: str, db: Session = Depends(get_db)):
+    from fastapi.responses import RedirectResponse
+    setting = db.query(StationSettings).filter_by(stn_id=stn_id).first()
+    if not setting:
+        setting = StationSettings(stn_id=stn_id, ota_exempt=1)
+        db.add(setting)
+    else:
+        setting.ota_exempt = 1 if setting.ota_exempt == 0 else 0
+    
+    # If we are locking it, clear any existing pending OTA_CHECK in the queue just in case
+    if setting.ota_exempt == 1:
+        db.query(CommandQueue).filter_by(stn_id=stn_id, cmd="OTA_CHECK", executed_at=None).delete()
+        
+    db.commit()
+    return RedirectResponse(url=f"/station/{stn_id}")
+
+
+@router.get("/delete/{stn_id}")
+def delete_station(stn_id: str, db: Session = Depends(get_db)):
+    from app.models import HealthReport
+    db.query(HealthReport).filter_by(stn_id=stn_id).delete()
+    db.query(CommandQueue).filter_by(stn_id=stn_id).delete()
+    db.commit()
+    return RedirectResponse(url="/dashboard")
+
+@router.get("/delete/record/{report_id}")
+def delete_record(report_id: int, db: Session = Depends(get_db)):
+    record = db.query(HealthReport).filter_by(id=report_id).first()
+    if record:
+        stn_id = record.stn_id
+        db.delete(record)
+        db.commit()
+        return RedirectResponse(url=f"/station/{stn_id}")
+    return RedirectResponse(url="/dashboard")
+
+class BulkDeleteRecords(BaseModel):
+    ids: List[int]
+
+class BulkDeleteStations(BaseModel):
+    stn_ids: List[str]
+
+@router.post("/delete/bulk-records")
+def delete_bulk_records(payload: BulkDeleteRecords, db: Session = Depends(get_db)):
+    db.query(HealthReport).filter(HealthReport.id.in_(payload.ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"status": "ok", "deleted": len(payload.ids)}
+
+@router.post("/delete/bulk-stations")
+def delete_bulk_stations(payload: BulkDeleteStations, db: Session = Depends(get_db)):
+    db.query(HealthReport).filter(HealthReport.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
+    db.query(CommandQueue).filter(CommandQueue.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"status": "ok", "deleted": len(payload.stn_ids)}

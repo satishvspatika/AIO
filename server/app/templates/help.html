@@ -1,0 +1,361 @@
+{% extends "base.html" %}
+{% block title %}Help & Legend — Spatika Health{% endblock %}
+{% set active = 'help' %}
+
+{% block content %}
+
+<div class="max-w-4xl mx-auto">
+
+    <h1 class="text-2xl font-black text-purple-400 mb-1">Help & Legend</h1>
+    <p class="text-sm text-slate-500 mb-8">Complete guide to the Spatika Health Monitoring System — how to read every
+        column, use every feature, and traverse the ecosystem.</p>
+
+    <!-- ── NAVIGATION ─────────────────────────────────────────── -->
+    <div class="card p-5 mb-6">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🗺️ How to Navigate This System</h2>
+        <div class="grid grid-cols-2 gap-4">
+            <div class="bg-slate-900 rounded-lg p-4">
+                <div class="text-blue-400 font-bold mb-1">📡 DASHBOARD</div>
+                <p class="text-xs text-slate-400">Your main daily-use page. Shows <strong class="text-white">one row per
+                        station</strong> (the latest check-in only). Gives you a quick fleet-wide health snapshot. Click
+                    any station row to see its full history.</p>
+            </div>
+            <div class="bg-slate-900 rounded-lg p-4">
+                <div class="text-green-400 font-bold mb-1">📊 FLEET SUMMARY</div>
+                <p class="text-xs text-slate-400">Group-level view. Shows each firmware group (KSNDMC-TWS, BIHAR-TRG,
+                    etc.) as a card with health stats, firmware conversion progress, and all stations in that group.</p>
+            </div>
+            <div class="bg-slate-900 rounded-lg p-4">
+                <div class="text-yellow-400 font-bold mb-1">🚀 OTA MANAGER</div>
+                <p class="text-xs text-slate-400">Deploy new firmware to a group. Set the target version, upload the
+                    <code class="text-yellow-300">.bin</code> file, and click DEPLOY. All stations in that group will
+                    receive the update on their next check-in.
+                </p>
+            </div>
+            <div class="bg-slate-900 rounded-lg p-4">
+                <div class="text-purple-400 font-bold mb-1">🟣 STATION DETAIL PAGE</div>
+                <p class="text-xs text-slate-400">Click any station row in Dashboard or Fleet Summary to see its full
+                    history (last 100 reports), send commands, upload a custom firmware only for that station, and
+                    download its history as CSV.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── DASHBOARD COLUMNS ──────────────────────────────────── -->
+    <div class="card p-5 mb-6">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">📋 Dashboard Column Definitions</h2>
+        <table class="w-full text-xs">
+            <thead>
+                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
+                    <th class="pb-2 pr-6 text-left">Column</th>
+                    <th class="pb-2 text-left">What It Means</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-blue-300">Station</td>
+                    <td class="py-2 text-slate-400">Unique Station ID set in the ESP32 NVS memory (e.g. <code
+                            class="text-white">WS0034</code>). Click to open full history.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-green-300">Group</td>
+                    <td class="py-2 text-slate-400">The firmware deployment group this station belongs to, derived from
+                        its Unit Type + System Mode.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white">Status</td>
+                    <td class="py-2 text-slate-400"><span class="badge-ok">✓ OK</span> = All subsystems healthy. <span
+                            class="badge-fail">✗ PD_CDM_NDM</span> = Partially Down + CDM fault + No Data Mode active.
+                        Hover for full status code.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white">Firmware</td>
+                    <td class="py-2 text-slate-400">Current firmware version running on the device. <span
+                            class="badge-ota">OTA↑</span> badge = device version differs from group target — will update
+                        on next check-in.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white">Data Today / Yest</td>
+                    <td class="py-2 text-slate-400"><strong class="text-white">Today</strong> = number of
+                        15-min data records successfully generated since the 08:45 AM rollover. <strong
+                            class="text-white">Yest</strong> = final count for the previous closed meteorological day.
+                        <br>
+                        <span class="text-[10px] text-blue-300">Note: "First" count inside station detail refers to the
+                            successful server-delivery count.</span>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white">Reg Fails</td>
+                    <td class="py-2 text-slate-400">Number of times the modem failed to register on the cellular network
+                        in the last session. <span class="text-red-400">Red if &gt;3</span> = connectivity problem.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white">Last Seen</td>
+                    <td class="py-2 text-slate-400">Relative time since the last health check-in (e.g. "5m ago"). Hover
+                        for the exact IST timestamp. Stations check in every 15 minutes by default.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ── COMMAND BUTTONS ────────────────────────────────────── -->
+    <div class="card p-5 mb-6">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">⚡ Command Buttons Explained</h2>
+        <p class="text-xs text-slate-500 mb-4">Commands are queued on the server and delivered to the device on its
+            <strong class="text-white">next health check-in</strong>. The device checks in every 15 minutes, or
+            immediately when you press SELECT on the keypad. Commands are never pushed — they wait to be pulled.
+        </p>
+        <div class="space-y-4">
+            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
+                <span class="btn-sm btn-red mt-0.5">↺ REBOOT</span>
+                <div>
+                    <div class="text-sm font-bold text-white mb-1">Remote Reboot</div>
+                    <p class="text-xs text-slate-400">Queues a <code class="text-red-300">REBOOT</code> command. On next
+                        check-in, the device receives this, powers off the GPRS modem (GPIO 26 → LOW), then calls <code
+                            class="text-red-300">ESP.restart()</code>. Use this when a station appears stuck or is
+                        showing repeated errors.</p>
+                </div>
+            </div>
+            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
+                <span class="btn-sm btn-grn mt-0.5">↑ BACKLOG</span>
+                <div>
+                    <div class="text-sm font-bold text-white mb-1">Force Backlog Sync (FTP_BACKLOG)</div>
+                    <p class="text-xs text-slate-400">Immediately triggers upload of the <code
+                            class="text-green-300">unsent.txt</code> file. Use this if a station was offline and you
+                        want to recover missing 15-min data records now.</p>
+                </div>
+            </div>
+            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
+                <span class="btn-sm btn-pur mt-0.5">↑ DAILY</span>
+                <div>
+                    <div class="text-sm font-bold text-white mb-1">Force Daily File (FTP_DAILY)</div>
+                    <p class="text-xs text-slate-400">Prompts for a date (<strong class="text-white">YYYYMMDD</strong>)
+                        and triggers upload of that specific daily log file (e.g. <code
+                            class="text-purple-300">dailyftp_20260228.txt</code>). Ideal for recovering the
+                        burst data for a specific past day.</p>
+                </div>
+            </div>
+            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
+                <span class="btn-sm btn-yel mt-0.5">🚀 Individual OTA</span>
+                <div>
+                    <div class="text-sm font-bold text-white mb-1">Deploy Custom Firmware to ONE Station</div>
+                    <p class="text-xs text-slate-400">Available on the Station Detail page. Upload a <code
+                            class="text-yellow-300">.bin</code> file targeted at that specific station only. The OTA
+                        command is queued immediately. On next check-in, only this station will update — all other
+                        stations in the group are unaffected. Use for testing a new firmware on one device before
+                        rolling out to a whole group.</p>
+                </div>
+            </div>
+            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
+                <span class="btn-sm btn-red mt-0.5">🗑 DELETE</span>
+                <div>
+                    <div class="text-sm font-bold text-white mb-1">Delete Station Records</div>
+                    <p class="text-xs text-slate-400">Permanently deletes <strong class="text-red-300">ALL historical
+                            records</strong> for that station from the database. The station will appear again on next
+                        check-in. Use this to clean up test stations or decommissioned units.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── OTA WORKFLOW ───────────────────────────────────────── -->
+    <div class="card p-5 mb-6">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🚀 How OTA Update Works (Step by Step)
+        </h2>
+        <div class="space-y-3">
+            <div class="flex items-start space-x-3">
+                <span
+                    class="bg-blue-900 text-blue-300 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">1</span>
+                <p class="text-xs text-slate-400">Go to <strong class="text-white">OTA Manager</strong>. Find the
+                    firmware group you want to update (e.g. SPATIKA-ADDON).</p>
+            </div>
+            <div class="flex items-start space-x-3">
+                <span
+                    class="bg-blue-900 text-blue-300 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">2</span>
+                <p class="text-xs text-slate-400">Enter the new version number (e.g. <code
+                        class="text-white">5.80</code>), choose the compiled <code class="text-white">.bin</code> file,
+                    and click <strong class="text-green-300">DEPLOY</strong>.</p>
+            </div>
+            <div class="flex items-start space-x-3">
+                <span
+                    class="bg-blue-900 text-blue-300 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
+                <p class="text-xs text-slate-400">The server now has <code class="text-white">target = 5.80</code> for
+                    this group. The <code class="text-white">.bin</code> is stored in <code
+                        class="text-white">/app/builds/FW_S1_SPATIKA_GEN.bin</code></p>
+            </div>
+            <div class="flex items-start space-x-3">
+                <span
+                    class="bg-blue-900 text-blue-300 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">4</span>
+                <p class="text-xs text-slate-400">When a station checks in (every 15 min), the server compares its
+                    version to the target. If different → response includes <code
+                        class="text-yellow-300">"cmd":"OTA_CHECK","cmd_param":"FW_S1_SPATIKA_GEN.bin"</code></p>
+            </div>
+            <div class="flex items-start space-x-3">
+                <span
+                    class="bg-blue-900 text-blue-300 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">5</span>
+                <p class="text-xs text-slate-400">The ESP32 downloads the file, flashes it, and reboots. The next
+                    check-in will show the new firmware version and the <span class="badge-ota">OTA↑</span> badge will
+                    disappear.</p>
+            </div>
+            <div class="flex items-start space-x-3">
+                <span
+                    class="bg-blue-900 text-blue-300 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">💡</span>
+                <p class="text-xs text-slate-400"><strong class="text-white">Rollback</strong>: Set the target version
+                    to an older number (e.g. from <code class="text-white">5.80</code> back to <code
+                        class="text-white">5.78</code>) and upload the older <code class="text-white">.bin</code>. Same
+                    process, works in reverse.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── STATUS CODE LEGEND ─────────────────────────────────── -->
+    <div class="card p-5 mb-6">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🔍 Health Status Code Legend</h2>
+        <p class="text-xs text-slate-500 mb-3">The Health Status field is a combination of flags separated by
+            underscores. Each part is decoded below.</p>
+        <table class="w-full text-xs">
+            <thead>
+                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
+                    <th class="pb-2 pr-6 text-left">Code</th>
+                    <th class="pb-2 text-left">Meaning</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+                <tr>
+                    <td class="py-2 pr-6"><span class="badge-ok">OK</span></td>
+                    <td class="py-2 text-slate-400">All subsystems nominal. No faults detected.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 text-red-300 font-mono">PD</td>
+                    <td class="py-2 text-slate-400"><strong class="text-white">Partially Down</strong> — Some data slots
+                        were not recorded or uploaded in a session.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 text-red-300 font-mono">CDM</td>
+                    <td class="py-2 text-slate-400"><strong class="text-white">Continuous Data Missing</strong> —
+                        Multiple consecutive recording slots failed. Station may need a field visit.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 text-red-300 font-mono">NDM</td>
+                    <td class="py-2 text-slate-400"><strong class="text-white">No Data Mode</strong> — Device has not
+                        successfully uploaded data for an extended period.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 text-red-300 font-mono">BFAIL</td>
+                    <td class="py-2 text-slate-400"><strong class="text-white">Battery FAIL</strong> — Battery voltage
+                        dangerously low. Immediate attention required.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 text-green-300 font-mono">BOK</td>
+                    <td class="py-2 text-slate-400"><strong class="text-white">Battery OK</strong> — Battery voltage
+                        within acceptable range.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ── COMMANDS & QUEUE ───────────────────────────────────── -->
+    <div class="card p-5 mb-6">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">❌ Clearing the Command Queue</h2>
+        <div class="grid grid-cols-2 gap-4">
+            <div class="bg-slate-900 rounded-lg p-4">
+                <div class="text-yellow-400 font-bold mb-1">Clear OTA Queue</div>
+                <p class="text-xs text-slate-400">Only removes <strong class="text-white">pending OTA update</strong>
+                    commands. Use this if you want to cancel a firmware update but keep other queued commands like
+                    REBOOT or
+                    BACKLOG sync.</p>
+            </div>
+            <div class="bg-slate-900 rounded-lg p-4">
+                <div class="text-red-400 font-bold mb-1">Clear ALL Queue</div>
+                <p class="text-xs text-slate-400">Wipes <strong class="text-white">every single pending command</strong>
+                    for the station. Resets the device to a clean slate with zero instructions waiting on its next
+                    check-in.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── CSV DOWNLOADS ──────────────────────────────────────── -->
+    <div class="card p-5 mb-6">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">📥 CSV Download Options</h2>
+        <table class="w-full text-xs">
+            <thead>
+                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
+                    <th class="pb-2 pr-6 text-left">Download</th>
+                    <th class="pb-2 pr-6 text-left">Where to Find</th>
+                    <th class="pb-2 text-left">What It Contains</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white">Summary CSV (Export CSV)</td>
+                    <td class="py-2 pr-6 text-slate-500">Nav bar → Export CSV → Summary CSV</td>
+                    <td class="py-2 text-slate-400">One row per station (the <strong class="text-white">latest
+                            snapshot</strong> only). All 33 fields. Perfect for current fleet status reports.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white">Full History CSV (Export All)</td>
+                    <td class="py-2 pr-6 text-slate-500">Nav bar → Export CSV → Export All CSV</td>
+                    <td class="py-2 text-slate-400">Every single health report ever received by the server for all
+                        stations.
+                        Enormous file — use for deep auditing or Excel analysis of trends.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white">Station History CSV</td>
+                    <td class="py-2 pr-6 text-slate-500">Click any station → Download History button</td>
+                    <td class="py-2 text-slate-400">All reports for <strong class="text-white">one particular
+                            station</strong>. Use for debugging a single troublesome unit.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ── FIELD GUIDE ────────────────────────────────────────── -->
+    <div class="card p-5 mb-6">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🔧 Field Engineer Quick Guide</h2>
+        <div class="grid grid-cols-2 gap-4">
+            <div class="bg-slate-900 rounded-lg p-4">
+                <div class="text-red-400 font-bold text-xs mb-2">Station shows CDM or NDM status</div>
+                <ol class="text-xs text-slate-400 space-y-1 list-decimal list-inside">
+                    <li>Click station → check last 5 health reports</li>
+                    <li>Look at Signal strength trend</li>
+                    <li>If signal OK → check SD card status</li>
+                    <li>Send FTP_NOW command to force a data push</li>
+                    <li>If no improvement → queue REBOOT</li>
+                    <li>If still failing → field visit required</li>
+                </ol>
+            </div>
+            <div class="bg-slate-900 rounded-lg p-4">
+                <div class="text-orange-400 font-bold text-xs mb-2">Station shows Low Battery</div>
+                <ol class="text-xs text-slate-400 space-y-1 list-decimal list-inside">
+                    <li>Check Solar V — should be &gt;12V in daylight</li>
+                    <li>If Solar V is 0 → panel or cable issue</li>
+                    <li>If Solar V OK but Bat low → charge controller fault</li>
+                    <li>Do NOT reboot — may not wake up</li>
+                    <li>Schedule urgent field visit</li>
+                </ol>
+            </div>
+            <div class="bg-slate-900 rounded-lg p-4">
+                <div class="text-yellow-400 font-bold text-xs mb-2">Station has OTA↑ badge</div>
+                <ol class="text-xs text-slate-400 space-y-1 list-decimal list-inside">
+                    <li>OTA will happen automatically on next check-in</li>
+                    <li>No action needed — wait 15 minutes</li>
+                    <li>After update, badge disappears</li>
+                    <li>Check health status after update</li>
+                </ol>
+            </div>
+            <div class="bg-slate-900 rounded-lg p-4">
+                <div class="text-blue-400 font-bold text-xs mb-2">Station hasn't been seen for &gt;1 hour</div>
+                <ol class="text-xs text-slate-400 space-y-1 list-decimal list-inside">
+                    <li>Check Net Count today vs. yesterday</li>
+                    <li>If Net Cnt = 0 today → no data at all</li>
+                    <li>Check Reg Fails — high count = SIM issue</li>
+                    <li>Check carrier in CSV export</li>
+                    <li>If no cellular coverage → field visit</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+</div><!-- end max-w -->
+{% endblock %}

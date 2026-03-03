@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}Fleet Summary — Spatika Health{% endblock %}
+{% set active = 'summary' %}
+
+{% block content %}
+
+<div class="mb-5">
+    <h2 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Fleet Summary — By Firmware Group</h2>
+    <p class="text-xs text-slate-600">Each card represents one deployment group. Click a station name to view its full
+        history.</p>
+</div>
+
+<div class="mb-6">
+    <div class="flex border-b border-slate-700 overflow-x-auto no-scrollbar">
+        {% for g in groups %}
+        <button onclick="showTab('tab-{{ g.fw.category_id }}')" id="btn-tab-{{ g.fw.category_id }}"
+            class="fleet-tab px-6 py-3 text-xs font-bold uppercase tracking-widest border-b-2 transition-all whitespace-nowrap
+                       {% if loop.first %}border-green-500 text-green-400 bg-slate-800/50{% else %}border-transparent text-slate-500 hover:text-slate-300{% endif %}">
+            {{ g.fw.display_name or g.fw.name }}
+        </button>
+        {% endfor %}
+    </div>
+</div>
+
+{% for g in groups %}
+{% set fw = g.fw %}
+{% set pct = g.pct %}
+
+<div id="tab-{{ fw.category_id }}" class="fleet-content {% if not loop.first %}hidden{% endif %}">
+    <div class="card p-6 mb-6">
+        <!-- Group Header Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                <div class="text-[10px] text-slate-500 uppercase font-black mb-1">Status</div>
+                <div class="text-xl font-black text-green-400">{{ g.converted }} / {{ g.total_seen }}</div>
+                <div class="text-[10px] text-slate-400">Converted to {{ fw.current_ver }}</div>
+            </div>
+            <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                <div class="text-[10px] text-slate-500 uppercase font-black mb-1">Health</div>
+                <div class="text-xl font-black text-blue-400">{{ g.ok_count }} OK</div>
+                <div class="text-[10px] text-slate-400">{{ g.fail_count }} Alarms Active</div>
+            </div>
+            <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                <div class="text-[10px] text-slate-500 uppercase font-black mb-1">Battery / Solar</div>
+                <div class="text-xl font-black text-orange-400">{{ g.low_bat }} Low</div>
+                <div class="text-[10px] text-slate-400">Bat threshold: 3.6V</div>
+            </div>
+            <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50 text-right">
+                <div class="text-[10px] text-slate-500 uppercase font-black mb-1">Group Progress</div>
+                <div class="text-2xl font-black text-slate-200">{{ pct }}%</div>
+                <div class="w-full bg-slate-700 h-1.5 rounded-full mt-2">
+                    <div class="h-1.5 rounded-full bg-green-500" style="width: {{ pct }}%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Group Sub-Table -->
+        <div class="tbl-wrap">
+            <table class="w-full text-left text-xs">
+                <thead>
+                    <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-800">
+                        <th class="p-3">Station</th>
+                        <th class="p-3">Status</th>
+                        <th class="p-3">Firmware</th>
+                        <th class="p-3">Batt / Sol</th>
+                        <th class="p-3 text-center">Data T/Y</th>
+                        <th class="p-3">Last Seen</th>
+                        <th class="p-3 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-800">
+                    {% for r in g.stations %}
+                    <tr class="hover:bg-slate-800/30 transition cursor-pointer"
+                        onclick="window.location='/station/{{ r.stn_id }}'">
+                        <td class="p-3 font-bold text-blue-300">{{ r.stn_id }}</td>
+                        <td class="p-3 text-xs">
+                            {% if r.health_sts == 'OK' %}<span class="badge-ok">✓ OK</span>
+                            {% else %}<span class="badge-fail">✗ {{ (r.health_sts or 'FAIL')[:12] }}</span>{% endif %}
+                        </td>
+                        <td class="p-3">
+                            <span class="badge-ver">{{ r.ver or '?' }}</span>
+                            {% if r.ver and r.ver.split('-')[-1] != fw.current_ver %}
+                            <span class="badge-ota">OTA↑</span>
+                            {% endif %}
+                        </td>
+                        <td class="p-3">
+                            <div
+                                class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}">
+                                {{ '%.2f'|format(r.bat_v or 0) }}V
+                            </div>
+                            <div class="text-[10px] text-slate-500">
+                                S: {{ '%.1f'|format(r.sol_v or 0) }}V
+                            </div>
+                        </td>
+                        <td class="p-3 font-mono text-center text-slate-300">{{ r.net_cnt or 0 }} / {{ r.net_cnt_prev or
+                            0 }}</td>
+                        <td class="p-3 text-slate-500 text-[11px]">{{ r.time_ago or '?' }}</td>
+                        <td class="p-3 text-right" onclick="event.stopPropagation()">
+                            <div class="relative inline-block text-left dropdown">
+                                <button onclick="toggleDropdown(event, 'drop-{{ fw.category_id }}-{{ r.stn_id }}')"
+                                    class="btn-sm bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center space-x-1">
+                                    <span>⚡ Actions</span>
+                                </button>
+                                <div id="drop-{{ fw.category_id }}-{{ r.stn_id }}"
+                                    class="dropdown-content absolute right-0 mt-2 w-48 rounded-md shadow-2xl bg-slate-900 border border-slate-600 z-[999] py-1">
+                                    {% if request.state.user and (request.state.user.role == 'supervisor' or
+                                    request.state.user.get('role') == 'supervisor') %}
+                                    <a href="/cmd/{{ r.stn_id }}/REBOOT"
+                                        class="block px-4 py-2 text-xs text-red-400 hover:bg-slate-800"
+                                        onclick="return confirm('Reboot {{ r.stn_id }}?')">↺ Reboot</a>
+                                    {% endif %}
+                                    <a href="/cmd/{{ r.stn_id }}/FTP_BACKLOG"
+                                        class="block px-4 py-2 text-xs text-green-400 hover:bg-slate-800">↑ Sync
+                                        Backlog</a>
+                                    <button onclick="promptFtpDaily('{{ r.stn_id }}')"
+                                        class="w-full text-left block px-4 py-2 text-xs text-purple-400 hover:bg-slate-800">↑
+                                        Daily Log</button>
+                                    {% if request.state.user and (request.state.user.role == 'supervisor' or
+                                    request.state.user.get('role') == 'supervisor') %}
+                                    <div class="border-t border-slate-700 my-1"></div>
+                                    <a href="/delete/{{ r.stn_id }}"
+                                        class="block px-4 py-2 text-xs text-red-500 hover:bg-red-900/50"
+                                        onclick="return confirm('WARNING: Permanently delete ALL records for {{ r.stn_id }}?')">🗑
+                                        Delete Station</a>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if not g.stations %}
+        <div class="p-10 text-center text-slate-600 italic">No stations checked in for this group yet.</div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+
+<script>
+    function showTab(tabId) {
+        // Change body class for transition effect (using a default group theme)
+        document.body.className = 'filter-all';
+
+        // Hide all content
+        document.querySelectorAll('.fleet-content').forEach(c => c.classList.add('hidden'));
+        // Show selected
+        document.getElementById(tabId).classList.remove('hidden');
+
+        // Reset buttons
+        document.querySelectorAll('.fleet-tab').forEach(b => {
+            b.classList.remove('border-green-500', 'text-green-400', 'bg-slate-800/50');
+            b.classList.add('border-transparent', 'text-slate-500');
+        });
+        // Highlight active button
+        const btn = document.getElementById('btn-' + tabId);
+        btn.classList.add('border-green-500', 'text-green-400', 'bg-slate-800/50');
+        btn.classList.remove('border-transparent', 'text-slate-500');
+    }
+
+    function promptFtpDaily(stnId) {
+        const date = prompt("Enter Date in YYYYMMDD format (e.g. 20260228):");
+        if (date && /^\d{8}$/.test(date)) {
+            window.location.href = `/cmd/${stnId}/FTP_DAILY?param=${date}`;
+        } else if (date) alert("Invalid date format.");
+    }
+
+    function toggleDropdown(event, id) {
+        event.stopPropagation();
+        const el = document.getElementById(id);
+        const isShown = el.classList.contains('show');
+
+        // Close all
+        document.querySelectorAll('.dropdown-content').forEach(d => d.classList.remove('show'));
+
+        // Toggle current
+        if (!isShown) el.classList.add('show');
+    }
+
+    window.onclick = function (event) {
+        if (!event.target.closest('.dropdown')) {
+            document.querySelectorAll('.dropdown-content').forEach(d => d.classList.remove('show'));
+        }
+    }
+</script>
+
+{% endblock %}
