@@ -2433,8 +2433,8 @@ void get_registration() {
           }
         }
 
-        if (consecutive_unreg >= 25) {
-          debugln("[GPRS] Persistent Unreg status. Fast failing.");
+        if (consecutive_unreg >= 45) {
+          debugln("[GPRS] Persistent Unreg status. Final fail.");
           break;
         }
 
@@ -2464,32 +2464,52 @@ void get_registration() {
       if (retries > 0 && retries % 5 == 0) {
         if (registration == 0 || registration == 3 || registration == 4) {
           if (retries == 5) {
-            // Tier 1: HARD HARDWARE RESET (The nuclear option, early)
-            debugln("[GPRS] Stubborn Denied/Idle. FORCING PHYSICAL POWER CYCLE "
-                    "(GPIO 26)...");
-            digitalWrite(26, LOW); // Kill power
+            // Tier 1: TRUE HARDWARE COLD START (Prevents Back-powering)
+            debugln("[GPRS] Stubborn Denied/Idle. FORCING TRUE COLD START...");
+
+            // 1. Shudown Serial to prevent back-powering via Tx/Rx
+            SerialSIT.end();
+            pinMode(16, INPUT);
+            pinMode(17, INPUT);
+
+            // 2. Physical Power Cut
+            digitalWrite(26, LOW);
+            vTaskDelay(2500);
+
+            // 3. Restore Power
+            digitalWrite(26, HIGH);
+            vTaskDelay(1000);
+
+            // 4. Re-init Serial
+            SerialSIT.begin(115200, SERIAL_8N1, 16, 17, false);
             vTaskDelay(2000);
-            digitalWrite(26, HIGH); // Restore power
-            vTaskDelay(3000);       // Wait for boot
+
             SerialSIT.println("AT");
             waitForResponse("OK", 2000);
             SerialSIT.println("ATE0");
             waitForResponse("OK", 1000);
-            SerialSIT.println("AT+CREG=1");
-            waitForResponse("OK", 1000);
             SerialSIT.println("AT+CNETLIGHT=1");
             waitForResponse("OK", 500);
+            SerialSIT.println("AT+CREG=1");
+            waitForResponse("OK", 1000);
             SerialSIT.println("AT+COPS=0");
             waitForResponse("OK", 5000);
           } else if (retries == 15) {
-            // Tier 2: Software Radio Kick (Nudge)
+            // Tier 2: Forced LTE-Only Mode (Airtel Fix)
+            debugln("[GPRS] Forcing LTE-Only Mode (AT+CNMP=38)...");
+            SerialSIT.println("AT+CNMP=38"); // Force LTE
+            waitForResponse("OK", 2000);
+            SerialSIT.println("AT+COPS=0");
+            waitForResponse("OK", 5000);
+          } else if (retries == 25) {
+            // Tier 3: Software Radio Kick (Nudge)
             debugln("[GPRS] Still searching. Forced Radio kick (COPS=2,0)...");
             SerialSIT.println("AT+COPS=2");
             waitForResponse("OK", 5000);
             SerialSIT.println("AT+COPS=0");
             waitForResponse("OK", 10000);
-          } else if (retries == 30) {
-            // Tier 3: Software Reboot (Last Software Resort)
+          } else if (retries == 40) {
+            // Tier 4: Software Reboot (Last Software Resort)
             debugln("[GPRS] Stubborn Search. Trying Software Reboot "
                     "(CFUN=1,1)...");
             SerialSIT.println("AT+CFUN=1,1");
