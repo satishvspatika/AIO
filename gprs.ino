@@ -2330,9 +2330,14 @@ void get_registration() {
 
   // v5.60: SET APN EARLY FOR CID 1 (Helps BSNL GPRS attachment)
   if (strlen(apn_str) > 3) {
-    debugln("[GPRS] Pre-setting APN for CID 1: " + String(apn_str));
-    // Use IPV4V6 for LTE compatibility
-    SerialSIT.print("AT+CGDCONT=1,\"IPV4V6\",\"");
+    debugln("[GPRS] Pre-setting APN for CID 1 & 6: " + String(apn_str));
+    // Set for both CID 1 and CID 6 as some firmware variants use CID 6 for LTE
+    SerialSIT.print("AT+CGDCONT=1,\"IP\",\"");
+    SerialSIT.print(apn_str);
+    SerialSIT.println("\"");
+    waitForResponse("OK", 1000);
+
+    SerialSIT.print("AT+CGDCONT=6,\"IP\",\"");
     SerialSIT.print(apn_str);
     SerialSIT.println("\"");
     waitForResponse("OK", 1000);
@@ -2488,33 +2493,30 @@ void get_registration() {
       if (retries > 0 && retries % 5 == 0) {
         if (registration == 0 || registration == 3 || registration == 4) {
           if (retries == 5) {
-            // Tier 1: TRUE COLD START + SIM SCRUB (FPLMN WIPE)
-            debugln("[GPRS] Stubborn Denied. FORCING TRUE COLD START & SIM "
-                    "SCRUB...");
+            // Tier 1: RADIO-OFF SIM SCRUB (The most aggressive re-init)
+            debugln("[GPRS] Stubborn Denied. FORCING RADIO-OFF SIM SCRUB...");
 
-            SerialSIT.end();
-            pinMode(16, INPUT);
-            pinMode(17, INPUT);
-            digitalWrite(26, LOW);
-            vTaskDelay(2500);
-            digitalWrite(26, HIGH);
-            vTaskDelay(1000);
-            SerialSIT.begin(115200, SERIAL_8N1, 16, 17, false);
-            vTaskDelay(2000);
+            SerialSIT.println("AT+CFUN=0"); // Radio Off FIRST
+            waitForResponse("OK", 5000);
 
-            SerialSIT.println("AT&F"); // Reset
-            waitForResponse("OK", 1000);
-
-            // v6.76: DEEP SIM SCRUB (Wipe 2G & 4G Forbidden Lists)
-            debugln("[GPRS] Performing Deep SIM Scrub (FPLMN)...");
-            // Wipe 6F7B (Forbidden PLMNs)
+            // Wipe 6F7B (Forbidden PLMNs) while radio is off
             SerialSIT.println(
                 "AT+CRSM=214,28539,0,0,12,\"FFFFFFFFFFFFFFFFFFFFFFFF\"");
             waitForResponse("OK", 2000);
 
-            SerialSIT.println("AT+COPS=0");
+            SerialSIT.println("AT+CFUN=1"); // Radio On
+            waitForResponse("OK", 5000);
+            SerialSIT.println("AT+COPS=0"); // Search
             waitForResponse("OK", 5000);
             SerialSIT.println("AT+CGATT=1"); // Force Attach
+            waitForResponse("OK", 2000);
+          } else if (retries == 15 || (retries > 15 && registration == 0)) {
+            // Search NAG: If stuck in 'Idle' (0), push it back to auto-search
+            debugln(
+                "[GPRS] Stuck in Idle. Nudging search (COPS=0 + CGATT=1)...");
+            SerialSIT.println("AT+COPS=0");
+            waitForResponse("OK", 5000);
+            SerialSIT.println("AT+CGATT=1");
             waitForResponse("OK", 2000);
           } else if (retries == 15) {
             // Tier 2: Force GSM Only (Diagnostic)
