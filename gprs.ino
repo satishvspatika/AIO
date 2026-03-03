@@ -2331,7 +2331,8 @@ void get_registration() {
   // v5.60: SET APN EARLY FOR CID 1 (Helps BSNL GPRS attachment)
   if (strlen(apn_str) > 3) {
     debugln("[GPRS] Pre-setting APN for CID 1: " + String(apn_str));
-    SerialSIT.print("AT+CGDCONT=1,\"IP\",\"");
+    // Use IPV4V6 for LTE compatibility
+    SerialSIT.print("AT+CGDCONT=1,\"IPV4V6\",\"");
     SerialSIT.print(apn_str);
     SerialSIT.println("\"");
     waitForResponse("OK", 1000);
@@ -2345,7 +2346,9 @@ void get_registration() {
   waitForResponse("OK", 5000);
   SerialSIT.println("AT+CREG=1");
   waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CEREG=2"); // Enhanced registration info
+  SerialSIT.println("AT+CEREG=2"); // Enhanced LTE reporting
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CEMODE=2"); // Force PS-mode (Data Only) for IoT
   waitForResponse("OK", 1000);
   SerialSIT.println("AT+CNETLIGHT=0"); // Reset LED driver
   waitForResponse("OK", 500);
@@ -2436,8 +2439,17 @@ void get_registration() {
         }
 
         if (registration == 3) {
-          debugln("[DIAG] Registration Denied. Querying error (AT+CEER)...");
-          SerialSIT.println("AT+CEER");
+          debugln("[DIAG] Registration Denied. Querying status...");
+
+          SerialSIT.println("AT+CPSI?"); // Deep Network Info
+          String cpsi = waitForResponse("OK", 2000);
+          debugln("[CPSI] Response: " + cpsi);
+
+          SerialSIT.println("AT+CEREG?"); // LTE Status
+          String cereg = waitForResponse("OK", 2000);
+          debugln("[CEREG] Response: " + cereg);
+
+          SerialSIT.println("AT+CEER"); // Error Cause
           String ceer = waitForResponse("OK", 2000);
           debugln("[CEER] Response: " + ceer);
         }
