@@ -2348,7 +2348,10 @@ void get_registration() {
   waitForResponse("OK", 1000);
   SerialSIT.println("AT+CEREG=2"); // Enhanced LTE reporting
   waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CEMODE=2"); // Force PS-mode (Data Only) for IoT
+  SerialSIT.println(
+      "AT+CEMODE=0"); // Combined Mode (More compatible for Airtel)
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CPSMS=0"); // Disable Power Saving Mode
   waitForResponse("OK", 1000);
   SerialSIT.println("AT+CNETLIGHT=0"); // Reset LED driver
   waitForResponse("OK", 500);
@@ -2485,63 +2488,56 @@ void get_registration() {
       if (retries > 0 && retries % 5 == 0) {
         if (registration == 0 || registration == 3 || registration == 4) {
           if (retries == 5) {
-            // Tier 1: TRUE HARDWARE COLD START (Prevents Back-powering)
-            debugln("[GPRS] Stubborn Denied/Idle. FORCING TRUE COLD START...");
+            // Tier 1: TRUE COLD START + SIM SCRUB (FPLMN WIPE)
+            debugln("[GPRS] Stubborn Denied. FORCING TRUE COLD START & SIM "
+                    "SCRUB...");
 
-            // 1. Shudown Serial to prevent back-powering via Tx/Rx
             SerialSIT.end();
             pinMode(16, INPUT);
             pinMode(17, INPUT);
-
-            // 2. Physical Power Cut
             digitalWrite(26, LOW);
             vTaskDelay(2500);
-
-            // 3. Restore Power
             digitalWrite(26, HIGH);
             vTaskDelay(1000);
-
-            // 4. Re-init Serial
             SerialSIT.begin(115200, SERIAL_8N1, 16, 17, false);
             vTaskDelay(2000);
 
-            SerialSIT.println("AT&F"); // Factory Reset internal settings
+            SerialSIT.println("AT&F"); // Reset
+            waitForResponse("OK", 1000);
+            // v6.75: WIPE FORBIDDEN PLMN FILE ON SIM (6F7B)
+            debugln("[GPRS] Wiping Forbidden PLMN list on SIM...");
+            SerialSIT.println(
+                "AT+CRSM=214,28539,0,0,12,\"FFFFFFFFFFFFFFFFFFFFFFFF\"");
             waitForResponse("OK", 2000);
-            SerialSIT.println("ATE0");
-            waitForResponse("OK", 1000);
-            SerialSIT.println("AT+CNETLIGHT=1");
-            waitForResponse("OK", 500);
-            SerialSIT.println("AT+CREG=1");
-            waitForResponse("OK", 1000);
             SerialSIT.println("AT+COPS=0");
             waitForResponse("OK", 5000);
           } else if (retries == 15) {
-            // Tier 2: Forced LTE-Only Mode (Airtel Fix)
-            debugln("[GPRS] Forcing LTE-Only Mode (AT+CNMP=38)...");
-            SerialSIT.println("AT+CNMP=38"); // Force LTE
+            // Tier 2: Force GSM Only (Diagnostic)
+            debugln(
+                "[GPRS] LTE blocked? Testing GSM-Only Mode (AT+CNMP=13)...");
+            SerialSIT.println("AT+CNMP=13");
             waitForResponse("OK", 2000);
             SerialSIT.println("AT+COPS=0");
             waitForResponse("OK", 5000);
           } else if (retries == 25) {
-            // Tier 3: Software Radio Kick (Nudge)
-            debugln("[GPRS] Still searching. Forced Radio kick (COPS=2,0)...");
-            SerialSIT.println("AT+COPS=2");
-            waitForResponse("OK", 5000);
+            // Tier 3: Force LTE Only (Primary)
+            debugln("[GPRS] GSM failed? Testing LTE-Only Mode (AT+CNMP=38)...");
+            SerialSIT.println("AT+CNMP=38");
+            waitForResponse("OK", 2000);
             SerialSIT.println("AT+COPS=0");
+            waitForResponse("OK", 5000);
+          } else if (retries == 35) {
+            // Tier 4: Restore Automatic & Explicit Airtel Selection
+            debugln("[GPRS] Restoring Auto-Mode & Forcing Airtel India...");
+            SerialSIT.println("AT+CNMP=2");
+            waitForResponse("OK", 1000);
+            SerialSIT.println("AT+COPS=1,2,\"40445\""); // Explicit Airtel
             waitForResponse("OK", 10000);
-          } else if (retries == 40) {
-            // Tier 4: Software Reboot (Last Software Resort)
-            debugln("[GPRS] Stubborn Search. Trying Software Reboot "
-                    "(CFUN=1,1)...");
+          } else if (retries == 45) {
+            // Tier 5: Software Reboot
+            debugln("[GPRS] Final Recovery. Software Reboot (CFUN=1,1)...");
             SerialSIT.println("AT+CFUN=1,1");
             waitForResponse("OK", 15000);
-            vTaskDelay(5000 / portTICK_PERIOD_MS);
-            SerialSIT.println("ATE0");
-            waitForResponse("OK", 1000);
-            SerialSIT.println("AT+CREG=1");
-            waitForResponse("OK", 1000);
-            SerialSIT.println("AT+COPS=0");
-            waitForResponse("OK", 5000);
           }
         }
       }
