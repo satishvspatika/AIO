@@ -2317,7 +2317,7 @@ void get_registration() {
   // - Adaptive wait replaces blind vTaskDelay(5000): poll CGREG every 1s
   //   and exit immediately on success. No wasted sleep.
   bool isBSNL = (strstr(carrier, "BSNL") != nullptr);
-  int no_of_retries = isBSNL ? 35 : 35;
+  int no_of_retries = isBSNL ? 50 : 50;
   registration = 0;
   retries = 0;
   bool is_registered = false;
@@ -2460,15 +2460,15 @@ void get_registration() {
     }
 
     if (!is_registered) {
-      // Periodic Recovery Logic
+      // Periodic Recovery Logic - Strictly Tiered to avoid interrupting search
       if (retries > 0 && retries % 5 == 0) {
         if (registration == 0 || registration == 3 || registration == 4) {
-          if (retries == 5 || (retries >= 5 && registration == 3)) {
-            // First Level: HARD HARDWARE RESET (Now triggered early if Denied)
+          if (retries == 5) {
+            // Tier 1: HARD HARDWARE RESET (The nuclear option, early)
             debugln("[GPRS] Stubborn Denied/Idle. FORCING PHYSICAL POWER CYCLE "
                     "(GPIO 26)...");
             digitalWrite(26, LOW); // Kill power
-            vTaskDelay(1500);
+            vTaskDelay(2000);
             digitalWrite(26, HIGH); // Restore power
             vTaskDelay(3000);       // Wait for boot
             SerialSIT.println("AT");
@@ -2481,14 +2481,19 @@ void get_registration() {
             waitForResponse("OK", 500);
             SerialSIT.println("AT+COPS=0");
             waitForResponse("OK", 5000);
-          } else if (retries == 10) {
-            // Second Level: Full Modem Software Reboot
-            debugln("[GPRS] Stubborn Denied/Idle. Trying full Software Reboot "
-                    "(CFUN=1,1 + CRESET)...");
-            SerialSIT.println("AT+CFUN=1,1");
+          } else if (retries == 15) {
+            // Tier 2: Software Radio Kick (Nudge)
+            debugln("[GPRS] Still searching. Forced Radio kick (COPS=2,0)...");
+            SerialSIT.println("AT+COPS=2");
             waitForResponse("OK", 5000);
-            SerialSIT.println("AT+CRESET");
+            SerialSIT.println("AT+COPS=0");
             waitForResponse("OK", 10000);
+          } else if (retries == 30) {
+            // Tier 3: Software Reboot (Last Software Resort)
+            debugln("[GPRS] Stubborn Search. Trying Software Reboot "
+                    "(CFUN=1,1)...");
+            SerialSIT.println("AT+CFUN=1,1");
+            waitForResponse("OK", 15000);
             vTaskDelay(5000 / portTICK_PERIOD_MS);
             SerialSIT.println("ATE0");
             waitForResponse("OK", 1000);
@@ -2496,13 +2501,6 @@ void get_registration() {
             waitForResponse("OK", 1000);
             SerialSIT.println("AT+COPS=0");
             waitForResponse("OK", 5000);
-          } else if (retries == 15) {
-            // Third Level: Forced Radio kick (COPS=2,0) as a light nudge
-            debugln("[GPRS] Stubborn search. Forced Radio kick (COPS=2,0)...");
-            SerialSIT.println("AT+COPS=2");
-            waitForResponse("OK", 5000);
-            SerialSIT.println("AT+COPS=0");
-            waitForResponse("OK", 12000);
           }
         }
       }
