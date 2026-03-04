@@ -1,0 +1,9 @@
+Build Configuration
+===================
+Configuration: SPATIKA_ADDON
+Short Code: TWSRF9-GEN
+Firmware Version: TWSRF9-GEN-6.00
+Base Version: 6.00
+Target DB Cat ID: 1
+Target File: FW_S1_SPATIKA_GEN.bin
+Build Date: Tue Mar  3 13:22:20 IST 2026

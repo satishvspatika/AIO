@@ -48,11 +48,14 @@ void start_deep_sleep() {
   int sleep_seconds;
 
   // Handle hour rollover (e.g., 59 minutes -> next hour at 0 minutes)
+  // v5.46: Offset reduced to 30s (was 60s). Server-time RTC sync keeps us
+  // aligned.
   if (next_boundary_min >= 60) {
-    next_boundary_min = 0; // Next hour, 0 minutes
-    sleep_seconds = (60 - current_min) * 60 - current_sec;
+    next_boundary_min = 0;
+    sleep_seconds = (60 - current_min) * 60 - current_sec + 30;
   } else {
-    sleep_seconds = (next_boundary_min * 60) - (current_min * 60 + current_sec);
+    sleep_seconds =
+        (next_boundary_min * 60) - (current_min * 60 + current_sec) + 30;
   }
 
   // Safety bounds: 1 minute minimum, 20 minutes maximum
@@ -447,13 +450,17 @@ void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
       // (Server Side)
       bool isPast = (mask == diag_sent_mask_prev) ? true : (i < current_s_idx);
       if (isPast) {
-        *hasUnresolvedPD = true;
         // Night Data Tracking: 9 PM (Sample 49) to 6 AM (Sample 85)
         if (i >= 49 && i <= 85) {
           *hasUnresolvedNDM = true;
         }
       }
     }
+  }
+
+  // v5.68: Threshold 86 (Only flag PD if more than 10 slots are missing)
+  if (mask == diag_sent_mask_prev && *outNetCount < 86) {
+    *hasUnresolvedPD = true;
   }
 
   // CDM Calculation: Only judge the deadline if we are analyzing the CLOSED day
@@ -500,6 +507,23 @@ void scanFileToMask(const char *fName, uint32_t *mask) {
     }
   }
   f.close();
+}
+
+int countStored(const char *fName) {
+  if (!SPIFFS.exists(fName))
+    return 0;
+  File f = SPIFFS.open(fName, FILE_READ);
+  if (!f)
+    return 0;
+  int count = 0;
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    if (line.length() >= 5 && line.indexOf(',') != -1) {
+      count++;
+    }
+  }
+  f.close();
+  return count;
 }
 
 void subtractUnsentFromMask(const char *uFile) {
@@ -581,15 +605,32 @@ void reconstructSentMasks() {
 
   // 1. Mark everything in full log files as 'Sent' initially
   char prevFile[32];
-  snprintf(prevFile, sizeof(prevFile), "/%s_%04d%02d%02d.txt", cleanStn,
-           current_year, current_month, current_day);
+  char curFile[32];
+
+  int cur_dd = current_day, cur_mm = current_month, cur_yy = current_year;
+  int prev_dd = current_day, prev_mm = current_month, prev_yy = current_year;
+
+  int h = (current_hour < 24) ? current_hour : 0;
+  int m = (current_min < 60) ? current_min : 0;
+  int sampleNo = h * 4 + m / 15;
+  sampleNo = (sampleNo + 61) % 96;
+
+  if (sampleNo <= 60) {
+    // Time is 08:45 AM or later:
+    // Current close date is Tomorrow. Previous close date is Today.
+    next_date(&cur_dd, &cur_mm, &cur_yy);
+  } else {
+    // Time is 00:00 to 08:30 AM:
+    // Current close date is Today. Previous close date is Yesterday.
+    previous_date(&prev_dd, &prev_mm, &prev_yy);
+  }
+
+  snprintf(prevFile, sizeof(prevFile), "/%s_%04d%02d%02d.txt", station_name,
+           prev_yy, prev_mm, prev_dd);
   scanFileToMask(prevFile, diag_sent_mask_prev);
 
-  char curFile[32];
-  int t_dd = current_day, t_mm = current_month, t_yy = current_year;
-  next_date(&t_dd, &t_mm, &t_yy);
-  snprintf(curFile, sizeof(curFile), "/%s_%04d%02d%02d.txt", cleanStn, t_yy,
-           t_mm, t_dd);
+  snprintf(curFile, sizeof(curFile), "/%s_%04d%02d%02d.txt", station_name,
+           cur_yy, cur_mm, cur_dd);
   scanFileToMask(curFile, diag_sent_mask_cur);
 
   // 2. Subtract records that are currently in 'Unsent' files

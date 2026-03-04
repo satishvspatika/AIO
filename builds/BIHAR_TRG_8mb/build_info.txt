@@ -3,8 +3,8 @@ Build Configuration
 SYSTEM: 0
 UNIT: BIHAR_TRG
 Output: BIHAR_TRG
-Firmware Version: 5.40
-Build Date: 2026-02-27 09:42:33.945808
+Firmware Version: 5.41
+Build Date: 2026-02-27 19:02:30.482087
 Binary Size: 1.10 MB
 Binary Path: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/BIHAR_TRG_8mb/firmware.bin
 Version File: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/BIHAR_TRG_8mb/fw_version.txt

@@ -1420,34 +1420,28 @@ void lcdkeypad(void *pvParameters) {
                                               ? fileName
                                               : "/" + fileName;
 
-                        // List of files to PRESERVE (Configuration & State)
-                        if (fullPath == "/apn_config.txt" ||
-                            fullPath == "/rf_fw.txt" ||
-                            fullPath == "/rf_res.txt" ||
-                            fullPath == "/signature.txt" ||
-                            fullPath == "/prevWindSpeed.txt" ||
-                            fullPath == "/calib.txt" ||
-                            fullPath == "/calib_test.txt" ||
-                            fullPath == "/sd_fw_md5.txt") {
-                          debug("Preserving Config: ");
+                        // List of files to PRESERVE (Only Station ID for fresh
+                        // start)
+                        if (fullPath == "/station.doc" ||
+                            fullPath == "/station.txt" ||
+                            fullPath == "/rf_fw.txt") {
+                          debug("Preserving: ");
                           debugln(fullPath);
                         }
-                        // Delete logs and records (.txt, .swd, .kwd, .krd)
-                        else if (fullPath.endsWith(".txt") ||
-                                 fullPath.endsWith(".swd") ||
-                                 fullPath.endsWith(".kwd") ||
-                                 fullPath.endsWith(".krd")) {
-                          debug("Deleting Data: ");
+                        // Delete everything else: Logs, Backlogs, AND Configs
+                        // (APN, Alt, Res, etc.)
+                        else {
+                          debug("Deleting: ");
                           debugln(fullPath);
                           SPIFFS.remove(fullPath);
                         }
                         file = root.openNextFile();
                       }
                       lcd.clear();
-                      lcd.print("COMPLETED!");
-                      vTaskDelay(1000);
-                      strcpy(ui_data[FLD_DELETE_DATA].topRow, "DELETE DATA?");
-                      strcpy(ui_data[FLD_DELETE_DATA].bottomRow, "Yes ?");
+                      lcd.print("CLEAN! REBOOTING");
+                      debugln("[UI] Factory Reset Complete. Restarting...");
+                      vTaskDelay(2000);
+                      ESP.restart();
                       xSemaphoreGive(i2cMutex);
                     }
                   } else {

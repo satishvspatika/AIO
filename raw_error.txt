@@ -1,6 +1,11 @@
 WARNING: library LiquidCrystal I2C claims to run on avr architecture(s) and may be incompatible with your current board which runs on esp32 architecture(s).
-Sketch uses 1324003 bytes (101%) of program storage space. Maximum is 1310720 bytes.
-Global variables use 56684 bytes (17%) of dynamic memory, leaving 270996 bytes for local variables. Maximum is 327680 bytes.
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3663:30: error: macro "debugf1" passed 3 arguments, but takes just 2
+ 3663 |             total_no_of_bytes);
+      |                              ^
+In file included from /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:25:
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:246:9: note: macro "debugf1" defined here
+  246 | #define debugf1(a, x) Serial.printf(a, x)
+      |         ^~~~~~~
 
 [92mUsed library[0m            [92mVersion[0m [90mPath[0m
 [93mKeypad[0m                  3.1.1   [90m/Users/satishkripavasan/Documents/Arduino/libraries/Keypad-master[0m
@@ -25,3 +30,4 @@ Global variables use 56684 bytes (17%) of dynamic memory, leaving 270996 bytes f
 
 [92mUsed platform[0m [92mVersion[0m [90mPath[0m
 [93mesp32:esp32[0m   3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6[0m
+Error during build: exit status 1

@@ -683,14 +683,14 @@ void scheduler(void *pvParameters) {
         debug("Last recorded cumRF: ");
         debugln(last_cumRF);
 
-        if (last_sampleNo > 0 && last_cumRF == 0) {
+        // v7.20: Enhanced Guard - Ignore reset if rollover from yesterday
+        // (95->0) or start of day (0)
+        if (last_sampleNo > 0 && last_sampleNo < 95 && last_cumRF == 0) {
 #if DEBUG == 1
           Serial.println(
               "[Rain] Integrity Issue: last_cumRF is 0 but sampleNo > 0.");
 #endif
           diag_rain_reset = true;
-          // Note: Healing here requires re-scanning the file, covered by
-          // post-integrity check
         }
 
         new_current_cumRF = last_cumRF + rf_value;
@@ -829,7 +829,7 @@ void scheduler(void *pvParameters) {
         debug(" H=");
         debugln(last_instHum);
 
-        if (last_sampleNo > 0 && last_cumRF == 0) {
+        if (last_sampleNo > 0 && last_sampleNo < 95 && last_cumRF == 0) {
 #if DEBUG == 1
           Serial.println("[Rain-TWS] Integrity Issue: last_cumRF is 0 but "
                          "sampleNo > 0.");
@@ -1601,6 +1601,9 @@ void scheduler(void *pvParameters) {
           }
           // debugln(); // Removed extra debugln()
           debugln(append_text);
+          if (diag_pd_count < 96)
+            diag_pd_count++; // v7.20: Increment "Stored Today" for every
+                             // successful record
 
           // Robust Rollover Detection (v5.81): Handles missed 8:45 AM slots
           bool is_rollover_slot = (sampleNo == 0);
@@ -2386,6 +2389,23 @@ void scheduler(void *pvParameters) {
 #endif
       }
       vTaskDelay(300);
+    } else if (timeSyncRequired == false && httpInitiated == false &&
+               sync_mode == eSyncModeInitial) {
+      // v7.08: IDLE TRAP PROTECTION
+      // If we wake up (via timer) and find we ALREADY processed this slot,
+      // we must allow the system to sleep. Otherwise, it stays awake
+      // at 80mA until the next 15-min interval.
+      static uint32_t idle_awake_start = (uint32_t)-1;
+      if (idle_awake_start == (uint32_t)-1)
+        idle_awake_start = millis();
+
+      if (millis() - idle_awake_start >
+          15000) { // 15s window for manual buttons
+        debugf("[SCHED] Idle: Slot %d already processed. Entering sleep...\n",
+               current_sample_idx);
+        sync_mode = eHttpStop;
+        idle_awake_start = (uint32_t)-1;
+      }
     } // %15 loop
 
     vTaskDelay(300);

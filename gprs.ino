@@ -12,6 +12,129 @@ void flushSerialSIT() {
   }
 }
 
+// v5.46: Parse "tm":"YYMMDDHHMMSS" from server JSON, convert UTC→IST, correct
+// RTC. force=true: apply even on first call (rejection path) force=false: apply
+// only once per day if drift > 90s (success path)
+void sync_rtc_from_server_tm(const char *payload, bool force) {
+  if (!payload)
+    return;
+
+  // Reset daily sync flag at midnight each new day
+  static int last_sync_day = -1;
+  if (current_day != last_sync_day) {
+    rtc_daily_sync_done = false;
+  }
+
+  // On success path (force=false): run at 10:00 AM, once per day
+  if (!force && (current_hour != 10 || rtc_daily_sync_done))
+    return;
+
+  // Find "tm":"YYMMDDHHMMSS" in payload
+  const char *tm_ptr = strstr(payload, "\"tm\"");
+  if (!tm_ptr)
+    tm_ptr = strstr(payload, "\"tm\":");
+  if (!tm_ptr) {
+    debugln("[RTC-Sync] No 'tm' field in server response. Skipping.");
+    return;
+  }
+
+  // Skip to the 12-digit timestamp value
+  const char *colon = strchr(tm_ptr, ':');
+  if (!colon)
+    return;
+  colon++;
+  while (*colon == ' ' || *colon == '"')
+    colon++;
+
+  // Parse YYMMDDHHMMSS (12 digits)
+  char ts[13];
+  strncpy(ts, colon, 12);
+  ts[12] = '\0';
+  if (strlen(ts) < 12) {
+    debugln("[RTC-Sync] Short timestamp. Skipping.");
+    return;
+  }
+
+  // Decode digits
+  int s_yy = (ts[0] - '0') * 10 + (ts[1] - '0');
+  int s_mm = (ts[2] - '0') * 10 + (ts[3] - '0');
+  int s_dd = (ts[4] - '0') * 10 + (ts[5] - '0');
+  int s_hh = (ts[6] - '0') * 10 + (ts[7] - '0'); // UTC hour
+  int s_mi = (ts[8] - '0') * 10 + (ts[9] - '0'); // UTC minute
+  int s_ss = (ts[10] - '0') * 10 + (ts[11] - '0');
+
+  // Sanity check raw UTC values before conversion
+  if (s_mm < 1 || s_mm > 12 || s_dd < 1 || s_dd > 31 || s_hh > 23 ||
+      s_mi > 59 || s_ss > 59 || s_yy < 25 || s_yy > 50) {
+    debugf("[RTC-Sync] Invalid UTC timestamp: %s\n", ts);
+    return;
+  }
+
+  // v5.46: Robust UTC → IST conversion handling all month/year/leap rollovers
+  struct tm t_in = {0};
+  t_in.tm_year = s_yy + 100; // years since 1900 (e.g., 2026 -> 126)
+  t_in.tm_mon = s_mm - 1;    // months since January (0-11)
+  t_in.tm_mday = s_dd;
+  t_in.tm_hour = s_hh;
+  t_in.tm_min = s_mi;
+  t_in.tm_sec = s_ss;
+
+  // Uses mktime() internally for perfect calendar math
+  convert_gmt_to_ist(&t_in);
+
+  // Extract the true IST values back out
+  s_yy = t_in.tm_year - 100;
+  s_mm = t_in.tm_mon + 1;
+  s_dd = t_in.tm_mday;
+  s_hh = t_in.tm_hour;
+  s_mi = t_in.tm_min;
+  s_ss = t_in.tm_sec;
+
+  debugf("[RTC-Sync] Server IST = 20%02d-%02d-%02d %02d:%02d:%02d\n", s_yy,
+         s_mm, s_dd, s_hh, s_mi, s_ss);
+
+  // Calculate drift in seconds vs current RTC
+  int rtc_total_sec = current_hour * 3600 + current_min * 60 + current_sec;
+  int srv_total_sec = s_hh * 3600 + s_mi * 60 + s_ss;
+  int drift = abs(srv_total_sec - rtc_total_sec);
+
+  // Threshold: force path=45s, daily path=90s
+  int threshold = force ? 45 : 90;
+  debugf("[RTC-Sync] Drift = %ds (threshold %ds, force=%d)\n", drift, threshold,
+         (int)force);
+
+  if (drift < threshold) {
+    debugln("[RTC-Sync] Drift within tolerance. No correction needed.");
+    if (!force)
+      rtc_daily_sync_done = true; // Mark as done even if no correction
+    last_sync_day = current_day;
+    return;
+  }
+
+  // Apply correction to RTC
+  debugf("[RTC-Sync] Correcting RTC: %02d:%02d:%02d → %02d:%02d:%02d (drift "
+         "%ds)\n",
+         current_hour, current_min, current_sec, s_hh, s_mi, s_ss, drift);
+
+  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+    // Use current date fields but server's IST time
+    rtc.adjust(DateTime(s_yy + 2000, s_mm, s_dd, s_hh, s_mi, s_ss));
+    xSemaphoreGive(i2cMutex);
+  }
+
+  // Update globals immediately so sleep calc uses correct time
+  current_hour = s_hh;
+  current_min = s_mi;
+  current_sec = s_ss;
+
+  if (!force) {
+    rtc_daily_sync_done = true;
+    last_sync_day = current_day;
+  }
+
+  debugln("[RTC-Sync] ✅ RTC corrected from server time (IST).");
+}
+
 void gprs(void *pvParameters) {
   esp_task_wdt_add(NULL);
 
@@ -196,8 +319,8 @@ void gprs(void *pvParameters) {
           if (TEST_HEALTH_EVERY_SLOT == 1) {
             is_health_time = true;
           } else {
-            if ((current_hour == 10 || current_hour == 16 ||
-                 current_hour == 22)) {
+            if ((current_hour == 4 || current_hour == 10 ||
+                 current_hour == 16 || current_hour == 22)) {
               if (health_last_sent_day != current_day ||
                   health_last_sent_hour != current_hour) {
                 is_health_time = true;
@@ -988,9 +1111,11 @@ void send_http_data() {
     if (target_ip[0] == '\0') {
       if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
         debugln("[DNS Cache] Resolution failed. Falling back to domain name.");
-        debugln("[DNS Cache] Force Deactivating CID 8 (Flapping)...");
+        debugln("[DNS Cache] Force Deactivating CIDs 1 & 8 (Flapping)...");
         xSemaphoreGive(serialMutex);
       }
+      SerialSIT.println("AT+CGACT=0,1"); // v7.11: Kill CID 1 too if DNS is dead
+      waitForResponse("OK", 2000);
       SerialSIT.println("AT+CGACT=0,8"); // Cleanup noise
       waitForResponse("OK", 2000);
       SerialSIT.println("AT+CDNSCFG=\"8.8.8.8\",\"1.1.1.1\"");
@@ -1007,9 +1132,11 @@ void send_http_data() {
   // especially useful during combined Health + Main data slots.
   SerialSIT.println("AT+CGACT?");
   response = waitForResponse("OK", 3000);
-  if (response.indexOf("+CGACT: " + String(active_cid) + ",1") != -1) {
+  if (response.indexOf("+CGACT: " + String(active_cid) + ",1") != -1 &&
+      diag_consecutive_http_fails == 0) {
     debugln("[GPRS] Bearer already live. Skipping CIPSHUT to save time.");
   } else {
+    debugln("[GPRS] Bearer status check: Re-initializing IP stack...");
     debugln("[GPRS] Starting HTTP...");
     debug("HTTP POST REQUEST IS ");
     debugln(httpPostRequest);
@@ -1046,6 +1173,11 @@ void send_http_data() {
   SerialSIT.println("AT+HTTPTERM");
   waitForResponse("OK", 3000);
   vTaskDelay(500);
+
+  // v5.50: Silence URCs during critical HTTP setup
+  SerialSIT.println("AT+CGEREP=0");
+  waitForResponse("OK", 1000);
+
   flushSerialSIT();   // v5.42: Clear stale UART bytes before HTTPINIT
   http_ready = false; // v5.42: Reset session flag
 
@@ -1314,9 +1446,12 @@ void send_http_data() {
     send_sms();
   } else {
     debugln("[GPRS] Skipping SMS check (hourly task).");
-    sync_mode =
-        eHttpStop; // Ensure we transition to stop state to allow deep sleep
+    sync_mode = eHttpStop;
   }
+
+  // v5.50: Restore URCs for the rest of the cycle
+  SerialSIT.println("AT+CGEREP=2");
+  waitForResponse("OK", 1000);
 
 } // end of send_http_data
 
@@ -1327,6 +1462,12 @@ void send_daily_file(
 
   if (SPIFFS.exists(dailyFile)) {
     debugf1("[FTP] Found daily file: %s. Initiating upload...\n", dailyFile);
+    // Signal guard: skip 24-retry loop if signal already known to be dead
+    if (signal_lvl <= -98) {
+      debugln("[FTP] Skip Daily: Signal too weak (" + String(signal_lvl) +
+              " dBm).");
+      return;
+    }
     get_registration();
     if (gprs_mode == eGprsSignalOk) {
       get_a7672s();
@@ -1382,90 +1523,96 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
     snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
     if (SPIFFS.exists(ftpunsent_file)) {
       debugln("[FTP] Checking Registration before backlog upload...");
-      // Re-verify registration status to prevent "Ghost Logins" on dropped
-      // links
-      get_registration();
-      if (gprs_mode == eGprsSignalOk) {
-        debugln("[FTP] Registration OK. Verifying IP (PDP Context)...");
-        get_a7672s(); // Ensure IP is assigned and context is ready
+      // Signal guard: skip 24-retry loop if signal already known to be dead
+      if (signal_lvl <= -98) {
+        debugln("[FTP] Skip Backlog: Signal too weak (" + String(signal_lvl) +
+                " dBm).");
+      } else {
+        // Re-verify registration status to prevent "Ghost Logins" on dropped
+        // links
+        get_registration();
+        if (gprs_mode == eGprsSignalOk) {
+          debugln("[FTP] Registration OK. Verifying IP (PDP Context)...");
+          get_a7672s(); // Ensure IP is assigned and context is ready
 
-        // v6.45: Increased stabilization delay for better login success
-        debugln("[FTP] Assigned IP. Waiting 5s for tower stabilization...");
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
-        esp_task_wdt_reset();
+          // v6.45: Increased stabilization delay for better login success
+          debugln("[FTP] Assigned IP. Waiting 5s for tower stabilization...");
+          vTaskDelay(5000 / portTICK_PERIOD_MS);
+          esp_task_wdt_reset();
 
-        // v5.51 Efficiency: Use Rename instead of Copy to save power/flash
-        // cycles
-        SPIFFS.remove(fileName); // Ensure dest is clean
-        if (SPIFFS.rename(ftpunsent_file, fileName)) {
-          debug("Renamed unsent to ");
+          // v5.51 Efficiency: Use Rename instead of Copy to save power/flash
+          // cycles
+          SPIFFS.remove(fileName); // Ensure dest is clean
+          if (SPIFFS.rename(ftpunsent_file, fileName)) {
+            debug("Renamed unsent to ");
+            debugln(fileName);
+          } else {
+            debugln("Rename failed. Falling back to copy.");
+            copyFile(ftpunsent_file, fileName);
+          }
+          debug("Retrieved file is ");
           debugln(fileName);
+          esp_task_wdt_reset();
+          send_ftp_file(fileName);
         } else {
-          debugln("Rename failed. Falling back to copy.");
-          copyFile(ftpunsent_file, fileName);
+          debugln("[FTP] Skip: Registration lost. Retrying next hour.");
         }
+      } // end else (signal OK)
+    } else {
+      debugln("No ftpunsent.txt found. Skipping FTP.");
+    }
+
+    if (sampleNo == 3 || sampleNo == 7) { // send previous day's data (96
+                                          // data) if available through FTP
+      if (current_hour == 9 && current_min > 30 && current_min < 45) {
+        // Cleanup at start of 09:30 AM cycle
+        snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
+        SPIFFS.remove(ftpunsent_file);
+        debug("Cleaned up unsent file at start of new Daily FTP (09:30): ");
+        debugln(ftpunsent_file);
+      }
+      debugln();
+      debug("***DAILY FTP file name is ");
+      debugln(fileName);
+      previous_rfclose_day = rf_cls_dd;
+      previous_rfclose_month = rf_cls_mm;
+      previous_rfclose_year = rf_cls_yy;
+      previous_date(
+          &previous_rfclose_day, &previous_rfclose_month,
+          &previous_rfclose_year); // to ge the previous rf_close_date file
+      snprintf(temp_file, sizeof(temp_file), "/dailyftp_%04d%02d%02d.txt",
+               previous_rfclose_year, previous_rfclose_month,
+               previous_rfclose_day);
+
+      snprintf(temp_file, sizeof(temp_file), "/dailyftp_%04d%02d%02d.txt",
+               previous_rfclose_year, previous_rfclose_month,
+               previous_rfclose_day);
+
+      // Maintain original standard filename
+      int ftp_year = rf_cls_yy % 100;
+#if SYSTEM == 1
+      snprintf(fileName, sizeof(fileName),
+               "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd", ftp_station, ftp_year,
+               rf_cls_mm, rf_cls_dd, record_hr, record_min);
+#endif
+#if SYSTEM == 2
+      snprintf(fileName, sizeof(fileName),
+               "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", ftp_station, ftp_year,
+               rf_cls_mm, rf_cls_dd, record_hr, record_min);
+#endif
+
+      if (SPIFFS.exists(temp_file)) {
+        copyFile(temp_file, fileName); // copyFile(source,destination);
         debug("Retrieved file is ");
         debugln(fileName);
         esp_task_wdt_reset();
         send_ftp_file(fileName);
       } else {
-        debugln("[FTP] Skip: Registration lost. Retrying next hour.");
+        debugln("Daily FTP: Temp file not found. Skipping.");
       }
-    } else {
-      debugln("No ftpunsent.txt found. Skipping FTP.");
     }
   }
-
-  if (sampleNo == 3 || sampleNo == 7) { // send previous day's data (96
-                                        // data) if available through FTP
-    if (current_hour == 9 && current_min > 30 && current_min < 45) {
-      // Cleanup at start of 09:30 AM cycle
-      snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-      SPIFFS.remove(ftpunsent_file);
-      debug("Cleaned up unsent file at start of new Daily FTP (09:30): ");
-      debugln(ftpunsent_file);
-    }
-    debugln();
-    debug("***DAILY FTP file name is ");
-    debugln(fileName);
-    previous_rfclose_day = rf_cls_dd;
-    previous_rfclose_month = rf_cls_mm;
-    previous_rfclose_year = rf_cls_yy;
-    previous_date(
-        &previous_rfclose_day, &previous_rfclose_month,
-        &previous_rfclose_year); // to ge the previous rf_close_date file
-    snprintf(temp_file, sizeof(temp_file), "/dailyftp_%04d%02d%02d.txt",
-             previous_rfclose_year, previous_rfclose_month,
-             previous_rfclose_day);
-
-    snprintf(temp_file, sizeof(temp_file), "/dailyftp_%04d%02d%02d.txt",
-             previous_rfclose_year, previous_rfclose_month,
-             previous_rfclose_day);
-
-    // Maintain original standard filename
-    int ftp_year = rf_cls_yy % 100;
-#if SYSTEM == 1
-    snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd",
-             ftp_station, ftp_year, rf_cls_mm, rf_cls_dd, record_hr,
-             record_min);
-#endif
-#if SYSTEM == 2
-    snprintf(fileName, sizeof(fileName),
-             "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", ftp_station, ftp_year,
-             rf_cls_mm, rf_cls_dd, record_hr, record_min);
-#endif
-
-    if (SPIFFS.exists(temp_file)) {
-      copyFile(temp_file, fileName); // copyFile(source,destination);
-      debug("Retrieved file is ");
-      debugln(fileName);
-      esp_task_wdt_reset();
-      send_ftp_file(fileName);
-    } else {
-      debugln("Daily FTP: Temp file not found. Skipping.");
-    }
-  }
-}
+} // end send_unsent_data
 
 void send_ftp_file(char *fileName) {
   // Use a local module-safe path (removes leading slash for cellular module
@@ -1602,9 +1749,34 @@ void send_ftp_file(char *fileName) {
           debugln(ftp_put_retries + 1);
 
           SerialSIT.println(gprs_xmit_buf); // FTP client context
-          response1 = waitForResponse(
-              "+CFTPSPUTFILE: 0",
-              60000); // v5.50 Optimized: 60s is ample for small txt files
+          // v5.45: Smart PUT monitor — poll every 500ms for success OR PS
+          // bearer loss (+CGEV: ME PDN DEACT 1). On 2G BSNL, +CREG:0/1 (CS
+          // domain events) are harmless for data. But +CGEV: ME PDN DEACT 1
+          // means the PS bearer (CID 1) itself died — bail immediately rather
+          // than waiting out the full 60s timeout.
+          {
+            response1 = "";
+            unsigned long put_start = millis();
+            bool ps_bearer_lost = false;
+            while ((millis() - put_start) < 60000) {
+              esp_task_wdt_reset();
+              vTaskDelay(500 / portTICK_PERIOD_MS);
+              while (SerialSIT.available()) {
+                char cc = SerialSIT.read();
+                if (response1.length() < 2048)
+                  response1 += cc;
+              }
+              if (response1.indexOf("+CFTPSPUTFILE:") != -1)
+                break; // Done
+              if (response1.indexOf("+CGEV: ME PDN DEACT 1") != -1) {
+                debugln("[FTP] PS Bearer (CID1) lost mid-PUT. Bailing early.");
+                ps_bearer_lost = true;
+                break;
+              }
+            }
+            if (ps_bearer_lost)
+              response1 = ""; // Force retry path
+          }
           debug("Response of AT+CFTPSPUTFILE ");
           debugln(response1);
 
@@ -1737,8 +1909,8 @@ void send_ftp_file(char *fileName) {
         vTaskDelay(200);
 
         // NOTE: Modem FS file already deleted in the success cleanup path
-        // above. A second AT+FSDEL here is redundant and always returns ERROR.
-        // Suppressed to eliminate confusing noise in the log.
+        // above. A second AT+FSDEL here is redundant and always returns
+        // ERROR. Suppressed to eliminate confusing noise in the log.
 
         SerialSIT.println("AT+FSLS");
         response = waitForResponse("OK", 10000);
@@ -1798,8 +1970,8 @@ void graceful_modem_shutdown() {
       vTaskDelay(500);
     }
   } else {
-    debugln(
-        "[GPRS] ⚠️ Session was unstable (reg fails). Hard Hardware Reset.");
+    debugln("[GPRS] ⚠️ Session was unstable (reg fails). Hard Hardware "
+            "Reset.");
   }
 
   debugln("[GPRS] Cutting physical VCC power (GPIO 26 -> LOW).");
@@ -1842,19 +2014,18 @@ int send_at_cmd_data(char *payload, String charArray) {
   int i;
   for (i = 0; payload[i] != '\0'; ++i)
     ;
-  snprintf(ht_data, sizeof(ht_data), "AT+HTTPDATA=%d,10000", i);
+  // v5.45: Capping timeout at 5000ms. Most A7672S firmwares reject > 5s with
+  // ERROR.
+  snprintf(ht_data, sizeof(ht_data), "AT+HTTPDATA=%d,5000", i);
 
   debugf1("Payload is %s", payload);
   debugln();
-  vTaskDelay(100);
-  flushSerialSIT(); // v7.02: Clear buffer before data command
   SerialSIT.println(ht_data);
-  response =
-      waitForResponse("DOWNLOAD", 10000); // Increased timeout significantly
-  if (response.indexOf("DOWNLOAD") == -1) {
+  // v5.45: Increased timeout to 10s for high-latency BSNL 2G handshakes
+  if (waitForResponse("DOWNLOAD", 10000).indexOf("DOWNLOAD") == -1) {
     debugln("[HTTP] AT+HTTPDATA failed (Missing DOWNLOAD).");
-    debugf1("[HTTP] Raw response: %s\n", response.c_str());
-    return 0;
+    flushSerialSIT();
+    return 0; // Original returns 0
   }
   vTaskDelay(500);          // v7.00: Increased buffer prep delay
   SerialSIT.print(payload); // v6.40: Use print to avoid trailing \r\n in body
@@ -1863,18 +2034,32 @@ int send_at_cmd_data(char *payload, String charArray) {
   SerialSIT.println("AT+HTTPACTION=1");
   waitForResponse("OK", 2000);
   response = waitForResponse("+HTTPACTION:",
-                             45000); // v5.60: Increased to 45s for BSNL
+                             25000); // v5.45: 25s (was 45s). LTE response in
+                                     // 3-8s; 45s was dead-server waste.
   debug("Response of AT+HTTPACTION=1 is ");
   debugln(response);
 
   if (response.indexOf("200") == -1) {
-    // Extract Error Code if not 200
-    int comma1 = response.indexOf(',');
-    int comma2 = response.indexOf(',', comma1 + 1);
-    if (comma1 != -1 && comma2 != -1) {
-      String errCode = response.substring(comma1 + 1, comma2);
+    // v5.45: Extract error code from +HTTPACTION: prefix ONLY.
+    // Old method searched the whole buffer from comma1→comma2, which picked
+    // up commas inside +CGEV: ME PDN ACT 8,0 URCs that rode in on the same
+    // buffer, producing corrupt strings like "0\n\n+CGEV: ME PDN ACT 8" as
+    // the code.
+    String errCode = "";
+    int ha_idx = response.indexOf("+HTTPACTION:");
+    if (ha_idx != -1) {
+      // Format: +HTTPACTION: <method>,<status>,<datalen>
+      int c1 = response.indexOf(',', ha_idx);
+      int c2 = (c1 != -1) ? response.indexOf(',', c1 + 1) : -1;
+      if (c1 != -1 && c2 != -1) {
+        errCode = response.substring(c1 + 1, c2);
+        errCode.trim();
+      }
+    }
+    if (errCode.length() > 0) {
       strncpy(diag_http_fail_reason, errCode.c_str(),
               sizeof(diag_http_fail_reason) - 1);
+      diag_http_fail_reason[sizeof(diag_http_fail_reason) - 1] = 0;
     } else {
       // v5.42: Blank response = +HTTPACTION: URC never arrived = timeout.
       // Label it so the retry path skips the bearer teardown (SAPBR=0,1).
@@ -1896,7 +2081,8 @@ int send_at_cmd_data(char *payload, String charArray) {
   // v6.35: A7672S needs time after action before read
   vTaskDelay(500);
 
-  SerialSIT.println("AT+HTTPREAD=0,290");
+  SerialSIT.println("AT+HTTPREAD=0,512"); // v5.45: 512 bytes (was 290) —
+                                          // safer for OTA ACK + health JSON
   response = waitForResponse("+HTTPREAD: 0", 10000);
   debug("Response (P) of AT+HTTPREAD=0,290 is ");
   debugln(response);
@@ -1937,7 +2123,16 @@ int send_at_cmd_data(char *payload, String charArray) {
     debugln("GPRS SEND : It is a Success");
     diag_rejected_count = 0; // Reset on success
 
-    diag_http_success_count++;
+    // v5.46: Daily silent RTC sync from server time (force=false: once/day,
+    // drift>90s)
+    sync_rtc_from_server_tm(payload_ptr, false);
+
+    // v7.20: Only increment if this is the first success for this specific
+    // record This prevents httpSet[multiple servers] from bloating the counter
+    // beyond 96
+    if (http_no == 0) {
+      diag_http_success_count++;
+    }
     diag_http_time_total += (millis() - start);
 
     // v5.88: Ensure HTTP session is closed EVEN on success
@@ -1945,7 +2140,7 @@ int send_at_cmd_data(char *payload, String charArray) {
     waitForResponse("OK", 3000);
 
     // v5.49 Update Golden Data sent mask (Auto-Routed)
-    if (temp_sampleNo >= 0 && temp_sampleNo <= 95) {
+    if (temp_sampleNo >= 0 && temp_sampleNo <= MAX_SAMPLE_NO) {
       // Calculate current timeline index (0 = 08:45 AM)
       int h = (current_hour < 24) ? current_hour : 0;
       int m = (current_min < 60) ? current_min : 0;
@@ -1954,7 +2149,6 @@ int send_at_cmd_data(char *payload, String charArray) {
 
       // Logic: If the sampled record's index is "Higher" than our current
       // clock, it must belong to 'Yesterday' (Before the 08:45 AM reset).
-      // Exception: If we just reset (timeline_idx ~0), everything is 'Current'.
       if (temp_sampleNo <= timeline_idx || timeline_idx < 5) {
         diag_sent_mask_cur[temp_sampleNo / 32] |= (1UL << (temp_sampleNo % 32));
       } else {
@@ -1976,15 +2170,21 @@ int send_at_cmd_data(char *payload, String charArray) {
   } else {
     debugln("GPRS SEND : It is a Failure");
 
-    // v6.85: Trigger RTC resync if rejected >= 3 times (Time mismatch)
+    // v6.85: Trigger RTC resync on rejection
     if (strstr(payload_ptr, "Rejected") || strstr(payload_ptr, "rejected")) {
       diag_rejected_count++;
       debugf1("[TIME] Server Rejected Data. Count: %d\n", diag_rejected_count);
 
+      // v5.46: Immediately try to correct RTC from server's tm field
+      // (force=true) This fires on FIRST rejection — no need to wait for 3
+      // failures
+      sync_rtc_from_server_tm(payload_ptr, true);
+
+      // Fallback: if still rejecting after 3 times, use CLBS network time
       if (diag_rejected_count > 2) {
-        debugln("[TIME] Multiple rejections. Forcing RTC resync via GPRS...");
+        debugln("[TIME] Persistent rejection. Falling back to CLBS resync...");
         resync_time();
-        diag_rejected_count = 0; // Reset after attempt
+        diag_rejected_count = 0;
       }
     }
 
@@ -2005,8 +2205,8 @@ void store_current_unsent_data() {
   snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
 
   // SAFETY: If the file is getting too large (>150KB), SPIFFS appends can get
-  // slow or buggy. 150KB = ~2500 records. If we haven't sent by then, something
-  // is very wrong.
+  // slow or buggy. 150KB = ~2500 records. If we haven't sent by then,
+  // something is very wrong.
   if (SPIFFS.exists(unsent_file)) {
     File f_check = SPIFFS.open(unsent_file, FILE_READ);
     if (f_check.size() > 150000) {
@@ -2311,13 +2511,13 @@ void get_registration() {
   debugln("GETTING REGISTRATION ");
   debugln("************************");
 
-  // v5.62 HYBRID ADAPTIVE REGISTRATION:
-  // - Airtel/Jio: 12 retries (~60s max) — they register in 1-3 iters anyway
-  // - BSNL: 24 retries (~120s max) — BSNL 2G towers need more time
-  // - Adaptive wait replaces blind vTaskDelay(5000): poll CGREG every 1s
-  //   and exit immediately on success. No wasted sleep.
+  // v5.45.6 4G-AWARE HYBRID REGISTRATION:
+  // - Airtel/Jio: 4G-first. CEREG=1/5 = success. CEREG=3 w/ cell = LTE-CS
+  // denied, push CGATT.
+  // - BSNL: 2G/3G only. Uses CREG + CGREG (no LTE). 24 retries max.
+  // - Hard cap: 24 retries total (~2.5 min max). No more 50-cycle waste.
   bool isBSNL = (strstr(carrier, "BSNL") != nullptr);
-  int no_of_retries = isBSNL ? 50 : 50;
+  int no_of_retries = 24; // v5.45.6: Hard cap at 24 for all carriers
   registration = 0;
   retries = 0;
   bool is_registered = false;
@@ -2331,7 +2531,8 @@ void get_registration() {
   // v5.60: SET APN EARLY FOR CID 1 (Helps BSNL GPRS attachment)
   if (strlen(apn_str) > 3) {
     debugln("[GPRS] Pre-setting APN for CID 1 & 6: " + String(apn_str));
-    // Set for both CID 1 and CID 6 as some firmware variants use CID 6 for LTE
+    // Set for both CID 1 and CID 6 as some firmware variants use CID 6 for
+    // LTE
     SerialSIT.print("AT+CGDCONT=1,\"IP\",\"");
     SerialSIT.print(apn_str);
     SerialSIT.println("\"");
@@ -2369,12 +2570,186 @@ void get_registration() {
   // strings, wasting ~1.2s of active time. Use AT+GSN once via CLI/SMS if
   // needed.
 
+  // v5.45.6: Track if we've already done the first-fail DIAG to avoid
+  // repeating it
+  bool diag_done = false;
   int consecutive_unreg = 0;
+
   while (!is_registered && (retries < no_of_retries)) {
     esp_task_wdt_reset();
 
-    // v5.62 BSNL STUBBORN TRIGGER:
-    // If BSNL and stuck in Status 0 (Idle) for 15s, force a re-scan.
+    // UI Feedback: Show progress on LCD
+    snprintf(reg_status, 16, "TRY #%d...", retries + 1);
+
+    // v5.45.6: 4G-AWARE REGISTRATION POLL
+    // Strategy:
+    //   BSNL  → Uses CREG (2G) + CGREG (GPRS/3G). No LTE on BSNL.
+    //   Airtel/Jio → Uses CEREG (4G/LTE) first, then CREG fallback.
+    //
+    // CEREG=3 interpretation (THE FIX):
+    //   +CEREG: 2,3         = LTE: Denied, no cell info visible. Truly
+    //   denied. +CEREG: 2,3,TAC,CID = LTE: Denied at CS level BUT modem CAN
+    //   see the
+    //                         tower. Airtel 4G shuts down 2G/CS voice, so
+    //                         CREG says Denied. Tower IS there. Force CGATT
+    //                         and wait.
+    int r2 = -1, r4 = -1;
+
+    if (!isBSNL) {
+      // --- 4G Path (Airtel / Jio): Check CEREG first ---
+      SerialSIT.println("AT+CEREG?");
+      String resp4 = waitForResponse("+CEREG:", 2000);
+      int c4 = resp4.indexOf(",");
+      if (c4 != -1) {
+        r4 = resp4.substring(c4 + 1).toInt();
+
+        // v5.45.6: Check for cell info after the stat field.
+        // +CEREG: 2,3,TAC,CID → has a second comma after the stat.
+        // +CEREG: 2,3         → no second comma. Truly no signal.
+        if (r4 == 3) {
+          int c4b = resp4.indexOf(',', c4 + 1); // comma after stat field
+          bool has_cell_info = (c4b != -1);
+          if (has_cell_info) {
+            // Tower is visible but Airtel denies 2G CS registration.
+            // This is the "Airtel 2G Ghost" — treat as still searching.
+            debugln(
+                "[GPRS] CEREG=3 but LTE cell visible (Airtel 4G-only tower)."
+                " Pushing CGATT and waiting...");
+            SerialSIT.println("AT+CGATT=1");
+            waitForResponse("OK", 3000);
+            r4 = 0; // Reset to 'searching' — do NOT count as denied
+          } else {
+            debugln("[GPRS] CEREG=3, no cell info. Truly no LTE signal.");
+          }
+        }
+      }
+
+      // Also check CREG as fallback for 2G/3G registration
+      SerialSIT.println("AT+CREG?");
+      String resp2 = waitForResponse("+CREG:", 2000);
+      int c2 = resp2.indexOf(",");
+      if (c2 != -1)
+        r2 = resp2.substring(c2 + 1).toInt();
+    } else {
+      // --- BSNL Path: 2G/3G only. Check CREG + CGREG (adaptive wait below)
+      // ---
+      SerialSIT.println("AT+CREG?");
+      String resp2 = waitForResponse("+CREG:", 2000);
+      int c2 = resp2.indexOf(",");
+      if (c2 != -1)
+        r2 = resp2.substring(c2 + 1).toInt();
+    }
+
+    // Determine overall registration status (4G preferred)
+    // r4 has already been normalized (Airtel ghost CEREG=3 → set to 0)
+    if (r4 == 1 || r4 == 5) {
+      registration = r4;
+    } else if (r2 == 1 || r2 == 5) {
+      registration = r2;
+    } else if (r4 != -1 && r4 != 0) {
+      registration = r4; // Could be 2=searching, 3=denied, 4=unknown
+    } else if (r2 != -1) {
+      registration = r2;
+    } else {
+      registration = 0;
+    }
+
+    // --- SUCCESS CHECK ---
+    if (r2 == 1 || r2 == 5) {
+      is_registered = true;
+      isLTE = false;
+      strcpy(reg_status, (r2 == 1) ? "GSM:Home:OK" : "GSM:Roam:OK");
+      debugln("[GPRS] Registered via CREG! (2G:" + String(r2) + ")");
+      break;
+    }
+    if (r4 == 1 || r4 == 5) {
+      is_registered = true;
+      isLTE = true;
+      strcpy(reg_status, (r4 == 1) ? "LTE:Home:OK" : "LTE:Roam:OK");
+      debugln("[GPRS] Registered via CEREG! (4G:" + String(r4) + ")");
+      break;
+    }
+
+    // --- FAILURE TRACKING ---
+    // Only count as hard-unreg if registration is truly bad (not 'searching')
+    bool is_searching = (registration == 2);   // 2 = actively searching
+    bool is_hard_denied = (registration == 3); // 3 = denied with no cell info
+    if (!is_searching && registration != 0 && is_hard_denied) {
+      consecutive_unreg++;
+    } else if (registration == 0) {
+      consecutive_unreg++; // No radio at all
+    } else {
+      consecutive_unreg = 0; // Searching (status=2) is OK, don't count
+    }
+
+    // Hard denied diag — only log ONCE, not every iteration
+    if (is_hard_denied && !diag_done) {
+      diag_done = true;
+      debugln("[DIAG] Network Denied (first occurrence). Querying CPSI+CEER:");
+      SerialSIT.println("AT+CPSI?");
+      waitForResponse("OK", 2000);
+      SerialSIT.println("AT+CEER");
+      waitForResponse("OK", 2000);
+    }
+
+    // Hard cap: give up after too many consecutive true-denials
+    if (consecutive_unreg >= 18) {
+      debugln("[GPRS] 18 consecutive unreg. Giving up.");
+      break;
+    }
+
+    // --- TIERED RECOVERY (fires every 5 retries) ---
+    if (retries > 0 && retries % 5 == 0) {
+      if (retries == 5) {
+        // Tier 1 @ iter 5: RADIO-OFF SIM SCRUB + Clear Forbidden PLMNs
+        debugln("[GPRS] Tier1 @ iter5: Radio-Off SIM Scrub...");
+        SerialSIT.println("AT+CFUN=0");
+        waitForResponse("OK", 5000);
+        SerialSIT.println(
+            "AT+CRSM=214,28539,0,0,12,\"FFFFFFFFFFFFFFFFFFFFFFFF\"");
+        waitForResponse("OK", 2000);
+        SerialSIT.println("AT+CFUN=1");
+        waitForResponse("OK", 5000);
+        SerialSIT.println("AT+COPS=0");
+        waitForResponse("OK", 5000);
+        SerialSIT.println("AT+CGATT=1");
+        waitForResponse("OK", 3000);
+      } else if (retries == 10) {
+        // Tier 2 @ iter 10: Force GSM-only (diagnostic step)
+        debugln("[GPRS] Tier2 @ iter10: Testing GSM-Only Mode (AT+CNMP=13)...");
+        SerialSIT.println("AT+CNMP=13");
+        waitForResponse("OK", 2000);
+        SerialSIT.println("AT+COPS=0");
+        waitForResponse("OK", 5000);
+        SerialSIT.println("AT+CGATT=1");
+        waitForResponse("OK", 3000);
+      } else if (retries == 15) {
+        // Tier 3 @ iter 15: Force LTE-Only mode
+        debugln("[GPRS] Tier3 @ iter15: Testing LTE-Only Mode (AT+CNMP=38)...");
+        SerialSIT.println("AT+CNMP=38");
+        waitForResponse("OK", 2000);
+        SerialSIT.println("AT+COPS=0");
+        waitForResponse("OK", 5000);
+        SerialSIT.println("AT+CGATT=1");
+        waitForResponse("OK", 3000);
+      } else if (retries == 20) {
+        // Tier 4 @ iter 20: Restore Auto-Mode + COPS auto (carrier-agnostic)
+        // NOTE: We do NOT hard-code 40445 (Airtel) here — BSNL would break.
+        debugln(
+            "[GPRS] Tier4 @ iter20: Restoring Auto-Mode (CNMP=2, COPS=0)...");
+        SerialSIT.println("AT+CNMP=2"); // Auto (LTE+GSM)
+        waitForResponse("OK", 1000);
+        SerialSIT.println("AT+CMNB=3"); // LTE then GSM
+        waitForResponse("OK", 1000);
+        SerialSIT.println(
+            "AT+COPS=0"); // Auto operator — works for ALL carriers
+        waitForResponse("OK", 10000);
+        SerialSIT.println("AT+CGATT=1");
+        waitForResponse("OK", 3000);
+      }
+    }
+
+    // BSNL early kick: if stuck in Idle at iter 3, force re-scan
     if (isBSNL && registration == 0 && retries == 3) {
       debugln(
           "[GPRS] BSNL Stubborn Idle. Forcing Frequency Re-scan (COPS=0)...");
@@ -2382,185 +2757,11 @@ void get_registration() {
       waitForResponse("OK", 5000);
     }
 
-    // UI Feedback: Show progress on LCD
-    snprintf(reg_status, 16, "TRY #%d...", retries + 1);
-
-    // 1. Check CEREG (LTE)
-    flushSerialSIT();
-    SerialSIT.println("AT+CEREG?");
-    response = waitForResponse("OK", 5000);
-    int tagIdx = response.indexOf("+CEREG:");
-    if (tagIdx != -1) {
-      int commaIdx = response.indexOf(',', tagIdx);
-      if (commaIdx != -1) {
-        registration = response.substring(commaIdx + 1).toInt();
-        if (registration == 1 || registration == 5) {
-          debugln("CEREG Registered");
-          isLTE = true;
-          strcpy(reg_status,
-                 (registration == 1) ? "LTE:Home:OK" : "LTE:Roam:OK");
-          is_registered = true;
-          break;
-        }
-      }
-    }
-
-    if (!is_registered) {
-      // 2. Check CGREG (GPRS)
-      flushSerialSIT();
-      SerialSIT.println("AT+CGREG?");
-      response = waitForResponse("OK", 5000);
-      tagIdx = response.indexOf("+CGREG:");
-      if (tagIdx != -1) {
-        int commaIdx = response.indexOf(',', tagIdx);
-        if (commaIdx != -1) {
-          registration = response.substring(commaIdx + 1).toInt();
-          if (registration == 1 || registration == 5) {
-            debugln("CGREG Registered");
-            isLTE = true;
-            strcpy(reg_status,
-                   (registration == 1) ? "GPRS:Home:OK" : "GPRS:Roam:OK");
-            is_registered = true;
-            break;
-          }
-        }
-      }
-    }
-
-    if (!is_registered) {
-      // 3. Check CREG (GSM)
-      flushSerialSIT();
-      SerialSIT.println("AT+CREG?");
-      response = waitForResponse("OK", 5000);
-      debug("Raw CREG: ");
-      debugln(response);
-      tagIdx = response.indexOf("+CREG:");
-      if (tagIdx != -1) {
-        int commaIdx = response.indexOf(',', tagIdx);
-        if (commaIdx != -1) {
-          registration = response.substring(commaIdx + 1).toInt();
-          if (registration == 0 || registration == 3 || registration == 4) {
-            consecutive_unreg++;
-          } else {
-            consecutive_unreg = 0;
-          }
-        }
-
-        if (registration == 3) {
-          debugln("[DIAG] Registration Denied. Querying status...");
-
-          SerialSIT.println("AT+CPSI?"); // Deep Network Info
-          String cpsi = waitForResponse("OK", 2000);
-          debugln("[CPSI] Response: " + cpsi);
-
-          SerialSIT.println("AT+CEREG?"); // LTE Status
-          String cereg = waitForResponse("OK", 2000);
-          debugln("[CEREG] Response: " + cereg);
-
-          SerialSIT.println("AT+CEER"); // Error Cause
-          String ceer = waitForResponse("OK", 2000);
-          debugln("[CEER] Response: " + ceer);
-        }
-
-        if (consecutive_unreg >= 45) {
-          debugln("[GPRS] Persistent Unreg status. Final fail.");
-          break;
-        }
-
-        // v5.60: EARLY KICK if stuck in 'Not Searching' state (0)
-        if (registration == 0 && retries == 2) {
-          debugln("[GPRS] Stuck in Idle. Early search kick (COPS=0)...");
-          SerialSIT.println("AT+COPS=0");
-          waitForResponse("OK", 5000);
-        }
-
-        if (commaIdx != -1 &&
-            (registration == 1 || registration == 5 || registration == 11)) {
-          debugln("CREG Registered (GSM)");
-          isLTE = false;
-          strcpy(reg_status,
-                 (registration == 1)
-                     ? "GSM:Home:OK"
-                     : (registration == 11 ? "GSM:LTE:EXT" : "GSM:Roam:OK"));
-          is_registered = true;
-          break;
-        }
-      }
-    }
-
-    if (!is_registered) {
-      // Periodic Recovery Logic - Strictly Tiered to avoid interrupting search
-      if (retries > 0 && retries % 5 == 0) {
-        if (registration == 0 || registration == 3 || registration == 4) {
-          if (retries == 5) {
-            // Tier 1: RADIO-OFF SIM SCRUB (The most aggressive re-init)
-            debugln("[GPRS] Stubborn Denied. FORCING RADIO-OFF SIM SCRUB...");
-
-            SerialSIT.println("AT+CFUN=0"); // Radio Off FIRST
-            waitForResponse("OK", 5000);
-
-            // Wipe 6F7B (Forbidden PLMNs) while radio is off
-            SerialSIT.println(
-                "AT+CRSM=214,28539,0,0,12,\"FFFFFFFFFFFFFFFFFFFFFFFF\"");
-            waitForResponse("OK", 2000);
-
-            SerialSIT.println("AT+CFUN=1"); // Radio On
-            waitForResponse("OK", 5000);
-            SerialSIT.println("AT+COPS=0"); // Search
-            waitForResponse("OK", 5000);
-            SerialSIT.println("AT+CGATT=1"); // Force Attach
-            waitForResponse("OK", 2000);
-          } else if (retries == 15 || (retries > 15 && registration == 0)) {
-            // Search NAG: If stuck in 'Idle' (0), push it back to auto-search
-            debugln(
-                "[GPRS] Stuck in Idle. Nudging search (COPS=0 + CGATT=1)...");
-            SerialSIT.println("AT+COPS=0");
-            waitForResponse("OK", 5000);
-            SerialSIT.println("AT+CGATT=1");
-            waitForResponse("OK", 2000);
-          } else if (retries == 15) {
-            // Tier 2: Force GSM Only (Diagnostic)
-            debugln(
-                "[GPRS] LTE blocked? Testing GSM-Only Mode (AT+CNMP=13)...");
-            SerialSIT.println("AT+CNMP=13");
-            waitForResponse("OK", 2000);
-            SerialSIT.println("AT+COPS=0");
-            waitForResponse("OK", 5000);
-          } else if (retries == 25) {
-            // Tier 3: Force LTE Only (Primary)
-            debugln("[GPRS] GSM failed? Testing LTE-Only Mode (AT+CNMP=38)...");
-            SerialSIT.println("AT+CNMP=38");
-            waitForResponse("OK", 2000);
-            SerialSIT.println("AT+COPS=0");
-            waitForResponse("OK", 5000);
-          } else if (retries == 35) {
-            // Tier 4: Restore Automatic & Explicit Airtel Selection
-            debugln("[GPRS] Restoring Auto-Mode & Forcing Airtel India...");
-            SerialSIT.println("AT+CNMP=2");
-            waitForResponse("OK", 1000);
-            SerialSIT.println("AT+COPS=1,2,\"40445\""); // Explicit Airtel
-            waitForResponse("OK", 10000);
-          } else if (retries == 45) {
-            // Tier 5: Software Reboot
-            debugln("[GPRS] Final Recovery. Software Reboot (CFUN=1,1)...");
-            SerialSIT.println("AT+CFUN=1,1");
-            waitForResponse("OK", 15000);
-          }
-        }
-      }
-
-      // v5.62 CONTINUOUS PDP POKE:
-      // Pokes the BSNL tower to open a data channel.
-      // This often converts a CREG=1 (GSM) to a CGREG=1 (GPRS).
-      SerialSIT.println("AT+CGACT=1,1");
-      vTaskDelay(500 / portTICK_PERIOD_MS);
-    }
-
     debugf("Reg Search [BSNL:%d]... Status:%d Iter:#%d/%d\n", isBSNL,
            registration, retries + 1, no_of_retries);
 
-    // v5.62 ADAPTIVE WAIT: Poll CGREG every 1s for up to 5s.
-    // Exits immediately on registration — no wasted blind sleep.
+    // v5.45.6: ADAPTIVE WAIT: Poll CGREG every 1s for up to 5s.
+    // Exits immediately on GPRS/3G registration — no wasted blind sleep.
     for (int w = 0; w < 5 && !is_registered; w++) {
       vTaskDelay(1000 / portTICK_PERIOD_MS);
       esp_task_wdt_reset();
@@ -2574,7 +2775,8 @@ void get_registration() {
           int qreg = qr.substring(qc + 1).toInt();
           if (qreg == 1 || qreg == 5) {
             debugln("[GPRS] CGREG registered during adaptive wait!");
-            isLTE = true;
+            isLTE =
+                !isBSNL; // For BSNL it's GPRS/3G. For others it's LTE bearer.
             strcpy(reg_status, (qreg == 1) ? "GPRS:Home:OK" : "GPRS:Roam:OK");
             is_registered = true;
           }
@@ -2582,7 +2784,7 @@ void get_registration() {
       }
     }
     retries++;
-  }
+  } // end while
 
   // Update Diagnostics
   int time_taken = retries * 5;
@@ -2639,8 +2841,8 @@ void get_a7672s() {
     if (strlen(apn_str) == 0) {
       // If we don't know the target APN yet, assume the active one is OK.
       // Also extract the active APN from the response so
-      // verify_bearer_or_recover has something to compare against on subsequent
-      // retries.
+      // verify_bearer_or_recover has something to compare against on
+      // subsequent retries.
       apn_match = true;
       // Parse APN from +CGCONTRDP: 1,5,"<apn>","ip",...
       int q1 = rdp_resp.indexOf('"');
@@ -2709,8 +2911,8 @@ void get_a7672s() {
         debugf1("Smart APN: Stored APN failed. Fail count: %d\n",
                 diag_stored_apn_fails);
 
-        // If it has failed 2+ times across wake cycles, the network data layer
-        // is down. Stop hunting to save power.
+        // If it has failed 2+ times across wake cycles, the network data
+        // layer is down. Stop hunting to save power.
         if (diag_stored_apn_fails >= 2) {
           debugln("Smart APN: Tower is likely rejecting data calls. Halting "
                   "search to save power.");
@@ -3253,9 +3455,17 @@ int setup_ftp() {
   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CDNSGIP=\"%s\"",
            ftpServer);
   SerialSIT.println(gprs_xmit_buf);
-  // v5.50 Optimized: Wait up to 10s for DNS resolution.
-  response = waitForResponse("+CDNSGIP:", 10000);
+  // v5.45 Optimized: Wait up to 20s for DNS resolution (BSNL/2G Latency)
+  response = waitForResponse("+CDNSGIP:", 20000);
   debugln(response);
+  // v5.45: DNS retry on BSNL — error 10 is transient DNS timeout
+  if (response.indexOf("+CDNSGIP: 0") != -1 || response.length() < 10) {
+    debugln("[FTP] DNS failed, retrying after 3s...");
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
+    SerialSIT.println(gprs_xmit_buf); // Retry same DNS query
+    response = waitForResponse("+CDNSGIP:", 20000);
+    debugln(response);
+  }
 
   vTaskDelay(2000 / portTICK_PERIOD_MS); // Pre-login settling delay
 
@@ -3301,7 +3511,18 @@ void fetchFromHttpAndUpdate(char *fileName) {
 
   debugf1("[OTA] Starting Range-GET download for: %s\n", fileName);
 
-  // === STEP 1: HEAD request - get file size without downloading body ===
+  // v7.16: Rule 27 (Total Silence Protocol)
+  // Completely silence the modem BEFORE any binary transfers occur.
+  SerialSIT.println("AT+CREG=0");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CGEREP=0");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CNMI=0,0,0,0,0");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CIURC=0");
+  waitForResponse("OK", 1000);
+
+  // === STEP 1: HEAD request ===
   SerialSIT.println("AT+HTTPTERM");
   waitForResponse("OK", 2000);
   vTaskDelay(500);
@@ -3317,6 +3538,12 @@ void fetchFromHttpAndUpdate(char *fileName) {
     p.end();
     return;
   }
+  // v5.46 (Rule 1): Bind to CID 1 — MANDATORY for Airtel/BSNL reliability
+  SerialSIT.println("AT+HTTPPARA=\"CID\",1");
+  if (waitForResponse("OK", 2000).indexOf("OK") == -1) {
+    debugln(
+        "[OTA] CID binding warning: No OK received, but continuing anyway.");
+  }
   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
            "AT+HTTPPARA=\"URL\",\"http://%s:%s/builds/%s\"", HEALTH_SERVER_IP,
            HEALTH_SERVER_PORT, fileName);
@@ -3327,13 +3554,42 @@ void fetchFromHttpAndUpdate(char *fileName) {
     waitForResponse("OK", 2000);
     return;
   }
+  flushSerialSIT(); // Pre-HEAD flush (Rule 28)
   // HTTP HEAD to determine Content-Length
   SerialSIT.println("AT+HTTPACTION=2");
   String head_resp = waitForResponse("+HTTPACTION:", 30000);
   debugf1("[OTA] HEAD: %s\n", head_resp.c_str());
-  int lc0 = head_resp.lastIndexOf(",");
-  if (lc0 != -1)
-    total_no_of_bytes = head_resp.substring(lc0 + 1).toInt();
+
+  // v5.45: The HTTPACTION datalen field for a HEAD request = size of HTTP
+  // *response headers*, NOT the firmware file size.
+  // Per A7672S manual, we must use AT+HTTPHEAD to read the buffered headers.
+  // v5.45: Wait 1s for BSNL network to respond
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  SerialSIT.println("AT+HTTPHEAD");
+  String hdr_body = waitForResponse("OK", 10000);
+  debugf1("[OTA] Headers: %s\n", hdr_body.c_str());
+
+  // Parse Content-Length: from header body (case-insensitive search)
+  int cl_idx = hdr_body.indexOf("Content-Length:");
+  if (cl_idx == -1)
+    cl_idx = hdr_body.indexOf("content-length:");
+  if (cl_idx != -1) {
+    int cl_val_start = cl_idx + 15; // skip "Content-Length:"
+    while (cl_val_start < (int)hdr_body.length() &&
+           hdr_body[cl_val_start] == ' ')
+      cl_val_start++; // skip spaces
+    total_no_of_bytes = hdr_body.substring(cl_val_start).toInt();
+    debugf1("[OTA] Content-Length parsed: %d bytes\n", total_no_of_bytes);
+  } else {
+    // Fallback: try last field of HTTPACTION (may work on some server
+    // configs)
+    int lc0 = head_resp.lastIndexOf(",");
+    if (lc0 != -1)
+      total_no_of_bytes = head_resp.substring(lc0 + 1).toInt();
+    debugf1("[OTA] Content-Length fallback from HTTPACTION: %d bytes\n",
+            total_no_of_bytes);
+  }
+
   SerialSIT.println("AT+HTTPTERM");
   waitForResponse("OK", 2000);
 
@@ -3353,12 +3609,21 @@ void fetchFromHttpAndUpdate(char *fileName) {
     debugf1("[OTA] Update.begin failed: %s\n", Update.errorString());
     return;
   }
+  // v5.45: Silence URCs during high-speed OTA download (Rule 4)
+  SerialSIT.println("AT+CGEREP=0");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CREG=0");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CEREG=0");
+  waitForResponse("OK", 1000);
+  flushSerialSIT();
+
   Update.onProgress(progressCallBack);
   ota_writing_active = true;
   debugln("[OTA] OTA begun. Downloading in 64KB Range chunks...");
 
-  const int RANGE_SIZE = 65536;
-  const int READ_SIZE = 4096;
+  const int RANGE_SIZE = 16384; // 16KB
+  const int READ_SIZE = 16384;  // 16KB
   uint8_t *buf = (uint8_t *)malloc(READ_SIZE);
   if (!buf) {
     debugln("[OTA] malloc failed!");
@@ -3367,136 +3632,284 @@ void fetchFromHttpAndUpdate(char *fileName) {
     return;
   }
 
-  // === STEP 3: Download 64KB chunks via Range GET ===
+  int chunk_retries = 0; // v5.45: Consolidated retry counter
+  bool session_active = false;
+
+  // === STEP 3: Download 16KB chunks via Range GET ===
   while (actual_downloaded < total_no_of_bytes) {
+    // v7.20: Explicit Offset logging to detect shift-bugs
+    debugf("[OTA] Range %d-%d (Progress: %.1f%%)\n", actual_downloaded,
+           actual_downloaded + RANGE_SIZE - 1,
+           (float)actual_downloaded * 100.0 / total_no_of_bytes);
+
+    if (!session_active) {
+      // v7.06: Only RESET stack when session is lost or at start
+      // This prevents "Socket Zombie" exhaustion from rapid INIT/TERM calls
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 2000);
+
+      // Rule 15: Carrier Congestion Breather
+      vTaskDelay(5000 / portTICK_PERIOD_MS);
+      flushSerialSIT();
+
+      // Rule 16: Verify bearer inside loop
+      if (!verify_bearer_or_recover()) {
+        debugln("[OTA] Bearer lost. Retrying recovery...");
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        chunk_retries++;
+        if (chunk_retries > 5)
+          break;
+        continue;
+      }
+
+      SerialSIT.println("AT+HTTPINIT");
+      if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
+        debugln("[OTA] HTTPINIT fail. Retrying...");
+        chunk_retries++;
+        if (chunk_retries > 5)
+          break;
+        continue;
+      }
+
+      // v5.46 (Rule 1+11): Bind CID=1 and URL in tight sequence — no gaps
+      SerialSIT.println("AT+HTTPPARA=\"CID\",1");
+      waitForResponse("OK", 2000);
+      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
+               "AT+HTTPPARA=\"URL\",\"http://%s:%s/builds/%s\"",
+               HEALTH_SERVER_IP, HEALTH_SERVER_PORT, fileName);
+      SerialSIT.println(gprs_xmit_buf);
+      waitForResponse("OK", 2000);
+
+      session_active = true;
+    }
+
     int r_start = actual_downloaded;
     int r_end = min(actual_downloaded + RANGE_SIZE - 1, total_no_of_bytes - 1);
-    debugf1("[OTA] Range bytes=%d-%d\n", r_start);
-    debug(" - ");
-    debugln(r_end);
+    debugf("[OTA] Range bytes=%d-%d\n", r_start, r_end);
 
-    SerialSIT.println("AT+HTTPTERM");
-    waitForResponse("OK", 2000);
-    vTaskDelay(300);
-    flushSerialSIT();
-
-    SerialSIT.println("AT+HTTPINIT");
-    if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
-      debugln("[OTA] HTTPINIT fail in chunk loop.");
-      break;
-    }
-    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-             "AT+HTTPPARA=\"URL\",\"http://%s:%s/builds/%s\"", HEALTH_SERVER_IP,
-             HEALTH_SERVER_PORT, fileName);
-    SerialSIT.println(gprs_xmit_buf);
-    waitForResponse("OK", 2000);
+    // (v5.46: Zombie signature check removed — caused false positives on
+    // firmware binary data, corrupting every other chunk via bearer teardown)
 
     // Range header
     snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
              "AT+HTTPPARA=\"USERDATA\",\"Range: bytes=%d-%d\"", r_start, r_end);
     SerialSIT.println(gprs_xmit_buf);
-    String rng_r = waitForResponse("OK", 2000);
-    debugf1("[OTA] Range set: %s\n", rng_r.indexOf("OK") != -1 ? "OK" : "FAIL");
+    waitForResponse("OK", 2000);
 
-    // Execute GET (90s timeout: 64KB on 2G ~11s + overhead)
+    // Execute GET
     SerialSIT.println("AT+HTTPACTION=0");
     String act = waitForResponse("+HTTPACTION:", 90000);
     debugf1("[OTA] GET resp: %s\n", act.c_str());
 
-    int lc2 = act.lastIndexOf(",");
-    int chunk_got = (lc2 != -1) ? act.substring(lc2 + 1).toInt() : 0;
-    if (chunk_got <= 0) {
-      debugln("[OTA] GET failed. Aborting.");
-      SerialSIT.println("AT+HTTPTERM");
-      waitForResponse("OK", 2000);
-      Update.abort();
-      free(buf);
-      ota_writing_active = false;
-      Preferences p;
-      p.begin("ota-track", false);
-      p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
-      p.putString("fail_res", "Chunk GET fail");
-      p.end();
-      return;
+    // v7.12: Improved HTTPACTION parsing (Rule 25)
+    int first_comma = act.indexOf(",");
+    int last_comma = act.lastIndexOf(",");
+    int http_status = 0;
+    int chunk_got = 0;
+    if (first_comma != -1 && last_comma != -1 && last_comma > first_comma) {
+      http_status = act.substring(first_comma + 1, last_comma).toInt();
+      chunk_got = act.substring(last_comma + 1).toInt();
     }
+
+    // Status 200/206 are successful. Anything else (like 706) is a retryable
+    // error.
+    if (http_status != 200 && http_status != 206) {
+      debugf("[OTA] GET failed (Status: %d). Retrying chunk (Rule 25)...\n",
+             http_status);
+
+      // Rule 19 Apply: If it's a socket/bearer error (706/714/etc), nuke the
+      // context
+      // v7.15: Rule 27 (Total Silence Protocol)
+      // Completely silence the modem to prevent URCs from contaminating the
+      // binary stream
+      SerialSIT.println("AT+CREG=0");
+      waitForResponse("OK", 1000);
+      SerialSIT.println("AT+CGEREP=0");
+      waitForResponse("OK", 1000);
+      SerialSIT.println("AT+CNMI=0,0,0,0,0"); // Kill SMS URCs
+      waitForResponse("OK", 1000);
+      SerialSIT.println("AT+CIURC=0"); // Kill all other URCs (if supported)
+      waitForResponse("OK", 1000);
+
+      if (http_status >= 700) {
+        debugln("[OTA] Socket/Bearer error. Forcing Hard Reset (Rule 30)...");
+        SerialSIT.println("AT+HTTPTERM");
+        waitForResponse("OK", 1000);
+        SerialSIT.println("AT+CGACT=0,1");
+        waitForResponse("OK", 3000);
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+      }
+
+      session_active = false; // Force re-init on next loop
+      chunk_retries++;
+      if (chunk_retries > 6) { // Allowing 6 retries per chunk
+        debugln("[OTA] Too many chunk retries. Aborting.");
+        SerialSIT.println("AT+HTTPTERM");
+        waitForResponse("OK", 2000);
+        Update.abort();
+        free(buf);
+        ota_writing_active = false;
+
+        Preferences p;
+        p.begin("ota-track", false);
+        p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
+        p.putString("fail_res", "Chunk status " + String(http_status));
+        p.end();
+        return;
+      }
+
+      // v7.14: Critical Buffer Flush before retry
+      flushSerialSIT();
+      continue; // Retry same chunk
+    }
+
     debugf1("[OTA] Chunk: %d bytes\n", chunk_got);
 
-    // Read chunk binary via HTTPREAD
-    int chk_off = 0;
-    bool read_ok = true;
-    while (chk_off < chunk_got) {
-      int to_read = min(chunk_got - chk_off, READ_SIZE);
-      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+HTTPREAD=%d,%d",
-               chk_off, to_read);
-      SerialSIT.println(gprs_xmit_buf);
+    // v5.45: Added stabilization delay (Mirrors send_at_cmd_data success path)
+    vTaskDelay(500);
 
-      // Wait for +HTTPREAD: header (signals binary data follows)
-      bool foundHdr = false;
-      String hdr = "";
-      unsigned long t0 = millis();
-      while (millis() - t0 < 10000) {
-        while (SerialSIT.available()) {
-          char c = SerialSIT.read();
-          hdr += c;
-          if (c == '\n' && hdr.indexOf("+HTTPREAD:") != -1) {
-            foundHdr = true;
-            break;
-          }
-        }
-        if (foundHdr)
-          break;
-        vTaskDelay(2);
-        esp_task_wdt_reset();
-      }
-      if (!foundHdr) {
-        debugf1("[OTA] No HTTPREAD hdr at %d. Aborting.\n", chk_off);
-        read_ok = false;
-        break;
-      }
+    // v7.15: Rule 28 (Pre-Read Flush)
+    // Clear any dangling URCs or async noise before requesting binary data
+    flushSerialSIT();
 
-      // Read exact binary bytes
-      SerialSIT.setTimeout(5000);
-      int got = 0;
-      unsigned long rs = millis();
-      while (got < to_read && millis() - rs < 15000) {
-        int r = SerialSIT.readBytes(buf + got, to_read - got);
-        if (r > 0)
-          got += r;
-        else
-          vTaskDelay(5);
-        esp_task_wdt_reset();
-      }
-      if (got > 0) {
-        if (Update.write(buf, got) != (size_t)got) {
-          debugln("[OTA] Flash write failed!");
-          read_ok = false;
+    // Read entire chunk into buffer (Chunk-Atomic)
+    bool read_ok = false;
+    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+HTTPREAD=0,%d",
+             chunk_got);
+    SerialSIT.println(gprs_xmit_buf);
+
+    // 1. Wait for Header
+    String hdr = "";
+    unsigned long t0 = millis();
+    while (millis() - t0 < 10000) {
+      if (SerialSIT.available()) {
+        char c = SerialSIT.read();
+        hdr += c;
+        if (c == '\n' && hdr.indexOf("+HTTPREAD:") != -1) {
+          read_ok = true;
           break;
         }
-        chk_off += got;
-        actual_downloaded += got;
-        waitForResponse("OK", 1000); // consume footer
-      } else {
-        debugln("[OTA] HTTPREAD no bytes.");
-        read_ok = false;
-        break;
       }
-      vTaskDelay(10);
-      esp_task_wdt_reset();
+      vTaskDelay(2);
     }
 
-    SerialSIT.println("AT+HTTPTERM");
-    waitForResponse("OK", 2000);
+    if (read_ok) {
+      // 2. Read Exact Bytes
+      SerialSIT.setTimeout(10000);
+      int got = SerialSIT.readBytes(buf, chunk_got);
+      if (got == chunk_got) {
+        // v5.46: Range Boundary Guard.
+        int bytes_to_write = min(got, total_no_of_bytes - actual_downloaded);
+
+        // v5.46: Magic Byte Guard — only valid check: first chunk must start
+        // 0xE9
+        if (actual_downloaded == 0 && buf[0] != 0xE9) {
+          debugf1("[OTA] !! First chunk bad magic: 0x%02X (expected 0xE9). "
+                  "Retrying.\n",
+                  buf[0]);
+          session_active = false;
+          chunk_retries++;
+          if (chunk_retries > 5) {
+            debugln("[OTA] Magic byte check failed too many times. Aborting.");
+            Update.abort();
+            free(buf);
+            ota_writing_active = false;
+            Preferences p;
+            p.begin("ota-track", false);
+            p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
+            p.putString("fail_res", "Bad magic byte");
+            p.end();
+            return;
+          }
+          read_ok = false; // fall through to retry logic
+        } else if (Update.write(buf, bytes_to_write) ==
+                   (size_t)bytes_to_write) {
+          actual_downloaded += bytes_to_write;
+          chunk_retries = 0; // Reset on true success
+
+          // v7.16: Enhanced Diagnostic Hex Dump
+          debug("[OTA] Chunk Head (Hex): ");
+          for (int i = 0; i < min(16, bytes_to_write); i++) {
+            if ((unsigned char)buf[i] < 16)
+              debug("0");
+            debug(String((unsigned char)buf[i], HEX) + " ");
+          }
+          debugln();
+
+          // Check for URC contamination patterns
+          if (buf[0] == '+' ||
+              (bytes_to_write > 2 && (buf[0] == '\r' || buf[0] == '\n') &&
+               buf[1] == '+')) {
+            debugln("[OTA] !! CRITICAL: URC Contamination Detected in Binary "
+                    "Stream !!");
+          }
+
+          // v7.15: Rule 29 (The Dangling Byte Guard)
+          int dangling = chunk_got - bytes_to_write;
+          if (dangling > 0) {
+            debugf("[OTA] Consuming %d dangling bytes...\n", dangling);
+            while (dangling > 0) {
+              if (SerialSIT.available()) {
+                SerialSIT.read();
+                dangling--;
+              } else {
+                vTaskDelay(10);
+                if (millis() - t0 > 15000)
+                  break;
+              }
+            }
+          }
+          waitForResponse("OK", 3000);
+        } else {
+          int errW = Update.getError();
+          debugf("[OTA] Flash write error! Code: %d, Str: %s\n", errW,
+                 Update.errorString());
+          read_ok = false;
+        }
+      } else {
+        debugf("[OTA] Chunk shortfall: %d/%d\n", got, chunk_got);
+        read_ok = false;
+      }
+    } else {
+      debugf1("[OTA] No HTTPREAD hdr. Received: %s\n", hdr.c_str());
+    }
 
     if (!read_ok) {
-      debugln("[OTA] Chunk read error. Aborting.");
-      Update.abort();
-      free(buf);
-      ota_writing_active = false;
-      return;
+      debugln("[OTA] Chunk failed. Invalidating session for recovery...");
+      session_active = false; // Force re-init on next loop
+      chunk_retries++;
+      if (chunk_retries > 15) { // v7.20: Increased from 3 to 15 for Airtel/BSNL
+        debugln("[OTA] Too many chunk retries. Aborting.");
+        Update.abort();
+        free(buf);
+        ota_writing_active = false;
+
+        // Restore sanity
+        SerialSIT.println("AT+HTTPTERM");
+        waitForResponse("OK", 1000);
+        SerialSIT.println("AT+CGEREP=2");
+        waitForResponse("OK", 1000);
+        SerialSIT.println("AT+CREG=1");
+        waitForResponse("OK", 1000);
+        SerialSIT.println("AT+CEREG=1");
+        waitForResponse("OK", 1000);
+
+        Preferences p;
+        p.begin("ota-track", false);
+        p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
+        p.putString("fail_res", "Chunk retry exhausted");
+        p.end();
+        return;
+      }
+      continue; // retry same chunk
     }
-    debugf1("[OTA] Progress: %d / %d\n", actual_downloaded);
+    debugf("[OTA] Progress: %d / %d\n", actual_downloaded, total_no_of_bytes);
     vTaskDelay(500);
     esp_task_wdt_reset();
+    // v7.46: Rule 33 (Post-read Purge)
+    // Mandatory UART flush regardless of success/fail to clear binary trailing
+    // junk or modem URCs
+    flushSerialSIT();
   }
 
   free(buf);
@@ -3520,17 +3933,41 @@ void fetchFromHttpAndUpdate(char *fileName) {
       ESP.restart();
     } else {
       String err = Update.errorString();
-      debugf1("[OTA] Update.end FAILED: %s\n", err.c_str());
+      int errCode = Update.getError();
+      debugf("[OTA] Update.end FAILED. Code: %d, Str: %s\n", errCode,
+             err.c_str());
+      Update.printError(SerialSIT);
+
       Preferences p;
       p.begin("ota-track", false);
       p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
-      p.putString("fail_res", err.c_str());
+      p.putString("fail_res", "End fail code: " + String(errCode));
       p.end();
     }
   } else {
-    debugf1("[OTA] Incomplete: %d/%d. Aborting.\n", actual_downloaded);
+    debugf("[OTA] Incomplete: %d/%d. Aborting.\n", actual_downloaded,
+           total_no_of_bytes);
     Update.abort();
   }
+
+  // Restore Modem URCs (v7.16 Restoration)
+  SerialSIT.println("AT+CREG=1");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CGEREP=2");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CNMI=2,1,0,0,0");
+  waitForResponse("OK", 1000);
+
+  // v7.06: Final Cleanup & Restoration
+  SerialSIT.println("AT+HTTPTERM");
+  waitForResponse("OK", 2000);
+  SerialSIT.println("AT+CGEREP=2");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CREG=1");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CEREG=1");
+  waitForResponse("OK", 1000);
+
   debugln("[OTA] Done.");
 }
 
@@ -3735,31 +4172,25 @@ void send_at_cmd(char *cmd, char *check, char *spl) {
  * Parameters: stn, type, gbat, ebat, sig
  */
 bool send_health_report(bool useJitter) {
-  // v7.00: Ensure bearer is live before starting Health Report flow
-  if (!verify_bearer_or_recover()) {
-    debugln("[Health] Bearer lost. Aborting.");
-    return false;
-  }
+  // v5.45: Carrier Congestion Breather after FTP (Special for BSNL)
+  vTaskDelay(5000 / portTICK_PERIOD_MS);
 
   // v6.68: Graceful Reset (Term only). Do NOT use CIPSHUT as it kills the
   // bearer!
   SerialSIT.println("AT+HTTPTERM");
   waitForResponse("OK", 3000);
-  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
 
-  if (useJitter) {
-    int jitter = random(0, 5000);
-    vTaskDelay(jitter / portTICK_PERIOD_MS);
-  }
+  // v5.45: Purity Guard - Silence all network noise during transmission
+  SerialSIT.println("AT+CGEREP=0");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CREG=0");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CEREG=0");
+  waitForResponse("OK", 1000);
 
-  // Perform Rainfall Integrity check before reporting
+  // --- v7.00: PREPARE PAYLOAD BEFORE AT COMMANDS (ZERO GAP) ---
   checkRainfallIntegrity();
-
-  // v5.49 Golden Data Analysis: Strictly analyze the Closed Day (Yesterday
-  // 08:45 AM -> Today 08:30 AM)
-  bool unresolvedPD = false;
-  bool unresolvedNDM = false;
-
   char cleanStn[16];
   strncpy(cleanStn, station_name, 15);
   cleanStn[15] = '\0';
@@ -3769,266 +4200,175 @@ bool send_health_report(bool useJitter) {
     slen--;
   }
 
-  // 1. Live Progress Look-ahead (Updates NetCount for JSON)
-  int dummyNetCount;
-  bool dummyPD, dummyNDM;
+  bool unresolvedPD = false, unresolvedNDM = false;
+  bool dummyPD = false, dummyNDM = false;
   analyzeFileHealth(diag_sent_mask_cur, &diag_net_data_count, &dummyPD,
                     &dummyNDM);
-
-  // 2. Official Day Recovery (Drives the Flags/Alarms)
-  // We do this LAST so it overwrites diag_cdm_status and PD/NDM flags
-  // correctly.
   analyzeFileHealth(diag_sent_mask_prev, &diag_net_data_count_prev,
                     &unresolvedPD, &unresolvedNDM);
 
-  // 2. Prepare Grouped Data
-  char sensor_info[32];
-  if (SYSTEM == 0) { // TRG
+  char sensor_info[48];
+  if (SYSTEM == 0)
     snprintf(sensor_info, sizeof(sensor_info), "RF-OK");
-  } else if (SYSTEM == 1) { // TWS
+  else if (SYSTEM == 1)
     snprintf(sensor_info, sizeof(sensor_info), "TH-%s,B-%s,WS-%s,WD-%s",
              (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"),
              (bmeType == BME_UNKNOWN ? "NA" : "OK"), (ws_ok ? "OK" : "FAIL"),
              (wd_ok ? "OK" : "FAIL"));
-  } else if (SYSTEM == 2) { // TWS-RF
-    // v6.50: Platinum labels as requested
+  else
     snprintf(sensor_info, sizeof(sensor_info), "TH-%s,RF-OK,WS-%s,WD-%s",
              (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"), (ws_ok ? "OK" : "FAIL"),
              (wd_ok ? "OK" : "FAIL"));
-  }
 
-  // GPS Group
   char gps_str[32];
   snprintf(gps_str, sizeof(gps_str), "%.6f,%.6f", lati, longi);
 
-  // Time metrics
-  float avg_reg =
-      (diag_reg_count > 0) ? (float)diag_reg_time_total / diag_reg_count : 0;
-  float avg_http =
-      (diag_http_success_count > 0)
-          ? (float)diag_http_time_total / diag_http_success_count / 1000.0
-          : 0;
-
-  // v5.43 Golden Summary Health Logic
-  char h_status[256];
-  h_status[0] = '\0';
-
-// v5.86: Removed local version definition to avoid conflicts
-// v5.88: Macro moved to globals.h to avoid redefinition errors
-#define ADD_FAULT(f)                                                           \
+  char h_status[256] = "";
+#define H_FAULT(f)                                                             \
   do {                                                                         \
     if (h_status[0] != '\0')                                                   \
       strcat(h_status, "_");                                                   \
     strcat(h_status, f);                                                       \
   } while (0)
-
-  // 1. Critical System Faults (Power & HW)
   if (diag_last_reset_reason == 15)
-    ADD_FAULT("BROWNOUT");
+    H_FAULT("BROWNOUT");
   if (diag_last_reset_reason == 7 || diag_last_reset_reason == 8 ||
       diag_last_reset_reason == 9 || diag_last_reset_reason == 13 ||
       diag_last_reset_reason == 16)
-    ADD_FAULT("WDOG");
+    H_FAULT("WDOG");
   if (!diag_rtc_battery_ok || current_year < 2025)
-    ADD_FAULT("RTC_FAIL");
-
-  // 2. Data Health (Golden Summary Standard)
+    H_FAULT("RTC_FAIL");
   if (unresolvedPD)
-    ADD_FAULT("PD");
+    H_FAULT("PD");
   if (strcmp(diag_cdm_status, "OK") != 0 && current_hour >= 9)
-    ADD_FAULT("CDM");
+    H_FAULT("CDM");
   if (unresolvedNDM)
-    ADD_FAULT("NDM");
+    H_FAULT("NDM");
 
-  // 3. Sensor Quality (Golden Summary Standard) - System Specific
-  if (SYSTEM != 0) { // TWS or TWS-RF
-    if (diag_temp_cv)
-      ADD_FAULT("Temp_CV");
-    if (diag_hum_cv)
-      ADD_FAULT("Humi_CV");
-    if (diag_ws_cv)
-      ADD_FAULT("WS_CV");
-    if (diag_temp_erv)
-      ADD_FAULT("Temp_ERV");
-    if (diag_hum_erv)
-      ADD_FAULT("Humi_ERV");
-    if (diag_ws_erv)
-      ADD_FAULT("WS_ERV");
-    if (diag_temp_erz)
-      ADD_FAULT("Temp_ERZ");
-    if (diag_hum_erz)
-      ADD_FAULT("Humi_ERZ");
-  }
-
-  if (SYSTEM != 1) { // TRG or TWS-RF
-    if (diag_rain_jump)
-      ADD_FAULT("Rain_JUMP");
-    if (diag_rain_calc_invalid)
-      ADD_FAULT("Rain_CALC_ERR");
-    if (diag_rain_reset)
-      ADD_FAULT("Rain_RESET");
-  }
-
-  // 4. Hardware Connectivity - System Specific
   if (SYSTEM != 0) {
-    if (hdcType == HDC_UNKNOWN)
-      ADD_FAULT("TH_MISSING");
-    if (!wd_ok)
-      ADD_FAULT("WD_MISSING");
+    if (diag_temp_cv)
+      H_FAULT("Temp_CV");
+    if (diag_hum_cv)
+      H_FAULT("Humi_CV");
+    if (diag_ws_cv)
+      H_FAULT("WS_CV");
+    if (diag_temp_erv)
+      H_FAULT("Temp_ERV");
+    if (diag_hum_erv)
+      H_FAULT("Humi_ERV");
+    if (diag_ws_erv)
+      H_FAULT("WS_ERV");
   }
-
-  // 5. Environment & Network
+  if (SYSTEM != 1) {
+    if (diag_rain_jump)
+      H_FAULT("Rain_JUMP");
+    if (diag_rain_calc_invalid)
+      H_FAULT("Rain_CALC_ERR");
+    if (diag_rain_reset)
+      H_FAULT("Rain_RESET");
+  }
   if (li_bat_val < 3.4)
-    ADD_FAULT("BATT_CRIT");
+    H_FAULT("BATT_CRIT");
   else if (li_bat_val < 3.6)
-    ADD_FAULT("BATT_LOW");
-
-  if (current_hour >= 9 && current_hour <= 16 && solar_val < (li_bat_val + 0.1))
-    ADD_FAULT("SOLAR_FAIL");
-
-  if (diag_consecutive_http_fails > 3)
-    ADD_FAULT("HTTP_BACKLOG");
-  if (avg_reg > 150.0)
-    ADD_FAULT("POOR_SIG");
-
-  // Default
+    H_FAULT("BATT_LOW");
   if (h_status[0] == '\0')
     strcpy(h_status, "OK");
 
-  int cur_dd_h = current_day, cur_mm_h = current_month, cur_yy_h = current_year;
-  int prev_dd_h = current_day, prev_mm_h = current_month,
-      prev_yy_h = current_year;
-
-  int h_idx = (current_hour < 24) ? current_hour : 0;
-  int m_idx = (current_min < 60) ? current_min : 0;
-  int sNo = h_idx * 4 + m_idx / 15;
-  sNo = (sNo + 61) % 96;
-
-  if (sNo <= 60) {
-    next_date(&cur_dd_h, &cur_mm_h, &cur_yy_h);
-  } else {
-    previous_date(&prev_dd_h, &prev_mm_h, &prev_yy_h);
-  }
-
-  char prevF[32], curF[32];
-  snprintf(prevF, sizeof(prevF), "/%s_%04d%02d%02d.txt", station_name,
-           prev_yy_h, prev_mm_h, prev_dd_h);
-  snprintf(curF, sizeof(curF), "/%s_%04d%02d%02d.txt", station_name, cur_yy_h,
-           cur_mm_h, cur_dd_h);
-
-  int cur_stored = countStored(curF);
-  int prev_stored = countStored(prevF);
-
-  // 3. Construct JSON Payload (v5.42 expanded)
   char jsonBody[1024];
-  snprintf(jsonBody, sizeof(jsonBody),
-           "{\"stn_id\":\"%s\",\"unit_type\":\"%s\",\"system\":%d,"
-           "\"health_sts\":\"%s\",\"sensor_sts\":\"%s\","
-           "\"reset_reason\":%d,\"rtc_ok\":%d,\"uptime_hrs\":%u,"
-           "\"bat_v\":%.2f,\"sol_v\":%.2f,\"signal\":%d,"
-           "\"reg_fails\":%d,\"reg_avg\":%.1f,\"reg_worst\":%d,"
-           "\"reg_fail_type\":\"%s\","
-           "\"http_fails\":%d,\"http_fail_reason\":\"%s\",\"http_avg\":%.1f,"
-           "\"net_cnt\":%d,\"net_cnt_prev\":%d,"
-           "\"cur_stored\":%d,\"prev_stored\":%d,"
-           "\"http_suc_cnt\":%d,\"http_suc_cnt_prev\":%d,"
-           "\"ndm_cnt\":%d,\"pd_cnt\":%d,\"cdm_sts\":\"%s\","
-           "\"first_http\":%d,"
-           "\"spiffs_kb\":%u,\"spiffs_total_kb\":%u,"
-           "\"sd_sts\":\"%s\",\"calib\":\"%s\","
-           "\"ver\":\"%s\",\"carrier\":\"%s\","
-           "\"iccid\":\"%s\",\"gps\":\"%s\","
-           "\"ota_fails\":%d,\"ota_fail_reason\":\"%s\"}",
-           cleanStn, UNIT, SYSTEM, h_status, sensor_info,
-           diag_last_reset_reason, (diag_rtc_battery_ok ? 1 : 0),
-           diag_total_uptime_hrs, li_bat_val, solar_val, signal_lvl,
-           diag_gprs_fails, avg_reg, diag_reg_worst, diag_reg_fail_type,
-           diag_daily_http_fails, diag_http_fail_reason, avg_http,
-           (TEST_HEALTH_EVERY_SLOT ? (int)diag_net_data_count
-                                   : diag_net_data_count_prev),
-           diag_net_data_count_prev, // always send prev for PD analysis
-           cur_stored, prev_stored, diag_http_success_count,
-           diag_http_success_count_prev,
-           (TEST_HEALTH_EVERY_SLOT ? diag_ndm_count : diag_ndm_count_prev),
-           (TEST_HEALTH_EVERY_SLOT ? diag_pd_count : diag_pd_count_prev),
-           diag_cdm_status,
-           (TEST_HEALTH_EVERY_SLOT ? diag_first_http_count
-                                   : diag_first_http_count_prev),
-           (unsigned int)(SPIFFS.usedBytes() / 1024),
-           (unsigned int)(SPIFFS.totalBytes() / 1024),
-           (sd_card_ok ? "OK" : "FAIL"), "NA", UNIT_VER, carrier, cached_iccid,
-           gps_str, ota_fail_count, ota_fail_reason);
+  int msgLen = snprintf(
+      jsonBody, sizeof(jsonBody),
+      "{\"stn_id\":\"%s\",\"unit_type\":\"%s\",\"system\":%d,"
+      "\"health_sts\":\"%s\",\"sensor_sts\":\"%s\","
+      "\"reset_reason\":%d,\"rtc_ok\":%d,\"uptime_hrs\":%u,"
+      "\"bat_v\":%.2f,\"sol_v\":%.2f,\"signal\":%d,"
+      "\"reg_fails\":%d,\"reg_avg\":%.1f,\"http_fails\":%d,"
+      "\"http_suc_cnt\":%d,\"cdm_sts\":\"%s\",\"spiffs_kb\":%u,"
+      "\"sd_sts\":\"%s\",\"ver\":\"%s\",\"carrier\":\"%s\","
+      "\"iccid\":\"%s\",\"gps\":\"%s\",\"ota_fails\":%d,"
+      "\"ndm_cnt\":%d,\"pd_cnt\":%d,\"first_http\":%d,\"net_cnt\":%d}",
+      cleanStn, UNIT, SYSTEM, h_status, sensor_info, diag_last_reset_reason,
+      (diag_rtc_battery_ok ? 1 : 0), diag_total_uptime_hrs, li_bat_val,
+      solar_val, signal_lvl, diag_gprs_fails,
+      (diag_reg_count > 0 ? (float)diag_reg_time_total / diag_reg_count : 0),
+      diag_daily_http_fails, diag_http_success_count, diag_cdm_status,
+      (unsigned int)(SPIFFS.usedBytes() / 1024), (sd_card_ok ? "OK" : "FAIL"),
+      UNIT_VER, carrier, cached_iccid, gps_str, ota_fail_count,
+      (TEST_HEALTH_EVERY_SLOT ? diag_ndm_count : diag_ndm_count_prev),
+      (TEST_HEALTH_EVERY_SLOT ? diag_pd_count : diag_pd_count_prev),
+      (TEST_HEALTH_EVERY_SLOT ? diag_first_http_count
+                              : diag_first_http_count_prev),
+      (TEST_HEALTH_EVERY_SLOT ? diag_net_data_count
+                              : diag_net_data_count_prev));
 
-  int max_attempts = 2; // v7.01: Health is critical for OTA; allow one retry.
-  bool success = false;
-
-  // Removed AT+CIPSHUT to prevent corrupting HTTPDATA buffer allocation on
-  // A7672S
-  if (!verify_bearer_or_recover()) {
-    debugln("[Health] Bearer recovery failed. Aborting health report.");
-    return false;
+  if (useJitter) {
+    vTaskDelay(random(0, 5000) / portTICK_PERIOD_MS);
+  } else {
+    // v7.08: Rule 15 Mandatory Breather if jitter is off (e.g. following FTP)
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
   }
 
-  for (int attempt = 1; attempt <= max_attempts; attempt++) {
-    debugf2("[Health] Attempt %d of %d\n", attempt, max_attempts);
+  bool success = false;
+  for (int attempt = 1; attempt <= 2; attempt++) {
+    debugf2("[Health] Attempt %d/%d\n", attempt, 2);
 
-    // v7.03 Cleanup Sequence: Ensure absolute clean slate before Health/OTA
-    // Instead of hard-killing CID 8, we kill ONLY if it's the target or if we
-    // are stuck.
-    SerialSIT.println("AT+HTTPTERM");
-    waitForResponse("OK", 2000);
-    vTaskDelay(1000 / portTICK_PERIOD_MS); // v7.03: Increased stabilization
-                                           // after potential FTP
-    flushSerialSIT();
-
-    http_ready = false;
-
-    SerialSIT.println("AT+HTTPINIT");
-    String init_resp = waitForResponse("OK", 5000);
-    if (init_resp.indexOf("OK") == -1) {
-      debugln("[Health] HTTPINIT Failed. Hard-Resetting stack...");
-      SerialSIT.println("AT+HTTPTERM");
-      waitForResponse("OK", 2000);
-      vTaskDelay(500);
-      flushSerialSIT();
-      SerialSIT.println("AT+HTTPINIT");
-      if (waitForResponse("OK", 5000).indexOf("OK") != -1) {
-        http_ready = true;
-      }
-    } else {
-      http_ready = true;
+    // v7.04: Verify bearer INSIDE the loop to catch carrier drops during
+    // switching
+    if (!verify_bearer_or_recover()) {
+      debugln("[Health] Bearer lost in loop. Recovering...");
+      continue;
     }
 
-    vTaskDelay(500); // v7.03: Stabilize after INIT before PARA commands
+    SerialSIT.println("AT+HTTPINIT");
+    if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 1000);
+      continue;
+    }
 
-    snprintf(ht_data, sizeof(ht_data), "AT+HTTPPARA=\"CID\",%d",
-             active_cid > 0 ? active_cid : 1);
+    // --- CRITICAL LEAN HANDSHAKE BLOCK ---
+    flushSerialSIT();
+    SerialSIT.println("AT+HTTPPARA=\"CID\",1");
+    waitForResponse("OK", 1000);
+
+    // v7.04: URL Sanitization - Remove redundant port 80 (A7672S Preference)
+    snprintf(ht_data, sizeof(ht_data),
+             "AT+HTTPPARA=\"URL\",\"http://%s/health\"", HEALTH_SERVER_IP);
     SerialSIT.println(ht_data);
-    String cid_resp = waitForResponse("OK", 1000);
-    debugf1("[Health] CID Setup: %s\n", cid_resp.c_str());
+    waitForResponse("OK", 1000);
 
-    char healthUrl[64];
-    snprintf(healthUrl, sizeof(healthUrl),
-             "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_IP,
-             HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
-    SerialSIT.println(healthUrl);
-    String url_resp = waitForResponse("OK", 1000);
-    debugf1("[Health] URL Setup: %s\n", url_resp.c_str());
+    // v7.04: Standard Headers (Matches successful main upload pattern)
+    SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
+    waitForResponse("OK", 1000);
 
     SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-    String content_resp = waitForResponse("OK", 2000);
-    debugf1("[Health] CONTENT Setup: %s\n", content_resp.c_str());
-    vTaskDelay(200);
+    waitForResponse("OK", 1000);
 
-    // 3. Transmit using vetted function
-    debugln("[Health] Initialized. Calling send_at_cmd_data()...");
-    if (send_at_cmd_data(jsonBody, "") == 1) {
-      success = true;
-      // Process server commands from the global 'response' string
-      String body = response;
+    snprintf(ht_data, sizeof(ht_data), "AT+HTTPDATA=%d,5000", msgLen);
+    SerialSIT.println(ht_data);
 
-      // v6.45: Robust JSON parsing (handles optional spaces from json.dumps)
-      if (body.indexOf("\"cmd\"") != -1) {
+    if (waitForResponse("DOWNLOAD", 8000).indexOf("DOWNLOAD") != -1) {
+      vTaskDelay(200);
+      SerialSIT.write(jsonBody, msgLen);
+      waitForResponse("OK", 5000);
+
+      SerialSIT.println("AT+HTTPACTION=1");
+      waitForResponse("OK", 2000);
+      String act = waitForResponse("+HTTPACTION:", 25000);
+      debugln("[Health] Resp: " + act);
+
+      if (act.indexOf("200") != -1) {
+        success = true;
+
+        // v7.05: Fetch actual response body to process commands
+        // (REBOOT/OTA_CHECK)
+        vTaskDelay(500);
+        SerialSIT.println("AT+HTTPREAD=0,512");
+        String body = waitForResponse("+HTTPREAD: 0", 10000);
+        debugln("[Health] Body: " + body);
+
+        // v5.46: Sync RTC from the Health Report server time (JSON "tm": field)
+        sync_rtc_from_server_tm(body.c_str(), false);
+
         if (body.indexOf("\"REBOOT\"") != -1) {
           debugln("[Health] CMD: REBOOT received!");
           force_reboot = true;
@@ -4036,11 +4376,10 @@ bool send_health_report(bool useJitter) {
 
         if (body.indexOf("\"OTA_CHECK\"") != -1) {
           debugln("[Health] CMD: OTA_CHECK received!");
-          // Look for "p":" (v3.2+) or "cmd_param":" (legacy)
+          force_ota = true;
           int pTag = body.indexOf("\"p\"");
           if (pTag == -1)
             pTag = body.indexOf("\"cmd_param\"");
-
           if (pTag != -1) {
             int valStart = body.indexOf(":", pTag);
             if (valStart != -1) {
@@ -4057,50 +4396,39 @@ bool send_health_report(bool useJitter) {
               }
             }
           }
-          force_ota = true;
         }
-
-        if (body.indexOf("\"FTP_DAILY\"") != -1) {
-          debugln("[Health] CMD: FTP_DAILY received!");
-          int pTag = body.indexOf("\"p\"");
-          if (pTag == -1)
-            pTag = body.indexOf("\"cmd_param\"");
-
-          if (pTag != -1) {
-            int valStart = body.indexOf(":", pTag);
-            if (valStart != -1) {
-              int quoteStart = body.indexOf("\"", valStart);
-              if (quoteStart != -1) {
-                int quoteEnd = body.indexOf("\"", quoteStart + 1);
-                if (quoteEnd != -1) {
-                  String param = body.substring(quoteStart + 1, quoteEnd);
-                  strncpy(ftp_daily_date, param.c_str(),
-                          sizeof(ftp_daily_date) - 1);
-                  ftp_daily_date[sizeof(ftp_daily_date) - 1] = '\0';
-                  debugf1("[Health] Target Date: %s\n", ftp_daily_date);
-                }
-              }
-            }
-          }
-          force_ftp_daily = true;
-        }
+        SerialSIT.println("AT+HTTPTERM");
+        waitForResponse("OK", 1000);
+        break;
+      } else if (act.indexOf("714") != -1) {
+        // v7.07: Handle "Socket Zombie" Rule 15
+        debugln("[Health] 714 Socket Error detected. Forcing Bearer "
+                "Deactivation...");
+        SerialSIT.println("AT+HTTPTERM");
+        waitForResponse("OK", 1000);
+        SerialSIT.println("AT+CGACT=0,1");
+        waitForResponse("OK", 3000);
+        vTaskDelay(3000); // v7.08: Mandatory wait for tower to clear session
+      } else {
+        SerialSIT.println("AT+HTTPTERM");
+        waitForResponse("OK", 1000);
       }
     } else {
-      debugln("[Health] Transmission failed via send_at_cmd_data.");
-    }
-
-    if (success) {
-      // v7.03: CRITICAL — Close HTTP session from health report before OTA
-      // opens a new one
       SerialSIT.println("AT+HTTPTERM");
       waitForResponse("OK", 2000);
-      http_ready = false;
-      break;
     }
-  } // End of for loop
+    vTaskDelay(2000);
+  }
 
+  SerialSIT.println("AT+CGEREP=2");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CREG=1");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CEREG=1");
+  waitForResponse("OK", 1000);
   return success;
 }
+
 /*
  *   HTTP
  *  - send_health_report()

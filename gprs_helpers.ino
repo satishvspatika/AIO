@@ -86,6 +86,14 @@ String get_ccid() {
   flushSerialSIT();
   String ccid = "";
 
+  // v7.11: Rule 23 - Verify SIM is ready before CCID fetch
+  for (int i = 0; i < 5; i++) {
+    SerialSIT.println("AT+CPIN?");
+    if (waitForResponse("READY", 2000).indexOf("READY") != -1)
+      break;
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+
   // Attempt 1: Try AT+CICCID (Primary for A7672)
   flushSerialSIT();
   vTaskDelay(200);
@@ -152,10 +160,35 @@ bool try_activate_apn(const char *apn) {
   debug("Trying APN: ");
   debugln(apn);
 
-  // 1. Force Deactivation for a clean state
+  // 1. Force Deactivation of all known BSNL contexts for a clean state (Rule
+  // 21)
   SerialSIT.println("AT+CGACT=0,1");
   waitForResponse("OK", 3000);
-  vTaskDelay(500 / portTICK_PERIOD_MS);
+  SerialSIT.println("AT+CGACT=0,6");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CGACT=0,8");
+  waitForResponse("OK", 1000);
+  vTaskDelay(5000 /
+             portTICK_PERIOD_MS); // v7.11: Increased to 5s for Rule 24 (2G)
+
+  // v7.13: Resilient CPIN Handshake (Rule 23)
+  // The SIM controller may be busy post-refresh. Wait and retry.
+  bool sim_ready = false;
+  for (int i = 0; i < 5; i++) {
+    SerialSIT.println("AT+CPIN?");
+    if (waitForResponse("READY", 3000).indexOf("READY") != -1) {
+      sim_ready = true;
+      break;
+    }
+    debugf("[GPRS] SIM not ready (Retry %d/5)...\n", i + 1);
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    esp_task_wdt_reset();
+  }
+
+  if (!sim_ready) {
+    debugln("APN Activation FAILED: SIM not ready (CPIN) after retries.");
+    return false;
+  }
 
   // 2. Set Context
   if (strcmp(apn, "jionet") == 0) {
@@ -172,6 +205,7 @@ bool try_activate_apn(const char *apn) {
   // 3. Attempt Activation
   SerialSIT.println("AT+CGACT=1,1");
   String response = waitForResponse("OK", 25000);
+  debugln("CGACT Resp: " + response); // v7.11: Log full response
 
   if (response.indexOf("OK") != -1 && response.indexOf("ERROR") == -1) {
     vTaskDelay(2000); // Settling delay
@@ -269,11 +303,11 @@ bearer_recovery: // Label used for ghost-session fallthrough
 
   // v5.53: CRITICAL — Check if modem is still registered BEFORE trying APN.
   // If deregistered (+CREG: 0), PDP activation will always fail.
-  // Wait up to 20 seconds for re-registration before proceeding.
+  // v7.13: Increased wait to 60 seconds for cold 2G attach.
   {
     bool is_registered = false;
     debugln("AG Recovery: Checking network registration before APN attempt...");
-    for (int r = 0; r < 10; r++) {
+    for (int r = 0; r < 30; r++) { // 30 * 2s = 60s
       SerialSIT.println("AT+CREG?");
       String creg = waitForResponse("OK", 2000);
       // Registered: ,1 (home) or ,5 (roaming)
@@ -286,11 +320,13 @@ bearer_recovery: // Label used for ghost-session fallthrough
       esp_task_wdt_reset();
     }
     if (!is_registered) {
-      debugln("AG Recovery: Modem deregistered after 20s wait. Cannot "
-              "activate PDP. Aborting.");
+      debugln("AG Recovery: Modem deregistered after 60s wait. Aborting.");
       return false;
     }
-    debugln("AG Recovery: Registered. Proceeding with APN activation.");
+    // v7.13: Rule 26 - SIM-Attach Stabilization (The 5-Second Settle)
+    debugln(
+        "AG Recovery: Registered. Waiting 5s for SIM profile stabilization...");
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
   }
 
   // 3. Bearer is dead or invalid. Attempt recovery using current runtime APN
@@ -303,12 +339,51 @@ bearer_recovery: // Label used for ghost-session fallthrough
   }
 
   // 4. Fallback: Query CCID and load stored APN from SPIFFS.
-  debugln("AG Recovery: Runtime APN failed/empty. Querying CCID...");
+  debugln("AG Recovery: Runtime APN failed. Querying CCID...");
   String ccid = get_ccid();
   char stored_apn[20] = {0};
   if (load_apn_config(ccid, stored_apn, sizeof(stored_apn))) {
+    debugf("AG Recovery: Trying stored APN -> %s\n", stored_apn);
     if (try_activate_apn(stored_apn))
       return true;
+  }
+
+  // v7.10: Rule 22 - Nuclear Fallback (Radio Refresh)
+  debugln(
+      "AG Recovery: ALL ACTIVATION ATTEMPTS FAILED. Performing Radio Refresh "
+      "(CFUN=0/1)...");
+  SerialSIT.println("AT+CFUN=0");
+  waitForResponse("OK", 5000);
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
+  SerialSIT.println("AT+CFUN=1");
+  waitForResponse("OK", 5000);
+
+  // v7.11: Wait for SIM Readiness after Radio Refresh
+  debugln("AG Recovery: Waiting for SIM (CPIN) stability...");
+  for (int i = 0; i < 5; i++) {
+    SerialSIT.println("AT+CPIN?");
+    if (waitForResponse("READY", 2000).indexOf("READY") != -1)
+      break;
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+
+  // Wait for re-registration after radio refresh
+  debugln("AG Recovery: Waiting for re-registration after refresh...");
+  for (int r = 0; r < 10; r++) {
+    SerialSIT.println("AT+CREG?");
+    String creg = waitForResponse("OK", 2000);
+    if (creg.indexOf(",1") != -1 || creg.indexOf(",5") != -1) {
+      debugln("AG Recovery: Re-registered after refresh. Trying one last "
+              "activation...");
+      // Try activation again with runtime APN
+      if (strlen(apn_str) > 0) {
+        if (try_activate_apn(apn_str))
+          return true;
+      }
+      break;
+    }
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    esp_task_wdt_reset();
   }
 
   return false;

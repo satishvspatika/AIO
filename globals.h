@@ -1,6 +1,12 @@
 #ifndef GATEWAY_GLOBALS_H
 #define GATEWAY_GLOBALS_H
 
+#ifdef ARDUINO
+#include "driver/rtc_io.h"
+#include "esp32/ulp.h"
+#include "esp_sleep.h"
+#include "soc/rtc_cntl_reg.h"
+#include "soc/sens_reg.h"
 #include <Arduino.h>
 #include <HardwareSerial.h>
 #include <Keypad.h>
@@ -15,6 +21,21 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <esp_attr.h>
+#include <esp_task_wdt.h>
+#include <esp_wifi.h>
+#include <hulp_arduino.h>
+#else
+// Linter fallback for non-Arduino environment (e.g. host-side analysis)
+#include <stdint.h>
+#include <string>
+#define RTC_DATA_ATTR
+#define String std::string
+#endif
+
+#include <math.h>
+#include <stdio.h>
+#include <time.h>
+
 #ifndef RTC_DATA_ATTR
 #define RTC_DATA_ATTR __attribute__((section(".rtc.data")))
 #endif
@@ -53,19 +74,6 @@ RTC_DATA_ATTR uint8_t ulp_code_reserve[512] = {0};
 
 // ESP-NOW permanently disabled (v5.40+) - includes removed
 // #include <esp_now.h>
-#include <esp_task_wdt.h>
-#include <esp_wifi.h>
-#include <hulp_arduino.h>
-#include <math.h>
-#include <stdio.h>
-#include <time.h>
-//#include <semphr.h>
-
-#include "driver/rtc_io.h"
-#include "esp32/ulp.h"
-#include "esp_sleep.h"
-#include "soc/rtc_cntl_reg.h"
-#include "soc/sens_reg.h"
 
 // CHANGE THESE FOR DIFFERENT SYSTEMS
 // Function Prototypes for Cross-File Visibility
@@ -89,7 +97,7 @@ char UNIT[15] = "SPATIKA_GEN"; // UNIT :
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.45"
+#define FIRMWARE_VERSION "5.46"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
@@ -98,7 +106,7 @@ char UNIT[15] = "SPATIKA_GEN"; // UNIT :
 #define ENABLE_HEALTH_REPORT                                                   \
   1 // Master Switch: Set to 1 to enable automated health reporting
 #define TEST_HEALTH_EVERY_SLOT                                                 \
-  1 // (Gated by ENABLE_HEALTH_REPORT) 1 for 15-min testing, 0 for daily.
+  0 // (Gated by ENABLE_HEALTH_REPORT) 1 for 15-min testing, 0 for daily.
 
 #define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
 
@@ -418,6 +426,8 @@ RTC_DATA_ATTR uint32_t diag_sent_mask[3] = {0, 0,
 RTC_DATA_ATTR int health_last_sent_hour = -1;
 RTC_DATA_ATTR int health_last_sent_day = -1;
 RTC_DATA_ATTR bool diag_fw_just_updated = false; // v5.76: Post-OTA Trigger
+RTC_DATA_ATTR bool rtc_daily_sync_done =
+    false; // v5.46: Server-time daily RTC sync
 
 String response;
 String rssiStr;

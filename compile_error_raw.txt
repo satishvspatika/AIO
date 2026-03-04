@@ -1,0 +1,551 @@
+In file included from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp.h:6,
+                 from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_arduino.h:1,
+                 from /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:58,
+                 from /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:25:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/deprecated/driver/adc.h:19:2: warning: #warning "legacy adc driver is deprecated, please migrate to use esp_adc/adc_oneshot.h and esp_adc/adc_continuous.h for oneshot mode and continuous mode drivers respectively" [-Wcpp]
+   19 | #warning "legacy adc driver is deprecated, please migrate to use esp_adc/adc_oneshot.h and esp_adc/adc_continuous.h for oneshot mode and continuous mode drivers respectively"
+      |  ^~~~~~~
+In file included from /Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/touch_sensor/include/driver/touch_pad.h:12,
+                 from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_touch.h:5,
+                 from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_arduino.h:9:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/touch_sensor/esp32/include/driver/touch_sensor.h:13:2: warning: #warning "This set of Touch APIs has been deprecated, please include 'driver/touch_sens.h' instead. if you want to keep using the old APIs and ignore this warning, you can enable 'Suppress legacy driver deprecated warning' option under 'Touch Configuration' menu in Kconfig" [-Wcpp]
+   13 | #warning "This set of Touch APIs has been deprecated, \
+      |  ^~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:140:9: warning: "TWO_PI" redefined
+  140 | #define TWO_PI 6.28318530718
+      |         ^~~~~~
+In file included from /Users/satishkripavasan/Library/Caches/arduino/sketches/CACFC114A377504851B277AE0F4F66DE/sketch/AIO9_5.0.ino.cpp:1:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/cores/esp32/Arduino.h:48:9: note: this is the location of the previous definition
+   48 | #define TWO_PI     6.283185307179586476925286766559
+      |         ^~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino: In function 'void initialize_hw()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:872:29: warning: 'ADC_ATTEN_DB_11' is deprecated [-Wdeprecated-declarations]
+  872 |                             ADC_ATTEN_DB_11); // GPIO 33 (Battery)
+      |                             ^~~~~~~~~~~~~~~
+In file included from /Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/deprecated/driver/adc_types_legacy.h:8,
+                 from /Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/deprecated/driver/adc.h:15:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/hal/include/hal/adc_types.h:52:5: note: declared here
+   52 |     ADC_ATTEN_DB_11 __attribute__((deprecated)) = ADC_ATTEN_DB_12,  ///<This is deprecated, it behaves the same as `ADC_ATTEN_DB_12`
+      |     ^~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:874:29: warning: 'ADC_ATTEN_DB_11' is deprecated [-Wdeprecated-declarations]
+  874 |                             ADC_ATTEN_DB_11); // GPIO 25 (Solar)
+      |                             ^~~~~~~~~~~~~~~
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/hal/include/hal/adc_types.h:52:5: note: declared here
+   52 |     ADC_ATTEN_DB_11 __attribute__((deprecated)) = ADC_ATTEN_DB_12,  ///<This is deprecated, it behaves the same as `ADC_ATTEN_DB_12`
+      |     ^~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/global_functions.ino: In function 'void validate_ulp_counters()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/global_functions.ino:112:22: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+  112 |   if (wind_count.val > 130000) {
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/global_functions.ino: In function 'void get_chip_id()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/global_functions.ino:253:38: warning: format '%X' expects argument of type 'unsigned int', but argument 5 has type 'uint32_t' {aka 'long unsigned int'} [-Wformat=]
+  253 |   snprintf(chip_id, sizeof(chip_id), "%04X%08X", (uint16_t)(chipid >> 32),
+      |                                      ^~~~~~~~~~
+  254 |            (uint32_t)chipid);
+      |            ~~~~~~~~~~~~~~~~           
+      |            |
+      |            uint32_t {aka long unsigned int}
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void send_ftp_file(char*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:1466:15: warning: unused variable 'resp' [-Wunused-variable]
+ 1466 |   const char *resp;
+      |               ^~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:1467:7: warning: unused variable 'rssiIndex' [-Wunused-variable]
+ 1467 |   int rssiIndex, rssiEndIndex, retries, registration;
+      |       ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:1467:18: warning: unused variable 'rssiEndIndex' [-Wunused-variable]
+ 1467 |   int rssiIndex, rssiEndIndex, retries, registration;
+      |                  ^~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:1467:32: warning: unused variable 'retries' [-Wunused-variable]
+ 1467 |   int rssiIndex, rssiEndIndex, retries, registration;
+      |                                ^~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:1467:41: warning: unused variable 'registration' [-Wunused-variable]
+ 1467 |   int rssiIndex, rssiEndIndex, retries, registration;
+      |                                         ^~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:1469:15: warning: unused variable 'ftpCharArray' [-Wunused-variable]
+ 1469 |   const char *ftpCharArray;
+      |               ^~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:1471:7: warning: unused variable 'success' [-Wunused-variable]
+ 1471 |   int success;
+      |       ^~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:1473:7: warning: unused variable 'total_no_of_bytes' [-Wunused-variable]
+ 1473 |   int total_no_of_bytes;
+      |       ^~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:1478:7: warning: unused variable 'result' [-Wunused-variable]
+ 1478 |   int result = -1;
+      |       ^~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void get_network()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2189:1: warning: label 'full_discovery' defined but not used [-Wunused-label]
+ 2189 | full_discovery:
+      | ^~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void get_a7672s()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2524:8: warning: unused variable 'gprs_xmit_buf' [-Wunused-variable]
+ 2524 |   char gprs_xmit_buf[300];
+      |        ^~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void process_sms(char)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2777:23: warning: format '%s' expects argument of type 'char*', but argument 3 has type 'char (*)[20]' [-Wformat=]
+ 2777 |       sscanf(filePtr, "FILE=%19s", &temp1); // +CCLK: \"23/08/01,09:54:35+00\"
+      |                       ^~~~~~~~~~~  ~~~~~~
+      |                                    |
+      |                                    char (*)[20]
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2687:9: warning: unused variable 'csqstr' [-Wunused-variable]
+ 2687 |   char *csqstr, c, *ptr, msg_rcvd_number[100];
+      |         ^~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2687:17: warning: unused variable 'c' [-Wunused-variable]
+ 2687 |   char *csqstr, c, *ptr, msg_rcvd_number[100];
+      |                 ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2687:21: warning: unused variable 'ptr' [-Wunused-variable]
+ 2687 |   char *csqstr, c, *ptr, msg_rcvd_number[100];
+      |                     ^~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2688:7: warning: unused variable 'i' [-Wunused-variable]
+ 2688 |   int i, response_no;
+      |       ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2688:10: warning: unused variable 'response_no' [-Wunused-variable]
+ 2688 |   int i, response_no;
+      |          ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2691:19: warning: unused variable 'msg_recd_no' [-Wunused-variable]
+ 2691 |   char *msg_body, msg_recd_no[20], temp[20], temp1[20], temp2[40];
+      |                   ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2691:57: warning: unused variable 'temp2' [-Wunused-variable]
+ 2691 |   char *msg_body, msg_recd_no[20], temp[20], temp1[20], temp2[40];
+      |                                                         ^~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2694:7: warning: unused variable 'cmd_no' [-Wunused-variable]
+ 2694 |   int cmd_no, cmd_no_loop;
+      |       ^~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2694:15: warning: unused variable 'cmd_no_loop' [-Wunused-variable]
+ 2694 |   int cmd_no, cmd_no_loop;
+      |               ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void prepare_and_send_status(char*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2792:7: warning: unused variable 'response_no' [-Wunused-variable]
+ 2792 |   int response_no;
+      |       ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void get_lat_long_date_time(char*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2934:7: warning: unused variable 'response_no' [-Wunused-variable]
+ 2934 |   int response_no;
+      |       ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2935:12: warning: unused variable 'tmp3' [-Wunused-variable]
+ 2935 |   int tmp, tmp3;
+      |            ^~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2936:8: warning: unused variable 'tmp2' [-Wunused-variable]
+ 2936 |   char tmp2[16];
+      |        ^~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2937:7: warning: unused variable 'day' [-Wunused-variable]
+ 2937 |   int day, month, year, hour, minute, seconds;
+      |       ^~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2937:12: warning: unused variable 'month' [-Wunused-variable]
+ 2937 |   int day, month, year, hour, minute, seconds;
+      |            ^~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2937:19: warning: unused variable 'year' [-Wunused-variable]
+ 2937 |   int day, month, year, hour, minute, seconds;
+      |                   ^~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2937:25: warning: unused variable 'hour' [-Wunused-variable]
+ 2937 |   int day, month, year, hour, minute, seconds;
+      |                         ^~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2937:31: warning: unused variable 'minute' [-Wunused-variable]
+ 2937 |   int day, month, year, hour, minute, seconds;
+      |                               ^~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2937:39: warning: unused variable 'seconds' [-Wunused-variable]
+ 2937 |   int day, month, year, hour, minute, seconds;
+      |                                       ^~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void fetchFromHttpAndUpdate(char*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3195:7: warning: unused variable 'handle_no' [-Wunused-variable]
+ 3195 |   int handle_no;
+      |       ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3197:9: warning: unused variable 'csqstr' [-Wunused-variable]
+ 3197 |   char *csqstr;
+      |         ^~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3198:15: warning: unused variable 'response_char' [-Wunused-variable]
+ 3198 |   const char *response_char;
+      |               ^~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void copyFromSPIFFSToFS(char*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3507:7: warning: unused variable 'len' [-Wunused-variable]
+ 3507 |   int len;
+      |       ^~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'bool send_health_report(bool)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3856:12: warning: format '%u' expects argument of type 'unsigned int', but argument 11 has type 'uint32_t' {aka 'long unsigned int'} [-Wformat=]
+ 3856 |            "{\"stn_id\":\"%s\",\"unit_type\":\"%s\",\"system\":%d,"
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3857 |            "\"health_sts\":\"%s\",\"sensor_sts\":\"%s\","
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3858 |            "\"reset_reason\":%d,\"rtc_ok\":%d,\"uptime_hrs\":%u,"
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3859 |            "\"bat_v\":%.2f,\"sol_v\":%.2f,\"signal\":%d,"
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3860 |            "\"reg_fails\":%d,\"reg_avg\":%.1f,\"reg_worst\":%d,"
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3861 |            "\"reg_fail_type\":\"%s\","
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3862 |            "\"http_fails\":%d,\"http_fail_reason\":\"%s\",\"http_avg\":%.1f,"
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3863 |            "\"net_cnt\":%d,\"net_cnt_prev\":%d,"
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3864 |            "\"ndm_cnt\":%d,\"pd_cnt\":%d,\"cdm_sts\":\"%s\","
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3865 |            "\"first_http\":%d,"
+      |            ~~~~~~~~~~~~~~~~~~~~
+ 3866 |            "\"spiffs_kb\":%u,\"spiffs_total_kb\":%u,"
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3867 |            "\"sd_sts\":\"%s\",\"calib\":\"%s\","
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3868 |            "\"ver\":\"%s\",\"carrier\":\"%s\","
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3869 |            "\"iccid\":\"%s\",\"gps\":\"%s\","
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3870 |            "\"ota_fails\":%d,\"ota_fail_reason\":\"%s\"}",
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+......
+ 3873 |            diag_total_uptime_hrs, li_bat_val, solar_val, signal_lvl,
+      |            ~~~~~~~~~~~~~~~~~~~~~
+      |            |
+      |            uint32_t {aka long unsigned int}
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3728:7: warning: unused variable 'dummyNetCount' [-Wunused-variable]
+ 3728 |   int dummyNetCount;
+      |       ^~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino: At global scope:
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:10:22: warning: ISO C++ forbids converting a string constant to 'char*' [-Wwrite-strings]
+   10 | char *key_name[7] = {"NOKEY", "CLEAR", "UP", "SET", "LEFT", "DOWN", "RIGHT"};
+      |                      ^~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:10:31: warning: ISO C++ forbids converting a string constant to 'char*' [-Wwrite-strings]
+   10 | char *key_name[7] = {"NOKEY", "CLEAR", "UP", "SET", "LEFT", "DOWN", "RIGHT"};
+      |                               ^~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:10:40: warning: ISO C++ forbids converting a string constant to 'char*' [-Wwrite-strings]
+   10 | char *key_name[7] = {"NOKEY", "CLEAR", "UP", "SET", "LEFT", "DOWN", "RIGHT"};
+      |                                        ^~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:10:46: warning: ISO C++ forbids converting a string constant to 'char*' [-Wwrite-strings]
+   10 | char *key_name[7] = {"NOKEY", "CLEAR", "UP", "SET", "LEFT", "DOWN", "RIGHT"};
+      |                                              ^~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:10:53: warning: ISO C++ forbids converting a string constant to 'char*' [-Wwrite-strings]
+   10 | char *key_name[7] = {"NOKEY", "CLEAR", "UP", "SET", "LEFT", "DOWN", "RIGHT"};
+      |                                                     ^~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:10:61: warning: ISO C++ forbids converting a string constant to 'char*' [-Wwrite-strings]
+   10 | char *key_name[7] = {"NOKEY", "CLEAR", "UP", "SET", "LEFT", "DOWN", "RIGHT"};
+      |                                                             ^~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:10:69: warning: ISO C++ forbids converting a string constant to 'char*' [-Wwrite-strings]
+   10 | char *key_name[7] = {"NOKEY", "CLEAR", "UP", "SET", "LEFT", "DOWN", "RIGHT"};
+      |                                                                     ^~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino: In function 'void lcdkeypad(void*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:311:43: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+  311 |         if (ui_data[cur_fld_no].fieldType < 0 ||
+      |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:790:38: warning: NULL used in arithmetic [-Wpointer-arith]
+  790 |       if ((key = keypad.getKey()) != NULL) {
+      |                                      ^~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:838:55: warning: array subscript has type 'char' [-Wchar-subscripts]
+  838 |           len = strlen(inpCharSet[ui_data[cur_fld_no].fieldType]);
+      |                                   ~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:882:50: warning: array subscript has type 'char' [-Wchar-subscripts]
+  882 |                   inpCharSet[ui_data[cur_fld_no].fieldType][cur_char_no];
+      |                              ~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1076:59: warning: array subscript has type 'char' [-Wchar-subscripts]
+ 1076 |                     strstr(inpCharSet[ui_data[cur_fld_no].fieldType], c);
+      |                                       ~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1078:70: warning: array subscript has type 'char' [-Wchar-subscripts]
+ 1078 |                   cur_char_no = ptr - inpCharSet[ui_data[cur_fld_no].fieldType];
+      |                                                  ~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1618:63: warning: array subscript has type 'char' [-Wchar-subscripts]
+ 1618 |             char *ptr = strstr(inpCharSet[ui_data[cur_fld_no].fieldType], c1);
+      |                                           ~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1620:66: warning: array subscript has type 'char' [-Wchar-subscripts]
+ 1620 |               cur_char_no = ptr - inpCharSet[ui_data[cur_fld_no].fieldType];
+      |                                              ~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1631:50: warning: array subscript has type 'char' [-Wchar-subscripts]
+ 1631 |                   inpCharSet[ui_data[cur_fld_no].fieldType][cur_char_no];
+      |                              ~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1692:63: warning: array subscript has type 'char' [-Wchar-subscripts]
+ 1692 |             char *ptr = strstr(inpCharSet[ui_data[cur_fld_no].fieldType], c1);
+      |                                           ~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1694:66: warning: array subscript has type 'char' [-Wchar-subscripts]
+ 1694 |               cur_char_no = ptr - inpCharSet[ui_data[cur_fld_no].fieldType];
+      |                                              ~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino: In function 'void rtcRead(void*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:25:7: warning: unused variable 'rtcRetries' [-Wunused-variable]
+   25 |   int rtcRetries = 0;
+      |       ^~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino: In function 'void resync_time()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:139:7: warning: unused variable 'response_no' [-Wunused-variable]
+  139 |   int response_no;
+      |       ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:141:8: warning: unused variable 'tmp2' [-Wunused-variable]
+  141 |   char tmp2[16];
+      |        ^~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:143:8: warning: unused variable 'status_response' [-Wunused-variable]
+  143 |   char status_response[256];
+      |        ^~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:144:8: warning: unused variable 'gprs_xmit_buf' [-Wunused-variable]
+  144 |   char gprs_xmit_buf[300];
+      |        ^~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino: In function 'void parse_and_convert_clbs_response(const char*, int, int, int, int, int, int)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:206:26: warning: missing initializer for member 'tm::tm_min' [-Wmissing-field-initializers]
+  206 |   struct tm timeinfo = {0};
+      |                          ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:206:26: warning: missing initializer for member 'tm::tm_hour' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:206:26: warning: missing initializer for member 'tm::tm_mday' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:206:26: warning: missing initializer for member 'tm::tm_mon' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:206:26: warning: missing initializer for member 'tm::tm_year' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:206:26: warning: missing initializer for member 'tm::tm_wday' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:206:26: warning: missing initializer for member 'tm::tm_yday' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:206:26: warning: missing initializer for member 'tm::tm_isdst' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:235:19: warning: implicitly-declared 'constexpr DateTime& DateTime::operator=(const DateTime&)' is deprecated [-Wdeprecated-copy]
+  235 |     now = rtc.now();
+      |                   ^
+In file included from /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:10:
+/Users/satishkripavasan/Documents/Arduino/libraries/RTClib/src/RTClib.h:148:3: note: because 'DateTime' has user-provided 'DateTime::DateTime(const DateTime&)'
+  148 |   DateTime(const DateTime &copy);
+      |   ^~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/rtcRead.ino:210:8: warning: unused variable 'time_str' [-Wunused-variable]
+  210 |   char time_str[20];
+      |        ^~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino: In function 'void scheduler(void*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:1002:19: warning: variable 'fill_sig' set but not used [-Wunused-but-set-variable]
+ 1002 |               int fill_sig;
+      |                   ^~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:227:11: warning: variable 'mins_into' set but not used [-Wunused-but-set-variable]
+  227 |       int mins_into = 0;         // Hoisted for goto safety
+      |           ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:231:12: warning: unused variable 'tmp_parse' [-Wunused-variable]
+  231 |       char tmp_parse[32];
+      |            ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:232:13: warning: unused variable 'last_instRF' [-Wunused-variable]
+  232 |       float last_instRF = 0, last_cumRF = 0;
+      |             ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/webServer.ino: In function 'void handleRoot()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/webServer.ino:218:18: warning: unused variable 'isBihar' [-Wunused-variable]
+  218 |             bool isBihar = (strstr(station_name, "BIHAR_TRG") != NULL);
+      |                  ^~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/webServer.ino: In function 'void handleViewLog()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/webServer.ino:1130:14: warning: unused variable 'isBihar' [-Wunused-variable]
+ 1130 |         bool isBihar = (strstr(station_name, "BIHAR_TRG") != NULL);
+      |              ^~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/windDirection.ino: In function 'void windDirection(void*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/windDirection.ino:9:45: warning: 'ADC_ATTEN_DB_11' is deprecated [-Wdeprecated-declarations]
+    9 |   adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_DB_11); // GPIO39
+      |                                             ^~~~~~~~~~~~~~~
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/hal/include/hal/adc_types.h:52:5: note: declared here
+   52 |     ADC_ATTEN_DB_11 __attribute__((deprecated)) = ADC_ATTEN_DB_12,  ///<This is deprecated, it behaves the same as `ADC_ATTEN_DB_12`
+      |     ^~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino: In function 'void lcdkeypad(void*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:670:39: warning: '%s' directive output may be truncated writing up to 19 bytes into a region of size 13 [-Wformat-truncation=]
+  670 |               snprintf(topBuffer, 17, "SIM:%s", carrier);
+      |                                       ^~~~~~~~  ~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:670:23: note: 'snprintf' output between 5 and 24 bytes into a destination of size 17
+  670 |               snprintf(topBuffer, 17, "SIM:%s", carrier);
+      |               ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:674:38: warning: ' dBm         ' directive output may be truncated writing 13 bytes into a region of size between 6 and 15 [-Wformat-truncation=]
+  674 |                 snprintf(sigStr, 17, "%d dBm         ", rssi);
+      |                                      ^~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:674:25: note: 'snprintf' output between 16 and 25 bytes into a destination of size 17
+  674 |                 snprintf(sigStr, 17, "%d dBm         ", rssi);
+      |                 ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1677:50: warning: '%02d' directive output may be truncated writing between 2 and 11 bytes into a region of size between 0 and 5 [-Wformat-truncation=]
+ 1677 |                 snprintf(defStr, sizeof(defStr), "%04d%02d%02d %02d:%02d",
+      |                                                  ^~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1677:50: note: directive argument in the range [-2147483640, 2147483640]
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1677:25: note: 'snprintf' output between 15 and 58 bytes into a destination of size 17
+ 1677 |                 snprintf(defStr, sizeof(defStr), "%04d%02d%02d %02d:%02d",
+      |                 ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 1678 |                          d_year, d_month, d_day, p_hr, p_min);
+      |                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1591:38: warning: 'snprintf' output truncated before the last format character [-Wformat-truncation=]
+ 1591 |                                      "RF:%-3.1fT:%-4.1fH:%-2.0f", rf, temp,
+      |                                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1590:37: note: 'snprintf' output between 17 and 942 bytes into a destination of size 16
+ 1590 |                             snprintf(dbuf1, sizeof(dbuf1),
+      |                             ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~
+ 1591 |                                      "RF:%-3.1fT:%-4.1fH:%-2.0f", rf, temp,
+      |                                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 1592 |                                      hum);
+      |                                      ~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1272:52: warning: '%d' directive output may be truncated writing between 1 and 10 bytes into a region of size 9 [-Wformat-truncation=]
+ 1272 |                         snprintf(msg, sizeof(msg), "Deleted %d files",
+      |                                                    ^~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1272:52: note: directive argument in the range [1, 2147483647]
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/lcdkeypad.ino:1272:33: note: 'snprintf' output between 16 and 25 bytes into a destination of size 17
+ 1272 |                         snprintf(msg, sizeof(msg), "Deleted %d files",
+      |                         ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 1273 |                                  deleted_count);
+      |                                  ~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino: In function 'void scheduler(void*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:37:36: warning: '%s' directive output may be truncated writing up to 15 bytes into a region of size 14 [-Wformat-truncation=]
+   37 |     snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
+      |                                    ^~~~~~  ~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/scheduler.ino:37:13: note: 'snprintf' output between 3 and 18 bytes into a destination of size 16
+   37 |     snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
+      |     ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void get_registration()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2342:30: warning: '...' directive output may be truncated writing 3 bytes into a region of size between 0 and 10 [-Wformat-truncation=]
+ 2342 |     snprintf(reg_status, 16, "TRY #%d...", retries + 1);
+      |                              ^~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2342:13: note: 'snprintf' output between 10 and 20 bytes into a destination of size 16
+ 2342 |     snprintf(reg_status, 16, "TRY #%d...", retries + 1);
+      |     ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'int setup_ftp()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3125:11: warning: 'ftpServer' may be used uninitialized [-Wmaybe-uninitialized]
+ 3125 |   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
+      |   ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3126 |            "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",0", ftpServer, portName,
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3127 |            ftpUser, ftpPassword); //\r\n removed
+      |            ~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3056:15: note: 'ftpServer' was declared here
+ 3056 |   const char *ftpServer;
+      |               ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3125:11: warning: 'ftpUser' may be used uninitialized [-Wmaybe-uninitialized]
+ 3125 |   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
+      |   ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3126 |            "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",0", ftpServer, portName,
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3127 |            ftpUser, ftpPassword); //\r\n removed
+      |            ~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3057:15: note: 'ftpUser' was declared here
+ 3057 |   const char *ftpUser;
+      |               ^~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3125:11: warning: 'ftpPassword' may be used uninitialized [-Wmaybe-uninitialized]
+ 3125 |   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
+      |   ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3126 |            "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",0", ftpServer, portName,
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 3127 |            ftpUser, ftpPassword); //\r\n removed
+      |            ~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3058:15: note: 'ftpPassword' was declared here
+ 3058 |   const char *ftpPassword;
+      |               ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void prepare_data_and_send()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:809:42: warning: '%s' directive output may be truncated writing up to 15 bytes into a region of size 14 [-Wformat-truncation=]
+  809 |           snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
+      |                                          ^~~~~~  ~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:809:19: note: 'snprintf' output between 3 and 18 bytes into a destination of size 16
+  809 |           snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
+      |           ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void gprs(void*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:213:19: warning: 'char* strcpy(char*, const char*)' writing 17 bytes into a region of size 10 overflows the destination [-Wstringop-overflow=]
+  213 |             strcpy(diag_cdm_status, "Firmware Updated");
+      |             ~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:394:20: note: destination object 'diag_cdm_status' of size 10
+  394 | RTC_DATA_ATTR char diag_cdm_status[10] = "OK";
+      |                    ^~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino: In function 'void setup()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:262:14: warning: '.txt' directive output may be truncated writing 4 bytes into a region of size between 1 and 16 [-Wformat-truncation=]
+  262 |              "/lastrecorded_00%s.txt", station_name);
+      |              ^~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:261:13: note: 'snprintf' output between 21 and 36 bytes into a destination of size 32
+  261 |     snprintf(old_prefix_lastrec, sizeof(old_prefix_lastrec),
+      |     ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  262 |              "/lastrecorded_00%s.txt", station_name);
+      |              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:264:14: warning: '.txt' directive output may be truncated writing 4 bytes into a region of size between 3 and 18 [-Wformat-truncation=]
+  264 |              "/lastrecorded_%s.txt", station_name);
+      |              ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:263:13: note: 'snprintf' output between 19 and 34 bytes into a destination of size 32
+  263 |     snprintf(new_prefix_lastrec, sizeof(new_prefix_lastrec),
+      |     ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  264 |              "/lastrecorded_%s.txt", station_name);
+      |              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:280:14: warning: '.txt' directive output may be truncated writing 4 bytes into a region of size between 2 and 17 [-Wformat-truncation=]
+  280 |              "/closingdata_00%s.txt", station_name);
+      |              ^~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:279:13: note: 'snprintf' output between 20 and 35 bytes into a destination of size 32
+  279 |     snprintf(old_prefix_closing, sizeof(old_prefix_closing),
+      |     ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  280 |              "/closingdata_00%s.txt", station_name);
+      |              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:282:14: warning: 'snprintf' output may be truncated before the last format character [-Wformat-truncation=]
+  282 |              "/closingdata_%s.txt", station_name);
+      |              ^~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:281:13: note: 'snprintf' output between 18 and 33 bytes into a destination of size 32
+  281 |     snprintf(new_prefix_closing, sizeof(new_prefix_closing),
+      |     ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  282 |              "/closingdata_%s.txt", station_name);
+      |              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C/LiquidCrystal_I2C.cpp:3:
+/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C/LiquidCrystal_I2C.cpp: In member function 'virtual size_t LiquidCrystal_I2C::write(uint8_t)':
+/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C/LiquidCrystal_I2C.h:53:12: warning: 'B00000001' is deprecated: use 0b00000001 instead [-Wdeprecated-declarations]
+   53 | #define Rs B00000001  // Register select bit
+      |            ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C/LiquidCrystal_I2C.cpp:11:21: note: in expansion of macro 'Rs'
+   11 |         send(value, Rs);
+      |                     ^~
+In file included from /Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/cores/esp32/Arduino.h:40,
+                 from /Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C/LiquidCrystal_I2C.cpp:7:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/cores/esp32/binary.h:53:3: note: declared here
+   53 |   B00000001 DEPRECATED(0b00000001) = 1,
+      |   ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C/LiquidCrystal_I2C.cpp: In member function 'void LiquidCrystal_I2C::pulseEnable(uint8_t)':
+/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C/LiquidCrystal_I2C.h:51:12: warning: 'B00000100' is deprecated: use 0b00000100 instead [-Wdeprecated-declarations]
+   51 | #define En B00000100  // Enable bit
+      |            ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C/LiquidCrystal_I2C.cpp:259:31: note: in expansion of macro 'En'
+  259 |         expanderWrite(_data | En);      // En high
+      |                               ^~
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/cores/esp32/binary.h:73:3: note: declared here
+   73 |   B00000100 DEPRECATED(0b00000100) = 4,
+      |   ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C/LiquidCrystal_I2C.h:51:12: warning: 'B00000100' is deprecated: use 0b00000100 instead [-Wdeprecated-declarations]
+   51 | #define En B00000100  // Enable bit
+      |            ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C/LiquidCrystal_I2C.cpp:262:32: note: in expansion of macro 'En'
+  262 |         expanderWrite(_data & ~En);     // En low
+      |                                ^~
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/cores/esp32/binary.h:73:3: note: declared here
+   73 |   B00000100 DEPRECATED(0b00000100) = 4,
+      |   ^~~~~~~~~
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp: In member function 'void WiFiClass::printDiag(Print&)':
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::password' [-Wmissing-field-initializers]
+   70 |   wifi_config_t conf = {0};
+      |                          ^
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::ssid_len' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::channel' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::authmode' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::ssid_hidden' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::max_connection' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::beacon_interval' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::csa_count' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::dtim_period' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::pairwise_cipher' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::ftm_responder' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::pmf_cfg' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::sae_pwe_h2e' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::transition_disable' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::sae_ext' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::bss_max_idle_cfg' [-Wmissing-field-initializers]
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi/src/WiFi.cpp:70:26: warning: missing initializer for member 'wifi_ap_config_t::gtk_rekey_interval' [-Wmissing-field-initializers]
+In file included from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp.h:6,
+                 from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_regwr.h:4,
+                 from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_regwr.c:1:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/deprecated/driver/adc.h:19:2: warning: #warning "legacy adc driver is deprecated, please migrate to use esp_adc/adc_oneshot.h and esp_adc/adc_continuous.h for oneshot mode and continuous mode drivers respectively" [-Wcpp]
+   19 | #warning "legacy adc driver is deprecated, please migrate to use esp_adc/adc_oneshot.h and esp_adc/adc_continuous.h for oneshot mode and continuous mode drivers respectively"
+      |  ^~~~~~~
+In file included from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp.h:6,
+                 from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_uart.h:9,
+                 from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_uart.c:1:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/deprecated/driver/adc.h:19:2: warning: #warning "legacy adc driver is deprecated, please migrate to use esp_adc/adc_oneshot.h and esp_adc/adc_continuous.h for oneshot mode and continuous mode drivers respectively" [-Wcpp]
+   19 | #warning "legacy adc driver is deprecated, please migrate to use esp_adc/adc_oneshot.h and esp_adc/adc_continuous.h for oneshot mode and continuous mode drivers respectively"
+      |  ^~~~~~~
+In file included from /Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/touch_sensor/include/driver/touch_pad.h:12,
+                 from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_touch.h:5,
+                 from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_touch.c:1:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/touch_sensor/esp32/include/driver/touch_sensor.h:13:2: warning: #warning "This set of Touch APIs has been deprecated, please include 'driver/touch_sens.h' instead. if you want to keep using the old APIs and ignore this warning, you can enable 'Suppress legacy driver deprecated warning' option under 'Touch Configuration' menu in Kconfig" [-Wcpp]
+   13 | #warning "This set of Touch APIs has been deprecated, \
+      |  ^~~~~~~
+In file included from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp.h:6,
+                 from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_touch.h:7:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/deprecated/driver/adc.h:19:2: warning: #warning "legacy adc driver is deprecated, please migrate to use esp_adc/adc_oneshot.h and esp_adc/adc_continuous.h for oneshot mode and continuous mode drivers respectively" [-Wcpp]
+   19 | #warning "legacy adc driver is deprecated, please migrate to use esp_adc/adc_oneshot.h and esp_adc/adc_continuous.h for oneshot mode and continuous mode drivers respectively"
+      |  ^~~~~~~
+/Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_touch.c: In function 'hulp_configure_touch_controller':
+/Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_touch.c:35:9: warning: 'touch_pad_set_meas_time' is deprecated: please use 'touch_pad_set_measurement_clock_cycles' and 'touch_pad_set_measurement_interval' instead [-Wdeprecated-declarations]
+   35 |         ESP_OK != (err = touch_pad_set_meas_time(TOUCH_PAD_SLEEP_CYCLE_DEFAULT, config->fastclk_meas_cycles))
+      |         ^~~~~~
+In file included from /Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/touch_sensor/esp32/include/driver/touch_sensor.h:10:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/touch_sensor/esp32/include/driver/touch_sensor_legacy.h:185:11: note: declared here
+  185 | esp_err_t touch_pad_set_meas_time(uint16_t sleep_cycle, uint16_t meas_cycle)
+      |           ^~~~~~~~~~~~~~~~~~~~~~~
+In file included from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp.h:6,
+                 from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_debug.h:4,
+                 from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp_debug.c:1:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/deprecated/driver/adc.h:19:2: warning: #warning "legacy adc driver is deprecated, please migrate to use esp_adc/adc_oneshot.h and esp_adc/adc_continuous.h for oneshot mode and continuous mode drivers respectively" [-Wcpp]
+   19 | #warning "legacy adc driver is deprecated, please migrate to use esp_adc/adc_oneshot.h and esp_adc/adc_continuous.h for oneshot mode and continuous mode drivers respectively"
+      |  ^~~~~~~
+In file included from /Users/satishkripavasan/Documents/Arduino/libraries/HULP-master/src/hulp.c:16:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/driver/deprecated/driver/adc.h:19:2: warning: #warning "legacy adc driver is deprecated, please migrate to use esp_adc/adc_oneshot.h and esp_adc/adc_continuous.h for oneshot mode and continuous mode drivers respectively" [-Wcpp]
+   19 | #warning "legacy adc driver is deprecated, please migrate to use esp_adc/adc_oneshot.h and esp_adc/adc_continuous.h for oneshot mode and continuous mode drivers respectively"
+      |  ^~~~~~~
+Sketch too big; see https://support.arduino.cc/hc/en-us/articles/360013825179 for tips on reducing it.
+Error during build: text section exceeds available space in board

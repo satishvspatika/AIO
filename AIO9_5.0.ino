@@ -43,6 +43,15 @@ bool wd_ok = false;
 TaskHandle_t scheduler_h;
 TaskHandle_t gprs_h; // http,sms,ftp,dota
 bool primary_data_delivered = false;
+volatile bool force_ftp = false;
+volatile bool force_ftp_daily = false;
+char ftp_daily_date[12] = "";
+volatile bool force_reboot = false;
+volatile bool force_ota = false;
+volatile bool ota_writing_active = false; // v6.88
+char ota_cmd_param[128] = "";
+int ota_fail_count = 0;
+char ota_fail_reason[48] = "NONE";
 bool health_in_progress = false;
 #if ENABLE_ESPNOW == 1
 TaskHandle_t espnow_h; // tx,rx from UI
@@ -81,6 +90,10 @@ void setup() {
   serialMutex = xSemaphoreCreateMutex();
   if (serialMutex != NULL)
     xSemaphoreGive(serialMutex);
+
+  fsMutex = xSemaphoreCreateMutex();
+  if (fsMutex != NULL)
+    xSemaphoreGive(fsMutex);
 
   initialize_hw();
   delay(300);
@@ -166,6 +179,24 @@ void setup() {
         debugln(station_name);
       }
     }
+  }
+
+  // --- OTA Failure Tracking ---
+  prefs.begin("ota-track", false);
+  ota_fail_count = prefs.getInt("fail_cnt", 0);
+  String last_reason = prefs.getString("fail_res", "NONE");
+  strncpy(ota_fail_reason, last_reason.c_str(), sizeof(ota_fail_reason) - 1);
+  ota_fail_reason[sizeof(ota_fail_reason) - 1] = '\0';
+
+  String last_ver =
+      prefs.getString("last_ver", "6.55"); // Updated default to 6.55
+  if (last_ver != FIRMWARE_VERSION) {
+    debugln("[BOOT] Version Change! Clearing OTA Fail counters.");
+    ota_fail_count = 0;
+    strcpy(ota_fail_reason, "NONE");
+    prefs.putInt("fail_cnt", 0);
+    prefs.putString("fail_res", "NONE");
+    prefs.putString("last_ver", FIRMWARE_VERSION);
   }
   prefs.end();
 
@@ -554,6 +585,7 @@ void setup() {
               Update.writeStream(firmware);
               if (Update.end()) {
                 debugln("Update finished! Storing MD5 and restarting...");
+                diag_fw_just_updated = true; // v5.76
                 File md5Write = SPIFFS.open("/sd_fw_md5.txt", FILE_WRITE);
                 if (md5Write) {
                   md5Write.print(sd_md5);
@@ -626,47 +658,94 @@ void setup() {
     }
   }
 
-  // REVISIT below code for DOTA
+  // v6.77: Atomic DOTA - Only update if binary AND ready flag exist
   if (SPIFFS.exists("/firmware.bin")) {
-    File firmware = SPIFFS.open("/firmware.bin");
-    if (firmware) {
-      debugln("Found!");
-      debugln("Try to update!");
-      esp_task_wdt_reset(); // WDT
-
-      Update.onProgress(progressCallBack);
-
-      Update.begin(firmware.size(), U_FLASH);
-      Update.writeStream(firmware);
-      if (Update.end()) {
-        debugln("Update finished!");
-        debug("Firmware updated sts is ");
-        debugln(firmwareUpdated);
-        File firm = SPIFFS.open("/firmware.doc", FILE_WRITE);
-        if (!firm) { // #TRUEFIX
-          debugln("Failed to open firmware.doc for writing");
+    if (!SPIFFS.exists("/firmware.ready")) {
+      debugln(
+          "[OTA] ❌ Found partial firmware.bin without ready flag. Deleting.");
+      SPIFFS.remove("/firmware.bin");
+    } else {
+      File firmware = SPIFFS.open("/firmware.bin");
+      if (firmware) {
+        // v6.81: Verify Magic Byte (0xE9) before starting
+        int firstByte = firmware.read();
+        if (firstByte != 0xE9) {
+          debugf1("[OTA] ❌ CORRUPT! Magic byte is 0x%02X (Expected 0xE9). "
+                  "Aborting.\n",
+                  firstByte);
+          firmware.close();
+          SPIFFS.remove("/firmware.bin");
+          SPIFFS.remove("/firmware.ready");
+          return; // Skip update
         }
-        firm.print(UNIT_VER);
-        firm.close();
-        delay(2000);
-        debugln();
-      } else {
-        debugln("Update error!");
-        debugln(Update.getError());
-      }
+        firmware.seek(0); // Reset to start for writeStream
 
-      firmware.close();
+        debugln("Found!");
+        debugln("Try to update!");
+        esp_task_wdt_reset(); // WDT
 
-      if (SPIFFS.exists("/firmware.bin")) {
-        if (SPIFFS.remove("/firmware.bin")) {
-          debugln("Firmware removed succesfully!");
+        Update.onProgress(progressCallBack);
+
+        Update.begin(firmware.size(), U_FLASH);
+        Update.writeStream(firmware);
+        if (Update.end()) {
+          debugln("Update finished!");
+          File firm = SPIFFS.open("/firmware.doc", FILE_WRITE);
+          if (firm) {
+            firm.print(UNIT_VER);
+            firm.close();
+          }
+          diag_fw_just_updated = true;
+          delay(2000);
         } else {
-          debugln("Firmware not found ... error!");
-        }
-      }
+          String err = Update.errorString();
+          debugf1("[OTA] Update FAILED in setup: %s\n", err.c_str());
 
-      delay(500); // TRG8-3.0.5g reduced from 2secs to 500ms
-      ESP.restart();
+          // Dump first 32 bytes and last 32 bytes for debugging
+          firmware.seek(0);
+          debug("[OTA DEBUG] First 32 bytes: ");
+          for (int i = 0; i < 32; i++)
+            debugf1("%02X ", firmware.read());
+          debugln();
+
+          int fsize = firmware.size();
+          firmware.seek(fsize > 32 ? fsize - 32 : 0);
+          debug("[OTA DEBUG] Last 32 bytes: ");
+          for (int i = 0; i < 32; i++)
+            debugf1("%02X ", firmware.read());
+          debugln();
+
+          Preferences p;
+          p.begin("ota-track", false);
+          int cnt = p.getInt("fail_cnt", 0) + 1;
+          p.putInt("fail_cnt", cnt);
+          p.putString("fail_res", err);
+          p.end();
+        }
+
+        firmware.close();
+
+        // ONLY DELETE IF SUCCESSFUL OR CORRUPT MAGIC BYTE (handled earlier)
+        if (diag_fw_just_updated) {
+          if (SPIFFS.exists("/firmware.bin")) {
+            if (SPIFFS.remove("/firmware.bin")) {
+              debugln("Firmware removed succesfully!");
+            }
+          }
+          if (SPIFFS.exists("/firmware.ready")) {
+            SPIFFS.remove("/firmware.ready");
+          }
+        } else {
+          debugln(
+              "Firmware update failed, keeping /firmware.bin for analysis.");
+          if (SPIFFS.exists("/firmware.ready")) {
+            SPIFFS.remove("/firmware.ready");
+          }
+        }
+
+        delay(500); // TRG8-3.0.5g reduced from 2secs to 500ms
+        ESP.restart();
+      }
     }
   }
 
@@ -682,8 +761,8 @@ void setup() {
                           0); // Core 0
 
   //    #if DEBUG == 1
-  //        xTaskCreatePinnedToCore(stackMonitor, "StackMonitor", 2048, NULL, 1,
-  //        NULL, 1);
+  //        xTaskCreatePinnedToCore(stackMonitor, "StackMonitor", 2048, NULL,
+  //        1, NULL, 1);
   //    #endif
 
 #if (SYSTEM == 1) || (SYSTEM == 2)
@@ -697,7 +776,8 @@ void setup() {
     debugln("[BOOT] No T/H sensor (HDC or BME). tempHumTask NOT created.");
   }
 
-  // v5.50: Only spawn bmeTask if Pressure is enabled AND this is a TWS-AP unit
+  // v5.50: Only spawn bmeTask if Pressure is enabled AND this is a TWS-AP
+  // unit
   bool pressure_supported =
       (SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP") != NULL);
   if (bmeType == BME_280 && ENABLE_PRESSURE_SENSOR == 1 && pressure_supported) {
@@ -742,8 +822,8 @@ void setup() {
   debugln("ULP Counting Enabled (attachInterrupt 27 Disabled).");
   delay(1000);
 
-  // Should be called only after getting the correct RF count from SPIFF. If no
-  // RF is present, make rf_count.val = 0 and call this ()
+  // Should be called only after getting the correct RF count from SPIFF. If
+  // no RF is present, make rf_count.val = 0 and call this ()
 
   // REVERTED to AIO9_3.0 logic: Always load/restart ULP on setup to ensure
   // counting is active.
@@ -812,9 +892,14 @@ void initialize_hw() {
   adc1_config_width(ADC_WIDTH_BIT_12);
   adc1_config_channel_atten(ADC1_CHANNEL_5,
                             ADC_ATTEN_DB_11); // GPIO 33 (Battery)
-  adc2_config_channel_atten(ADC2_CHANNEL_8, ADC_ATTEN_DB_11); // GPIO 25 (Solar)
+  adc2_config_channel_atten(ADC2_CHANNEL_8,
+                            ADC_ATTEN_DB_11); // GPIO 25 (Solar)
 
   Serial.begin(115200);
+  // v7.06: CRITICAL! Expand UART RX buffer to 16KB so that incoming AT+HTTPREAD
+  // data does not drop bytes when Update.write() blocks the CPU during flash
+  // erase operations.
+  SerialSIT.setRxBufferSize(16384);
   SerialSIT.begin(115200, SERIAL_8N1, 16, 17, false);
 
   setCpuFrequencyMhz(80); // Step down early to save power during boot init
@@ -827,7 +912,10 @@ void initialize_hw() {
 
 #if (SYSTEM == 1 || SYSTEM == 2)
   // Early init for sensor detection status
-  initBME();
+  // v6.50: Skip BME for TWS-RF (SYSTEM 2) as requested
+  if (SYSTEM != 2) {
+    initBME();
+  }
   initHDC();
 #endif
 
@@ -884,10 +972,12 @@ void initialize_hw() {
   esp_task_wdt_add(NULL);
   esp_task_wdt_reset();
 
-  if (bmeType == BME_280) {
-    debugln("[BOOT] BME280: OK");
-  } else {
-    debugln("[BOOT] BME280: NOT FOUND");
+  if (SYSTEM != 2) {
+    if (bmeType == BME_280) {
+      debugln("[BOOT] BME280: OK");
+    } else {
+      debugln("[BOOT] BME280: NOT FOUND");
+    }
   }
 
   if (hdcType != HDC_UNKNOWN) {
@@ -896,24 +986,30 @@ void initialize_hw() {
     debugln("[BOOT] HDC Sensor: NOT FOUND");
   }
 
+#if (SYSTEM == 0 || SYSTEM == 2)
+  debugln("[BOOT] Rainfall Counter: OK");
+#endif
+
   debugln("[BOOT] Hardware Initialized.");
 }
 
 void loop() {
   /*
-   * eHTTPStop : When SIM error or SIGNAL issue ot REG issue (wont service SMS)
-   * but will store current record to unsent_file) eSMSStop : After HTTP is
-   * over, SMS starts regardless of whether HTTP went through or not. after SMS,
-   * it issues this eExceptionHandled : This is when resync_time is triggered
-   * inside rtcTask
+   * eHTTPStop : When SIM error or SIGNAL issue ot REG issue (wont service
+   * SMS) but will store current record to unsent_file) eSMSStop : After HTTP
+   * is over, SMS starts regardless of whether HTTP went through or not. after
+   * SMS, it issues this eExceptionHandled : This is when resync_time is
+   * triggered inside rtcTask
    */
 
   // WiFi is now manually triggered via the LCD menu.
-  // We no longer aggressively auto-start the Access Point here on EXT0 wakeups.
+  // We no longer aggressively auto-start the Access Point here on EXT0
+  // wakeups.
   if (((sync_mode == eHttpStop) || (sync_mode == eSMSStop) ||
        (sync_mode == eExceptionHandled)) &&
       (lcdkeypad_start == 0) && (wifi_active == false) &&
-      (health_in_progress == false)) {
+      (health_in_progress == false) && (force_reboot == false) &&
+      (force_ota == false)) {
     debugln("[PWR] All tasks done. Entering Deep Sleep...");
     esp_task_wdt_reset(); // Final pet before sleep
     start_deep_sleep();
@@ -1096,8 +1192,8 @@ void ULP_COUNTING(uint32_t us) {
   rtc_gpio_init(GPIO_NUM_35);
   rtc_gpio_set_direction(GPIO_NUM_35, RTC_GPIO_MODE_INPUT_ONLY);
 
-  rtc_gpio_pullup_en(GPIO_NUM_34); // rf (Note: GPIO34 has NO internal pullup on
-                                   // ESP32. External required!)
+  rtc_gpio_pullup_en(GPIO_NUM_34); // rf (Note: GPIO34 has NO internal pullup
+                                   // on ESP32. External required!)
   rtc_gpio_pullup_en(GPIO_NUM_35); // wind count (Note: GPIO35 has NO internal
                                    // pullup on ESP32. External required!)
 
@@ -1106,33 +1202,36 @@ void ULP_COUNTING(uint32_t us) {
   ulp_run(0);
 }
 
-// AIO_iter3 : Restructuring for scheduler to have all calculation for cumrf etc
-// at the beginning.
+// AIO_iter3 : Restructuring for scheduler to have all calculation for cumrf
+// etc at the beginning.
 
 /* wired = 1 : Integrated system
  * // SENSOR/PERIPHERAL
  * GPIO34 : RF - it if for rainfall monitoring even in deep sleep mode(ULP)
  * GPIO35 : WS - It is used for getting the WS count in deep sleep mode(ULP)
- * GPIO39 : WD - It is used to get analog data from Wind direction sensor AS5600
- * magnetic encoder wind direction (earlier solar sense) I2C    : Temp/Hum
- * sensor HDC1080/HDC2022  (0x40) I2C    : LCD 16x2 (0x27) I2C    : RTC (0x68)
+ * GPIO39 : WD - It is used to get analog data from Wind direction sensor
+ * AS5600 magnetic encoder wind direction (earlier solar sense) I2C    :
+ * Temp/Hum sensor HDC1080/HDC2022  (0x40) I2C    : LCD 16x2 (0x27) I2C    :
+ * RTC (0x68)
  * // CONTROL SIGNALS
  * GPIO27 : ext0 - external wakeup for UI or lcdkeypad(for lcdkeypad, it also
  * enables GPIO32 to give 5V supply to LCD GPIO32 : When made HIGH switched on
- * the MOSFET to allow 5V supply to LCD. When set to LOW, it stops 5V supply to
- * the i2c based LCD module GPIO26 : When made HIGH , it provides 3.7V to GPRS
- * module. When set to LOW, it stops 3.7V to GPRS module
+ * the MOSFET to allow 5V supply to LCD. When set to LOW, it stops 5V supply
+ * to the i2c based LCD module GPIO26 : When made HIGH , it provides 3.7V to
+ * GPRS module. When set to LOW, it stops 3.7V to GPRS module
  * // SIGNAL STRENGTHS
- * -110 : This signal_strength is given while filling the previous rf_close_date
- * file -111 : This signal_strength is given while filling the initial ones when
- * device starts at mid - day and SPIFFs file was not present. -112 or -115 to
- * -120  : This signal_strength is given to all the filled up values for the
- * current day when there were some initial values in the current rf_close_date
- * file. cur_file is present here -125 to -130 : If signal strength is not good
- * including SIM ERROR, data is stored with this signal range
+ * -110 : This signal_strength is given while filling the previous
+ * rf_close_date file -111 : This signal_strength is given while filling the
+ * initial ones when device starts at mid - day and SPIFFs file was not
+ * present. -112 or -115 to -120  : This signal_strength is given to all the
+ * filled up values for the current day when there were some initial values in
+ * the current rf_close_date file. cur_file is present here -125 to -130 : If
+ * signal strength is not good including SIM ERROR, data is stored with this
+ * signal range
  * // Sample data stored
  * TRG : length 45 including \r\n :
- * 00,2024-05-21,08:45,0000.0,0000.0,-111,00.0\r\n (inst_rf,cum_rf) TWS : length
- * 53 including \r\n : 00,2024-05-21,08:45,00.00,00.00,00.00,000,-111,00.0\r\n
+ * 00,2024-05-21,08:45,0000.0,0000.0,-111,00.0\r\n (inst_rf,cum_rf) TWS :
+ * length 53 including \r\n :
+ * 00,2024-05-21,08:45,00.00,00.00,00.00,000,-111,00.0\r\n
  * (temp,hum,avg_ws,wd)
  */
