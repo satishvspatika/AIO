@@ -1,0 +1,10 @@
+Build Configuration
+===================
+SYSTEM: 2
+UNIT: SPATIKA_GEN
+Output: SPATIKA_ADDON
+Firmware Version: 5.47
+Build Date: 2026-03-05 18:10:13.679691
+Binary Size: 1.14 MB
+Binary Path: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/SPATIKA_ADDON_8mb/firmware.bin
+Version File: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/SPATIKA_ADDON_8mb/fw_version.txt

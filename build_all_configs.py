@@ -25,9 +25,7 @@ CONFIGS = [
     (0, "BIHAR_TRG", "BIHAR_TRG"),
     (0, "SPATIKA_GEN", "SPATIKA_TRG"),
     (1, "KSNDMC_TWS", "KSNDMC_TWS"),
-    (1, "KSNDMC_TWS-AP", "KSNDMC_TWS_AP"),
     (2, "KSNDMC_ADDON", "KSNDMC_ADDON"),
-    (2, "SPATIKA_GEN", "SPATIKA_ADDON"),
 ]
 
 # Flash size variants available:
@@ -177,22 +175,28 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
             version_match = re.search(r'#define FIRMWARE_VERSION "([^"]+)"', globals_content)
             firmware_version = version_match.group(1) if version_match else "UNKNOWN"
             
-            # Create fw_version.txt for legacy SD card updates
-            # Format: [TYPE]9-[CLIENT]-[VERSION]
-            # TYPE: TRG (0), TWS (1), TWSRF (2)
-            # CLIENT: Extracted from UNIT (e.g., KSNDMC_TRG -> DMC, BIHAR_TRG -> BIHAR)
-            
             type_prefix = "TRG9" if system == 0 else ("TWS9" if system == 1 else "TWSRF9")
             
-            client = "UNKNOWN"
-            if unit.startswith("KSNDMC"):
-                client = "DMC"
-            elif "_" in unit:
-                client = unit.split("_")[0]
+            # Map specific strings based on logic in AIO9_5.0.ino
+            if unit == "KSNDMC_TRG":
+                full_version = f"TRG9-DMC-{firmware_version}"
+            elif unit == "BIHAR_TRG":
+                full_version = f"TRG9-BIH-{firmware_version}"
+            elif unit == "SPATIKA_GEN" and system == 0:
+                full_version = f"TRG9-GEN-{firmware_version}"
+            elif unit == "KSNDMC_TWS":
+                full_version = f"TWS9-DMC-{firmware_version}"
+            elif unit == "KSNDMC_ADDON":
+                full_version = f"TWSRF9-DMC-{firmware_version}"
             else:
-                client = unit
-                
-            full_version = f"{type_prefix}-{client}-{firmware_version}"
+                client = "UNKNOWN"
+                if unit.startswith("KSNDMC"):
+                    client = "DMC"
+                elif "_" in unit:
+                    client = unit.split("_")[0]
+                else:
+                    client = unit
+                full_version = f"{type_prefix}-{client}-{firmware_version}"
             
             fw_version_file = output_dir / "fw_version.txt"
             with open(fw_version_file, 'w') as f:
