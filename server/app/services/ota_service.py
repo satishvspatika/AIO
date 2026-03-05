@@ -28,4 +28,6 @@ def needs_ota(device_ver: str, target_ver: str) -> bool:
     Returns True if device version is different from target version.
     Uses numeric comparison to handle float edge cases (e.g. 5.9 vs 5.10).
     """
+    if not target_ver:
+        return False
     return get_numeric_ver(device_ver) != get_numeric_ver(target_ver)

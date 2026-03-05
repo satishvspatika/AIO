@@ -56,6 +56,8 @@ async def health(request: Request, db: Session = Depends(get_db)):
             net_cnt_prev=data.get("net_cnt_prev"),             cur_stored=data.get("cur_stored"),
             prev_stored=data.get("prev_stored"),               http_suc_cnt=data.get("http_suc_cnt"),
             http_suc_cnt_prev=data.get("http_suc_cnt_prev"),   ndm_cnt=data.get("ndm_cnt"),
+            http_ret_cnt=data.get("http_ret_cnt"),             http_ret_cnt_prev=data.get("http_ret_cnt_prev"),
+            ftp_suc_cnt=data.get("ftp_suc_cnt"),               ftp_suc_cnt_prev=data.get("ftp_suc_cnt_prev"),
             pd_cnt=data.get("pd_cnt"),                         cdm_sts=data.get("cdm_sts"),
             spiffs_kb=data.get("spiffs_kb"),                   sd_sts=data.get("sd_sts"),
             ver=ver,                                           carrier=data.get("carrier"),

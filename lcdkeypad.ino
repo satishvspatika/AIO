@@ -907,7 +907,13 @@ void lcdkeypad(void *pvParameters) {
             lcdkeypad_start = 0;
             digitalWrite(32, LOW);
 
-            // Link Wi-Fi shutdown to manual LCD shutdown
+            // Manual LCD shutdown: Turn off hardware and signal idle to system.
+            // System will sleep naturally via AIO9_5.0.ino's loop() when tasks
+            // are done.
+            debugln(
+                "Manual LCD OFF -> UI Idle. System remains active for tasks.");
+
+            // Link Wi-Fi shutdown to manual LCD shutdown (Power save)
             if (wifi_active) {
               WiFi.softAPdisconnect(true);
               wifi_active = false;
@@ -916,24 +922,6 @@ void lcdkeypad(void *pvParameters) {
               strcpy(ui_data[FLD_WIFI_ENABLE].bottomRow, "ENABLE WIFI     ");
             }
 
-            // Check if we can go to deep sleep
-            bool task_running =
-                (sync_mode == eSMSStart || sync_mode == eGPSStart ||
-                 sync_mode == eHttpTrigger || sync_mode == eHttpBegin ||
-                 sync_mode == eHttpStarted);
-
-            int m = current_min;
-            bool within_window =
-                (m == 58 || m == 59 || m == 0 || m == 14 || m == 15 ||
-                 m == 29 || m == 30 || m == 44 || m == 45);
-
-            if (!task_running && !within_window) {
-              debugln("Manual LCD OFF -> Force Deep Sleep");
-              start_deep_sleep();
-            } else {
-              debugln(
-                  "Manual LCD OFF -> Keeping Awake (Task Active or In Window)");
-            }
             vTaskDelay(100);
           } else if (cur_fld_no == FLD_SEND_STATUS) {
             if ((sync_mode == eSyncModeInitial) || (sync_mode == eSMSStop) ||

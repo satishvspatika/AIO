@@ -64,6 +64,30 @@ def migrate():
     except sqlite3.OperationalError as e:
         if "duplicate" not in str(e): print(e)
 
+    try:
+        cursor.execute("ALTER TABLE health_reports ADD COLUMN http_ret_cnt INTEGER DEFAULT 0;")
+        print("✓ Column 'http_ret_cnt' added.")
+    except sqlite3.OperationalError as e:
+        if "duplicate" not in str(e): print(e)
+
+    try:
+        cursor.execute("ALTER TABLE health_reports ADD COLUMN http_ret_cnt_prev INTEGER DEFAULT 0;")
+        print("✓ Column 'http_ret_cnt_prev' added.")
+    except sqlite3.OperationalError as e:
+        if "duplicate" not in str(e): print(e)
+
+    try:
+        cursor.execute("ALTER TABLE health_reports ADD COLUMN ftp_suc_cnt INTEGER DEFAULT 0;")
+        print("✓ Column 'ftp_suc_cnt' added.")
+    except sqlite3.OperationalError as e:
+        if "duplicate" not in str(e): print(e)
+
+    try:
+        cursor.execute("ALTER TABLE health_reports ADD COLUMN ftp_suc_cnt_prev INTEGER DEFAULT 0;")
+        print("✓ Column 'ftp_suc_cnt_prev' added.")
+    except sqlite3.OperationalError as e:
+        if "duplicate" not in str(e): print(e)
+
     conn.commit()
     conn.close()
     print("Migration complete.")

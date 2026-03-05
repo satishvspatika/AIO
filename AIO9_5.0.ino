@@ -48,7 +48,9 @@ volatile bool force_ftp_daily = false;
 char ftp_daily_date[12] = "";
 volatile bool force_reboot = false;
 volatile bool force_ota = false;
-volatile bool ota_writing_active = false; // v6.88
+volatile bool ota_writing_active = false;
+volatile bool ota_silent_mode = false; // Rule 43
+                                       // v6.88
 char ota_cmd_param[128] = "";
 int ota_fail_count = 0;
 char ota_fail_reason[48] = "NONE";
@@ -180,6 +182,8 @@ void setup() {
       }
     }
   }
+  // --- GPS Location Recovery ---
+  loadGPS(); // v5.51: Ensure coordinates are available even after POR
 
   // --- OTA Failure Tracking ---
   prefs.begin("ota-track", false);
@@ -883,8 +887,11 @@ void setup() {
 }
 
 void progressCallBack(size_t currSize, size_t totalSize) {
-  debugf2("CALLBACK:  Update process at %d of %d bytes...\n", currSize,
-          totalSize);
+  // Silent during actual download to prevent console leak into Modem RX
+  if (!ota_silent_mode) {
+    debugf2("CALLBACK:  Update process at %d of %d bytes...\n", currSize,
+            totalSize);
+  }
 }
 
 void initialize_hw() {
@@ -963,12 +970,12 @@ void initialize_hw() {
   }
 
   // RE-INITIALIZE Watchdog with a safe 30-second timeout for first-boot tasks
-  esp_task_wdt_config_t wdt_config = {.timeout_ms = 30000,
+  // v5.52: Increased Watchdog to 120s for slow 2G OTA stability
+  esp_task_wdt_config_t wdt_config = {.timeout_ms = 120000,
                                       .idle_core_mask =
                                           (1 << portNUM_PROCESSORS) - 1,
                                       .trigger_panic = true};
   esp_task_wdt_init(&wdt_config);
-  // Re-register if not already (safeguard)
   esp_task_wdt_add(NULL);
   esp_task_wdt_reset();
 
@@ -1005,11 +1012,12 @@ void loop() {
   // WiFi is now manually triggered via the LCD menu.
   // We no longer aggressively auto-start the Access Point here on EXT0
   // wakeups.
-  if (((sync_mode == eHttpStop) || (sync_mode == eSMSStop) ||
+  if ((millis() > 5000) &&
+      ((sync_mode == eHttpStop) || (sync_mode == eSMSStop) ||
        (sync_mode == eExceptionHandled)) &&
       (lcdkeypad_start == 0) && (wifi_active == false) &&
       (health_in_progress == false) && (force_reboot == false) &&
-      (force_ota == false)) {
+      (force_ota == false) && (ota_writing_active == false)) {
     debugln("[PWR] All tasks done. Entering Deep Sleep...");
     esp_task_wdt_reset(); // Final pet before sleep
     start_deep_sleep();

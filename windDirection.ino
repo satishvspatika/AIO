@@ -45,16 +45,27 @@ void windDirection(void *pvParameters) {
       wd_ok = true;
     }
 
-    // Smooth 0-4095 → 0-359 mapping (mathematical - 359 naturally rolls to 0)
-    if (wd_ok) {
+    // v5.52 Fix: Only print disconnected message on state-CHANGE, not every
+    // second. When sensors are disconnected, this was flooding serial at 1/sec.
+    static bool prev_wd_ok = true;
+    if (!wd_ok) {
+      windDir = 0;
+      if (prev_wd_ok) {
+        // Print ONCE when transitioning from connected → disconnected
+        debugln("[WD] Sensor disconnected (ADC=0, spread=0). Suppressing "
+                "further prints.");
+      }
+    } else {
+      // Smooth 0-4095 → 0-359 mapping
       windDir = (tempWindDir * 360) / 4096;
       if (windDir > 359)
         windDir = 0; // Safety clamp
-    } else {
-      // Disconnected: report 000 (numeric, server-safe — not NA)
-      windDir = 0;
-      debugf2("[WD] ADC:%d spread:%d -> Disconnected\n", tempWindDir, spread);
+      if (!prev_wd_ok) {
+        debugf2("[WD] Sensor reconnected. ADC:%d -> Dir:%d deg\n", tempWindDir,
+                windDir);
+      }
     }
+    prev_wd_ok = wd_ok;
     snprintf(windDir_str, sizeof(windDir_str), "%03d deg", windDir);
 
     vTaskDelay(1000);

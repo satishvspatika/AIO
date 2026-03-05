@@ -670,13 +670,22 @@ void prepare_data_and_send() {
     tLen--;
   }
 
+  // v5.52: KSNDMC Padding Rule - Pad 4-digit numeric IDs to 6-digits (e.g. 1881
+  // -> 001881)
+  // This is required for TWS and TWS-RF legacy servers on KSNDMC.
+  if ((SYSTEM == 1 || SYSTEM == 2) && tLen == 4 && isDigitStr(cleanStn)) {
+    char padded[16];
+    snprintf(padded, sizeof(padded), "00%s", cleanStn);
+    strcpy(cleanStn, padded);
+  }
+
   if (!strcmp(httpSet[http_no].Format,
               "json")) { // if json then this loop otherwise goto urlencoded one
 // BIHAR TRG
 #if SYSTEM == 0
     snprintf(http_data, sizeof(http_data),
              "{\"StnNo\":\"%s\",\"DeviceTime\":\"%04d-%02d-%02d "
-             "%02d:%02d:00\",\"RainDP\":\"%05.2f\",\"RainCuml\":\"%05.2f\","
+             "%02d:%02d:00\",\"RainDP\":\"%05.1f\",\"RainCuml\":\"%05.1f\","
              "\"BatVolt\":\"%s\",\"SigStr\":\"%04d\",\"ApiKey\":\"%s\"}",
              cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
              temp_instrf, temp_crf, sample_bat, temp_sig, httpSet[http_no].Key);
@@ -709,29 +718,21 @@ void prepare_data_and_send() {
     }
   } // Ensure this cleanly closes the TRG checks
 
-  // TWS
+// TWS
 #if SYSTEM == 1
-  if (strstr(UNIT, "SPATIKA_GEN"))
-    snprintf(http_data, sizeof(http_data),
-             "stn_id=%s&rec_time=%04d-%02d-%02d,%02d:%02d&temp=%s&humid=%s&w_"
-             "speed=%s&w_dir=%s&signal=%04d&key=%s&bat_volt=%s&bat_volt2=%s",
-             cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
-             sample_temp, sample_hum, sample_avgWS, sample_WD, temp_sig,
-             httpSet[http_no].Key, sample_bat, sample_bat);
-  else
-    snprintf(http_data, sizeof(http_data),
-             "stn_id=%s&rec_time=%04d-%02d-%02d,%02d:%02d&temp=%s&humid=%s&w_"
-             "speed=%s&w_dir=%s&signal=%04d&key=%s&bat_volt=%s&bat_volt2=%s",
-             cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
-             sample_temp, sample_hum, sample_avgWS, sample_WD, temp_sig,
-             httpSet[http_no].Key, sample_bat, sample_bat);
+  snprintf(http_data, sizeof(http_data),
+           "stn_no=%s&rec_time=%04d-%02d-%02d,%02d:%02d&temp=%s&humid=%s&w_"
+           "speed=%s&w_dir=%s&signal=%04d&key=%s&bat_volt=%s&bat_volt2=%s",
+           cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
+           sample_temp, sample_hum, sample_avgWS, sample_WD, temp_sig,
+           httpSet[http_no].Key, sample_bat, sample_bat);
 #endif
 
-    // TWS-RF
+// TWS-RF (ADDON / SPATIKA)
 #if SYSTEM == 2
+  // v7.53: DMC Legacy requires stn_no and %05.1f. Spatika General requires
+  // stn_id.
   if (strstr(UNIT, "SPATIKA_GEN")) {
-    // v6.75: Reverted to stn_id as per user confirmation
-    // v6.81: Reverted to stn_id and comma as per user confirmation from v4.29
     snprintf(http_data, sizeof(http_data),
              "stn_id=%s&rec_time=%04d-%02d-%02d,%02d:%02d&key=%s&rainfall=%05."
              "2f&temp=%s&humid=%s&w_speed=%s&w_dir=%s&signal=%04d&"
@@ -739,15 +740,15 @@ void prepare_data_and_send() {
              cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
              httpSet[http_no].Key, temp_crf, sample_temp, sample_hum,
              sample_avgWS, sample_WD, temp_sig, sample_bat, sample_bat);
-  } else
-    // v6.81: Reverted to stn_id and comma as per user confirmation from v4.29
+  } else {
     snprintf(http_data, sizeof(http_data),
-             "stn_id=%s&rec_time=%04d-%02d-%02d,%02d:%02d&key=%s&rainfall=%05."
-             "2f&temp=%s&humid=%s&w_speed=%s&w_dir=%s&signal=%04d&bat_volt=%s&"
-             "bat_volt2=%s",
+             "stn_no=%s&rec_time=%04d-%02d-%02d,%02d:%02d&key=%s&rainfall=%05."
+             "1f&temp=%s&humid=%s&w_speed=%s&w_dir=%s&signal=%04d&"
+             "bat_volt=%s&bat_volt2=%s",
              cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
              httpSet[http_no].Key, temp_crf, sample_temp, sample_hum,
              sample_avgWS, sample_WD, temp_sig, sample_bat, sample_bat);
+  }
 #endif
 
   debug("http_data format is ");
@@ -1596,9 +1597,15 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
                rf_cls_mm, rf_cls_dd, record_hr, record_min);
 #endif
 #if SYSTEM == 2
-      snprintf(fileName, sizeof(fileName),
-               "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", ftp_station, ftp_year,
-               rf_cls_mm, rf_cls_dd, record_hr, record_min);
+      // v7.53: SPATIKA_GEN uses .swd, KSNDMC_ADDON uses .kwd
+      if (strstr(UNIT, "SPATIKA_GEN"))
+        snprintf(fileName, sizeof(fileName),
+                 "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", ftp_station, ftp_year,
+                 rf_cls_mm, rf_cls_dd, record_hr, record_min);
+      else
+        snprintf(fileName, sizeof(fileName),
+                 "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", ftp_station, ftp_year,
+                 rf_cls_mm, rf_cls_dd, record_hr, record_min);
 #endif
 
       if (SPIFFS.exists(temp_file)) {
@@ -1811,6 +1818,9 @@ void send_ftp_file(char *fileName) {
 
           if (upload_success) {
             markFileAsDelivered(fileName); // v5.48 Track recovered records
+            // v7.53: Increment FTP success counter (counts as 1 per file/slot
+            // batch)
+            diag_ftp_success_count++;
           }
 
           if (sampleNo == 3 || sampleNo == 7) { // If Daily FTP is successful,
@@ -1882,8 +1892,8 @@ void send_ftp_file(char *fileName) {
               String fileName1 = file.name();
               if (fileName1.endsWith(pattern)) {
                 String prefixedFileName = prefix + fileName1;
-                debugf1("Removing file (failure cleanup): %s\n",
-                        prefixedFileName.c_str());
+                debugf("Removing file (failure cleanup): %s\n",
+                       prefixedFileName.c_str());
                 vTaskDelay(100);
                 SPIFFS.remove(prefixedFileName);
               }
@@ -2127,11 +2137,14 @@ int send_at_cmd_data(char *payload, String charArray) {
     // drift>90s)
     sync_rtc_from_server_tm(payload_ptr, false);
 
-    // v7.20: Only increment if this is the first success for this specific
-    // record This prevents httpSet[multiple servers] from bloating the counter
-    // beyond 96
-    if (http_no == 0) {
+    // v7.53: Increment for CURRENT DATA on ANY system's primary server success.
+    // Previous code only counted http_no==0 (KSNDMC_TRG), leaving
+    // TWS/ADDON/SPATIKA with http_suc_cnt permanently 0 in health reports.
+    if (data_mode == eCurrentData) {
       diag_http_success_count++;
+    } else if (data_mode == eUnsentData) {
+      // v7.53: Track successful recovery of older slots via HTTP retry
+      diag_http_retry_count++;
     }
     diag_http_time_total += (millis() - start);
 
@@ -3352,6 +3365,61 @@ void get_lat_long_date_time(char *gsm_no) {
   debugln(response);
 }
 
+// Proposed Rule 45: The Header-Health Check
+// Checks if the buffer contains "Modem-speak" or invalid ESP32 entry points
+bool isBufferSanityOK(uint8_t *buf, int len, int offset) {
+  // 1. Check for UART Cross-talk Signature (uh@\b)
+  if (len >= 4) {
+    if (buf[0] == 0x75 && buf[1] == 0x68 && buf[2] == 0x40 && buf[3] == 0x08) {
+      Serial.println("[OTA] ❌ UART Cross-talk (0x75684008) DETECTED! Poisoned "
+                     "chunk. Restarting...");
+      return false;
+    }
+  }
+
+  // 2. Check for "Modem-speak" strings at the BEGINNING of a chunk.
+  // BUG-1 Fix: Removed "SampleNo", "Gaps", and "HTTP/" — these are common
+  // byte sequences inside valid ESP32 firmware binaries and cause false
+  // positives. Only uniquely modem-specific strings remain.
+  // BUG-8 Fix: Loop auto-sized via sizeof to prevent count mismatch bugs.
+  const char *traps[] = {"+HTTPREAD:", "ERROR\r\n"};
+  int scanLimit = min(len, 32); // Only scan first 32 bytes for modem leakage
+  for (int t = 0; t < (int)(sizeof(traps) / sizeof(traps[0])); t++) {
+    int trapLen = strlen(traps[t]);
+    for (int i = 0; i <= scanLimit - trapLen; i++) {
+      if (memcmp(&buf[i], traps[t], trapLen) == 0) {
+        Serial.printf("[OTA] \u274c Modem-speak '%s' detected at offset %d!\n",
+                      traps[t], i);
+        return false;
+      }
+    }
+  }
+
+  // 3. Header specific checks for first chunk
+  if (offset == 0) {
+    if (buf[0] != 0xE9) {
+      Serial.printf("[OTA] ❌ Invalid Magic Byte: 0x%02X (Expected 0xE9)\n",
+                    buf[0]);
+      return false;
+    }
+  }
+
+  // 4. Large block of repeating bytes (often a sign of UART/Flash sync issues)
+  int repeatCount = 0;
+  for (int i = 1; i < len; i++) {
+    if (buf[i] == buf[0])
+      repeatCount++;
+  }
+  if (repeatCount > (len - 16)) { // 99.9% identical
+    Serial.printf("[OTA] ❌ Suspicious data (99%% repeating 0x%02X). Aborting "
+                  "chunk.\n",
+                  buf[0]);
+    return false;
+  }
+
+  return true;
+}
+
 int setup_ftp() {
   flushSerialSIT(); // Clear leftover data from previous task
   char gprs_xmit_buf[300];
@@ -3604,26 +3672,29 @@ void fetchFromHttpAndUpdate(char *fileName) {
     return;
   }
 
+  // BUG-3 Fix: Lock silence BEFORE Update.begin() to prevent any debug
+  // output from leaking to the UART during partition initialization.
+  ota_silent_mode = true;
+  flushSerialSIT(); // Hard flush the UART before starting partition write
+
   // === STEP 2: Begin OTA partition write ===
   if (!Update.begin(total_no_of_bytes, U_FLASH)) {
-    debugf1("[OTA] Update.begin failed: %s\n", Update.errorString());
+    // Direct Serial print since ota_silent_mode is true
+    Serial.printf("[OTA] Update.begin failed: %s\n", Update.errorString());
+    ota_silent_mode = false; // Release silence on early-exit failure
     return;
   }
-  // v5.45: Silence URCs during high-speed OTA download (Rule 4)
-  SerialSIT.println("AT+CGEREP=0");
-  waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CREG=0");
-  waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CEREG=0");
-  waitForResponse("OK", 1000);
-  flushSerialSIT();
+  // BUG-9 Fix: Duplicate URC silence commands removed — already silenced
+  // at function entry (lines 3569-3578). No re-silencing needed here.
 
+  ota_silent_mode = true; // Rule 50: Macro-Silence LOCK before begin()
   Update.onProgress(progressCallBack);
   ota_writing_active = true;
-  debugln("[OTA] OTA begun. Downloading in 64KB Range chunks...");
+  Serial.println("[OTA] OTA begun. Downloading in 64KB Range chunks...");
 
-  const int RANGE_SIZE = 16384; // 16KB
-  const int READ_SIZE = 16384;  // 16KB
+  const int RANGE_SIZE =
+      65536; // v7.52: 64KB (Balanced for RAM & 2G throughput)
+  const int READ_SIZE = 65536;
   uint8_t *buf = (uint8_t *)malloc(READ_SIZE);
   if (!buf) {
     debugln("[OTA] malloc failed!");
@@ -3632,46 +3703,66 @@ void fetchFromHttpAndUpdate(char *fileName) {
     return;
   }
 
-  int chunk_retries = 0; // v5.45: Consolidated retry counter
-  bool session_active = false;
+  int chunk_retries = 0;
+  int consecutive_fails = 0; // Rule 42b: Hardware Reset Trigger
+  // Note: ota_silent_mode already set to true before Update.begin() (BUG-3 fix)
 
-  // === STEP 3: Download 16KB chunks via Range GET ===
+  // === STEP 3: Download 4KB chunks via Range GET ===
   while (actual_downloaded < total_no_of_bytes) {
     // v7.20: Explicit Offset logging to detect shift-bugs
     debugf("[OTA] Range %d-%d (Progress: %.1f%%)\n", actual_downloaded,
            actual_downloaded + RANGE_SIZE - 1,
            (float)actual_downloaded * 100.0 / total_no_of_bytes);
 
-    if (!session_active) {
-      // v7.06: Only RESET stack when session is lost or at start
-      // This prevents "Socket Zombie" exhaustion from rapid INIT/TERM calls
-      SerialSIT.println("AT+HTTPTERM");
-      waitForResponse("OK", 2000);
-
-      // Rule 15: Carrier Congestion Breather
+    if (consecutive_fails >= 3) {
+      Serial.println("[OTA] 🚨 3 Consecutive chunk failures! Hard Hardware "
+                     "Resetting Modem...");
+      digitalWrite(26, LOW);
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      esp_task_wdt_reset(); // Keep WDT alive during hardware reset
+      digitalWrite(26, HIGH);
       vTaskDelay(5000 / portTICK_PERIOD_MS);
-      flushSerialSIT();
-
-      // Rule 16: Verify bearer inside loop
+      esp_task_wdt_reset(); // Keep WDT alive
+      consecutive_fails = 0;
+      // Re-initialize bearer after hard power cycle
       if (!verify_bearer_or_recover()) {
-        debugln("[OTA] Bearer lost. Retrying recovery...");
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        esp_task_wdt_reset();
         chunk_retries++;
-        if (chunk_retries > 5)
-          break;
         continue;
       }
+    }
+
+    // v7.52: Reverted to One-Chunk-One-Session (Rule 41) for binary safety,
+    // but using 64KB chunks to maintain high throughput.
+    bool session_active = false;
+
+    if (!session_active) {
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 1000);
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+      if (!verify_bearer_or_recover()) {
+        Serial.println("[OTA] ❌ Bearer Recovery Failed");
+        chunk_retries++;
+        consecutive_fails++;
+        if (chunk_retries > 30)
+          break;
+        esp_task_wdt_reset();
+        continue;
+      }
+
+      SerialSIT.println("ATE0");
+      waitForResponse("OK", 1000);
 
       SerialSIT.println("AT+HTTPINIT");
       if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
-        debugln("[OTA] HTTPINIT fail. Retrying...");
+        Serial.println("[OTA] ⚠️ HTTPINIT Failed");
         chunk_retries++;
-        if (chunk_retries > 5)
-          break;
+        consecutive_fails++;
+        esp_task_wdt_reset();
         continue;
       }
 
-      // v5.46 (Rule 1+11): Bind CID=1 and URL in tight sequence — no gaps
       SerialSIT.println("AT+HTTPPARA=\"CID\",1");
       waitForResponse("OK", 2000);
       snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
@@ -3683,237 +3774,154 @@ void fetchFromHttpAndUpdate(char *fileName) {
       session_active = true;
     }
 
+    // Set Range
     int r_start = actual_downloaded;
     int r_end = min(actual_downloaded + RANGE_SIZE - 1, total_no_of_bytes - 1);
-    debugf("[OTA] Range bytes=%d-%d\n", r_start, r_end);
-
-    // (v5.46: Zombie signature check removed — caused false positives on
-    // firmware binary data, corrupting every other chunk via bearer teardown)
-
-    // Range header
     snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
              "AT+HTTPPARA=\"USERDATA\",\"Range: bytes=%d-%d\"", r_start, r_end);
     SerialSIT.println(gprs_xmit_buf);
     waitForResponse("OK", 2000);
 
     // Execute GET
+    Serial.printf("[OTA] Triggering GET Action (Range %d)... ", r_start);
     SerialSIT.println("AT+HTTPACTION=0");
-    String act = waitForResponse("+HTTPACTION:", 90000);
-    debugf1("[OTA] GET resp: %s\n", act.c_str());
+    String act_resp = waitForResponse("+HTTPACTION:", 95000);
+    Serial.println(act_resp); // Show the response status code
 
-    // v7.12: Improved HTTPACTION parsing (Rule 25)
-    int first_comma = act.indexOf(",");
-    int last_comma = act.lastIndexOf(",");
     int http_status = 0;
-    int chunk_got = 0;
-    if (first_comma != -1 && last_comma != -1 && last_comma > first_comma) {
-      http_status = act.substring(first_comma + 1, last_comma).toInt();
-      chunk_got = act.substring(last_comma + 1).toInt();
+    int chunk_total = 0;
+    int first_c = act_resp.indexOf(",");
+    int last_c = act_resp.lastIndexOf(",");
+    if (first_c != -1 && last_c != -1 && last_c > first_c) {
+      http_status = act_resp.substring(first_c + 1, last_c).toInt();
+      chunk_total = act_resp.substring(last_c + 1).toInt();
     }
 
-    // Status 200/206 are successful. Anything else (like 706) is a retryable
-    // error.
     if (http_status != 200 && http_status != 206) {
-      debugf("[OTA] GET failed (Status: %d). Retrying chunk (Rule 25)...\n",
-             http_status);
-
-      // Rule 19 Apply: If it's a socket/bearer error (706/714/etc), nuke the
-      // context
-      // v7.15: Rule 27 (Total Silence Protocol)
-      // Completely silence the modem to prevent URCs from contaminating the
-      // binary stream
-      SerialSIT.println("AT+CREG=0");
-      waitForResponse("OK", 1000);
-      SerialSIT.println("AT+CGEREP=0");
-      waitForResponse("OK", 1000);
-      SerialSIT.println("AT+CNMI=0,0,0,0,0"); // Kill SMS URCs
-      waitForResponse("OK", 1000);
-      SerialSIT.println("AT+CIURC=0"); // Kill all other URCs (if supported)
-      waitForResponse("OK", 1000);
-
-      if (http_status >= 700) {
-        debugln("[OTA] Socket/Bearer error. Forcing Hard Reset (Rule 30)...");
-        SerialSIT.println("AT+HTTPTERM");
-        waitForResponse("OK", 1000);
-        SerialSIT.println("AT+CGACT=0,1");
-        waitForResponse("OK", 3000);
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
-      }
-
+      Serial.printf("[OTA] ❌ HTTP Error: %d. Resetting session.\n",
+                    http_status);
       session_active = false; // Force re-init on next loop
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
       chunk_retries++;
-      if (chunk_retries > 6) { // Allowing 6 retries per chunk
-        debugln("[OTA] Too many chunk retries. Aborting.");
-        SerialSIT.println("AT+HTTPTERM");
-        waitForResponse("OK", 2000);
-        Update.abort();
-        free(buf);
-        ota_writing_active = false;
-
-        Preferences p;
-        p.begin("ota-track", false);
-        p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
-        p.putString("fail_res", "Chunk status " + String(http_status));
-        p.end();
-        return;
-      }
-
-      // v7.14: Critical Buffer Flush before retry
-      flushSerialSIT();
-      continue; // Retry same chunk
+      consecutive_fails++;
+      esp_task_wdt_reset();
+      continue;
     }
 
-    debugf1("[OTA] Chunk: %d bytes\n", chunk_got);
-
-    // v5.45: Added stabilization delay (Mirrors send_at_cmd_data success path)
-    vTaskDelay(500);
-
-    // v7.15: Rule 28 (Pre-Read Flush)
-    // Clear any dangling URCs or async noise before requesting binary data
-    flushSerialSIT();
-
-    // Read entire chunk into buffer (Chunk-Atomic)
-    bool read_ok = false;
+    // READ Data - THE SENSITIVE WINDOW
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    flushSerialSIT(); // Hard-Flush (Rule 42b)
     snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+HTTPREAD=0,%d",
-             chunk_got);
+             chunk_total);
     SerialSIT.println(gprs_xmit_buf);
 
-    // 1. Wait for Header
-    String hdr = "";
-    unsigned long t0 = millis();
-    while (millis() - t0 < 10000) {
+    String read_hdr = "";
+    unsigned long t_start = millis();
+    bool hdr_found = false;
+    while (millis() - t_start < 12000) {
       if (SerialSIT.available()) {
         char c = SerialSIT.read();
-        hdr += c;
-        if (c == '\n' && hdr.indexOf("+HTTPREAD:") != -1) {
-          read_ok = true;
+        read_hdr += c;
+        if (c == '\n' && read_hdr.indexOf("+HTTPREAD:") != -1) {
+          hdr_found = true;
           break;
         }
+        if (read_hdr.indexOf("ERROR") != -1)
+          break;
       }
-      vTaskDelay(2);
+      vTaskDelay(1);
     }
 
-    if (read_ok) {
-      // 2. Read Exact Bytes
-      SerialSIT.setTimeout(10000);
-      int got = SerialSIT.readBytes(buf, chunk_got);
-      if (got == chunk_got) {
-        // v5.46: Range Boundary Guard.
-        int bytes_to_write = min(got, total_no_of_bytes - actual_downloaded);
-
-        // v5.46: Magic Byte Guard — only valid check: first chunk must start
-        // 0xE9
-        if (actual_downloaded == 0 && buf[0] != 0xE9) {
-          debugf1("[OTA] !! First chunk bad magic: 0x%02X (expected 0xE9). "
-                  "Retrying.\n",
-                  buf[0]);
-          session_active = false;
-          chunk_retries++;
-          if (chunk_retries > 5) {
-            debugln("[OTA] Magic byte check failed too many times. Aborting.");
-            Update.abort();
-            free(buf);
-            ota_writing_active = false;
-            Preferences p;
-            p.begin("ota-track", false);
-            p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
-            p.putString("fail_res", "Bad magic byte");
-            p.end();
-            return;
-          }
-          read_ok = false; // fall through to retry logic
-        } else if (Update.write(buf, bytes_to_write) ==
-                   (size_t)bytes_to_write) {
-          actual_downloaded += bytes_to_write;
-          chunk_retries = 0; // Reset on true success
-
-          // v7.16: Enhanced Diagnostic Hex Dump
-          debug("[OTA] Chunk Head (Hex): ");
-          for (int i = 0; i < min(16, bytes_to_write); i++) {
-            if ((unsigned char)buf[i] < 16)
-              debug("0");
-            debug(String((unsigned char)buf[i], HEX) + " ");
-          }
-          debugln();
-
-          // Check for URC contamination patterns
-          if (buf[0] == '+' ||
-              (bytes_to_write > 2 && (buf[0] == '\r' || buf[0] == '\n') &&
-               buf[1] == '+')) {
-            debugln("[OTA] !! CRITICAL: URC Contamination Detected in Binary "
-                    "Stream !!");
-          }
-
-          // v7.15: Rule 29 (The Dangling Byte Guard)
-          int dangling = chunk_got - bytes_to_write;
-          if (dangling > 0) {
-            debugf("[OTA] Consuming %d dangling bytes...\n", dangling);
-            while (dangling > 0) {
-              if (SerialSIT.available()) {
-                SerialSIT.read();
-                dangling--;
-              } else {
-                vTaskDelay(10);
-                if (millis() - t0 > 15000)
-                  break;
-              }
-            }
-          }
-          waitForResponse("OK", 3000);
-        } else {
-          int errW = Update.getError();
-          debugf("[OTA] Flash write error! Code: %d, Str: %s\n", errW,
-                 Update.errorString());
-          read_ok = false;
-        }
-      } else {
-        debugf("[OTA] Chunk shortfall: %d/%d\n", got, chunk_got);
-        read_ok = false;
-      }
-    } else {
-      debugf1("[OTA] No HTTPREAD hdr. Received: %s\n", hdr.c_str());
-    }
-
-    if (!read_ok) {
-      debugln("[OTA] Chunk failed. Invalidating session for recovery...");
-      session_active = false; // Force re-init on next loop
+    if (!hdr_found) {
       chunk_retries++;
-      if (chunk_retries > 15) { // v7.20: Increased from 3 to 15 for Airtel/BSNL
-        debugln("[OTA] Too many chunk retries. Aborting.");
-        Update.abort();
-        free(buf);
-        ota_writing_active = false;
-
-        // Restore sanity
-        SerialSIT.println("AT+HTTPTERM");
-        waitForResponse("OK", 1000);
-        SerialSIT.println("AT+CGEREP=2");
-        waitForResponse("OK", 1000);
-        SerialSIT.println("AT+CREG=1");
-        waitForResponse("OK", 1000);
-        SerialSIT.println("AT+CEREG=1");
-        waitForResponse("OK", 1000);
-
-        Preferences p;
-        p.begin("ota-track", false);
-        p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
-        p.putString("fail_res", "Chunk retry exhausted");
-        p.end();
-        return;
-      }
-      continue; // retry same chunk
+      consecutive_fails++;
+      esp_task_wdt_reset();
+      continue;
     }
-    debugf("[OTA] Progress: %d / %d\n", actual_downloaded, total_no_of_bytes);
-    vTaskDelay(500);
+
+    int safe_total = min(chunk_total, READ_SIZE);
+
+    // v5.52: Non-blocking Looped Read with WDT resets
+    // readBytes is blocking and triggers WDT on slow 2G connections.
+    int got = 0;
+    unsigned long startRead = millis();
+    while (got < safe_total &&
+           (millis() - startRead < 120000)) { // 120s timeout
+      if (SerialSIT.available()) {
+        buf[got++] = SerialSIT.read();
+      } else {
+        vTaskDelay(1); // Give CPU a break
+      }
+      if (got % 1024 == 0)
+        esp_task_wdt_reset(); // Frequent resets
+    }
+
+    if (got != safe_total) {
+      Serial.printf("[OTA] ❌ Read Timeout/Incomplete: got %d of %d\n", got,
+                    safe_total);
+      flushSerialSIT(); // Clear residual bytes from incomplete read
+      chunk_retries++;
+      consecutive_fails++;
+      esp_task_wdt_reset(); // readBytes failure (likely 15s timeout)
+      continue;
+    }
+
+    // Consume the Tail (The 6-Byte Residual \r\nOK\r\n)
+    unsigned long tail_start = millis();
+    while (millis() - tail_start < 1000) {
+      if (SerialSIT.find("OK"))
+        break;
+      vTaskDelay(1);
+    }
+
+    // Rule 45: The Header-Health Check & Crosstalk Trap
+    if (!isBufferSanityOK(buf, got, actual_downloaded)) {
+      if (buf[0] == 0x75 && buf[1] == 0x68 && buf[2] == 0x40 &&
+          buf[3] == 0x08) {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        ESP.restart(); // Signature matched crosstalk, instant restart
+      }
+      flushSerialSIT(); // BUG-4 Fix: Clear residual UART bytes on sanity fail
+      session_active = false; // Something is deeply wrong, reset session
+      chunk_retries++;
+      consecutive_fails++;
+      esp_task_wdt_reset();
+      continue;
+    }
+
+    // Write to Flash
+    int bytes_to_write = min(got, total_no_of_bytes - actual_downloaded);
+    if (Update.write(buf, bytes_to_write) == (size_t)bytes_to_write) {
+      actual_downloaded += bytes_to_write;
+      chunk_retries = 0;
+      consecutive_fails = 0;
+
+      // Progress log (Direct print to bypass silence)
+      Serial.printf("[OTA] Progress: %d / %d (HEAD: %02X %02X %02X %02X)\n",
+                    actual_downloaded, total_no_of_bytes, buf[0], buf[1],
+                    buf[2], buf[3]);
+    } else {
+      Serial.printf("[OTA] Flash Write ERROR: %d\n", Update.getError());
+      break;
+    }
+
+    flushSerialSIT(); // Final tail cleanup
+    vTaskDelay(100);
     esp_task_wdt_reset();
-    // v7.46: Rule 33 (Post-read Purge)
-    // Mandatory UART flush regardless of success/fail to clear binary trailing
-    // junk or modem URCs
-    flushSerialSIT();
+    session_active = false; // Force re-init for next chunk (Rule 41)
   }
 
   free(buf);
   ota_writing_active = false;
+  ota_silent_mode = false; // Rule 43: Resume normal logging
+
+  // Restore Modem settings after binary transfer
+  SerialSIT.println("ATE1");
+  waitForResponse("OK", 500);
+  SerialSIT.println("AT+CREG=1");
+  waitForResponse("OK", 500);
+  SerialSIT.println("AT+CGEREP=2");
+  waitForResponse("OK", 500);
 
   // === STEP 4: Finalize OTA ===
   if (actual_downloaded == total_no_of_bytes && total_no_of_bytes > 0) {
@@ -3936,7 +3944,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
       int errCode = Update.getError();
       debugf("[OTA] Update.end FAILED. Code: %d, Str: %s\n", errCode,
              err.c_str());
-      Update.printError(SerialSIT);
+      Update.printError(Serial); // BUG-10 Fix: Print to console, not modem UART
 
       Preferences p;
       p.begin("ota-track", false);
@@ -4108,7 +4116,8 @@ String waitForResponse(String expectedResponse, int timeout) {
 
   while ((millis() - startTime) < timeout) {
     vTaskDelay(10);
-    esp_task_wdt_reset(); // Keep watchdog happy during long AT command waits
+    esp_task_wdt_reset(); // Keep watchdog happy during long AT command
+                          // waits
 
     while (SerialSIT.available()) {
       char c = SerialSIT.read();
@@ -4157,7 +4166,8 @@ void convert_gmt_to_ist(struct tm *gmt_time) {
   gmt_time->tm_hour += 5;
   gmt_time->tm_min += 30;
 
-  // Normalize the time in case minutes overflow (i.e., more than 60 minutes)
+  // Normalize the time in case minutes overflow (i.e., more than 60
+  // minutes)
   mktime(gmt_time);
 }
 
@@ -4221,14 +4231,24 @@ bool send_health_report(bool useJitter) {
              (wd_ok ? "OK" : "FAIL"));
 
   char gps_str[32];
-  snprintf(gps_str, sizeof(gps_str), "%.6f,%.6f", lati, longi);
+  // v7.53: Use "NA" when GPS not yet acquired instead of ambiguous
+  // 0.000000,0.000000
+  if (lati == 0.0 && longi == 0.0)
+    snprintf(gps_str, sizeof(gps_str), "NA");
+  else
+    snprintf(gps_str, sizeof(gps_str), "%.6f,%.6f", lati, longi);
 
   char h_status[256] = "";
+  // v7.53: Bounded H_FAULT to prevent strcat stack overflow with many
+  // simultaneous faults
 #define H_FAULT(f)                                                             \
   do {                                                                         \
-    if (h_status[0] != '\0')                                                   \
-      strcat(h_status, "_");                                                   \
-    strcat(h_status, f);                                                       \
+    size_t _rem = sizeof(h_status) - strlen(h_status) - 1;                     \
+    if (h_status[0] != '\0' && _rem > 1)                                       \
+      strncat(h_status, "_", _rem--);                                          \
+    _rem = sizeof(h_status) - strlen(h_status) - 1;                            \
+    if (_rem > 0)                                                              \
+      strncat(h_status, f, _rem);                                              \
   } while (0)
   if (diag_last_reset_reason == 15)
     H_FAULT("BROWNOUT");
@@ -4244,6 +4264,8 @@ bool send_health_report(bool useJitter) {
     H_FAULT("CDM");
   if (unresolvedNDM)
     H_FAULT("NDM");
+  if (lati == 0.0 && longi == 0.0)
+    H_FAULT("NO_GPS");
 
   if (SYSTEM != 0) {
     if (diag_temp_cv)
@@ -4274,6 +4296,27 @@ bool send_health_report(bool useJitter) {
   if (h_status[0] == '\0')
     strcpy(h_status, "OK");
 
+  char prevFile[32];
+  char curFile[32];
+  int cur_dd = current_day, cur_mm = current_month, cur_yy = current_year;
+  int prev_dd = current_day, prev_mm = current_month, prev_yy = current_year;
+  int h = (current_hour < 24) ? current_hour : 0;
+  int m = (current_min < 60) ? current_min : 0;
+  int sampleNo = h * 4 + m / 15;
+  sampleNo = (sampleNo + 61) % 96;
+  if (sampleNo <= 60) {
+    next_date(&cur_dd, &cur_mm, &cur_yy);
+  } else {
+    previous_date(&prev_dd, &prev_mm, &prev_yy);
+  }
+  snprintf(prevFile, sizeof(prevFile), "/%s_%04d%02d%02d.txt", cleanStn,
+           prev_yy, prev_mm, prev_dd);
+  snprintf(curFile, sizeof(curFile), "/%s_%04d%02d%02d.txt", cleanStn, cur_yy,
+           cur_mm, cur_dd);
+
+  int cur_stored = countStored(curFile);
+  int prev_stored = countStored(prevFile);
+
   char jsonBody[1024];
   int msgLen = snprintf(
       jsonBody, sizeof(jsonBody),
@@ -4285,31 +4328,34 @@ bool send_health_report(bool useJitter) {
       "\"http_suc_cnt\":%d,\"cdm_sts\":\"%s\",\"spiffs_kb\":%u,"
       "\"sd_sts\":\"%s\",\"ver\":\"%s\",\"carrier\":\"%s\","
       "\"iccid\":\"%s\",\"gps\":\"%s\",\"ota_fails\":%d,"
-      "\"ndm_cnt\":%d,\"pd_cnt\":%d,\"first_http\":%d,\"net_cnt\":%d}",
+      "\"ndm_cnt\":%d,\"pd_cnt\":%d,\"first_http\":%d,\"net_cnt\":%d,"
+      "\"net_cnt_prev\":%d,\"cur_stored\":%d,\"prev_stored\":%d,"
+      "\"http_suc_cnt_prev\":%d,\"http_ret_cnt\":%d,"
+      "\"http_ret_cnt_prev\":%d,\"ftp_suc_cnt\":%d,\"ftp_suc_cnt_prev\":%d}",
       cleanStn, UNIT, SYSTEM, h_status, sensor_info, diag_last_reset_reason,
       (diag_rtc_battery_ok ? 1 : 0), diag_total_uptime_hrs, li_bat_val,
       solar_val, signal_lvl, diag_gprs_fails,
       (diag_reg_count > 0 ? (float)diag_reg_time_total / diag_reg_count : 0),
       diag_daily_http_fails, diag_http_success_count, diag_cdm_status,
       (unsigned int)(SPIFFS.usedBytes() / 1024), (sd_card_ok ? "OK" : "FAIL"),
-      UNIT_VER, carrier, cached_iccid, gps_str, ota_fail_count,
-      (TEST_HEALTH_EVERY_SLOT ? diag_ndm_count : diag_ndm_count_prev),
-      (TEST_HEALTH_EVERY_SLOT ? diag_pd_count : diag_pd_count_prev),
-      (TEST_HEALTH_EVERY_SLOT ? diag_first_http_count
-                              : diag_first_http_count_prev),
-      (TEST_HEALTH_EVERY_SLOT ? diag_net_data_count
-                              : diag_net_data_count_prev));
+      UNIT_VER, carrier, cached_iccid, gps_str, ota_fail_count, diag_ndm_count,
+      diag_pd_count, diag_first_http_count, diag_net_data_count,
+      diag_net_data_count_prev, cur_stored, prev_stored,
+      diag_http_success_count_prev, diag_http_retry_count,
+      diag_http_retry_count_prev, diag_ftp_success_count,
+      diag_ftp_success_count_prev);
 
   if (useJitter) {
     vTaskDelay(random(0, 5000) / portTICK_PERIOD_MS);
   } else {
-    // v7.08: Rule 15 Mandatory Breather if jitter is off (e.g. following FTP)
+    // v7.08: Rule 15 Mandatory Breather if jitter is off (e.g. following
+    // FTP)
     vTaskDelay(3000 / portTICK_PERIOD_MS);
   }
 
   bool success = false;
-  for (int attempt = 1; attempt <= 2; attempt++) {
-    debugf2("[Health] Attempt %d/%d\n", attempt, 2);
+  for (int attempt = 1; attempt <= 3; attempt++) {
+    debugf2("[Health] Attempt %d/%d\n", attempt, 3);
 
     // v7.04: Verify bearer INSIDE the loop to catch carrier drops during
     // switching
@@ -4320,8 +4366,12 @@ bool send_health_report(bool useJitter) {
 
     SerialSIT.println("AT+HTTPINIT");
     if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
+      debugln("[Health] HTTPINIT Failed. Forcing Bearer Nuke...");
       SerialSIT.println("AT+HTTPTERM");
       waitForResponse("OK", 1000);
+      SerialSIT.println("AT+CGACT=0,1");
+      waitForResponse("OK", 3000);
+      vTaskDelay(3000 / portTICK_PERIOD_MS);
       continue;
     }
 
@@ -4330,9 +4380,11 @@ bool send_health_report(bool useJitter) {
     SerialSIT.println("AT+HTTPPARA=\"CID\",1");
     waitForResponse("OK", 1000);
 
-    // v7.04: URL Sanitization - Remove redundant port 80 (A7672S Preference)
+    // v7.04: URL Sanitization - Match successful main upload pattern
+    // (explicit :80)
     snprintf(ht_data, sizeof(ht_data),
-             "AT+HTTPPARA=\"URL\",\"http://%s/health\"", HEALTH_SERVER_IP);
+             "AT+HTTPPARA=\"URL\",\"http://%s:%s/health\"", HEALTH_SERVER_IP,
+             HEALTH_SERVER_PORT);
     SerialSIT.println(ht_data);
     waitForResponse("OK", 1000);
 
@@ -4363,10 +4415,13 @@ bool send_health_report(bool useJitter) {
         // (REBOOT/OTA_CHECK)
         vTaskDelay(500);
         SerialSIT.println("AT+HTTPREAD=0,512");
-        String body = waitForResponse("+HTTPREAD: 0", 10000);
+        // BUG-5 Fix: Wait for "+HTTPREAD:" not "+HTTPREAD: 0" — the
+        // response contains the actual byte count, not literally "0".
+        String body = waitForResponse("+HTTPREAD:", 10000);
         debugln("[Health] Body: " + body);
 
-        // v5.46: Sync RTC from the Health Report server time (JSON "tm": field)
+        // v5.46: Sync RTC from the Health Report server time (JSON "tm":
+        // field)
         sync_rtc_from_server_tm(body.c_str(), false);
 
         if (body.indexOf("\"REBOOT\"") != -1) {
@@ -4400,15 +4455,23 @@ bool send_health_report(bool useJitter) {
         SerialSIT.println("AT+HTTPTERM");
         waitForResponse("OK", 1000);
         break;
-      } else if (act.indexOf("714") != -1) {
+      } else if (act.indexOf("714") != -1 || act.indexOf("706") != -1) {
         // v7.07: Handle "Socket Zombie" Rule 15
-        debugln("[Health] 714 Socket Error detected. Forcing Bearer "
-                "Deactivation...");
-        SerialSIT.println("AT+HTTPTERM");
-        waitForResponse("OK", 1000);
-        SerialSIT.println("AT+CGACT=0,1");
-        waitForResponse("OK", 3000);
-        vTaskDelay(3000); // v7.08: Mandatory wait for tower to clear session
+        if (attempt < 3) {
+          debugln("[Health] Transient 706/714. Soft-resetting HTTP stack for "
+                  "retry...");
+          SerialSIT.println("AT+HTTPTERM");
+          waitForResponse("OK", 2000);
+          vTaskDelay(2000); // v7.08: Breather before loop restart
+        } else {
+          debugln("[Health] Persistent 706/714. Final Attempt: Forcing Bearer "
+                  "Deactivation...");
+          SerialSIT.println("AT+HTTPTERM");
+          waitForResponse("OK", 1000);
+          SerialSIT.println("AT+CGACT=0,1");
+          waitForResponse("OK", 3000);
+          vTaskDelay(3000);
+        }
       } else {
         SerialSIT.println("AT+HTTPTERM");
         waitForResponse("OK", 1000);

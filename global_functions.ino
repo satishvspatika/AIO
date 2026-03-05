@@ -403,8 +403,8 @@ void checkRainfallIntegrity() {
       if (cum < prev_cum - 0.01) {
         diag_rain_reset = true;
 #if DEBUG == 1
-        Serial.printf("[RainCheck] RESET detected @ Sample %d (%.2f < %.2f)\n",
-                      sample_no, cum, prev_cum);
+        debugf("[RainCheck] RESET detected @ Sample %d (%.2f < %.2f)\n",
+               sample_no, cum, prev_cum);
 #endif
       }
 
@@ -413,9 +413,8 @@ void checkRainfallIntegrity() {
         if (abs(cum - (prev_cum + inst)) > 0.05) {
           diag_rain_calc_invalid = true;
 #if DEBUG == 1
-          Serial.printf(
-              "[RainCheck] CALC error @ Sample %d: %.2f != %.2f + %.2f\n",
-              sample_no, cum, prev_cum, inst);
+          debugf("[RainCheck] CALC error @ Sample %d: %.2f != %.2f + %.2f\n",
+                 sample_no, cum, prev_cum, inst);
 #endif
         }
       }
@@ -478,10 +477,9 @@ void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
   }
 
 #if DEBUG == 1
-  Serial.printf("[HealthScan] NetCount: %d | CDM: %s | PD: %s | NDM: %s\n",
-                *outNetCount, diag_cdm_status,
-                (*hasUnresolvedPD ? "FAIL" : "OK"),
-                (*hasUnresolvedNDM ? "FAIL" : "OK"));
+  debugf("[HealthScan] NetCount: %d | CDM: %s | PD: %s | NDM: %s\n",
+         *outNetCount, diag_cdm_status, (*hasUnresolvedPD ? "FAIL" : "OK"),
+         (*hasUnresolvedNDM ? "FAIL" : "OK"));
 #endif
 }
 
@@ -642,20 +640,58 @@ void reconstructSentMasks() {
 }
 
 // v5.48 reconciles delivered data after successful FTP upload
+// v7.53: Fixed to handle both CSV records (sampleNo,DATE...) and FTP records
+// (stnId;DATE,TIME;...) with correct sampleNo back-calculation.
 void markFileAsDelivered(const char *fileName) {
   if (!SPIFFS.exists(fileName))
     return;
   File f = SPIFFS.open(fileName, FILE_READ);
   if (!f)
     return;
+  // Detect format from extension: .kwd/.swd = FTP (semicolon), else CSV
+  bool isFtpFile =
+      (strstr(fileName, ".kwd") != NULL || strstr(fileName, ".swd") != NULL ||
+       strstr(fileName, "ftpunsent") != NULL);
+
   while (f.available()) {
     String line = f.readStringUntil('\n');
+    line.trim();
     if (line.length() < 10)
       continue;
-    int commaIdx = line.indexOf(',');
-    if (commaIdx == -1)
-      continue;
-    int sNum = line.substring(0, commaIdx).toInt();
+
+    int sNum = -1;
+
+    if (isFtpFile) {
+      // FTP format: stnId;YYYY-MM-DD,HH:MM;...
+      // Extract sampleNo by back-calculating from the time field
+      int semi1 = line.indexOf(';');
+      if (semi1 == -1)
+        continue;
+      int semi2 = line.indexOf(';', semi1 + 1);
+      if (semi2 == -1)
+        continue;
+      String dateTime = line.substring(semi1 + 1, semi2); // "YYYY-MM-DD,HH:MM"
+      int commaIdx = dateTime.indexOf(',');
+      if (commaIdx == -1)
+        continue;
+      String timeStr = dateTime.substring(commaIdx + 1); // "HH:MM"
+      int colonIdx = timeStr.indexOf(':');
+      if (colonIdx == -1)
+        continue;
+      int h = timeStr.substring(0, colonIdx).toInt();
+      int m = timeStr.substring(colonIdx + 1).toInt();
+      // Convert time to meteorological day sample index (same formula as
+      // firmware)
+      int raw = h * 4 + m / 15;
+      sNum = (raw + 61) % 96;
+    } else {
+      // CSV format: sampleNo,DATE,...
+      int commaIdx = line.indexOf(',');
+      if (commaIdx == -1)
+        continue;
+      sNum = line.substring(0, commaIdx).toInt();
+    }
+
     if (sNum >= 0 && sNum <= 95) {
       int current_s_idx = current_hour * 4 + current_min / 15;
       current_s_idx = (current_s_idx + 61) % 96;

@@ -35,6 +35,12 @@ void windSpeed(void *pvParameters) {
   for (;;) {
     esp_task_wdt_reset();
 
+    // v5.52: Absolute Silence Protocol — Pause task during OTA
+    while (ota_silent_mode) {
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
+      esp_task_wdt_reset();
+    }
+
     // Store current count in buffer
     pulseBuffer[bufferIndex] = wind_count.val;
 

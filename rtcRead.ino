@@ -28,6 +28,14 @@ void rtcRead(void *pvParameters) {
   debugln("[RTC] Task Started");
 
   for (;;) {
+    esp_task_wdt_reset();
+
+    // v5.52: Absolute Silence Protocol — Pause task during OTA to prevent
+    // crosstalk
+    while (ota_silent_mode) {
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
+      esp_task_wdt_reset();
+    }
 
     memset(data, 0, sizeof(data)); // Initialize array to zero
     rtc_ok = false;
@@ -104,7 +112,7 @@ void rtcRead(void *pvParameters) {
 
       if (mi != current_min) {
         if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-          Serial.printf("[RTC] Time: %02d:%02d\n", hr, mi);
+          debugf("[RTC] Time: %02d:%02d\n", hr, mi);
           xSemaphoreGive(serialMutex);
         }
       }
@@ -148,6 +156,9 @@ void resync_time() {
 
   debugln("[RTC] Resync Requested. Powering on GPRS...");
   debugln();
+  health_in_progress = true; // Guard against sleep
+  sync_mode = eHttpTrigger;  // Mark busy
+
   signal_strength = 0;
   signal_lvl = 0;
   strcpy(reg_status, "NA");
@@ -252,7 +263,7 @@ void parse_and_convert_clbs_response(const char *response, int year1,
     debug(last_recorded_yy);
     debug(" , Time : ");
     if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-      Serial.printf("%02d:%02d\n", last_recorded_hr, last_recorded_min);
+      debugf("%02d:%02d\n", last_recorded_hr, last_recorded_min);
       xSemaphoreGive(serialMutex);
     }
     debugln();
@@ -271,15 +282,10 @@ void parse_and_convert_clbs_response(const char *response, int year1,
     current_hour = last_recorded_hr;
     current_min = last_recorded_min;
 
-    //                    current_hour = now.hour(); current_min = now.minute();
-    //                    // This is for getting into the loop of %15 in
-    //                    scheduler current_hour = now.hour(); current_min =
-    //                    now.minute(); // This is for getting into the loop of
-    //                    %15 in scheduler
     File fileTemp2 = SPIFFS.open("/signature.txt", FILE_WRITE);
     if (!fileTemp2) {
       debugln("Failed to open signature.txt for writing");
-    } // #TRUEFIX
+    }
     snprintf(signature, sizeof(signature), "%04d-%02d-%02d,%02d:%02d",
              last_recorded_yy, last_recorded_mm, last_recorded_dd,
              last_recorded_hr, last_recorded_min);
@@ -287,14 +293,16 @@ void parse_and_convert_clbs_response(const char *response, int year1,
     fileTemp2.close();
     vTaskDelay(500);
     if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-      Serial.printf("[RTC] Time: %02d:%02d\n", current_hour, current_min);
+      debugf("[RTC] Time: %02d:%02d\n", current_hour, current_min);
       xSemaphoreGive(serialMutex);
     }
     vTaskDelay(1000);
+    health_in_progress = false; // Task COMPLETED
     sync_mode = eExceptionHandled;
 
   } else {
     debugln("Failed to get the correct time");
+    health_in_progress = false; // Allow error recovery
     sync_mode = eExceptionHandled;
   }
 }

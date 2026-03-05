@@ -159,6 +159,13 @@ void scheduler(void *pvParameters) {
   for (;;) {
     esp_task_wdt_reset();
 
+    // v5.52: Absolute Silence Protocol — Pause task during OTA to prevent
+    // crosstalk
+    while (ota_silent_mode) {
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
+      esp_task_wdt_reset();
+    }
+
     if (!rtcReady) {
       esp_task_wdt_reset();
       vTaskDelay(100);
@@ -203,7 +210,8 @@ void scheduler(void *pvParameters) {
       // PREVENT SLEEP: Flag active operation so loop() doesn't sleep if LCD
       // turns off
       if (sync_mode != eSMSStart && sync_mode != eGPSStart) {
-        sync_mode = eSyncModeInitial;
+        sync_mode = eHttpTrigger; // v5.48: Mark as Busy (System stays awake for
+                                  // reporting)
       }
 
       // v6.88: FS Collision Guard - Wait if OTA is writing to SPIFFS
@@ -285,7 +293,18 @@ void scheduler(void *pvParameters) {
       rf_value = (float)rf_count.val * RF_RESOLUTION; // **NEW
       rf_count.val =
           0; // Reset immediately to capture new tips during GPRS wait
-             // DON'T Reset yet comment removed - we ARE resetting now.
+
+      // v5.52 Sanity Cap: If rf_value exceeds 50mm in 15 minutes
+      // (= 200mm/hr, beyond any recorded Indian rainfall event), the pin
+      // is floating and ULP counted electrical noise. Discard as noise.
+      if (rf_value > 50.0) {
+        Serial.printf(
+            "[Rain] \u26a0\ufe0f Noise Storm: rf_count produced %.1fmm. "
+            "Discarding (pin floating).\n",
+            rf_value);
+        rf_value = 0.0;
+        diag_rain_jump = true; // Flag it for health report
+      }
 
 #if SYSTEM == 0
       debugln();
@@ -538,11 +557,12 @@ void scheduler(void *pvParameters) {
 
       if (is_fresh_boot) {
         debugln("Fresh boot detected. Skipping data logging (no history). "
-                "Waiting for next slot for gap filling.");
+                "Checking for Commands.");
         data_writing_initiated = 0;
-        goto TRIGGER_HTTP;
+        // Proceed to TRIGGER_HTTP so we still connect for Time Sync & OTA check
+      } else {
+        data_writing_initiated = 1;
       }
-      data_writing_initiated = 1;
       // Hoisted declarations moved to top of block for scope safety (goto)
       // float avgPulsesPerSecond; // Removed duplicate
       /*
@@ -687,8 +707,7 @@ void scheduler(void *pvParameters) {
         // (95->0) or start of day (0)
         if (last_sampleNo > 0 && last_sampleNo < 95 && last_cumRF == 0) {
 #if DEBUG == 1
-          Serial.println(
-              "[Rain] Integrity Issue: last_cumRF is 0 but sampleNo > 0.");
+          debugln("[Rain] Integrity Issue: last_cumRF is 0 but sampleNo > 0.");
 #endif
           diag_rain_reset = true;
         }
@@ -699,8 +718,8 @@ void scheduler(void *pvParameters) {
         if (sampleNo > 0 && last_sampleNo < sampleNo &&
             new_current_cumRF < last_cumRF) {
 #if DEBUG == 1
-          Serial.printf("[Rain] RESET Detected: Aligning %.2f to %.2f\n",
-                        new_current_cumRF, last_cumRF + rf_value);
+          debugf("[Rain] RESET Detected: Aligning %.2f to %.2f\n",
+                 new_current_cumRF, last_cumRF + rf_value);
 #endif
           new_current_cumRF = last_cumRF + rf_value;
           diag_rain_reset = true;
@@ -787,6 +806,18 @@ void scheduler(void *pvParameters) {
           p = strchr(p + 1, ',');
         if (p) {
           last_cumRF = atof(p + 1);
+          // v5.52 Sanity Cap: A corrupt record (e.g. from a floating pin
+          // noise storm) can store values like 4555.5mm in SPIFFS. If we
+          // load that as last_cumRF, ALL subsequent cumulations are wrong.
+          // Cap at 300mm (a full extreme-monsoon day is ~200mm max).
+          if (last_cumRF > 300.0) {
+            Serial.printf(
+                "[Rain] \u26a0\ufe0f Corrupt last_cumRF=%.1f in SPIFFS. "
+                "Resetting to 0.\n",
+                last_cumRF);
+            last_cumRF = 0.0;
+            diag_rain_reset = true;
+          }
           p = strchr(p + 1, ',');
           if (p)
             last_instTemp = atof(p + 1);
@@ -831,8 +862,8 @@ void scheduler(void *pvParameters) {
 
         if (last_sampleNo > 0 && last_sampleNo < 95 && last_cumRF == 0) {
 #if DEBUG == 1
-          Serial.println("[Rain-TWS] Integrity Issue: last_cumRF is 0 but "
-                         "sampleNo > 0.");
+          debugln("[Rain-TWS] Integrity Issue: last_cumRF is 0 but "
+                  "sampleNo > 0.");
 #endif
           diag_rain_reset = true;
         }
@@ -843,8 +874,8 @@ void scheduler(void *pvParameters) {
         if (sampleNo > 0 && last_sampleNo < sampleNo &&
             new_current_cumRF < last_cumRF) {
 #if DEBUG == 1
-          Serial.printf("[Rain-TWS] RESET Detected: Aligning %.2f to %.2f\n",
-                        new_current_cumRF, last_cumRF + rf_value);
+          debugf("[Rain-TWS] RESET Detected: Aligning %.2f to %.2f\n",
+                 new_current_cumRF, last_cumRF + rf_value);
 #endif
           new_current_cumRF = last_cumRF + rf_value;
           diag_rain_reset = true;
@@ -1278,6 +1309,7 @@ void scheduler(void *pvParameters) {
               sampleNo, current_year, current_month, current_day, record_hr,
               record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
               signal_lvl, bat_val);
+          // v7.53: Legacy ADDON FTP Format (63 bytes)
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
@@ -1366,6 +1398,7 @@ void scheduler(void *pvParameters) {
                    sampleNo, current_year, current_month, current_day,
                    record_hr, record_min, inst_temp, inst_hum, avg_wind_speed,
                    inst_wd, signal_strength, bat_val);
+          // v7.53: Legacy TWS FTP Format (57 bytes)
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
@@ -1375,18 +1408,17 @@ void scheduler(void *pvParameters) {
 
 // TWS-RF
 #if SYSTEM == 2
-          snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(rf_value));
+          snprintf(cum_rf, sizeof(cum_rf), "%06.1f", float(rf_value));
           cum_rf[6] = 0;
-          snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(rf_value));
-          ftpcum_rf[5] = 0; // Add this
+          snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.1f", float(rf_value));
+          ftpcum_rf[5] = 0;
           snprintf(
               append_text, sizeof(append_text),
               "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
               sampleNo, current_year, current_month, current_day, record_hr,
               record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-              signal_strength,
-              bat_val); // inst_rf is cum_rf as it is the same
-                        // for 8:45 data //iter10
+              signal_strength, bat_val);
+          // v7.53: Legacy ADDON FTP Format (63 bytes)
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
@@ -1580,6 +1612,7 @@ void scheduler(void *pvParameters) {
               sampleNo, current_year, current_month, current_day, record_hr,
               record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
               signal_strength, bat_val);
+          // v7.53: Legacy ADDON FTP Format (63 bytes)
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
@@ -1622,6 +1655,8 @@ void scheduler(void *pvParameters) {
             diag_sent_mask_prev[2] = diag_sent_mask_cur[2];
 
             diag_http_success_count_prev = diag_http_success_count;
+            diag_http_retry_count_prev = diag_http_retry_count;
+            diag_ftp_success_count_prev = diag_ftp_success_count;
 
             // Now perform Resets for the New Day
             diag_reg_time_total = 0;
@@ -1634,6 +1669,8 @@ void scheduler(void *pvParameters) {
             diag_net_data_count = 0;
             diag_http_time_total = 0;
             diag_http_success_count = 0;
+            diag_http_retry_count = 0;
+            diag_ftp_success_count = 0;
             diag_daily_http_fails = 0;
             strcpy(diag_cdm_status, "OK");
             strcpy(diag_reg_fail_type, "NONE");
@@ -1985,8 +2022,17 @@ void scheduler(void *pvParameters) {
               snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
                        "%05.2f", fill_AvgWS);
 
-              // Cumulative Rainfall Interpolation with Rounding
-              fill_crf = start_crf + ((new_current_cumRF - start_crf) *
+              // Cumulative Rainfall Interpolation for BACKLOG (previous-day)
+              // BUG FIX: Do NOT interpolate toward new_current_cumRF here.
+              // new_current_cumRF is computed for the CURRENT boot session
+              // (rf_value = 0 after a power-on ULP wipe). Using it as the
+              // interpolation target causes the CRF to trend DOWN to 0 over
+              // the missed slots. For historical gaps, the correct behavior
+              // is: rain stays flat at start_crf (no new tips = no new rain).
+              // Only add rf_value (sensors active since this boot) as the
+              // delta.
+              float end_crf_backlog = start_crf + rf_value; // rf_value=0 on POR
+              fill_crf = start_crf + ((end_crf_backlog - start_crf) *
                                       gap_idx_roll / total_gaps_roll);
               if (RF_RESOLUTION > 0) {
                 fill_crf =
@@ -2025,6 +2071,7 @@ void scheduler(void *pvParameters) {
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                        fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
                        fill_inst_wd, SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+              // v7.53: Legacy TWS FTP Format
               snprintf(ftpappend_text, sizeof(ftpappend_text),
                        "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%"
                        "04.1f\r\n",
@@ -2045,6 +2092,7 @@ void scheduler(void *pvParameters) {
                        fill_avg_wind_speed, fill_inst_wd,
                        SIGNAL_STRENGTH_PREV_DAY_GAP,
                        bat_val); // ALL_NEW_REVIEW1
+              // v7.53: Legacy ADDON FTP Format (63 bytes)
               snprintf(ftpappend_text, sizeof(ftpappend_text),
                        "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;"
                        "%04.1f\r\n",
@@ -2076,23 +2124,23 @@ void scheduler(void *pvParameters) {
                 sd3.print(append_text);
               }
 
-#if FILLGAP == 1
-#if SYSTEM == 0
-              if (unsent3)
-                unsent3.close(); // 2024 iter6
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2)
-              if (ftpunsent3)
-                ftpunsent3.close();
-#endif
-#endif
-
-              file3.close();
-              if (sd_card_ok && sd3) {
-                sd3.close();
-              }
             } // end for q (gap filling)
 
+#if FILLGAP == 1
+#if SYSTEM == 0
+            if (unsent3)
+              unsent3.close(); // 2024 iter6
+#endif
+#if (SYSTEM == 1 || SYSTEM == 2)
+            if (ftpunsent3)
+              ftpunsent3.close();
+#endif
+#endif
+
+            file3.close();
+            if (sd_card_ok && sd3) {
+              sd3.close();
+            }
           } // previous rf_close_date file if exists (temp_file if exists)
           // Fill data to current day rf close date file also from 8:45am to
           // current sample number TRG8-3.0.5g
@@ -2274,7 +2322,7 @@ void scheduler(void *pvParameters) {
             file3.seek(seekPos);
             String tail = file3.readString();
             debugln("   ... [Tail Content] ...");
-            Serial.print(tail); // Burst print
+            debug(tail); // Combined print via macro (Rule 43)
             debugln("-----------------------");
           }
           file3.close();
@@ -2304,7 +2352,7 @@ void scheduler(void *pvParameters) {
             sd3.seek(seekPos);
             String tail = sd3.readString();
             debugln("   ... [Tail Content] ...");
-            Serial.print(tail); // Burst print
+            debug(tail); // Combined print via macro (Rule 43)
             debugln("-----------------------");
           }
           sd3.close();
@@ -2323,7 +2371,7 @@ void scheduler(void *pvParameters) {
           file4.close();
           if (content.length() > 0) {
             debugln("\n--- UNSENT DATA START ---");
-            Serial.print(content); // Burst print to prevent interleaving
+            debug(content); // Burst print via macro (Rule 43)
             debugln("--- UNSENT DATA END ---\n");
           }
         }
@@ -2339,7 +2387,7 @@ void scheduler(void *pvParameters) {
           file4.close();
           if (content.length() > 0) {
             debugln("\n--- UNSENT DATA START ---");
-            Serial.print(content); // Burst print to prevent interleaving
+            debug(content); // Burst print via macro (Rule 43)
             debugln("--- UNSENT DATA END ---\n");
           }
         }
@@ -2371,7 +2419,7 @@ void scheduler(void *pvParameters) {
         // Protect manual triggers (SMS/GPS/Startup) from being overwritten
         if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
             sync_mode != eStartupGPS) {
-          sync_mode = eHttpStop;
+          sync_mode = eHttpBegin; // Force connection check on boot/duplicate
         }
       } else {
         debugln();

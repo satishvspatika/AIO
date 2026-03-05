@@ -66,7 +66,8 @@ extern volatile bool force_ota;          // v5.68: Command piggyback
 extern volatile bool ota_writing_active; // v6.88: Prevent FS collision
 extern int ota_fail_count;
 extern char ota_fail_reason[48];
-extern char ota_cmd_param[128]; // v75: Target binary name from dashboard
+extern char ota_cmd_param[128];       // v75: Target binary name from dashboard
+extern volatile bool ota_silent_mode; // Rule 43: Stop all log leakage
 
 // SAFETY BUFFER: Reserve 512 bytes at the start of RTC Memory to prevent
 // ULP Program Code (loaded at offset 0) from overwriting C variables.
@@ -89,17 +90,17 @@ void reconstructSentMasks();
 void markFileAsDelivered(const char *fileName);
 
 /************************************************************************************************/
-#define SYSTEM 2               // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "SPATIKA_GEN"; // UNIT :
+#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 //                                0:  KSNDMC_TRG  BIHAR_TRG
 //                                1:  KSNDMC_TWS KSNDMC_TWS-AP
 //                                2:  KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.46"
+#define FIRMWARE_VERSION "5.47"
 
-#define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
+#define DEBUG 0 // Set to 1 for serial debug, 0 for production (Saves space)
 
 #define ENABLE_WEBSERVER 0       // Set to 0 to remove WebServer
 #define ENABLE_PRESSURE_SENSOR 0 // Set to 0 to disable BMP/BME
@@ -228,14 +229,46 @@ unsigned long last_key_time = 0;
 int record_length;
 int cur_file_found = 0;
 #if DEBUG == 1
-#define debug(...) Serial.print(__VA_ARGS__)
-#define debugln(...) Serial.println(__VA_ARGS__)
-#define debugf1(a, x) Serial.printf(a, x)
-#define debugf2(a, x, y) Serial.printf(a, x, y)
-#define debugf3(a, x, y, z) Serial.printf(a, x, y, z)
-#define debugf4(a, x, y, z, p) Serial.printf(a, x, y, z, p)
-#define debugf5(a, x, y, z, p, q) Serial.printf(a, x, y, z, p, q)
-#define debugf(a, ...) Serial.printf(a, ##__VA_ARGS__)
+#define debugln(...)                                                           \
+  do {                                                                         \
+    if (!ota_silent_mode)                                                      \
+      Serial.println(__VA_ARGS__);                                             \
+  } while (0)
+#define debug(...)                                                             \
+  do {                                                                         \
+    if (!ota_silent_mode)                                                      \
+      Serial.print(__VA_ARGS__);                                               \
+  } while (0)
+#define debugf1(a, x)                                                          \
+  do {                                                                         \
+    if (!ota_silent_mode)                                                      \
+      Serial.printf(a, x);                                                     \
+  } while (0)
+#define debugf2(a, x, y)                                                       \
+  do {                                                                         \
+    if (!ota_silent_mode)                                                      \
+      Serial.printf(a, x, y);                                                  \
+  } while (0)
+#define debugf3(a, x, y, z)                                                    \
+  do {                                                                         \
+    if (!ota_silent_mode)                                                      \
+      Serial.printf(a, x, y, z);                                               \
+  } while (0)
+#define debugf4(a, x, y, z, p)                                                 \
+  do {                                                                         \
+    if (!ota_silent_mode)                                                      \
+      Serial.printf(a, x, y, z, p);                                            \
+  } while (0)
+#define debugf5(a, x, y, z, p, q)                                              \
+  do {                                                                         \
+    if (!ota_silent_mode)                                                      \
+      Serial.printf(a, x, y, z, p, q);                                         \
+  } while (0)
+#define debugf(a, ...)                                                         \
+  do {                                                                         \
+    if (!ota_silent_mode)                                                      \
+      Serial.printf(a, ##__VA_ARGS__);                                         \
+  } while (0)
 #else
 #define debug(...)
 #define debugln(...)
@@ -412,6 +445,13 @@ RTC_DATA_ATTR uint32_t diag_sent_mask_cur[3] = {0, 0, 0};
 RTC_DATA_ATTR uint32_t diag_sent_mask_prev[3] = {0, 0, 0};
 RTC_DATA_ATTR int diag_http_success_count = 0; // Total successful HTTP attempts
 RTC_DATA_ATTR int diag_http_success_count_prev = 0;
+// v7.53: Retry / FTP success counters (separate from primary current-slot)
+RTC_DATA_ATTR int diag_http_retry_count =
+    0; // slots recovered via HTTP retry (System 0)
+RTC_DATA_ATTR int diag_http_retry_count_prev = 0; // yesterday's
+RTC_DATA_ATTR int diag_ftp_success_count =
+    0; // slots delivered via FTP upload (System 1/2)
+RTC_DATA_ATTR int diag_ftp_success_count_prev = 0; // yesterday's
 RTC_DATA_ATTR char diag_reg_fail_type[16] = "NONE";
 RTC_DATA_ATTR char diag_http_fail_reason[16] = "NONE";
 

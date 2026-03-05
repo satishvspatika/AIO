@@ -1,29 +1,29 @@
-# ESP32 AIO v5.51 Project Status - Feb 25, 2026
+# ESP32 AIO v5.52 Project Status - March 5, 2026
 
-## 🚀 Key Improvements & Fixes (v5.51 - Sensor & Reporting Optimization)
+## 🚀 Key Improvements & Fixes (v5.52 - OTA & Stability Overhaul)
 
-### 1. Pressure Sensor Gating
-- **Status**: ✅ Implemented in v5.51.
-- **Logic**: Atmospheric pressure and altitude fields are now **disabled completely** unless the configuration is specifically `UNIT = KSNDMC_TWS-AP` and `SYSTEM == 1`.
-- **Benefit**: Removes unwanted pressure data from the LCD and records on standard `SPATIKA_GEN` (EMPRII) or basic `TWS` units.
+### 1. Robust OTA Download (Rule 56)
+- **Status**: ✅ Implemented in v5.52.
+- **Optimization**: Switched from 4KB to **16KB chunks** for Range-GET downloads. 
+- **Benefit**: Reduced total OTA time on high-latency 2G networks (BSNL) by ~10x by amortizing AT command overhead.
 
-### 2. Health Report Control
-- **Status**: ✅ Implemented. Added `ENABLE_HEALTH_REPORT` global flag.
-- **Benefit**: Allows complete disabling of automated health reports to save power and bandwidth if the server-side dashboard is not in use.
+### 2. High-Resolution Rainfall Integrity (Rule 53)
+- **Status**: ✅ Implemented. Added automatic "Noise Storm" detection.
+- **Benefit**: Detects and resets corrupted cumulative rainfall counters (e.g., >1000mm in one slot) caused by floating inputs or sensor noise.
 
-### 3. Accelerated FTP Backlog Retries (2-Hourly)
-- **Status**: ✅ Implemented for `SYSTEM 1` (TWS) and `SYSTEM 2` (TWS-RF/ADDON).
-- **Benefit**: Reduced the unsent data retry interval from 3 hours to **2 hours**. This ensures faster recovery of "Golden Data" after network outages while still avoiding session overlaps.
-
-### 4. Optimized FTP Reliability (v5.50 Legacy)
+### 3. GPS & System Persistence (Rule 52)
 - **Status**: ✅ Active.
-- **Benefit**: Reduced timeouts (Login 45s, PUT 60s) and signal strength gating to protect battery life on weak BSNL links.
+- **Benefit**: Persistent GPS coordinates and system states are now restored from SPIFFS immediately on **Power-On Reset (POR)**, ensuring zero "UNKNOWN" locations on the dashboard after battery changes.
+
+### 4. Backlog servicer logic (Rule 55)
+- **Status**: ✅ Fixed.
+- **Benefit**: Historical data interpolation no longer "drifts" downward during long outages, ensuring accurate daily totals on the dashboard.
 
 ---
 
 ## 🛠 Active Technical Specs
-- **Unit**: `TWS9-GEN-5.51` (Configured as `SPATIKA_GEN` / `SYSTEM 2`)
-- **Status**: All non-essential telemetry (Pressure/Health) disabled to minimize footprints.
+- **Unit**: `TWSRF9-GEN-5.52` (Configured as `SPATIKA_GEN` / `SYSTEM 2`)
+- **Status**: OTA reliability and data integrity prioritized. Verified for 4-layer PCB modular hardware separation.
 
 ---
-*Last Updated: 2026-02-25 | v5.51 Precision Build*
+*Last Updated: 2026-03-05 | v5.52 Stability Build*

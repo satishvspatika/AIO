@@ -93,10 +93,10 @@ This file tracks hard-won discoveries about the A7672S modem and network-specifi
 *   **Fact:** The actual JSON payload resides in the modem's internal memory and must be explicitly fetched.
 *   **Correct approach:** Always use `AT+HTTPREAD=0,512` (or a similar range) after a successful `200` response to pull the response body into the ESP32's serial buffer before attempting to parse for commands or parameters.
 
-## 18. Session Preservation Rule (OTA Chunking)
-*   **Discovery:** High-speed, multi-chunk downloads (like OTA) fail on BSNL if each 16KB chunk performs a full `AT+HTTPTERM` / `AT+HTTPINIT` cycle. This rapid context switching triggers the "Socket Zombie" state or tower-side throttling.
-*   **Fact:** The A7672S can maintain a high-speed HTTP session indefinitely as long as the registration URCs (`CGEREP=0`) are silenced and the bearer is verified.
-*   **Correct approach:** Keep the HTTP session active (`session_active = true`) throughout the entire chunk loop. Only perform a full `HTTPTERM` reset if a chunk actually fails. This reduces UART noise and stabilizes the carrier-side connection for files > 1MB.
+## 18. Session Preservation Rule (OTA Chunking) ⚠️ SUPERSEDED by Rule 41
+*   **Original Discovery:** High-speed, multi-chunk downloads fail on BSNL if each chunk performs a full `AT+HTTPTERM` / `AT+HTTPINIT` cycle. Rapid context switching triggers "Socket Zombie" or tower throttling.
+*   **⚠️ CORRECTION (v5.47 — Rule 41):** This rule was **WRONG for Range GET downloads**. The A7672S `AT+HTTPREAD=0,N` always reads from position 0 of an **accumulating** buffer. `AT+HTTPACTION=0` **appends** new response data to the existing buffer; it does NOT replace it. Keeping the session alive means HTTPREAD=0,16384 always returns the same first 16384 bytes (chunk 0), regardless of the Range header — the flash is filled with chunk 0 repeated.
+*   **Correct approach (v5.47):** Force `session_active = false` after **every** successful chunk. `AT+HTTPTERM` + `AT+HTTPINIT` clears the buffer before each new Range GET, ensuring each chunk's actual bytes are written to flash. The inner HTTPREAD retry loop (Rule 40) avoids redundant HTTPTERM on transient HTTPREAD failures, keeping network overhead reasonable.
 
 ## 19. The 714 "Socket Zombie" Recovery Logic
 *   **Discovery:** When Error 714 (+HTTPACTION: 1,714,0) occurs, simply retrying the HTTP command with `HTTPTERM/HTTPINIT` is not enough. The modem's socket stack remains contaminated by the previous failed task (often an FTP DNS timeout).
@@ -153,11 +153,57 @@ This file tracks hard-won discoveries about the A7672S modem and network-specifi
 *   **Symptoms:** Consecutive AT commands returning `ERROR` or garbage because they are reading the tail of the previous binary chunk.
 *   **Correct approach:** After writing the requested range to flash, check if `chunk_got` was larger than `bytes_written`. If so, explicitly read and discard the excess bytes from the UART before continuing the loop.
 
+## 45. The "Pulsing" Gap-Fill Loop (Handle Leak)
+*   **Discovery:** During data recovery for multiple missing days, the system would only recover exactly ONE record per day per boot, despite dozens being missing.
+*   **Root Cause:** A logic error where file handles (`SPIFFS.open`) were being **closed inside the first iteration** of the `for` loop. The first gap was filled, the file was closed, and subsequent loop iterations failed silently because the handle was dead.
+*   **Symptoms:** Old data (e.g., March 1st) "creeping" back into reports one record at a time for days.
+*   **Correct approach:** Always separate Handle Management from Loop Logic. Open handles *before* the loop, iterate through all data, and close handles only *after* the loop completes.
+
+## 46. The Binary False-Positive Trap (OTA Check)
+*   **Discovery:** A 1.2MB ESP32 binary is statistically guaranteed to contain the sequence `AT+` (0x41 0x54 0x2B) somewhere in its machine code.
+*   **Symptoms:** OTA chunk 3 or 4 failing with "Modem-speak 'AT+' detected at offset 3543" followed by a hardware reset.
+*   **Correct approach:** Limit "Sanity Checks" for modem URCs (`HTTP/`, `ERROR`, `+HTTPREAD:`) to the first **128 bytes** of a chunk. Real modem leaks always occur at the start of a read. Scanning the entire payload for 3-byte strings leads to 100% failure rate on larger binaries.
+
+## 47. The "Entry Point" Header Trap
+*   **Discovery:** ESP32 binary entry point offsets (8-11) vary depending on the build environment, flash mode (DIO/QIO), and bootloader version. Hardcoding a check for `0x40` or `0x3F` at a specific offset often fails on perfectly valid builds.
+*   **Correct approach:** Rely on the **Magic Byte (0xE9)** at `buf[0]` and a valid `Content-Length`. Do not attempt deeper structural validation of the binary header inside the GPRS driver, as it is too brittle across different firmware versions.
+## 48. Health URL Consistency (Port 80 Rule)
+*   **Discovery:** The main data upload succeeded on BSNL using an explicit `:80` port in the URL. Meanwhile, the Health Report (running just seconds later) was using a "clean" URL without the port and failing with Error 706.
+*   **Correct approach:** Match the working pattern exactly. If one server/task works with `:80`, use it for all HTTP tasks on that modem. A7672S firmware can be sensitive to URL string formatting inconsistencies between tasks.
+
+## 49. Soft-Retry for Health Reports (706/714 Logic)
+*   **Discovery:** Nuking the bearer (`AT+CGACT=0,1`) on the very first socket error (706/714) in `send_health_report` causes a 60-90 second re-attachment delay. 
+*   **Success Hook:** The main data upload logic (v5.50) uses a "soft reset" (TERM only) for the first retry. 
+*   **Correct approach:** Apply the same "Soft-Retry" to Health Reports. Only nuke the bearer as a last resort on the 3rd attempt. This allows the system to recover from transient carrier glitches in ~5 seconds instead of ~2 minutes.
+
+---
+### 🛠️ Session Summary (March 5, 2026 - Late Morning): "Health Resilience & URL Alignment"
+Refined `send_health_report` to use the same "Soft-Retry" strategy as the main data upload and aligned the URL formatting to include an explicit port 80. These changes eliminate the excessive bearer-nuke cycles observed on BSNL 2G when transient socket errors occur.
+
 ## 30. The Session Nuke Rule (706/714 Hard Kill)
 *   **Discovery:** A simple context reset (Rule 19) is sometimes insufficient to clear a glitched session on BSNL 2G. The modem stack can get "stuck" in a state where it replays stale buffers.
 *   **Symptoms:** Repeating socket errors or identical chunks being delivered for different requests.
 *   **Correct approach:** On a `706/714` error, execute a full "Nuke Protocol": `AT+HTTPTERM`, `AT+CGACT=0,1`, and a 5-second delay to force the carrier side to assign a fresh IP and clear its internal memory.
 
+## 50. The "Total Silence & WDT Resilience" Protocol (v5.52 Final)
+*   **Discovery:** Chunk failures on BSNL often lead to 90s+ timeouts. If the ESP32's Watchdog Timer (WDT) is not reset during these cycles, the chip will reboot mid-download, appearing as a "random" failure.
+*   **Discovery:** Setting `ota_silent_mode = true` *inside* the loop (after the first progress print) allows a small window of vulnerability where background tasks (RTC Sync or Scheduler check) can leak ASCII into the buffer before the silence flag is hit.
+*   **Correct approach (v5.52):**
+    1.  **Macro-Silence:** Move the `ota_silent_mode = true` assignment BEFORE `Update.begin()` to lock the console for the entire 2-3 minute download duration.
+    2.  **Explicit WDT Servicing:** Add `esp_task_wdt_reset()` to ALL retry paths, hardware reset delays, and long `waitForResponse` calls. Never assume the WDT will wait for a network timeout.
+    3.  **Task Suspension:** All background FreeRTOS tasks (Scheduler, RTC, TempHum, WindSpeed) now spin-wait on `while(ota_silent_mode)` so they cannot emit ANY output or trigger I2C activity during the binary transfer.
+*   **Anti-Pattern (REMOVED):** Adding strings like `"SampleNo"` and `"Gaps"` to the sanity traps causes false positives because these byte sequences naturally exist in any compiled ESP32 binary's string table. See Rule 51.
+
+---
+### 🛠️ Session Summary (March 5, 2026 - Noon): "Design Review & False-Positive Trap Fix"
+A structured code review revealed 11 bugs across the OTA pipeline. The most critical was that `"SampleNo"` and `"Gaps"` added as UART cross-talk traps were **matching bytes inside the firmware binary itself** (e.g., at offset 83), causing every OTA attempt to fail. Additional fixes included:
+- Moving `ota_silent_mode = true` before `Update.begin()` to close a 5-second silence gap.
+- Removing duplicate AT silence commands (three commands fired twice, wasting 3 seconds).
+- Adding heap overflow protection to `readBytes()` (bounded by `READ_SIZE`).
+- Adding `flushSerialSIT()` to the sanity-fail path to clear stale UART bytes.
+- Moving `ATE0` to AFTER `verify_bearer_or_recover()` to prevent echo confusion.
+- Fixed `Update.printError(SerialSIT)` (was sending error text to the modem) to `Update.printError(Serial)`.
+- Fixed health report HTTPREAD wait string from `"+HTTPREAD: 0"` to `"+HTTPREAD:"`.
 ## 31. The Extended Zombie Guard (Multi-Signature Replay)
 *   **Discovery:** In severe socket glitches (Airtel/BSNL), the A7672S sometimes re-delivers the buffer of ANY of the previous 3-4 chunks, or trickles one extra byte into the stream that shifts the rest of the file.
 *   **Symptoms:** Final `Update.end()` failure with `invalid segment length` after 100% "progress".
@@ -168,10 +214,32 @@ This file tracks hard-won discoveries about the A7672S modem and network-specifi
 *   **Discovery:** If the very first chunk (Offset 0) is corrupted or shifted by even one byte, the entire OTA is doomed to fail at the 100% mark.
 *   **Correct approach:** Explicitly verify that `buf[0] == 0xE9` (ESP32 Magic Byte) for the first chunk of every application download. If it's missing, the stream is corrupted—reset the modem immediately.
 
+## 51. The Binary Sanity Trap False-Positive Rule
+*   **Discovery (Critical):** The `isBufferSanityOK` function was trapping on strings like `"SampleNo"`, `"Gaps"`, and `"HTTP/"` — but these are SHORT, COMMON byte sequences that can appear anywhere in a compiled ESP32 binary. For example, any string constant containing "SampleNo" in the source code gets embedded in the `.rodata` section of the binary. The sanitiy check was rejecting valid firmware data at byte offset 83 on every single attempt.
+*   **Root Cause:** Short English-word traps are useless against binary data. The binary is a random soup of bytes — ANY 6-character word will appear at some offset.
+*   **Correct approach (v5.52 Final):**
+    1. Only trap on strings that are **definitively modem-specific and contain AT syntax**: `"+HTTPREAD:"` and `"ERROR\r\n"` (with CRLF makes it highly specific).
+    2. Reduce the scan window from 128 bytes to **32 bytes**. The first 32 bytes of a valid chunk are always structured binary (segment headers, addresses). Modem text bleeds in at byte 0, not at offset 83.
+    3. Auto-size the loop: `sizeof(traps)/sizeof(traps[0])`, not a magic `5`.
+    4. The magic byte check (`buf[0] == 0xE9`) for the first chunk remains valid — it's binary-specific.
+*   **Result:** With these two targeted traps and the absolute silence protocol (Rule 50), OTA proceeds cleanly without false rejections.
+
 ## 33. The Post-Read UART Purge (Mandatory)
 *   **Discovery:** Residual characters (like `\r\n` or the modem's `OK` response) can linger in the UART buffer after an `AT+HTTPREAD` binary dump. If these characters are not cleared, they will be read as the START of the next `+HTTPREAD:` header, causing a shift-bug.
 *   **Symptoms:** `No HTTPREAD hdr` errors or "Shortfall" errors in the middle of a download.
 *   **Correct approach:** Execute a mandatory `flushSerialSIT()` AFTER every binary read (success or failure) to ensure a clean slate for the next AT command.
+
+## 52. The GPS Initialization Order Bug
+*   **Discovery:** GPS coordinates are stored in `RTC_DATA_ATTR` (volatile RAM) and persisted to SPIFFS in `gps_coords.txt`. However, the `loadGPS()` function was only called during manual triggers or station changes. On a Power-On Reset (POR), the RTC RAM is wiped, and since coordinates weren't re-loaded from SPIFFS during `setup()`, the system reported `0.0,0.0` to the server until a fresh fix was forced.
+*   **Symptoms:** Map missing station location / station appearing at Null Island (0,0).
+*   **Correct approach (v5.51):** Call `loadGPS()` immediately in `setup()` after SPIFFS is ready. This ensures the last known location is ALWAYS available for the health report on every boot.
+
+## 53. The Floating Rain Gauge Noise Storm
+*   **Discovery:** If the rain gauge sensor is disconnected, the ESP32 input pin (Pin 27) can float. With the ULP program running at 1ms resolution (Rule 50), high-frequency electrical noise can be interpreted as thousands of "tips".
+*   **Symptoms:** Absurd rainfall values (e.g., 4555.5mm) appearing in logs after a 15-minute period.
+*   **Correct approach (v5.52):** 
+    1. Implement a **50mm/15min sanity cap** on the instantaneous `rf_value` reading. Anything higher (equivalent to 200mm/hr) is physically impossible in almost any weather event and is discarded as noise.
+    2. Implement a **300mm sanity cap** when loading `last_cumRF` from SPIFFS. This prevents a previous "noise storm" from corrupting the cumulative total for all future records.
 
 ## 34. Stored vs. Sent Dashboard Alignment
 *   **Discovery:** The "Stored" count on the dashboard (PD) was sometimes less than the "Sent" count (HTTP).
@@ -187,6 +255,23 @@ This file tracks hard-won discoveries about the A7672S modem and network-specifi
 *   **Discovery:** The "Today Sent Mask" on the dashboard would sometimes show gaps even after a successful multi-record send.
 *   **Cause:** The code was using the *current* clock hour to mark the bitmask, rather than the `sampleNo` of the actual record being transmitted.
 *   **Correct approach:** Pass the `temp_sampleNo` of the record to the success handler. Use this actual index to set the `diag_sent_mask_cur` bit, ensuring the dashboard accurately reflects which slots were delivered.
+
+## 54. Wind Direction Logging Rate Limit
+*   **Discovery:** When the wind direction (WD) sensor is disconnected or faulty (ADC:0), the system was printing a disconnection warning every single second.
+*   **Symptoms:** Serial console flooded with redundant messages, making it impossible to see other system diagnostics.
+*   **Correct approach (v5.51):** Implemented a state-transition check in `windDirection.ino`. The "[WD] Disconnected" message now only prints once when the sensor state changes from Connected to Disconnected.
+
+## 55. The Backlog Interpolation Bug (RF Decrease)
+*   **Discovery:** After a Power-On Reset (POR), the current `new_current_cumRF` is 0.00 until the first tip occurs. During backlog servicing for a missing previous day, the system used this 0.00 as the interpolation target for cumulative rainfall.
+*   **Symptoms:** Historical rainfall data would "interpolate downward" (e.g., 5.00mm → 0.00mm) over several hours of gap-filled records, corrupting the daily total.
+*   **Correct approach (v5.51):** In `scheduler.ino` backlog path, the interpolation target must be `start_crf + rf_value`. This ensures the rain remains flat (constant) during historical gaps if no new tips have been recorded in the current session.
+
+## 56. Bulk Chunk Efficiency Rule (v5.52 Discovery)
+On high-latency 2G networks (BSNL), the AT command overhead for setting up an HTTP session (`TERM -> INIT -> PARA -> ACTION`) can take up to 40-60 seconds regardless of data size. Using 4KB chunks leads to ~90% overhead time. Increasing to **16KB chunks** significantly improves throughput by amortizing the setup cost, provided the signal strength is stable (RSSI better than -85dBm).
+
+---
+### 🛠️ Session Summary (March 5, 2026 - Early Afternoon): "Stability & Integrity Overhaul"
+Finalized version v5.51/5.52. Key fixes include restoring GPS persistence on boot (Rule 52), implementing high-resolution noise filtering for the rain gauge (Rule 53), rate-limiting sensor logs (Rule 54), and fixing critical interpolation logic in the backlog servicer (Rule 55). These changes ensure that the system recovers gracefully from power resets without corrupting historical data or reporting incorrect locations.
 
 
 ---
@@ -209,3 +294,53 @@ In this session, we resolved the terminal failure of the OTA system (Invalid Seg
     3.  **Progress stall detection (if needed):** If `actual_downloaded` does not advance after N retries, abort — this catches true replay/stall without false-firing on binary data.
 *   **Note:** The true "Stale Buffer Replay" failure (Rule 31 intent) is handled upstream by the 5-second `vTaskDelay` breather + `flushSerialSIT()` before each new session, which already purges modem buffers. Rule 31's signature check was a double-guard that backfired.
 
+## 38. The Sent vs. Stored Artifact Dashboard Mismatch
+*   **Discovery:** The web dashboard was showing higher sizes for "Today Sent" than "Stored", sometimes completely missing Stored packets.
+*   **Cause:** Early versions of the firmware depended purely on ternary arguments and legacy loop counts (`TEST_HEALTH_EVERY_SLOT`) to dynamically send variables. If the ternary evaluated dynamically to another variable, it would visually misalign columns on the Dashboard.
+*   **Correct approach (v5.47):** Pre-calculate file lines using `countStored()` directly onto variables (`cur_stored` and `prev_stored`) through SPIFFS before JSON construction. Manually push each independent variable to its respective JSON key, completely deprecating arbitrary variable reassignment and ensuring Sent and Stored metrics are perfectly represented on the Server.
+
+## 39. The Persistent FTP-HTTP Socket Zombie
+*   **Discovery:** If an FTP upload drops midway due to network weakness (Error 13), the A7672S correctly terminates the FTP service but leaves the inner IP stack flagged as active (`CGACT: 1,1`) yet silently deaf. When the device immediately transitions to `send_health_report()`, Attempt 1 fails `AT+HTTPINIT`. Prior logic simply executed `AT+HTTPTERM` and retried, meaning Attempt 2 successfully launched `HTTPINIT`, pushed the data, but suffered a 60-second hang and dropped with `+HTTPACTION: 1,706,0`.
+*   **Correct approach (v5.47):** If `AT+HTTPINIT` ever fails, ALWAYS assume the worst and proactively Nuke the Bearer (`AT+CGACT=0,1`) before retrying, instead of just silently terminating HTTP. Also, `706` is identically added to the Zombie recovery list alongside `714`. Number of retries should also be realistically extended to `3`.
+
+## 40. The Post-HTTPREAD-Failure UART Ghost (Root cause of `invalid segment length`)
+*   **Discovery:** After ~20 OTA download attempts across multiple firmware versions, the OTA would consistently complete 100% progress but fail `Update.end()` with `invalid segment length 0x2f766564`. The hex `2f 76 65 64` decodes to ASCII `/ved` — a substring of `"valid IP). Recovering..."` from the firmware's own string pool.
+*   **Root Cause:** When `AT+HTTPREAD` fails (modem returns `ERROR` instead of `+HTTPREAD: N`), the code printed a diagnostic and fell through to the `read_ok = false` retry path. However, the crucial `flushSerialSIT()` call only existed AFTER a **successful** read (at line ~3912), NOT in the failed-header path. This left the modem's `ERROR\r\n` response bytes sitting in the ESP32's UART hardware RX buffer.
+*   **The Corruption Chain:**
+    1. Chunk N: `AT+HTTPREAD` → modem returns `ERROR\r\n` (7-8 bytes in UART buffer)
+    2. Code sets `session_active = false`, retries
+    3. New session init'd correctly, `AT+HTTPREAD=0,16384` sent
+    4. Modem responds with `+HTTPREAD: 16384\r\n` followed by 16384 binary bytes
+    5. BUT: `waitForResponse("+HTTPREAD:")` reads the stale `ERROR\r\n` FIRST, then the real `+HTTPREAD:` — causing the binary payload read to START 7-8 bytes early
+    6. Those 7-8 ghost bytes get written to flash, shifting every subsequent binary byte by the same offset
+    7. At `Update.end()`, the ESP32 image validation reads a segment header that now points into ASCII text instead of binary code
+*   **Correct approach (v5.47 Final Overhaul — Rule 42):**
+    1. **Abandon Inner Retries:** The inner HTTPREAD retry loop is **DANGEROUS** for binary streams. If a read shortfall occurs (e.g. 14500/16384), the buffer is partially consumed. Retrying `HTTPREAD` pulls the NEXT bytes, causing a permanent byte-shift.
+    2. **Redo Chunk Entirely:** On ANY `HTTPREAD` failure (timeout, shortfall, or `ERROR`), terminate the session and redo the entire `HTTPACTION` for that specific Range chunk.
+    3. **Absolute Session Flush:** `AT+HTTPTERM` must be called at the end of EVERY chunk to ensure the modem's internal HTTP buffer is empty for the next range.
+*   **Rule of Thumb:** Never assume the modem buffer is stable after a partial read. Flush everything and start over.
+
+
+---
+### 🛠️ Session Summary (March 4, 2026 — Night): "OTA Solved — The One-Chunk-One-Session Protocol"
+The final root cause was a combination of Rule 41 (Accumulating Buffer) and Rule 42 (Fatal Shortfall). Keeping the session alive caused the modem to re-serve Chunk 0 repeatedly. Attempting to "retry" failed HTTPREADs without redoing the HTTPACTION caused byte-shifts when the UART timed out. **Final Protocol (v5.47 overhaul):** No session preservation. No inner retries. Every 16KB chunk is an atomic `TERM -> INIT -> ACTION -> READ -> TERM` transaction. This is slow (2.5 mins for 1.2MB) but 100% immune to buffer accumulation and shift-drift.
+
+
+
+## 43. The "Log Leak" Rule (UART Cross-Talk)
+*   **Discovery:** Chunk headers at 100% progress revealed ASCII strings like `"valid IP"` and `"(64.1 KB)"` inside the binary firmware buffer. These strings are identical to ESP32 `debugln` output.
+*   **Root Cause:** The board hardware or shared UART wiring causes ESP32 TX (Console) output to be "seen" by the Modem UART RX. During the small timing gap between `AT+HTTPREAD` and the arrival of binary data, any foreground task (Scheduler, Health, or Update Callback) printing to `Serial` fills the Modem RX buffer with ASCII text.
+*   **The Shift:** If 50 bytes of text enter the buffer, `SerialSIT.readBytes(buf, 16384)` returns a "full" 16KB block containing `50 bytes text + 16334 bytes binary`. The last 50 bytes of actual firmware are lost to UART overflow. This shifts the entire binary sequence and causes `invalid segment length` at the image tail.
+*   **Correct approach (v5.47 Final):**
+    1.  **Rule 43: The Log Leak (v7.50 Final Fix)**
+  - *Problem*: Small ASCII segments ("vali", "6.1f", "[RTC]") were still appearing in chunks 1-10.
+  - *Discovery*: Even with `ota_silent_mode = true`, tasks using direct `Serial.printf` (instead of `debugf`) bypass the logic.
+  - *Solution*:
+    1.  Replaced ALL `Serial.print/printf` calls in `scheduler.ino` and `rtcRead.ino` with the `debug` macro counterparts.
+    2.  `ota_silent_mode` MUST remain `true` throughout the download loop.
+    3.  Only the OTA progress print uses a direct `Serial.printf` bypass (safe as it is within the same task).
+
+## 44. Command-Aware Boot (v7.50 - Quality of Life Fix)
+*   **Problem:** After a fresh flash or power cycle, the device would skip GPRS/HTTP logic entirely to avoid logging a "Zero" data record. This forced developers to wait up to 15 minutes for the next slot just to test a new command (like OTA).
+*   **Solution:** Modified `scheduler.ino` to allow Fresh Boots to still proceed to the `TRIGGER_HTTP` label. 
+*   **Benefit:** The device now connects to the server immediately on power-up to sync time and check for pending OTA commands, even though it still skips the recorded data upload. This drastically speeds up the development/test cycle.
