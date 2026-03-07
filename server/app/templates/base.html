@@ -43,6 +43,10 @@
       background: #1a0c1d;
     }
 
+    body.page-diagnostics {
+      background: #0d1b2a;
+    }
+
     body.filter-alarm {
       background: #2d0a0a !important;
     }
@@ -316,6 +320,7 @@
       <a href="/dashboard" class="text-base font-black text-blue-400 tracking-tight">📡 SPATIKA</a>
       <a href="/dashboard" class="nav-link {% if active == 'dashboard' %}nav-active{% endif %}">DASHBOARD</a>
       <a href="/summary" class="nav-link {% if active == 'summary' %}nav-active{% endif %}">FLEET</a>
+      <a href="/diagnostics" class="nav-link {% if active == 'diagnostics' %}nav-active{% endif %}">DIAGNOSTICS</a>
       <a href="/ota" class="nav-link {% if active == 'ota' %}nav-active{% endif %}">OTA</a>
       <a href="/help" class="nav-link {% if active == 'help' %}nav-active{% endif %}">HELP</a>
     </div>
@@ -325,9 +330,13 @@
       <div class="dropdown">
         <button class="btn-sm btn-blu">📥 Export ▾</button>
         <div class="dropdown-menu">
-          <div class="px-4 py-2 text-[10px] text-slate-500 uppercase tracking-wider">Historical Fleet Reports</div>
+          <div class="px-4 py-2 text-[10px] text-slate-500 uppercase tracking-wider">Fleet Reports</div>
           <a href="/csv/summary" class="dropdown-item">📋 Latest Snapshot</a>
           <a href="/csv/full_history" class="dropdown-item">📂 Full History</a>
+          <div class="dropdown-sep"></div>
+          <div class="px-4 py-2 text-[10px] text-slate-500 uppercase tracking-wider">Diagnostics Reports</div>
+          <a href="/csv/diagnostics" class="dropdown-item">🔬 Diagnostics Snapshot</a>
+          <a href="/csv/diagnostics/full" class="dropdown-item">📡 Diagnostics Full History</a>
         </div>
       </div>
       {% if request.state.user %}

@@ -5,6 +5,8 @@ from sqlalchemy import func
 from app.database import SessionLocal
 from app.models import HealthReport, FirmwareRegistry
 from app.services.ota_service import get_numeric_ver
+import datetime, os
+BUILDS_DIR = "/app/builds"
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -33,6 +35,9 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
         groups  = []
 
         for fw in fws:
+            # Check if actual file exists on disk
+            fw.file_exists = os.path.exists(os.path.join(BUILDS_DIR, f"FW_S{fw.category_id}_{fw.unit_type}.bin"))
+
             # Get latest report per station within this group
             subq = (
                 db.query(HealthReport.stn_id, func.max(HealthReport.reported_at).label("m"))
@@ -48,6 +53,15 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
                 .order_by(HealthReport.reported_at.desc())
                 .all()
             )
+
+            now = datetime.datetime.now()
+            for r in latest_reports:
+                if r.reported_at:
+                    delta = now - r.reported_at
+                    mins = int(delta.total_seconds() / 60)
+                    r.time_ago = f"{mins}m ago" if mins < 60 else f"{mins // 60}h {mins % 60}m ago"
+                else:
+                    r.time_ago = "?"
 
             total_seen = len(latest_reports)
             converted  = sum(

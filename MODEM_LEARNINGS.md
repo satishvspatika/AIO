@@ -344,3 +344,17 @@ The final root cause was a combination of Rule 41 (Accumulating Buffer) and Rule
 *   **Problem:** After a fresh flash or power cycle, the device would skip GPRS/HTTP logic entirely to avoid logging a "Zero" data record. This forced developers to wait up to 15 minutes for the next slot just to test a new command (like OTA).
 *   **Solution:** Modified `scheduler.ino` to allow Fresh Boots to still proceed to the `TRIGGER_HTTP` label. 
 *   **Benefit:** The device now connects to the server immediately on power-up to sync time and check for pending OTA commands, even though it still skips the recorded data upload. This drastically speeds up the development/test cycle.
+
+## 45. The "Ghost Gap" SPIFFS Parse Error (v7.58 Fix)
+*   **Discovery:** A backward seek on a file using a rigid byte offset (e.g., `s - 60`) to find the last record is extremely dangerous when float formatting varies (e.g., `00.0` vs `0.00`). The ESP32 often extracted halfway through a line, mistakenly converting variables like Battery Level `.03` into `sampleNo 03`. 
+*   **Symptoms:** Every morning at 08:45 AM, the device hallucinated that it missed samples 04 through 95 from a previous day (like March 1st) and endlessly generated massive 90-record gaps.
+*   **Correct approach:** When seeking backward, extract a safe ~120 byte buffer, but DO NOT call `atoi(buf)` immediately. Explicitly scan the string from left to right for the **last `\n` character**, advance the pointer by 1 (`ptr + 1`), and parse precisely that isolated line. 
+
+## 46. The 5.7 KB Payload Limit and FTP Queue Draining (v7.58 Fix)
+*   **Discovery:** BSNL will hard-drop any FTP transmission over its 2G network if a file (`/ftpunsent.txt`) hits around 5.7 KB (roughly 90 records).
+*   **Symptoms:** `+CFTPSPUTFILE: 9` (Timeout/Network Error). Because the upload failed, the full backlog file was deleted, destroying 90 genuine records permanently.
+*   **Correct approach (Queue Draining):** Never blindly rename and upload the entire `ftpunsent.txt` file. Instead, stream the file line by line. Extract a **maximum chunk of 15 records (~900 Bytes)** to an active upload file (e.g., `TWS_0301.kwd`), and mathematically push the rest of the queue into a `ftpremain.txt` file. Once chunk 1 safely uploads, rename `ftpremain.txt` back to `ftpunsent.txt` so it gracefully drains the remaining 75 records across the next 5 hourly slots. If an error occurs, no data is lost because `ftpunsent.txt` only loses 900 bytes per cycle.
+
+## 47. The FTP -> HTTP Socket Zombie
+*   **Discovery:** Transitioning immediately from a heavy HTTP POST payload directly into an FTP Backlog upload throws the modem into a `Signal 85` (Panic / No Context) state on BSNL. 
+*   **Correct approach:** Always explicitly execute a **5000ms pause** before initializing the FTP task. This serves as a "Carrier Congestion Breather," granting the tower adequate IP stack teardown time before context switching.

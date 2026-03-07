@@ -63,26 +63,26 @@
                 {% else %}
                 <th class="p-3 w-8"></th>
                 {% endif %}
-                <th class="p-3">Station</th>
-                <th class="p-3">Group</th>
-                <th class="p-3">Status</th>
-                <th class="p-3">Firmware</th>
-                <th class="p-3">Batt / Sol</th>
-                <th class="p-3 text-center">Tdy Sent/Stored</th>
-                <th class="p-3 text-center">Ydy Sent/Stored</th>
-                <th class="p-3 text-center">HTTP / Retry FTP/HTTP</th>
-                <th class="p-3">Reg Fails</th>
-                <th class="p-3">Last Seen</th>
+                <th class="p-3 text-left whitespace-nowrap">Station</th>
+                <th class="p-3 text-left whitespace-nowrap">Group</th>
+                <th class="p-3 text-left whitespace-nowrap">Status</th>
+                <th class="p-3 text-center whitespace-nowrap">Tdy Sent/Stored</th>
+                <th class="p-3 text-center whitespace-nowrap">Ydy Sent/Stored</th>
+                <th class="p-3 text-center whitespace-nowrap"
+                    title="Today: On-time HTTP pushes / HTTP+FTP Backlog Recovered">Tdy HTTP/Backlogs</th>
+                <th class="p-3 text-center whitespace-nowrap"
+                    title="Yesterday: On-time HTTP pushes / HTTP+FTP Backlog Recovered">Ydy HTTP/Backlogs</th>
+                <th class="p-3 text-left whitespace-nowrap">Last Seen</th>
                 {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role')
                 == 'supervisor') %}
-                <th class="p-3 text-right">Delete</th>
+                <th class="p-3 text-right whitespace-nowrap">Delete</th>
                 {% endif %}
             </tr>
         </thead>
         <tbody class="divide-y divide-slate-800">
             {% for r in reports %}
             <tr class="transition cursor-pointer row-item" data-stn="{{ r.stn_id }}"
-                data-status="{% if r.health_sts != 'OK' %}alarm{% else %}ok{% endif %}"
+                data-status="{% if r.eval.verdict in ('CRITICAL', 'WARN', 'OFFLINE') %}alarm{% else %}ok{% endif %}"
                 data-ota="{{ 'true' if r.ota_needed else 'false' }}"
                 data-lowbat="{{ 'true' if r.bat_v and r.bat_v < 3.6 else 'false' }}"
                 onclick="window.location='/station/{{ r.stn_id }}'">
@@ -92,54 +92,41 @@
                     <input type="checkbox" class="stn-checkbox" value="{{ r.stn_id }}" onchange="updateBulkDeleteBtn()">
                     {% endif %}
                 </td>
-                <td class="p-3 font-bold text-blue-300">{{ r.stn_id }}</td>
+                <td class="p-3 font-bold text-blue-300 whitespace-nowrap">{{ r.stn_id }}</td>
                 <td class="p-3 text-slate-400 text-[10px] leading-tight">
                     {{ r.fw_group.display_name if r.fw_group else (r.unit_type or '?')|truncate(15) }}
                 </td>
                 <td class="p-3">
-                    {% if r.health_sts == 'OK' %}
-                    <span class="badge-ok">✓ OK</span>
+                    {% if r.eval.verdict == 'OK' %}
+                    <span class="badge-ok" title="Score: {{ r.eval.score }}">✓ OK</span>
                     {% else %}
-                    <span class="badge-fail" title="{{ r.health_sts }}">
-                        ✗ {{ (r.health_sts or 'FAIL')[:14] }}
-                    </span>
+                    <div class="flex flex-wrap gap-1">
+                        {% for reason in r.eval.reasons %}
+                        <span class="badge-fail shadow-sm py-0.5 px-1.5 text-[9px]"
+                            title="Score: {{ r.eval.score }} | FW: {{ r.eval.fw_sts }}">
+                            ✗ {{ reason }}
+                        </span>
+                        {% endfor %}
+                    </div>
                     {% endif %}
                 </td>
-                <td class="p-3">
-                    <span class="badge-ver">{{ r.ver or '?' }}</span>
-                    {% if r.is_exempt %}
-                    <span class="text-[10px] text-orange-500 ml-1" title="OTA Disabled (Locked)">🔒</span>
-                    {% elif r.ota_needed %}
-                    <span class="badge-ota">OTA↑</span>
-                    {% endif %}
-                    {% if r.ota_fails and r.ota_fails > 0 %}
-                    <span class="text-[10px] bg-red-900/40 text-red-400 px-1 rounded ml-1"
-                        title="Last Fail: {{ r.ota_fail_reason }}">⚠ {{ r.ota_fails }}</span>
-                    {% endif %}
-                </td>
-                <td class="p-3">
-                    <span
-                        class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}">
-                        {{ '%.2f'|format(r.bat_v or 0) }}V
-                    </span>
-                    <span class="text-slate-500"> / {{ '%.1f'|format(r.sol_v or 0) }}V</span>
-                </td>
-                <td class="p-3 font-mono text-center text-slate-300">
+                <td class="p-3 font-mono text-center text-slate-300 whitespace-nowrap">
                     {{ r.net_cnt or 0 }} / {{ r.cur_stored or 0 }}
                 </td>
-                <td class="p-3 font-mono text-center text-slate-300">
+                <td class="p-3 font-mono text-center text-slate-300 whitespace-nowrap">
                     {{ r.net_cnt_prev or 0 }} / {{ r.prev_stored or 0 }}
                 </td>
-                <td class="p-3 font-mono text-center text-blue-300">
+                <td class="p-3 font-mono text-center text-blue-300" title="Today: Direct HTTP / Recovered">
                     {% set http = r.http_suc_cnt or 0 %}
                     {% set ftp = (r.net_cnt or 0) - http %}
                     {{ http }} / {{ ftp if ftp > 0 else 0 }}
                 </td>
-                <td
-                    class="p-3 {% if r.reg_fails and r.reg_fails > 3 %}text-red-400 font-bold{% else %}text-slate-400{% endif %}">
-                    {{ r.reg_fails or 0 }}
+                <td class="p-3 font-mono text-center text-blue-300" title="Yesterday: Direct HTTP / Recovered">
+                    {% set http_p = r.http_suc_cnt_prev or 0 %}
+                    {% set ftp_p = (r.net_cnt_prev or 0) - http_p %}
+                    {{ http_p }} / {{ ftp_p if ftp_p > 0 else 0 }}
                 </td>
-                <td class="p-3 text-slate-500 text-[11px]" title="{{ r.reported_at }}">
+                <td class="p-3 text-slate-500 text-[11px] whitespace-nowrap" title="{{ r.reported_at }}">
                     {{ r.time_ago }}
                 </td>
                 {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role')
@@ -175,7 +162,7 @@
     { 
         "id": "{{ r.stn_id }}", 
         "gps": "{{ r.gps }}", 
-        "ok": {{ 'true' if r.health_sts == 'OK' else 'false' }}, 
+        "ok": {{ 'true' if r.eval.verdict in ('OK', 'INFO') else 'false' }}, 
         "ver": "{{ r.ver or '' }}" 
     }{{ "," if not loop.last }}
     {% endfor %}

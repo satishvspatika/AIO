@@ -476,9 +476,12 @@ void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
     // status.
   }
 
+  const char *dayLabel = (mask == diag_sent_mask_prev) ? "YDY" : "TDY";
+
 #if DEBUG == 1
-  debugf("[HealthScan] NetCount: %d | CDM: %s | PD: %s | NDM: %s\n",
-         *outNetCount, diag_cdm_status, (*hasUnresolvedPD ? "FAIL" : "OK"),
+  debugf("[HealthScan %s] NetCount: %d | CDM: %s | PD: %s | NDM: %s\n",
+         dayLabel, *outNetCount, diag_cdm_status,
+         (*hasUnresolvedPD ? "FAIL" : "OK"),
          (*hasUnresolvedNDM ? "FAIL" : "OK"));
 #endif
 }
@@ -516,8 +519,83 @@ int countStored(const char *fName) {
   int count = 0;
   while (f.available()) {
     String line = f.readStringUntil('\n');
-    if (line.length() >= 5 && line.indexOf(',') != -1) {
+    // v7.59: Minimum 20 chars to skip corrupt/partial lines; cap at 96
+    if (line.length() >= 20 && line.indexOf(',') != -1) {
       count++;
+      if (count >= 96)
+        break; // v7.59: Cap — ghost gap-fill cannot inflate beyond one day
+    }
+  }
+  f.close();
+  return count;
+}
+
+float restoreRainfall(const char *fName) {
+  if (!SPIFFS.exists(fName))
+    return 0.0;
+  File f = SPIFFS.open(fName, FILE_READ);
+  if (!f)
+    return 0.0;
+
+  // v7.67: Efficiently read last valid line by seeking backwards from EOF
+  // avoids allocating 96 String objects for a full-file scan.
+  int fSize = f.size();
+  if (fSize < 20) {
+    f.close();
+    return 0.0;
+  }
+
+  // Seek back up to 512 bytes from EOF to capture the last 1-2 lines
+  int seekFrom = max(0, fSize - 512);
+  f.seek(seekFrom);
+  String lastLine = "";
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() > 20)
+      lastLine = line;
+  }
+  f.close();
+
+  if (lastLine.length() > 0) {
+    // CSV format: sampleNo,DATE,TIME,CUM_RF,...
+    // Field index 3 (0-based) is the rainfall field for SYSTEM 0 and 2.
+    // For SYSTEM 1 (TWS - no rainfall), this returns 0 safely.
+    int firstComma = lastLine.indexOf(',');
+    if (firstComma == -1)
+      return 0.0;
+    int secondComma = lastLine.indexOf(',', firstComma + 1);
+    if (secondComma == -1)
+      return 0.0;
+    int thirdComma = lastLine.indexOf(',', secondComma + 1);
+    if (thirdComma == -1)
+      return 0.0;
+    int fourthComma = lastLine.indexOf(',', thirdComma + 1);
+    // fourthComma may be -1 (last field), substring still works
+    String rfStr = lastLine.substring(thirdComma + 1, fourthComma);
+    rfStr.trim();
+    return rfStr.toFloat();
+  }
+  return 0.0;
+}
+
+int countNightStored(const char *fName) {
+  if (!SPIFFS.exists(fName))
+    return 0;
+  File f = SPIFFS.open(fName, FILE_READ);
+  if (!f)
+    return 0;
+  int count = 0;
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    if (line.length() >= 10) {
+      int commaIdx = line.indexOf(',');
+      if (commaIdx != -1) {
+        int sNum = line.substring(0, commaIdx).toInt();
+        if (sNum >= 49 && sNum <= 85) {
+          count++;
+        }
+      }
     }
   }
   f.close();
@@ -626,10 +704,15 @@ void reconstructSentMasks() {
   snprintf(prevFile, sizeof(prevFile), "/%s_%04d%02d%02d.txt", station_name,
            prev_yy, prev_mm, prev_dd);
   scanFileToMask(prevFile, diag_sent_mask_prev);
+  diag_pd_count_prev = countStored(prevFile);
+  diag_ndm_count_prev = countNightStored(prevFile);
 
   snprintf(curFile, sizeof(curFile), "/%s_%04d%02d%02d.txt", station_name,
            cur_yy, cur_mm, cur_dd);
   scanFileToMask(curFile, diag_sent_mask_cur);
+  diag_pd_count = countStored(curFile);
+  diag_ndm_count = countNightStored(curFile);
+  new_current_cumRF = restoreRainfall(curFile);
 
   // 2. Subtract records that are currently in 'Unsent' files
   subtractUnsentFromMask("/unsent.txt");
@@ -654,6 +737,7 @@ void markFileAsDelivered(const char *fileName) {
        strstr(fileName, "ftpunsent") != NULL);
 
   while (f.available()) {
+    esp_task_wdt_reset(); // v7.67: Prevent WDT on huge backlog files
     String line = f.readStringUntil('\n');
     line.trim();
     if (line.length() < 10)
@@ -697,9 +781,15 @@ void markFileAsDelivered(const char *fileName) {
       current_s_idx = (current_s_idx + 61) % 96;
 
       if (sNum <= current_s_idx) {
-        diag_sent_mask_cur[sNum / 32] |= (1UL << (sNum % 32));
+        if (!(diag_sent_mask_cur[sNum / 32] & (1UL << (sNum % 32)))) {
+          diag_sent_mask_cur[sNum / 32] |= (1UL << (sNum % 32));
+          diag_ftp_success_count++;
+        }
       } else {
-        diag_sent_mask_prev[sNum / 32] |= (1UL << (sNum % 32));
+        if (!(diag_sent_mask_prev[sNum / 32] & (1UL << (sNum % 32)))) {
+          diag_sent_mask_prev[sNum / 32] |= (1UL << (sNum % 32));
+          diag_ftp_success_count_prev++;
+        }
       }
     }
   }

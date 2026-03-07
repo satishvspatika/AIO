@@ -58,6 +58,8 @@ void rtcRead(void *pvParameters) {
       }
 
       xSemaphoreGive(i2cMutex);
+    } else {
+      diag_i2c_errors++;
     }
 
     if (!rtc_ok) {
@@ -72,7 +74,7 @@ void rtcRead(void *pvParameters) {
       }
       if (fail_count > 60) {
         debugln("[RTC] Persistent Hardware Failure! Restarting...");
-        vTaskDelay(1000);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
         ESP.restart();
       }
       vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -132,9 +134,16 @@ void rtcRead(void *pvParameters) {
 
     // Handle too many bad reads
     if (badReads >= 24) {
-      badReads = -1;
-      debugln("rtcRead: Too many bad reads — resyncing RTC");
-      resync_time();
+      bool gprs_idle = ((sync_mode == eHttpStop || sync_mode == eSMSStop ||
+                         sync_mode == eExceptionHandled) &&
+                        !health_in_progress && !wifi_active);
+      if (gprs_idle) {
+        badReads = -1;
+        debugln("rtcRead: Too many bad reads — resyncing RTC");
+        resync_time();
+      } else {
+        debugln("[RTC] Deferring resync, GPRS task is busy.");
+      }
     }
 
     esp_task_wdt_reset();
@@ -152,7 +161,8 @@ void resync_time() {
   char gprs_xmit_buf[300];
 
   char *csqstr;
-  float lati, longi;
+  // BUG FIX: Removed local `float lati, longi;` — it shadowed the global
+  // RTC_DATA_ATTR variables, causing GPS coordinates to be silently discarded.
 
   debugln("[RTC] Resync Requested. Powering on GPRS...");
   debugln();
@@ -172,15 +182,15 @@ void resync_time() {
 
   const char *response_char;
 
-  vTaskDelay(5000);
+  vTaskDelay(5000 / portTICK_PERIOD_MS); // EX5 FIX: was bare 5000 ticks = 50s
   SerialSIT.println("AT+CLBS=4");
   response = waitForResponse("+CLBS:", 10000);
-  vTaskDelay(200);
+  vTaskDelay(200 / portTICK_PERIOD_MS);
   debug("Response of AT+CLBS=4 is ");
   debugln(response);
-  vTaskDelay(200);
+  vTaskDelay(200 / portTICK_PERIOD_MS);
   response_char = response.c_str();
-  vTaskDelay(200);
+  vTaskDelay(200 / portTICK_PERIOD_MS);
   csqstr = strstr(response_char, "+CLBS");
 
   if (csqstr != NULL) {
@@ -273,7 +283,7 @@ void parse_and_convert_clbs_response(const char *response, int year1,
                           last_recorded_hr, last_recorded_min, 0));
       xSemaphoreGive(i2cMutex);
     }
-    vTaskDelay(2000);
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
 
     // Assign for making the correct decision on time to sleep
     current_year = last_recorded_yy;
@@ -285,23 +295,27 @@ void parse_and_convert_clbs_response(const char *response, int year1,
     File fileTemp2 = SPIFFS.open("/signature.txt", FILE_WRITE);
     if (!fileTemp2) {
       debugln("Failed to open signature.txt for writing");
+    } else { // EX3 FIX: do NOT fall-through and call .print()/.close() on
+             // invalid handle
+      snprintf(signature, sizeof(signature), "%04d-%02d-%02d,%02d:%02d",
+               last_recorded_yy, last_recorded_mm, last_recorded_dd,
+               last_recorded_hr, last_recorded_min);
+      fileTemp2.print(signature);
+      fileTemp2.close();
     }
-    snprintf(signature, sizeof(signature), "%04d-%02d-%02d,%02d:%02d",
-             last_recorded_yy, last_recorded_mm, last_recorded_dd,
-             last_recorded_hr, last_recorded_min);
-    fileTemp2.print(signature);
-    fileTemp2.close();
-    vTaskDelay(500);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
     if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
       debugf("[RTC] Time: %02d:%02d\n", current_hour, current_min);
       xSemaphoreGive(serialMutex);
     }
-    vTaskDelay(1000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    gprs_started = false; // EX6 FIX: reset flag so next GPRS cycle powers modem
     health_in_progress = false; // Task COMPLETED
     sync_mode = eExceptionHandled;
 
   } else {
     debugln("Failed to get the correct time");
+    gprs_started = false;       // EX6 FIX: reset on failure path too
     health_in_progress = false; // Allow error recovery
     sync_mode = eExceptionHandled;
   }

@@ -1,11 +1,31 @@
 from fastapi import APIRouter, Request, Depends, Response
 from sqlalchemy.orm import Session
+from sqlalchemy import text, inspect as sa_inspect
 from app.database import SessionLocal
 from app.models import HealthReport, FirmwareRegistry, CommandQueue, StationSettings
 from app.services.ota_service import needs_ota
-import datetime
+import datetime, json, re
 
 router = APIRouter()
+
+# Whitelist: only safe column names (alphanumeric + underscore)
+_SAFE_COL = re.compile(r'^[a-z][a-z0-9_]{0,63}$')
+
+# Fields never treated as data columns
+_SKIP_FIELDS = {"id", "reported_at"}
+
+# Known type hints — anything not listed defaults to TEXT
+_INT_FIELDS  = {
+    "system","reset_reason","rtc_ok","uptime_hrs","signal","reg_fails","reg_worst",
+    "http_fails","net_cnt","net_cnt_prev","cur_stored","prev_stored",
+    "http_suc_cnt","http_suc_cnt_prev","http_ret_cnt","http_ret_cnt_prev",
+    "ftp_suc_cnt","ftp_suc_cnt_prev","ndm_cnt","pd_cnt","first_http",
+    "spiffs_kb","spiffs_total_kb","ota_fails","rtc_ok","first_http",
+    "consec_reg_fails","consec_http_fails","consec_sim_fails",
+    "spiffs_free_kb","free_heap_kb","unsent_count","slot_no","ws_same_cnt",
+    "stack_rtc","stack_sched","stack_gprs","stack_ui","i2c_errs","m_temp","min_rssi","max_rssi"
+}
+_FLOAT_FIELDS = {"bat_v","sol_v","reg_avg","http_avg"}
 
 
 def get_db():
@@ -16,69 +36,123 @@ def get_db():
         db.close()
 
 
+def _infer_sql_type(key: str, val) -> str:
+    """Infer SQLite column type from key name + value type."""
+    if key in _INT_FIELDS:
+        return "INTEGER"
+    if key in _FLOAT_FIELDS or isinstance(val, float):
+        return "REAL"
+    if isinstance(val, int):
+        return "INTEGER"
+    return "TEXT"
+
+
+def _get_db_columns(db: Session, table: str) -> set:
+    """Returns the set of column names currently in the table."""
+    inspector = sa_inspect(db.bind)
+    return {col["name"] for col in inspector.get_columns(table)}
+
+
+def _auto_migrate(db: Session, data: dict, table: str = "health_reports"):
+    """
+    For each key in `data` that does not yet exist as a column in `table`,
+    auto-add the column via ALTER TABLE.
+    Returns the updated column set.
+    """
+    existing = _get_db_columns(db, table)
+    for key, val in data.items():
+        if key in _SKIP_FIELDS or key in existing:
+            continue
+        if not _SAFE_COL.match(key):
+            print(f"[AutoMigrate] Skipping unsafe column name: {key!r}")
+            continue
+        col_type = _infer_sql_type(key, val)
+        default  = "0" if col_type in ("INTEGER","REAL") else "''"
+        try:
+            db.execute(text(f"ALTER TABLE {table} ADD COLUMN {key} {col_type} DEFAULT {default}"))
+            db.commit()
+            existing.add(key)
+            print(f"[AutoMigrate] ✅ Added column '{key}' ({col_type}) to {table}")
+        except Exception as e:
+            if "duplicate" not in str(e).lower():
+                print(f"[AutoMigrate] ⚠️  Could not add column '{key}': {e}")
+            existing.add(key)   # treat as existing to avoid retry loops
+    return existing
+
+
 @router.post("/health")
 async def health(request: Request, db: Session = Depends(get_db)):
     try:
         body = await request.body()
         body_str = body.decode("utf-8")
         print(f"[Health] Raw Body: {body_str}")
-        
+
         try:
             data = await request.json()
         except Exception:
-            # Fallback for form-urlencoded or malformed JSON
             from urllib.parse import parse_qs
             data = {k: v[0] for k, v in parse_qs(body_str).items()}
             print(f"[Health] Fallback Parse: {data}")
 
         if not data:
-            return Response(content='{"status":"err","msg":"empty body"}', media_type="application/json", status_code=400)
+            return Response(
+                content='{"status":"err","msg":"empty body"}',
+                media_type="application/json", status_code=400
+            )
 
         stn_id    = str(data.get("stn_id", "UNKNOWN")).strip().upper()
-        unit_type = data.get("unit_type", "UNKNOWN")
+        unit_type = str(data.get("unit_type", "UNKNOWN"))
         sys_mode  = int(data.get("system", 0))
         ver       = str(data.get("ver", "5.00")).strip()
+        ota_fails = int(data.get("ota_fails", 0))
 
-        ota_fails   = int(data.get("ota_fails", 0))
-        ota_reason  = str(data.get("ota_fail_reason", "NONE"))
+        # ── Step 1: Auto-migrate any new columns ─────────────────────────────
+        existing_cols = _auto_migrate(db, data)
 
-        # Store the full health report
-        report = HealthReport(
-            stn_id=stn_id,           unit_type=unit_type,     system=sys_mode,
-            health_sts=data.get("health_sts"),                 sensor_sts=data.get("sensor_sts"),
-            reset_reason=data.get("reset_reason"),             rtc_ok=data.get("rtc_ok"),
-            uptime_hrs=data.get("uptime_hrs"),                 bat_v=data.get("bat_v"),
-            sol_v=data.get("sol_v"),                           signal=data.get("signal"),
-            reg_fails=data.get("reg_fails"),                   reg_avg=data.get("reg_avg"),
-            reg_worst=data.get("reg_worst"),                   reg_fail_type=data.get("reg_fail_type"),
-            http_fails=data.get("http_fails"),                 http_fail_reason=data.get("http_fail_reason"),
-            http_avg=data.get("http_avg"),                     net_cnt=data.get("net_cnt"),
-            net_cnt_prev=data.get("net_cnt_prev"),             cur_stored=data.get("cur_stored"),
-            prev_stored=data.get("prev_stored"),               http_suc_cnt=data.get("http_suc_cnt"),
-            http_suc_cnt_prev=data.get("http_suc_cnt_prev"),   ndm_cnt=data.get("ndm_cnt"),
-            http_ret_cnt=data.get("http_ret_cnt"),             http_ret_cnt_prev=data.get("http_ret_cnt_prev"),
-            ftp_suc_cnt=data.get("ftp_suc_cnt"),               ftp_suc_cnt_prev=data.get("ftp_suc_cnt_prev"),
-            pd_cnt=data.get("pd_cnt"),                         cdm_sts=data.get("cdm_sts"),
-            spiffs_kb=data.get("spiffs_kb"),                   sd_sts=data.get("sd_sts"),
-            ver=ver,                                           carrier=data.get("carrier"),
-            iccid=data.get("iccid"),                           gps=data.get("gps"),
-            ota_fails=ota_fails,                               ota_fail_reason=ota_reason,
-            reported_at=datetime.datetime.now()
-        )
+        # ── Step 2: Build a HealthReport from all matching fields ─────────────
+        # Map numeric conversions & type-safe casting
+        report_kwargs = {"stn_id": stn_id, "reported_at": datetime.datetime.now()}
+
+        for key, val in data.items():
+            if key in _SKIP_FIELDS:
+                continue
+            if key not in existing_cols:
+                continue
+            if not _SAFE_COL.match(key):
+                continue
+            # Type-safe cast
+            try:
+                if key in _INT_FIELDS:
+                    report_kwargs[key] = int(val) if val not in (None, "") else None
+                elif key in _FLOAT_FIELDS or isinstance(val, float):
+                    report_kwargs[key] = float(val) if val not in (None, "") else None
+                else:
+                    report_kwargs[key] = str(val) if val is not None else None
+            except (ValueError, TypeError):
+                report_kwargs[key] = None
+
+        # Override stn_id to always be uppercased
+        report_kwargs["stn_id"] = stn_id
+
+        # Safe defaults for fields that firmware may not always send
+        report_kwargs.setdefault("spiffs_total_kb", 4640)
+        report_kwargs.setdefault("calib", "NA")
+
+        report = HealthReport(**report_kwargs)
         db.add(report)
 
-        # Handle Auto-Lock for repeated OTA failures
+        # ── Step 3: Handle OTA Auto-Lock ──────────────────────────────────────
         if ota_fails >= 3:
             setting = db.query(StationSettings).filter_by(stn_id=stn_id).first()
             if not setting:
                 setting = StationSettings(stn_id=stn_id, ota_exempt=1)
                 db.add(setting)
-                print(f"[OTA LOCK] New setting created for {stn_id} (Persistent Failures)")
+                print(f"[OTA LOCK] New setting created for {stn_id}")
             elif setting.ota_exempt == 0:
                 setting.ota_exempt = 1
-                print(f"[OTA LOCK] Station {stn_id} locked due to {ota_fails} failures: {ota_reason}")
+                print(f"[OTA LOCK] {stn_id} locked after {ota_fails} failures")
 
-        # Manual commands take priority over OTA
+        # ── Step 4: Command / OTA check ───────────────────────────────────────
         cmd, cmd_param = "", ""
         pending = db.query(CommandQueue).filter_by(stn_id=stn_id, executed_at=None).first()
         if pending:
@@ -87,12 +161,12 @@ async def health(request: Request, db: Session = Depends(get_db)):
             pending.executed_at = datetime.datetime.now()
             print(f"[CMD] {stn_id} → {cmd} ({cmd_param})")
         else:
-            # First, check if station is exempt from OTA
-            setting = db.query(StationSettings).filter_by(stn_id=stn_id).first()
+            # ── Auto-Command Priority Chain ──────────────────────────────────
+            # Priority: Manual CMD > OTA_CHECK > CLEAR_FTP_QUEUE > GET_GPS
+            setting  = db.query(StationSettings).filter_by(stn_id=stn_id).first()
             is_exempt = setting and setting.ota_exempt == 1
 
             if not is_exempt:
-                # OTA version mismatch check — must match both unit_type AND system_mode
                 fw = db.query(FirmwareRegistry).filter_by(
                     unit_type=unit_type, system_mode=sys_mode
                 ).first()
@@ -101,38 +175,45 @@ async def health(request: Request, db: Session = Depends(get_db)):
                     cmd_param = fw.filename
                     print(f"[OTA] {stn_id}: {ver} → {fw.current_ver}")
             else:
-                print(f"[OTA] {stn_id} is EXEMPT/LOCKED from further OTA updates.")
+                print(f"[OTA] {stn_id} is EXEMPT from OTA.")
+
+            # CLEAR_FTP_QUEUE: if backlog > 50 records, server triggers a clear
+            if not cmd:
+                unsent = int(data.get("unsent_count", 0) or 0)
+                if unsent > 50:
+                    cmd = "CLEAR_FTP_QUEUE"
+                    print(f"[CMD] {stn_id}: FTP backlog={unsent} > 50 → CLEAR_FTP_QUEUE")
+
+            # GET_GPS: if GPS is missing and no higher-priority cmd is pending
+            if not cmd:
+                gps_val = str(data.get("gps", "") or "").strip()
+                if gps_val in ("NA", "0.000000,0.000000", "", "0,0"):
+                    cmd = "GET_GPS"
+                    print(f"[CMD] {stn_id}: GPS missing ({gps_val!r}) → GET_GPS")
+
 
         db.commit()
-        import json
+
         resp_data = {
-            "status": "ok", 
+            "status": "ok",
             "stored": True,
             "tm": datetime.datetime.now().strftime("%y%m%d%H%M%S"),
-            "cmd": cmd, 
+            "cmd": cmd,
             "p": cmd_param
         }
         content = json.dumps(resp_data)
         return Response(
-            content=content, 
+            content=content,
             media_type="application/json",
             headers={"Content-Length": str(len(content))}
         )
 
     except Exception as e:
         import traceback
-        import json
-        error_msg = str(e)
-        print(f"[Health Error] {error_msg}")
         traceback.print_exc()
-        resp_data = {
-            "status": "err", 
-            "msg": error_msg[:50],
-            "stored": False
-        }
-        content = json.dumps(resp_data)
+        content = json.dumps({"status": "err", "msg": str(e)[:80], "stored": False})
         return Response(
-            content=content, 
+            content=content,
             media_type="application/json",
             headers={"Content-Length": str(len(content))}
         )

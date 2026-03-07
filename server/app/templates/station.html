@@ -27,6 +27,12 @@
                 class="dropdown-content hidden absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-slate-900 border border-slate-700 z-50 py-1">
                 <a href="/cmd/{{ stn_id }}/REBOOT" class="block px-4 py-2 text-xs text-red-400 hover:bg-slate-800"
                     onclick="return confirm('Queue REBOOT for {{ stn_id }}?')">↺ Queue REBOOT</a>
+                <a href="/cmd/{{ stn_id }}/CLEAR_FTP_QUEUE"
+                    class="block px-4 py-2 text-xs text-red-500 hover:bg-slate-800"
+                    onclick="return confirm('Clear FTP unsent queue on device {{ stn_id }}?')">🗑 Queue CLEAR FTP
+                    QUEUE</a>
+                <a href="/cmd/{{ stn_id }}/GET_GPS" class="block px-4 py-2 text-xs text-blue-400 hover:bg-slate-800"
+                    onclick="return confirm('Force {{ stn_id }} to acquire a new GPS fix?')">📍 Queue GET GPS</a>
                 <a href="/cmd/{{ stn_id }}/FTP_BACKLOG"
                     class="block px-4 py-2 text-xs text-green-400 hover:bg-slate-800">↑ Queue FTP BACKLOG</a>
                 <button onclick="promptFtpDaily('{{ stn_id }}')"
@@ -176,10 +182,17 @@
                         {{ r.reported_at.strftime('%m-%d %H:%M:%S') if r.reported_at else '?' }}
                     </td>
                     <td class="p-3">
-                        {% if r.health_sts == 'OK' %}
-                        <span class="badge-ok">OK</span>
+                        {% if r.eval.verdict == 'OK' %}
+                        <span class="badge-ok" title="Score: {{ r.eval.score }}">OK</span>
                         {% else %}
-                        <span class="badge-fail" title="{{ r.health_sts }}">{{ (r.health_sts or 'FAIL')[:12] }}</span>
+                        <div class="flex flex-wrap gap-1">
+                            {% for reason in r.eval.reasons %}
+                            <span class="badge-fail py-0.5 px-1 whitespace-normal text-[9px] leading-tight"
+                                title="Score: {{ r.eval.score }}">
+                                ✗ {{ reason }}
+                            </span>
+                            {% endfor %}
+                        </div>
                         {% endif %}
                     </td>
                     <td class="p-3 text-slate-400">{{ r.sensor_sts or '?' }}</td>

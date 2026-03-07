@@ -92,8 +92,7 @@ void IRAM_ATTR lcdTimer() {
 
 void lcdkeypad(void *pvParameters) {
   esp_task_wdt_add(NULL);
-  static int calib_mode = 0;  // 0=Field, 1=Test
-  static char calib_text[40]; // Result buffer
+  static int calib_mode = 0; // 0=Field, 1=Test
   static int last_lcd_state =
       0; // v5.57: Moved to top to avoid declaration order issues
 
@@ -121,7 +120,7 @@ void lcdkeypad(void *pvParameters) {
       lcdkeypad_start = 0;
     }
   }
-  vTaskDelay(100);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
 
   debug("[UI] Data Size: ");
   debugln(sizeof(ui_data));
@@ -162,7 +161,8 @@ void lcdkeypad(void *pvParameters) {
       }
     }
     file8.close();
-    strcpy(ui_data[FLD_RF_CALIB].bottomRow, content.c_str());
+    strncpy(ui_data[FLD_RF_CALIB].bottomRow, content.c_str(), 16);
+    ui_data[FLD_RF_CALIB].bottomRow[16] = '\0';
     snprintf(calib_text, sizeof(calib_text), "%s", content.c_str());
 
   } else {
@@ -227,8 +227,9 @@ void lcdkeypad(void *pvParameters) {
       // If LCD is not started OR the timer hasn't been initialized yet
       if (lcdkeypad_start == 0 || lcd_timer == NULL) {
         debugln("[UI] Activating LCD Power (GPIO 32)...");
-        digitalWrite(32, HIGH); // Turn ON power to LCD (5V)
-        vTaskDelay(1000); // Wait for power stabilization (Increased to 1s)
+        digitalWrite(32, HIGH);                // Turn ON power to LCD (5V)
+        vTaskDelay(1000 / portTICK_PERIOD_MS); // Wait for power stabilization
+                                               // (Increased to 1s)
 
         if (lcd_timer == NULL) {
           debugln("[UI] Initializing LCD Timer...");
@@ -253,7 +254,7 @@ void lcdkeypad(void *pvParameters) {
         }
 
         lcdkeypad_start = 1;
-        vTaskDelay(200);
+        vTaskDelay(200 / portTICK_PERIOD_MS);
 
         debugln("[UI] Requesting I2C Mutex for LCD Init...");
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
@@ -523,7 +524,7 @@ void lcdkeypad(void *pvParameters) {
             lcd.setCursor(0, 1);
             lcd.print(calib_text);
             xSemaphoreGive(i2cMutex);
-            vTaskDelay(3000); // Wait for user to see
+            vTaskDelay(3000 / portTICK_PERIOD_MS); // Wait for user to see
 
             // Cleanup: Revert to standard timeout after showing result
             // User said: "Once the test completes after 5 mins or manually
@@ -533,7 +534,8 @@ void lcdkeypad(void *pvParameters) {
             timerRestart(lcd_timer);
 
             // Cleanup
-            strcpy(ui_data[FLD_RF_CALIB].bottomRow, calib_text);
+            strncpy(ui_data[FLD_RF_CALIB].bottomRow, calib_text, 16);
+            ui_data[FLD_RF_CALIB].bottomRow[16] = '\0';
             calib_flag = 0;
             show_now = 1;
 
@@ -922,7 +924,7 @@ void lcdkeypad(void *pvParameters) {
               strcpy(ui_data[FLD_WIFI_ENABLE].bottomRow, "ENABLE WIFI     ");
             }
 
-            vTaskDelay(100);
+            vTaskDelay(100 / portTICK_PERIOD_MS);
           } else if (cur_fld_no == FLD_SEND_STATUS) {
             if ((sync_mode == eSyncModeInitial) || (sync_mode == eSMSStop) ||
                 (sync_mode == eHttpStop) || (sync_mode == eExceptionHandled)) {
@@ -936,7 +938,7 @@ void lcdkeypad(void *pvParameters) {
               debugln("Button: SEND STATUS ignored - HTTP in progress");
               strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "BUSY-TRY LATER");
               show_now = 1;
-              vTaskDelay(2000);
+              vTaskDelay(2000 / portTICK_PERIOD_MS);
               strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "YES ?           ");
               show_now = 1;
             }
@@ -951,7 +953,7 @@ void lcdkeypad(void *pvParameters) {
               debugln("Button: SEND GPS ignored - HTTP in progress");
               strcpy(ui_data[FLD_SEND_GPS].bottomRow, "BUSY-TRY LATER");
               show_now = 1;
-              vTaskDelay(2000);
+              vTaskDelay(2000 / portTICK_PERIOD_MS);
               strcpy(ui_data[FLD_SEND_GPS].bottomRow, "YES ?           ");
               show_now = 1;
             }
@@ -976,10 +978,10 @@ void lcdkeypad(void *pvParameters) {
               timerRestart(lcd_timer);
 
               lcd.clear();
-              vTaskDelay(300);
+              vTaskDelay(300 / portTICK_PERIOD_MS);
             } else if (calib_flag == 1) {
               calib_flag = 2; // Stop
-              vTaskDelay(300);
+              vTaskDelay(300 / portTICK_PERIOD_MS);
             }
           } else if (cur_fld_no == FLD_SD_COPY) {
             copyFilesFromSPIFFSToSD("/");
@@ -1122,7 +1124,7 @@ void lcdkeypad(void *pvParameters) {
                       xSemaphoreGive(i2cMutex);
                     }
                     debugln("Resolution updated. Restarting...");
-                    vTaskDelay(3000);
+                    vTaskDelay(3000 / portTICK_PERIOD_MS);
                     ESP.restart();
                   } else {
                     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
@@ -1132,7 +1134,7 @@ void lcdkeypad(void *pvParameters) {
                       lcd.print("VAL: 0.25 / 0.50");
                       xSemaphoreGive(i2cMutex);
                     }
-                    vTaskDelay(2000);
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
                   }
                   rf_res_edit_state = 0;
                   strcpy(ui_data[FLD_RF_RES].topRow, "RF RESOLUTION");
@@ -1168,7 +1170,7 @@ void lcdkeypad(void *pvParameters) {
                       lcd.print("RESTARTING...");
                       xSemaphoreGive(i2cMutex);
                     }
-                    vTaskDelay(3000);
+                    vTaskDelay(3000 / portTICK_PERIOD_MS);
                     ESP.restart();
                   } else {
                     strcpy(ui_data[FLD_ALTITUDE].topRow, "Station Alt (m)");
@@ -1179,7 +1181,7 @@ void lcdkeypad(void *pvParameters) {
                       lcd.print("0 to 5000m only");
                       xSemaphoreGive(i2cMutex);
                     }
-                    vTaskDelay(2000);
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
                   }
                 } else if (cur_fld_no == FLD_STATION) {
                   // Store old station name before changing
@@ -1265,7 +1267,7 @@ void lcdkeypad(void *pvParameters) {
                       }
                       xSemaphoreGive(i2cMutex);
                     }
-                    vTaskDelay(2000);
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
 
                     // NEW: Cleanup for new station
                     debugln("[UI] Station Changed: Deleting Calib & Unsent "
@@ -1428,7 +1430,7 @@ void lcdkeypad(void *pvParameters) {
                       lcd.clear();
                       lcd.print("CLEAN! REBOOTING");
                       debugln("[UI] Factory Reset Complete. Restarting...");
-                      vTaskDelay(2000);
+                      vTaskDelay(2000 / portTICK_PERIOD_MS);
                       ESP.restart();
                       xSemaphoreGive(i2cMutex);
                     }
@@ -1588,7 +1590,7 @@ void lcdkeypad(void *pvParameters) {
                       }
                     }
                     xSemaphoreGive(i2cMutex);
-                    vTaskDelay(5000); // Allow user to read
+                    vTaskDelay(5000 / portTICK_PERIOD_MS); // Allow user to read
                   }
                 }
               }
@@ -1697,18 +1699,21 @@ void lcdkeypad(void *pvParameters) {
     if (lcdkeypad_start) {
       // Check if there was recent key activity (within last 2 seconds)
       if (millis() - last_key_time < 2000) {
-        vTaskDelay(5); // Fast polling when user is actively pressing keys
+        vTaskDelay(5 / portTICK_PERIOD_MS); // Fast polling when user is
+                                            // actively pressing keys
         recent_activity = true;
       } else {
-        vTaskDelay(20); // Slower polling when idle - saves power
+        vTaskDelay(
+            20 / portTICK_PERIOD_MS); // Slower polling when idle - saves power
         if (recent_activity) {
           recent_activity = false;
           // debugln("[UI] Switching to power-save polling");
         }
       }
     } else {
-      vTaskDelay(50); // Faster polling (50ms) to ensure EXT0 manual wakeups are
-                      // cleanly caught
+      vTaskDelay(50 /
+                 portTICK_PERIOD_MS); // Faster polling (50ms) to ensure EXT0
+                                      // manual wakeups are cleanly caught
     }
 
   } // End of forever loop

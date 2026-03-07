@@ -96,7 +96,7 @@ String get_ccid() {
 
   // Attempt 1: Try AT+CICCID (Primary for A7672)
   flushSerialSIT();
-  vTaskDelay(200);
+  vTaskDelay(200 / portTICK_PERIOD_MS);
   SerialSIT.println("AT+CICCID");
   String resp = waitForResponse("OK", 3000);
   debug("Raw CICCID Resp: ");
@@ -123,7 +123,7 @@ String get_ccid() {
   if (ccid.length() < 10) {
     ccid = ""; // Reset
     flushSerialSIT();
-    vTaskDelay(300); // Extra settle time on stressed modem
+    vTaskDelay(300 / portTICK_PERIOD_MS); // Extra settle time on stressed modem
     SerialSIT.println("AT+CCID");
     // v5.53 fix: modem may respond with +ICCID: (not +CCID:) when stressed.
     // Wait for "OK" to capture the full response regardless of URC prefix.
@@ -208,7 +208,7 @@ bool try_activate_apn(const char *apn) {
   debugln("CGACT Resp: " + response); // v7.11: Log full response
 
   if (response.indexOf("OK") != -1 && response.indexOf("ERROR") == -1) {
-    vTaskDelay(2000); // Settling delay
+    vTaskDelay(2000 / portTICK_PERIOD_MS); // Settling delay
 
     // 4. STRICT VERIFICATION: Assigned IP must be valid (not 0.0.0.0)
     SerialSIT.println("AT+CGPADDR=1");
@@ -387,4 +387,68 @@ bearer_recovery: // Label used for ghost-session fallthrough
   }
 
   return false;
+}
+// v7.59: Query modem for internal health and network state
+void updateDeepHealth() {
+  flushSerialSIT();
+
+  // 1. Get Signal Quality (RSSI) and update Min/Max
+  SerialSIT.println("AT+CSQ");
+  String csq_resp = waitForResponse("+CSQ:", 2000);
+  if (csq_resp.indexOf("+CSQ:") != -1) {
+    int comma = csq_resp.indexOf(',');
+    if (comma != -1) {
+      int rssi_raw =
+          csq_resp.substring(csq_resp.indexOf(':') + 1, comma).toInt();
+      if (rssi_raw != 99) {
+        diag_last_rssi = -113 + (rssi_raw * 2);
+        if (diag_last_rssi < diag_min_rssi)
+          diag_min_rssi = diag_last_rssi;
+        if (diag_last_rssi > diag_max_rssi)
+          diag_max_rssi = diag_last_rssi;
+      }
+    }
+  }
+
+  // 2. Get Modem Temperature (A7672S specific)
+  // The correct command for Simcom A7672S to read internal temp is AT+CPMUTEMP
+  SerialSIT.println("AT+CPMUTEMP");
+  String temp_resp = waitForResponse("+CPMUTEMP:", 2000);
+  if (temp_resp.indexOf("+CPMUTEMP:") != -1) {
+    String t_val = temp_resp.substring(temp_resp.indexOf(':') + 1);
+    t_val.trim();
+    // A7672S +CPMUTEMP typically returns the integer temperature directly in
+    // Celsius
+    diag_modem_temp = t_val.toInt();
+  }
+
+  // 3. Get Network Type (RAT)
+  SerialSIT.println("AT+CNSMOD?");
+  String mode_resp = waitForResponse("+CNSMOD:", 2000);
+  if (mode_resp.indexOf("+CNSMOD:") != -1) {
+    int comma = mode_resp.indexOf(',');
+    if (comma != -1) {
+      int mode = mode_resp.substring(comma + 1).toInt();
+      switch (mode) {
+      case 0:
+        strcpy(diag_network_type, "NONE");
+        break;
+      case 1:
+        strcpy(diag_network_type, "GSM");
+        break;
+      case 2:
+        strcpy(diag_network_type, "GPRS");
+        break;
+      case 3:
+        strcpy(diag_network_type, "EGPRS");
+        break;
+      case 8:
+        strcpy(diag_network_type, "LTE");
+        break;
+      default:
+        strcpy(diag_network_type, "OTHER");
+        break;
+      }
+    }
+  }
 }

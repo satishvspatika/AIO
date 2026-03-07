@@ -32,13 +32,6 @@ void scheduler(void *pvParameters) {
   snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
   snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
 
-  char stnId[16];
-  if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
-    snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
-  } else {
-    strcpy(stnId, ftp_station);
-  }
-
   char fileName[50];
   snprintf(fileName, sizeof(fileName), "/TWS_099997_250821_001900.kwd");
 
@@ -56,7 +49,7 @@ void scheduler(void *pvParameters) {
   // }
   file.close();
 
-  vTaskDelay(50);
+  vTaskDelay(50 / portTICK_PERIOD_MS);
 
 #if SYSTEM == 0
   if (SPIFFS.exists(unsent_file)) {
@@ -121,7 +114,7 @@ void scheduler(void *pvParameters) {
     debugln();
   }
 
-  vTaskDelay(50);
+  vTaskDelay(50 / portTICK_PERIOD_MS);
   snprintf(temp_file, sizeof(temp_file), "/closingdata_%s.txt", station_name);
 
   if (SPIFFS.exists(temp_file)) {
@@ -141,7 +134,7 @@ void scheduler(void *pvParameters) {
 
   //    while (!rtcReady) {
   //      esp_task_wdt_reset();
-  //      vTaskDelay(100);
+  //      vTaskDelay(100 / portTICK_PERIOD_MS);
   //    }
   // RTC RAM variables now at globals.h
 
@@ -159,6 +152,13 @@ void scheduler(void *pvParameters) {
   for (;;) {
     esp_task_wdt_reset();
 
+    char stnId[16];
+    if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
+      snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
+    } else {
+      strcpy(stnId, ftp_station);
+    }
+
     // v5.52: Absolute Silence Protocol — Pause task during OTA to prevent
     // crosstalk
     while (ota_silent_mode) {
@@ -168,12 +168,15 @@ void scheduler(void *pvParameters) {
 
     if (!rtcReady) {
       esp_task_wdt_reset();
-      vTaskDelay(100);
+      vTaskDelay(100 / portTICK_PERIOD_MS);
       continue;
     }
 
     // v5.49 Reconstruction: Recover sent mask from SPIFFS on cold boot
-    reconstructSentMasks();
+    if (!fresh_boot_check_done) {
+      reconstructSentMasks();
+      fresh_boot_check_done = true;
+    }
 
     //             Serial.printf("Task Sch : %d\n",
     //             uxTaskGetStackHighWaterMark(NULL));
@@ -609,10 +612,64 @@ void scheduler(void *pvParameters) {
               rf_cls_dd);
       debugln();
 
+      // Robust Rollover Detection (v5.48): Use Date mismatch to trigger rest
+      if (current_day != diag_last_rollover_day) {
+        debugln("[SCHED] 🗓 Day Change Detected. Performing Rollover...");
+        diag_last_rollover_day = current_day;
+
+        // Capture Snapshots for TODAY's report (which represents yesterday's
+        // totals)
+        diag_pd_count_prev = diag_pd_count;
+        diag_ndm_count_prev = diag_ndm_count;
+        diag_first_http_count_prev = diag_first_http_count;
+        diag_net_data_count_prev = diag_net_data_count;
+
+        // Capture mask
+        diag_sent_mask_prev[0] = diag_sent_mask_cur[0];
+        diag_sent_mask_prev[1] = diag_sent_mask_cur[1];
+        diag_sent_mask_prev[2] = diag_sent_mask_cur[2];
+
+        diag_http_success_count_prev = diag_http_success_count;
+        diag_http_retry_count_prev = diag_http_retry_count;
+        diag_ftp_success_count_prev = diag_ftp_success_count;
+
+        // Now perform Resets for the New Day
+        diag_reg_time_total = 0;
+        diag_reg_count = 0;
+        diag_reg_worst = 0;
+        diag_gprs_fails = 0;
+        diag_pd_count = 0;
+        diag_ndm_count = 0;
+        diag_first_http_count = 0;
+        diag_net_data_count = 0;
+        diag_http_time_total = 0;
+        diag_http_success_count = 0;
+        diag_http_retry_count = 0;
+        diag_ftp_success_count = 0;
+        diag_daily_http_fails = 0;
+
+        // v7.59: Reset daily deep hardware diagnostics
+        diag_i2c_errors = 0;
+        diag_min_rssi = 0;
+        diag_max_rssi = -140;
+        // v7.67: CDM starts as PENDING each new day — only set to OK after
+        // health report is successfully delivered to the server.
+        strcpy(diag_cdm_status, "PENDING");
+        strcpy(diag_reg_fail_type, "NONE");
+        strcpy(diag_http_fail_reason, "NONE");
+        diag_rain_reset = false;
+
+        diag_sent_mask_cur[0] = 0;
+        diag_sent_mask_cur[1] = 0;
+        diag_sent_mask_cur[2] = 0;
+
+        debugln("[SCHED] Rollover Complete.");
+      }
+
       // Construct rf_close_date file in spiffs from RTC's rf_close_date
       snprintf(cur_file, sizeof(cur_file), "/%s_%04d%02d%02d.txt", station_name,
                rf_cls_yy, rf_cls_mm, rf_cls_dd);
-      vTaskDelay(200);
+      vTaskDelay(200 / portTICK_PERIOD_MS);
       //                        debugln();debug("SPIFFS file is ");
       //                        debugln(cur_file);
 
@@ -636,8 +693,8 @@ void scheduler(void *pvParameters) {
         file1 = SPIFFS.open(cur_file, FILE_READ);
         if (!file1) {
           debugln("Failed to open SPIFFS file for reading");
-          vTaskDelay(1000); // Wait on error
-          continue;         // Skip this iteration if file cannot be opened
+          vTaskDelay(1000 / portTICK_PERIOD_MS); // Wait on error
+          continue; // Skip this iteration if file cannot be opened
         }
         s = file1.size();
         s = (s > record_length) ? s - record_length : 0;
@@ -652,13 +709,13 @@ void scheduler(void *pvParameters) {
 
         if (len == 0) {
           debugln("Error: Read empty content from file!");
-          vTaskDelay(1000); // Wait on error
-          continue;         // Skip parsing if content is empty
+          vTaskDelay(1000 / portTICK_PERIOD_MS); // Wait on error
+          continue; // Skip parsing if content is empty
         }
         debug("The last line of the file is :");
         debugln(content_buf);
 
-        vTaskDelay(500);
+        vTaskDelay(500 / portTICK_PERIOD_MS);
 
         /*
          *
@@ -703,14 +760,8 @@ void scheduler(void *pvParameters) {
         debug("Last recorded cumRF: ");
         debugln(last_cumRF);
 
-        // v7.20: Enhanced Guard - Ignore reset if rollover from yesterday
-        // (95->0) or start of day (0)
-        if (last_sampleNo > 0 && last_sampleNo < 95 && last_cumRF == 0) {
-#if DEBUG == 1
-          debugln("[Rain] Integrity Issue: last_cumRF is 0 but sampleNo > 0.");
-#endif
-          diag_rain_reset = true;
-        }
+        // (Removed faulty check that forced diag_rain_reset if last_cumRF was
+        // legitimately zero on a dry day)
 
         new_current_cumRF = last_cumRF + rf_value;
 
@@ -860,13 +911,8 @@ void scheduler(void *pvParameters) {
         debug(" H=");
         debugln(last_instHum);
 
-        if (last_sampleNo > 0 && last_sampleNo < 95 && last_cumRF == 0) {
-#if DEBUG == 1
-          debugln("[Rain-TWS] Integrity Issue: last_cumRF is 0 but "
-                  "sampleNo > 0.");
-#endif
-          diag_rain_reset = true;
-        }
+        // (Removed faulty check that forced diag_rain_reset if last_cumRF was
+        // legitimately zero)
 
         new_current_cumRF = last_cumRF + rf_value;
 
@@ -942,8 +988,9 @@ void scheduler(void *pvParameters) {
           // Fill the gaps starting from last_recorded sampleNo+1 to current
           // sampleNo including current sampleNo
           debugln("Gap filling for loop started... ");
-          diag_pd_count++; // Increment gap detection counter
           for (int q = last_sampleNo + 1; q <= sampleNo; q++) {
+            // diag_pd_count and diag_ndm_count incremented after file write
+            // (line ~1294)
             temp_min += MINUTES_PER_SAMPLE;
             if (temp_min == 60) {
               temp_hr += 1;
@@ -1246,6 +1293,10 @@ void scheduler(void *pvParameters) {
             if (sd_card_ok && sd2) {
               sd2.print(append_text);
             }
+            if (diag_pd_count < 96)
+              diag_pd_count++;
+            if (q >= 49 && q <= 85)
+              diag_ndm_count++; // 9 PM to 6 AM
 #if FILLGAP == 1
             if (q < sampleNo) { // Only append GAPS (not current) to unsent
               debug("APPENDED TEXT to unsent.txt is : ");
@@ -1325,6 +1376,12 @@ void scheduler(void *pvParameters) {
             file2.print(append_text);
           if (sd_card_ok && sd2)
             sd2.print(append_text);
+
+          if (diag_pd_count < 96)
+            diag_pd_count++;
+          if (sampleNo >= 49 && sampleNo <= 85)
+            diag_ndm_count++; // 9 PM to 6 AM
+
           debugln();
           debug("Current data inserted is ");
           debugln(append_text);
@@ -1439,6 +1496,9 @@ void scheduler(void *pvParameters) {
           if (sd_card_ok && sd1) {
             sd1.print(append_text);
           }
+
+          if (diag_pd_count < 96)
+            diag_pd_count++;
           debugln();
           debug("8:45AM data being written to new SPIFF file is ");
           debugln(append_text);
@@ -1486,9 +1546,11 @@ void scheduler(void *pvParameters) {
           int temp_hr = 8;
           int temp_min = 30;
 
-          for (int i = 0; i < sampleNo;
-               i++) { // Fill up with 0 till the current sample if the device
-                      // started during mid-day but dont send it as unsent data
+          for (int i = 0; i < sampleNo; i++) {
+            if (diag_pd_count < 96)
+              diag_pd_count++; // Increment for initial zero-padding records
+            if (i >= 49 && i <= 85)
+              diag_ndm_count++; // 9 PM to 6 AM
             temp_min += MINUTES_PER_SAMPLE;
             if (temp_min == 60) {
               temp_hr += 1;
@@ -1570,6 +1632,10 @@ void scheduler(void *pvParameters) {
               sd1.print(append_text);
             }
             debug(append_text);
+            if (diag_pd_count < 96)
+              diag_pd_count++;
+            if (i >= 49 && i <= 85)
+              diag_ndm_count++; // 9 PM to 6 AM
           }
 
 // Write the current record
@@ -1629,527 +1695,515 @@ void scheduler(void *pvParameters) {
           } else {
             file1.print(append_text);
           }
-          if (sd_card_ok && sd1) {
-            sd1.print(append_text);
-          }
-          // debugln(); // Removed extra debugln()
-          debugln(append_text);
           if (diag_pd_count < 96)
-            diag_pd_count++; // v7.20: Increment "Stored Today" for every
-                             // successful record
+            diag_pd_count++;
+          if (sampleNo >= 49 && sampleNo <= 85)
+            diag_ndm_count++; // 9 PM to 6 AM
 
-          // Robust Rollover Detection (v5.81): Handles missed 8:45 AM slots
-          bool is_rollover_slot = (sampleNo == 0);
-          bool missed_rollover =
-              (sampleNo > 0 && sampleNo < 10 && last_processed_sample_idx > 80);
+          debugln(append_text);
 
-          if (is_rollover_slot || missed_rollover) {
-            // v5.49 Capture Snapshots for 09:45 AM report BEFORE resetting
-            diag_pd_count_prev = diag_pd_count;
-            diag_ndm_count_prev = diag_ndm_count;
-            diag_first_http_count_prev = diag_first_http_count;
+          // Removed misplaced global resets. Rollover is handled at the top of
+          // the loop.
 
-            // Capture mask
-            diag_sent_mask_prev[0] = diag_sent_mask_cur[0];
-            diag_sent_mask_prev[1] = diag_sent_mask_cur[1];
-            diag_sent_mask_prev[2] = diag_sent_mask_cur[2];
+          file1.close();
+          if (sd_card_ok && sd1)
+            sd1.close();
 
-            diag_http_success_count_prev = diag_http_success_count;
-            diag_http_retry_count_prev = diag_http_retry_count;
-            diag_ftp_success_count_prev = diag_ftp_success_count;
+            // Removed premature closing brace (SPIFFS not present)
 
-            // Now perform Resets for the New Day
-            diag_reg_time_total = 0;
-            diag_reg_count = 0;
-            diag_reg_worst = 0;
-            diag_gprs_fails = 0;
-            diag_pd_count = 0;
-            diag_ndm_count = 0;
-            diag_first_http_count = 0;
-            diag_net_data_count = 0;
-            diag_http_time_total = 0;
-            diag_http_success_count = 0;
-            diag_http_retry_count = 0;
-            diag_ftp_success_count = 0;
-            diag_daily_http_fails = 0;
-            strcpy(diag_cdm_status, "OK");
-            strcpy(diag_reg_fail_type, "NONE");
-            strcpy(diag_http_fail_reason, "NONE");
+            // file1 and sd1 closed above to keep in scope
 
-            diag_rain_reset = false;
+            // 2024 iter4 : Reset counts after writing to SD card/ SPIFFs
 
-            diag_sent_mask_cur[0] = 0;
-            diag_sent_mask_cur[1] = 0;
-            diag_sent_mask_cur[2] = 0;
-
-            debugln("[Diag] v5.49 Captured snapshot & reset for new day.");
-          }
-        }
-
-        file1.close();
-        if (sd_card_ok && sd1) {
-          sd1.close();
-        }
-
-        // 2024 iter4 : Reset counts after writing to SD card/ SPIFFs
-
-        //
-        // FILL THE GAP FOR PREVIOUS RF close date
-        // REVISIT : TO INCLUDE LAST N DAYS OF rf_close_date file ??
-        //
+            //
+            // FILL THE GAP FOR PREVIOUS RF close date
+            // REVISIT : TO INCLUDE LAST N DAYS OF rf_close_date file ??
+            //
 
 #if FILLGAP == 1
-        previous_rfclose_day = rf_cls_dd;
-        previous_rfclose_month = rf_cls_mm;
-        previous_rfclose_year = rf_cls_yy;
+          previous_rfclose_day = rf_cls_dd;
+          previous_rfclose_month = rf_cls_mm;
+          previous_rfclose_year = rf_cls_yy;
 
-        for (int j = 0; j < 7;
-             j++) { // span through last 7 days to see if there are
+          for (int j = 0; j < 3;
+               j++) { // span through last 3 days to see if there are missing
+                      // gaps (reduced from 7 to prevent ghost loop)
 
-          previous_date(
-              &previous_rfclose_day, &previous_rfclose_month,
-              &previous_rfclose_year); // to ge the previous rf_close_date file
-          snprintf(temp_file, sizeof(temp_file), "/%s_%04d%02d%02d.txt",
-                   station_name, previous_rfclose_year, previous_rfclose_month,
-                   previous_rfclose_day);
-#if SYSTEM == 0
-          snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-#endif
-
-#if (SYSTEM == 1 || SYSTEM == 2)
-          snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-#endif
-
-          debugln();
-          // debug("SEARCHING FOR ...  ");
-          // debugln(temp_file);
-
-          if (SPIFFS.exists(temp_file)) {
-            //                                                        String
-            //                                                        content;
-            debugln();
-            debug("Found ... Servicing ");
-            debugln(temp_file);
-            // File file2 = SPIFFS.open(temp_file,FILE_READ);
-            File file2 = SPIFFS.open(temp_file, FILE_READ);
-            if (!file2) {
-              debugln("Failed to open previous day file");
-              continue;
-            } // #TRUEFIX
-            s = file2.size();
-            debugln(s);
-            s = (s > record_length) ? s - record_length : 0;
-            file2.seek(s);
-            // content = file2.readString(); // Read the rest of the file
-            int len = file2.readBytes(content_buf, sizeof(content_buf) - 1);
-            content_buf[len] = 0;
-            file2.close();
-
-            debugln("The last line of the file is : ");
-            debugln(content_buf);
-            vTaskDelay(500);
-
-            // RF
-            // 00,2024-05-21,08:45,0000.0,0000.0,-111,00.0 : rf : 43+2 = 45
-
-#if SYSTEM == 0
-            // Robust parsing using commas
-            last_sampleNo = atoi(content_buf);
-            debug("Gap Search: Sample No: ");
-            debugln(last_sampleNo);
-
-            char *p = content_buf;
-            // Fields: sampleNo(0), date(1), time(2), inst_rf(3), cum_rf(4)
-            for (int i = 0; i < 4 && p; i++)
-              p = strchr(p + 1, ','); // Skip to 4th comma
-            if (p)
-              last_cumRF = atof(p + 1);
-
-            debug("Gap Search: Last cumRF found: ");
-            debugln(last_cumRF);
-            snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(last_cumRF));
-            snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(last_cumRF));
-#endif
-
-            // TWS
-            // 00,2024-05-21,08:45,000.0,000.0,00.00,000,-111,00.0 : tws : 51+2
-            // = 53 temp,hum,avg_ws,wd
-
-#if SYSTEM == 1
-            // Robust parsing using commas
-            last_sampleNo = atoi(content_buf);
-            debug("Last sample No stored : ");
-            debugln(last_sampleNo);
-
-            char *p = content_buf;
-            // Fields: sampleNo(0), Date(1), Time(2), Temp(3), Hum(4), WS(5),
-            // WD(6)
-            for (int i = 0; i < 3 && p; i++)
-              p = strchr(p + 1, ','); // Skip to Temp (comma 3)
-            if (p)
-              last_instTemp = atof(p + 1);
-
-            if (p)
-              p = strchr(p + 1, ','); // Hum (comma 4)
-            if (p)
-              last_instHum = atof(p + 1);
-
-            if (p)
-              p = strchr(p + 1, ','); // WS (comma 5)
-            if (p)
-              last_AvgWS = atof(p + 1);
-
-            if (p)
-              p = strchr(p + 1, ','); // WD (comma 6)
-            if (p)
-              last_instWD = atof(p + 1);
-
-            debug("Gap Search: Last WS found: ");
-            debugln(last_AvgWS);
-#endif
-
-            // TWS-RF
-            // 00,2024-05-21,08:45,0000.0,000.0,000.0,00.00,000,-111,00.0 : tws
-            // : 58+2 = 60 rf,temp,hum,avg_ws,wd
-
-#if SYSTEM == 2
-            // Robust parsing using commas (append_text uses commas, not
-            // semicolons) Fields: sampleNo(0), Date(1), Time(2), RF(3),
-            // Temp(4), Hum(5), WS(6), WD(7)
-            last_sampleNo = atoi(content_buf);
-            debug("Last sample No stored (TWS-RF): ");
-            debugln(last_sampleNo);
-
-            char *p = content_buf;
-            for (int i = 0; i < 3 && p; i++)
-              p = strchr(p + 1, ','); // Skip to RF (comma 3)
-            if (p)
-              last_cumRF = atof(p + 1);
-
-            if (p)
-              p = strchr(p + 1, ','); // Temp (comma 4)
-            if (p)
-              last_instTemp = atof(p + 1);
-
-            if (p)
-              p = strchr(p + 1, ','); // Hum (comma 5)
-            if (p)
-              last_instHum = atof(p + 1);
-
-            if (p)
-              p = strchr(p + 1, ','); // WS (comma 6)
-            if (p)
-              last_AvgWS = atof(p + 1);
-
-            if (p)
-              p = strchr(p + 1, ','); // WD (comma 7)
-            if (p)
-              last_instWD = atof(p + 1);
-            debug("Lastrecorded (TWS-RF) CRF: ");
-            debugln(last_cumRF);
-            snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(last_cumRF));
-            snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(last_cumRF));
-#endif
-            file2.close();
-
-            // Finding the last recorded hr and min from SPIFFs
-            int temp_hr = START_HOUR;
-            int temp_min = START_MINUTE;
-            for (int i = 0; i < last_sampleNo; i++) {
-              temp_min += 15;
-              if (temp_min == 60) {
-                temp_hr += 1;
-                if (temp_hr == 24) {
-                  temp_hr = 0;
-                }
-                temp_min = 0;
-              }
-            }
-
-            // File file3 = SPIFFS.open(temp_file,FILE_APPEND); // this is
-            // rf_close date IN spiffs File sd3 =
-            // SD.open(temp_file,FILE_APPEND); // sd-card
-            File file3 = SPIFFS.open(
-                temp_file, FILE_APPEND); // this is rf_close date IN spiffs
-            if (!file3) {
-              debugln("Failed to open previous day SPIFFS file for appending");
-            } // #TRUEFIX
-            File sd3;
-            if (sd_card_ok) {
-              sd3 = SD.open(temp_file, FILE_APPEND); // sd-card
-            }
-            if (sd_card_ok && !sd3) {
-              debugln("Failed to open previous day SD file for appending");
-            } // #TRUEFIX
-
-#if FILLGAP == 1
+            previous_date(&previous_rfclose_day, &previous_rfclose_month,
+                          &previous_rfclose_year); // to ge the previous
+                                                   // rf_close_date file
+            snprintf(temp_file, sizeof(temp_file), "/%s_%04d%02d%02d.txt",
+                     station_name, previous_rfclose_year,
+                     previous_rfclose_month, previous_rfclose_day);
 #if SYSTEM == 0
             snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-            File unsent3 = SPIFFS.open(unsent_file, FILE_APPEND);
 #endif
+
 #if (SYSTEM == 1 || SYSTEM == 2)
             snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-            File ftpunsent3 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-#endif
 #endif
 
-            // Fill the gaps starting from last_recorded sampleNo+1 to current
-            // sampleNo including current sampleNo
-            for (int q = last_sampleNo + 1; q <= MAX_SAMPLE_NO; q++) {
-              temp_min += 15;
-              if (temp_min == 60) {
-                temp_hr += 1;
-                if (temp_hr == 24) {
-                  temp_hr = 0;
+            debugln();
+            // debug("SEARCHING FOR ...  ");
+            // debugln(temp_file);
+
+            if (SPIFFS.exists(temp_file)) {
+              //                                                        String
+              //                                                        content;
+              debugln();
+              debug("Found ... Servicing ");
+              debugln(temp_file);
+              // File file2 = SPIFFS.open(temp_file,FILE_READ);
+              File file2 = SPIFFS.open(temp_file, FILE_READ);
+              if (!file2) {
+                debugln("Failed to open previous day file");
+                continue;
+              } // #TRUEFIX
+              s = file2.size();
+              debugln(s);
+              int s_pos = (s > 120) ? s - 120 : 0; // Seek back safely to catch
+                                                   // at least one full newline
+              file2.seek(s_pos);
+              int len = file2.readBytes(content_buf, sizeof(content_buf) - 1);
+              content_buf[len] = 0;
+              file2.close();
+
+              // Root Cause Fix: Avoid parsing partial floats from previous
+              // records
+              char *last_line = content_buf;
+              char *search_ptr = content_buf;
+              while (*search_ptr) {
+                if (*search_ptr == '\n' && *(search_ptr + 1) != '\0') {
+                  last_line = search_ptr + 1; // Move past \n
                 }
-                temp_min = 0;
-              }
-              temp_day = previous_rfclose_day;
-              temp_month = previous_rfclose_month;
-              temp_year = previous_rfclose_year;
-
-              if (q <= MIDNIGHT_SAMPLE_NO) { // This means that the gap is
-                                             // starting before
-                // midnight and the lastSample recorded is before
-                // midnight. Assuming current sampleNo is last as
-                // it is the previous day
-                previous_date(&temp_day, &temp_month, &temp_year);
-                debug("PREVIOUS RF CLOSE DATE : Gap started before midnight "
-                      "extending to next day, so calculating the previous day "
-                      "to store. Current record : ");
-                debug(temp_hr);
-                debug(" : ");
-                debugln(temp_min);
+                search_ptr++;
               }
 
-              // Linear Interpolation for Rollover
-              float target_number, min_val, max_val;
-              char fill_inst_temp[7], fill_inst_hum[7], fill_avg_wind_speed[7],
-                  fill_inst_wd[7], fill_cum_rf[10], fill_ftpcum_rf[10];
-              float fill_temp, fill_hum, fill_AvgWS, fill_crf;
-              int fill_WD;
+              debugln("The last line of the file is (safe extracted): ");
+              debugln(last_line);
+              vTaskDelay(500 / portTICK_PERIOD_MS);
 
-              // total_gaps = approximate distance to today's current sample
-              // across the rollover
-              int total_gaps_roll =
-                  (MAX_SAMPLE_NO - last_sampleNo) + sampleNo + 1;
-              int gap_idx_roll = q - last_sampleNo;
+              // RF
+              // 00,2024-05-21,08:45,0000.0,0000.0,-111,00.0 : rf : 43+2 = 45
 
-              // IQ Start: Ensure we don't interpolate from 0.0 or -999.0 if it
-              // looks like an error
-              float start_t = (last_instTemp < 1.0 && temperature > 5.0)
-                                  ? temperature
-                                  : last_instTemp;
-              float start_h = (last_instHum < 1.0 && humidity > 5.0)
-                                  ? humidity
-                                  : last_instHum;
-              float start_ws = (last_AvgWS < 0.0 || last_AvgWS > 50.0)
-                                   ? cur_avg_wind_speed
-                                   : last_AvgWS;
-              float start_crf = (last_cumRF < 0.0)
-                                    ? new_current_cumRF - rf_value
-                                    : last_cumRF;
-
-              float end_t = (temperature > 5.0) ? temperature : start_t;
-              float end_h = (humidity > 5.0) ? humidity : start_h;
-              float end_ws =
-                  (cur_avg_wind_speed >= 0.0 && cur_avg_wind_speed < 50.0)
-                      ? cur_avg_wind_speed
-                      : start_ws;
-
-              // Temperature Interpolation
-              fill_temp = start_t +
-                          ((end_t - start_t) * gap_idx_roll / total_gaps_roll);
-              if (fill_temp < 10.0)
-                fill_temp = 10.0 + (random(0, 10) / 10.0);
-              if (fill_temp > 35.0)
-                fill_temp = 35.0 - (random(0, 10) / 10.0);
-              min_val = fill_temp - 0.2;
-              max_val = fill_temp + 0.2;
-
-              // Add a forced perturbation every 8th reading to avoid constant
-              // flatlining
-              if (gap_idx_roll % 8 == 0) {
-                min_val -= 0.6;
-                max_val += 0.6;
-              }
-
-              target_number =
-                  ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
-              snprintf(fill_inst_temp, sizeof(fill_inst_temp), "%05.1f",
-                       target_number);
-
-              // Humidity Interpolation
-              fill_hum = start_h +
-                         ((end_h - start_h) * gap_idx_roll / total_gaps_roll);
-              if (fill_hum < 10.0)
-                fill_hum = 10.0 + random(0, 5);
-              if (fill_hum > 100.0)
-                fill_hum = 100.0;
-              min_val = fill_hum - 1.5;
-              max_val = fill_hum + 1.5;
-
-              // Add a forced perturbation every 8th reading to avoid constant
-              // flatlining
-              if (gap_idx_roll % 8 == 0) {
-                min_val -= 3.0;
-                max_val += 3.0;
-              }
-
-              target_number =
-                  ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
-              if (target_number > 100.0)
-                target_number = 100.0;
-              if (target_number < 10.0)
-                target_number = 10.0;
-              snprintf(fill_inst_hum, sizeof(fill_inst_hum), "%05.1f",
-                       target_number);
-
-              // Wind Speed Interpolation
-              fill_AvgWS = start_ws + ((end_ws - start_ws) * gap_idx_roll /
-                                       total_gaps_roll);
-              if (fill_AvgWS < 0.05) {
-                fill_AvgWS = 0.0;
-              } else {
-                min_val = fill_AvgWS - 0.2;
-                max_val = fill_AvgWS + 0.2;
-                fill_AvgWS =
-                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
-                if (fill_AvgWS < 0.1)
-                  fill_AvgWS = 0.1;
-                // Removed the artificial 2.2 cap
-              }
-              snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
-                       "%05.2f", fill_AvgWS);
-
-              // Cumulative Rainfall Interpolation for BACKLOG (previous-day)
-              // BUG FIX: Do NOT interpolate toward new_current_cumRF here.
-              // new_current_cumRF is computed for the CURRENT boot session
-              // (rf_value = 0 after a power-on ULP wipe). Using it as the
-              // interpolation target causes the CRF to trend DOWN to 0 over
-              // the missed slots. For historical gaps, the correct behavior
-              // is: rain stays flat at start_crf (no new tips = no new rain).
-              // Only add rf_value (sensors active since this boot) as the
-              // delta.
-              float end_crf_backlog = start_crf + rf_value; // rf_value=0 on POR
-              fill_crf = start_crf + ((end_crf_backlog - start_crf) *
-                                      gap_idx_roll / total_gaps_roll);
-              if (RF_RESOLUTION > 0) {
-                fill_crf =
-                    floor((fill_crf / RF_RESOLUTION) + 0.5) * RF_RESOLUTION;
-              }
-              snprintf(fill_cum_rf, sizeof(fill_cum_rf), "%06.2f", fill_crf);
-              snprintf(fill_ftpcum_rf, sizeof(fill_ftpcum_rf), "%05.2f",
-                       fill_crf);
-
-              // Wind Direction
-              if ((windDir > WIND_DIR_MIN_VALID) &&
-                  (windDir < WIND_DIR_MAX_VALID)) {
-                fill_WD = random(windDir - WIND_DIR_RANGE,
-                                 windDir + WIND_DIR_RANGE + 1);
-                snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", fill_WD);
-              } else {
-                snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", windDir);
-              }
-
-// RF
 #if SYSTEM == 0
-              snprintf(
-                  append_text, sizeof(append_text),
-                  "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,%04d,%04.1f\r\n", q,
-                  temp_year, temp_month, temp_day, temp_hr, temp_min,
-                  fill_cum_rf, SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+              // Robust parsing using commas
+              last_sampleNo = atoi(last_line);
+              debug("Gap Search: Sample No: ");
+              debugln(last_sampleNo);
+
+              char *p = last_line;
+              // Fields: sampleNo(0), date(1), time(2), inst_rf(3), cum_rf(4)
+              for (int i = 0; i < 4 && p; i++)
+                p = strchr(p + 1, ','); // Skip to 4th comma
+              if (p)
+                last_cumRF = atof(p + 1);
+
+              debug("Gap Search: Last cumRF found: ");
+              debugln(last_cumRF);
+              snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(last_cumRF));
+              snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f",
+                       float(last_cumRF));
 #endif
 
               // TWS
-              // 003655;2025-08-18,19:45;+21.5;099.9;00.0;023;-079;13.13
+              // 00,2024-05-21,08:45,000.0,000.0,00.00,000,-111,00.0 : tws :
+              // 51+2 = 53 temp,hum,avg_ws,wd
 
 #if SYSTEM == 1
-              snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%"
-                       "04.1f\r\n",
-                       q, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                       fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
-                       fill_inst_wd, SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
-              // v7.53: Legacy TWS FTP Format
-              snprintf(ftpappend_text, sizeof(ftpappend_text),
-                       "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%"
-                       "04.1f\r\n",
-                       stnId, temp_year, temp_month, temp_day, temp_hr,
-                       temp_min, fill_inst_temp, fill_inst_hum,
-                       fill_avg_wind_speed, fill_inst_wd,
-                       SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+              // Robust parsing using commas
+              last_sampleNo = atoi(last_line);
+              debug("Last sample No stored : ");
+              debugln(last_sampleNo);
+
+              char *p = last_line;
+              // Fields: sampleNo(0), Date(1), Time(2), Temp(3), Hum(4), WS(5),
+              // WD(6)
+              for (int i = 0; i < 3 && p; i++)
+                p = strchr(p + 1, ','); // Skip to Temp (comma 3)
+              if (p)
+                last_instTemp = atof(p + 1);
+
+              if (p)
+                p = strchr(p + 1, ','); // Hum (comma 4)
+              if (p)
+                last_instHum = atof(p + 1);
+
+              if (p)
+                p = strchr(p + 1, ','); // WS (comma 5)
+              if (p)
+                last_AvgWS = atof(p + 1);
+
+              if (p)
+                p = strchr(p + 1, ','); // WD (comma 6)
+              if (p)
+                last_instWD = atof(p + 1);
+
+              debug("Gap Search: Last WS found: ");
+              debugln(last_AvgWS);
+#endif
+
+              // TWS-RF
+              // 00,2024-05-21,08:45,0000.0,000.0,000.0,00.00,000,-111,00.0 :
+              // tws : 58+2 = 60 rf,temp,hum,avg_ws,wd
+
+#if SYSTEM == 2
+              // Robust parsing using commas (append_text uses commas, not
+              // semicolons) Fields: sampleNo(0), Date(1), Time(2), RF(3),
+              // Temp(4), Hum(5), WS(6), WD(7)
+              last_sampleNo = atoi(last_line);
+              debug("Last sample No stored (TWS-RF): ");
+              debugln(last_sampleNo);
+
+              char *p = last_line;
+              for (int i = 0; i < 3 && p; i++)
+                p = strchr(p + 1, ','); // Skip to RF (comma 3)
+              if (p)
+                last_cumRF = atof(p + 1);
+
+              if (p)
+                p = strchr(p + 1, ','); // Temp (comma 4)
+              if (p)
+                last_instTemp = atof(p + 1);
+
+              if (p)
+                p = strchr(p + 1, ','); // Hum (comma 5)
+              if (p)
+                last_instHum = atof(p + 1);
+
+              if (p)
+                p = strchr(p + 1, ','); // WS (comma 6)
+              if (p)
+                last_AvgWS = atof(p + 1);
+
+              if (p)
+                p = strchr(p + 1, ','); // WD (comma 7)
+              if (p)
+                last_instWD = atof(p + 1);
+              debug("Lastrecorded (TWS-RF) CRF: ");
+              debugln(last_cumRF);
+              snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(last_cumRF));
+              snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f",
+                       float(last_cumRF));
+#endif
+              // file2 already closed at line 1767 after read — no double close
+
+              // Finding the last recorded hr and min from SPIFFs
+              int temp_hr = START_HOUR;
+              int temp_min = START_MINUTE;
+              for (int i = 0; i < last_sampleNo; i++) {
+                temp_min += 15;
+                if (temp_min == 60) {
+                  temp_hr += 1;
+                  if (temp_hr == 24) {
+                    temp_hr = 0;
+                  }
+                  temp_min = 0;
+                }
+              }
+
+              // File file3 = SPIFFS.open(temp_file,FILE_APPEND); // this is
+              // rf_close date IN spiffs File sd3 =
+              // SD.open(temp_file,FILE_APPEND); // sd-card
+              File file3 = SPIFFS.open(
+                  temp_file, FILE_APPEND); // this is rf_close date IN spiffs
+              if (!file3) {
+                debugln(
+                    "Failed to open previous day SPIFFS file for appending");
+              } // #TRUEFIX
+              File sd3;
+              if (sd_card_ok) {
+                sd3 = SD.open(temp_file, FILE_APPEND); // sd-card
+              }
+              if (sd_card_ok && !sd3) {
+                debugln("Failed to open previous day SD file for appending");
+              } // #TRUEFIX
+
+#if FILLGAP == 1
+#if SYSTEM == 0
+              snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
+              File unsent3 = SPIFFS.open(unsent_file, FILE_APPEND);
+#endif
+#if (SYSTEM == 1 || SYSTEM == 2)
+              snprintf(ftpunsent_file, sizeof(ftpunsent_file),
+                       "/ftpunsent.txt");
+              File ftpunsent3 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+#endif
+#endif
+
+              // Fill the gaps starting from last_recorded sampleNo+1 to current
+              // sampleNo including current sampleNo
+              // Generate ALL genuine missed records, we will chunk them during
+              // FTP transfer
+              for (int q = last_sampleNo + 1; q <= MAX_SAMPLE_NO; q++) {
+                if (diag_pd_count_prev < 96)
+                  diag_pd_count_prev++;
+                if (q >= 49 && q <= 85)
+                  diag_ndm_count_prev++; // 9 PM to 6 AM
+                temp_min += 15;
+                if (temp_min == 60) {
+                  temp_hr += 1;
+                  if (temp_hr == 24) {
+                    temp_hr = 0;
+                  }
+                  temp_min = 0;
+                }
+                temp_day = previous_rfclose_day;
+                temp_month = previous_rfclose_month;
+                temp_year = previous_rfclose_year;
+
+                if (q <= MIDNIGHT_SAMPLE_NO) { // This means that the gap is
+                                               // starting before
+                  // midnight and the lastSample recorded is before
+                  // midnight. Assuming current sampleNo is last as
+                  // it is the previous day
+                  previous_date(&temp_day, &temp_month, &temp_year);
+                  debug(
+                      "PREVIOUS RF CLOSE DATE : Gap started before midnight "
+                      "extending to next day, so calculating the previous day "
+                      "to store. Current record : ");
+                  debug(temp_hr);
+                  debug(" : ");
+                  debugln(temp_min);
+                }
+
+                // Linear Interpolation for Rollover
+                float target_number, min_val, max_val;
+                char fill_inst_temp[7], fill_inst_hum[7],
+                    fill_avg_wind_speed[7], fill_inst_wd[7], fill_cum_rf[10],
+                    fill_ftpcum_rf[10];
+                float fill_temp, fill_hum, fill_AvgWS, fill_crf;
+                int fill_WD;
+
+                // total_gaps = approximate distance to today's current sample
+                // across the rollover
+                int total_gaps_roll =
+                    (MAX_SAMPLE_NO - last_sampleNo) + sampleNo + 1;
+                int gap_idx_roll = q - last_sampleNo;
+
+                // IQ Start: Ensure we don't interpolate from 0.0 or -999.0 if
+                // it looks like an error
+                float start_t = (last_instTemp < 1.0 && temperature > 5.0)
+                                    ? temperature
+                                    : last_instTemp;
+                float start_h = (last_instHum < 1.0 && humidity > 5.0)
+                                    ? humidity
+                                    : last_instHum;
+                float start_ws = (last_AvgWS < 0.0 || last_AvgWS > 50.0)
+                                     ? cur_avg_wind_speed
+                                     : last_AvgWS;
+                float start_crf = (last_cumRF < 0.0)
+                                      ? new_current_cumRF - rf_value
+                                      : last_cumRF;
+
+                float end_t = (temperature > 5.0) ? temperature : start_t;
+                float end_h = (humidity > 5.0) ? humidity : start_h;
+                float end_ws =
+                    (cur_avg_wind_speed >= 0.0 && cur_avg_wind_speed < 50.0)
+                        ? cur_avg_wind_speed
+                        : start_ws;
+
+                // Temperature Interpolation
+                fill_temp = start_t + ((end_t - start_t) * gap_idx_roll /
+                                       total_gaps_roll);
+                if (fill_temp < 10.0)
+                  fill_temp = 10.0 + (random(0, 10) / 10.0);
+                if (fill_temp > 35.0)
+                  fill_temp = 35.0 - (random(0, 10) / 10.0);
+                min_val = fill_temp - 0.2;
+                max_val = fill_temp + 0.2;
+
+                // Add a forced perturbation every 8th reading to avoid constant
+                // flatlining
+                if (gap_idx_roll % 8 == 0) {
+                  min_val -= 0.6;
+                  max_val += 0.6;
+                }
+
+                target_number =
+                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+                snprintf(fill_inst_temp, sizeof(fill_inst_temp), "%05.1f",
+                         target_number);
+
+                // Humidity Interpolation
+                fill_hum = start_h +
+                           ((end_h - start_h) * gap_idx_roll / total_gaps_roll);
+                if (fill_hum < 10.0)
+                  fill_hum = 10.0 + random(0, 5);
+                if (fill_hum > 100.0)
+                  fill_hum = 100.0;
+                min_val = fill_hum - 1.5;
+                max_val = fill_hum + 1.5;
+
+                // Add a forced perturbation every 8th reading to avoid constant
+                // flatlining
+                if (gap_idx_roll % 8 == 0) {
+                  min_val -= 3.0;
+                  max_val += 3.0;
+                }
+
+                target_number =
+                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+                if (target_number > 100.0)
+                  target_number = 100.0;
+                if (target_number < 10.0)
+                  target_number = 10.0;
+                snprintf(fill_inst_hum, sizeof(fill_inst_hum), "%05.1f",
+                         target_number);
+
+                // Wind Speed Interpolation
+                fill_AvgWS = start_ws + ((end_ws - start_ws) * gap_idx_roll /
+                                         total_gaps_roll);
+                if (fill_AvgWS < 0.05) {
+                  fill_AvgWS = 0.0;
+                } else {
+                  min_val = fill_AvgWS - 0.2;
+                  max_val = fill_AvgWS + 0.2;
+                  fill_AvgWS =
+                      ((float)rand() / RAND_MAX) * (max_val - min_val) +
+                      min_val;
+                  if (fill_AvgWS < 0.1)
+                    fill_AvgWS = 0.1;
+                  // Removed the artificial 2.2 cap
+                }
+                snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
+                         "%05.2f", fill_AvgWS);
+
+                // Cumulative Rainfall Interpolation for BACKLOG (previous-day)
+                // BUG FIX: Do NOT interpolate toward new_current_cumRF here.
+                // new_current_cumRF is computed for the CURRENT boot session
+                // (rf_value = 0 after a power-on ULP wipe). Using it as the
+                // interpolation target causes the CRF to trend DOWN to 0 over
+                // the missed slots. For historical gaps, the correct behavior
+                // is: rain stays flat at start_crf (no new tips = no new rain).
+                // Only add rf_value (sensors active since this boot) as the
+                // delta.
+                float end_crf_backlog =
+                    start_crf + rf_value; // rf_value=0 on POR
+                fill_crf = start_crf + ((end_crf_backlog - start_crf) *
+                                        gap_idx_roll / total_gaps_roll);
+                if (RF_RESOLUTION > 0) {
+                  fill_crf =
+                      floor((fill_crf / RF_RESOLUTION) + 0.5) * RF_RESOLUTION;
+                }
+                snprintf(fill_cum_rf, sizeof(fill_cum_rf), "%06.2f", fill_crf);
+                snprintf(fill_ftpcum_rf, sizeof(fill_ftpcum_rf), "%05.2f",
+                         fill_crf);
+
+                // Wind Direction
+                if ((windDir > WIND_DIR_MIN_VALID) &&
+                    (windDir < WIND_DIR_MAX_VALID)) {
+                  fill_WD = random(windDir - WIND_DIR_RANGE,
+                                   windDir + WIND_DIR_RANGE + 1);
+                  snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", fill_WD);
+                } else {
+                  snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", windDir);
+                }
+
+// RF
+#if SYSTEM == 0
+                snprintf(
+                    append_text, sizeof(append_text),
+                    "%02d,%04d-%02d-%02d,%02d:%02d,000.00,%s,%04d,%04.1f\r\n",
+                    q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                    fill_cum_rf, SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+#endif
+
+                // TWS
+                // 003655;2025-08-18,19:45;+21.5;099.9;00.0;023;-079;13.13
+
+#if SYSTEM == 1
+                snprintf(append_text, sizeof(append_text),
+                         "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%"
+                         "04.1f\r\n",
+                         q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                         fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
+                         fill_inst_wd, SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+                // v7.53: Legacy TWS FTP Format
+                snprintf(ftpappend_text, sizeof(ftpappend_text),
+                         "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%"
+                         "04.1f\r\n",
+                         stnId, temp_year, temp_month, temp_day, temp_hr,
+                         temp_min, fill_inst_temp, fill_inst_hum,
+                         fill_avg_wind_speed, fill_inst_wd,
+                         SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
 
 #endif
 
 // TWS-RF
 #if SYSTEM == 2
-              snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04."
-                       "1f\r\n",
-                       q, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                       fill_cum_rf, fill_inst_temp, fill_inst_hum,
-                       fill_avg_wind_speed, fill_inst_wd,
-                       SIGNAL_STRENGTH_PREV_DAY_GAP,
-                       bat_val); // ALL_NEW_REVIEW1
-              // v7.53: Legacy ADDON FTP Format (63 bytes)
-              snprintf(ftpappend_text, sizeof(ftpappend_text),
-                       "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;"
-                       "%04.1f\r\n",
-                       stnId, temp_year, temp_month, temp_day, temp_hr,
-                       temp_min, fill_ftpcum_rf, fill_inst_temp, fill_inst_hum,
-                       fill_avg_wind_speed, fill_inst_wd,
-                       SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+                snprintf(
+                    append_text, sizeof(append_text),
+                    "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04."
+                    "1f\r\n",
+                    q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                    fill_cum_rf, fill_inst_temp, fill_inst_hum,
+                    fill_avg_wind_speed, fill_inst_wd,
+                    SIGNAL_STRENGTH_PREV_DAY_GAP,
+                    bat_val); // ALL_NEW_REVIEW1
+                // v7.53: Legacy ADDON FTP Format (63 bytes)
+                snprintf(ftpappend_text, sizeof(ftpappend_text),
+                         "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;"
+                         "%04.1f\r\n",
+                         stnId, temp_year, temp_month, temp_day, temp_hr,
+                         temp_min, fill_ftpcum_rf, fill_inst_temp,
+                         fill_inst_hum, fill_avg_wind_speed, fill_inst_wd,
+                         SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
 #endif
 
-              //                                                              len
-              //                                                              =
-              //                                                              strlen(append_text);
-              //                                                              append_text[len]
-              //                                                              =
-              //                                                              '\0';
+                //                                                              len
+                //                                                              =
+                //                                                              strlen(append_text);
+                //                                                              append_text[len]
+                //                                                              =
+                //                                                              '\0';
+
+#if FILLGAP == 1
+#if SYSTEM == 0
+                if (unsent3)
+                  unsent3.print(append_text);
+#endif
+#if (SYSTEM == 1 || SYSTEM == 2)
+                if (ftpunsent3)
+                  ftpunsent3.print(ftpappend_text); // AG2
+#endif
+#endif
+                file3.print(append_text);
+                if (sd_card_ok && sd3) {
+                  sd3.print(append_text);
+                }
+
+              } // end for q (gap filling)
 
 #if FILLGAP == 1
 #if SYSTEM == 0
               if (unsent3)
-                unsent3.print(append_text);
+                unsent3.close(); // 2024 iter6
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
               if (ftpunsent3)
-                ftpunsent3.print(ftpappend_text); // AG2
+                ftpunsent3.close();
 #endif
 #endif
-              file3.print(append_text);
+
+              // Ensure physical commit to flash before closing to fix Ghost Gap
+              // bug
+              file3.flush();
+              file3.close();
               if (sd_card_ok && sd3) {
-                sd3.print(append_text);
+                sd3.flush();
+                sd3.close();
               }
+            } // previous rf_close_date file if exists (temp_file if exists)
+            // Fill data to current day rf close date file also from 8:45am to
+            // current sample number TRG8-3.0.5g
 
-            } // end for q (gap filling)
-
-#if FILLGAP == 1
-#if SYSTEM == 0
-            if (unsent3)
-              unsent3.close(); // 2024 iter6
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2)
-            if (ftpunsent3)
-              ftpunsent3.close();
-#endif
-#endif
-
-            file3.close();
-            if (sd_card_ok && sd3) {
-              sd3.close();
-            }
-          } // previous rf_close_date file if exists (temp_file if exists)
-          // Fill data to current day rf close date file also from 8:45am to
-          // current sample number TRG8-3.0.5g
-
-        } // loop through 7 days
+          } // loop through 7 days
 
 #endif
 
-      } // if-else : IF SPIFF FILE DOES NOT EXIST
+        } // matches the brace for 'else' at line 1527
+      }   // matches the brace for 'else' at line 1390
 
       //          len = strlen(append_text);
       //          append_text[len] = '\0';
@@ -2181,11 +2235,9 @@ void scheduler(void *pvParameters) {
 
 #if (SYSTEM == 1 || SYSTEM == 2)
       strcpy(store_text,
-             ftpappend_text); // COPY this so that it can beused for
-                              // storing data if signal is not good.
+             append_text); // v7.66: Use CSV format for internal parsing logic
       debugln();
-      debug("ftpappend_text->store_text : Used for storing in FTP unsent file "
-            "is: ");
+      debug("append_text->store_text : Used for internal status: ");
       debugln(store_text);
 
       //   sprintf(temp_file, "/lastrecorded_%s.txt", station_name);
@@ -2296,7 +2348,7 @@ void scheduler(void *pvParameters) {
         file5.print(append_text);
         file5.close();
         strcpy(diag_cdm_status, "PENDING"); // Mark CDM as ready to send
-        vTaskDelay(200);
+        vTaskDelay(200 / portTICK_PERIOD_MS);
       }
 
 #if DEBUG == 1
@@ -2436,7 +2488,7 @@ void scheduler(void *pvParameters) {
         }
 #endif
       }
-      vTaskDelay(300);
+      vTaskDelay(300 / portTICK_PERIOD_MS);
     } else if (timeSyncRequired == false && httpInitiated == false &&
                sync_mode == eSyncModeInitial) {
       // v7.08: IDLE TRAP PROTECTION
@@ -2456,9 +2508,9 @@ void scheduler(void *pvParameters) {
       }
     } // %15 loop
 
-    vTaskDelay(300);
+    vTaskDelay(300 / portTICK_PERIOD_MS);
 
-    vTaskDelay(1000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
 
   } // for loop
 

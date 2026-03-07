@@ -23,7 +23,7 @@ BACKUP_GLOBALS = "/tmp/globals.h.backup"
 CONFIGS = [
     (0, "KSNDMC_TRG", "KSNDMC_TRG"),
     (0, "BIHAR_TRG", "BIHAR_TRG"),
-    (0, "SPATIKA_GEN", "SPATIKA_TRG"),
+    (2, "SPATIKA_GEN", "SPATIKA_TWSRF"),
     (1, "KSNDMC_TWS", "KSNDMC_TWS"),
     (2, "KSNDMC_ADDON", "KSNDMC_ADDON"),
 ]
@@ -182,8 +182,8 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
                 full_version = f"TRG9-DMC-{firmware_version}"
             elif unit == "BIHAR_TRG":
                 full_version = f"TRG9-BIH-{firmware_version}"
-            elif unit == "SPATIKA_GEN" and system == 0:
-                full_version = f"TRG9-GEN-{firmware_version}"
+            elif unit == "SPATIKA_GEN" and system == 2:
+                full_version = f"TWSRF9-GEN-{firmware_version}"
             elif unit == "KSNDMC_TWS":
                 full_version = f"TWS9-DMC-{firmware_version}"
             elif unit == "KSNDMC_ADDON":

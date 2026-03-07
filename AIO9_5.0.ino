@@ -48,6 +48,10 @@ volatile bool force_ftp_daily = false;
 char ftp_daily_date[12] = "";
 volatile bool force_reboot = false;
 volatile bool force_ota = false;
+volatile bool force_gps_refresh =
+    false; // v7.59: Server-requested GPS re-acquire
+volatile bool force_clear_ftp_queue =
+    false; // v7.59: Server-requested FTP backlog clear
 volatile bool ota_writing_active = false;
 volatile bool ota_silent_mode = false; // Rule 43
                                        // v6.88
@@ -97,9 +101,7 @@ void setup() {
   if (fsMutex != NULL)
     xSemaphoreGive(fsMutex);
 
-  initialize_hw();
-  delay(300);
-  setCpuFrequencyMhz(80); // Save power by stepping down CPU freq
+  initialize_hw(); // sets CPU to 80MHz internally
 
   // Record Reset Reason and Increment Uptime
   RESET_REASON rr = rtc_get_reset_reason(0);
@@ -114,6 +116,18 @@ void setup() {
       last_valid_temp = 26.0;
     if (last_valid_hum < 0.0 || last_valid_hum > 100.0)
       last_valid_hum = 65.0;
+
+    // Reset deep diagnostics on Power-On only
+    diag_stack_min_rtc = 9999;
+    diag_stack_min_sched = 9999;
+    diag_stack_min_gprs = 9999;
+    diag_stack_min_ui = 9999;
+    diag_i2c_errors = 0;
+    diag_modem_temp = -99;
+    strcpy(diag_network_type, "NA");
+    diag_last_rssi = 0;
+    diag_min_rssi = 0;
+    diag_max_rssi = -140;
   }
 
   // Pre-load essential system data: Try NVS (Preferences) first for robustness
@@ -185,7 +199,8 @@ void setup() {
   // --- GPS Location Recovery ---
   loadGPS(); // v5.51: Ensure coordinates are available even after POR
 
-  // --- OTA Failure Tracking ---
+  // --- OTA Failure Tracking (Change namespace) ---
+  prefs.end(); // Close sys-config
   prefs.begin("ota-track", false);
   ota_fail_count = prefs.getInt("fail_cnt", 0);
   String last_reason = prefs.getString("fail_res", "NONE");
@@ -328,16 +343,20 @@ void setup() {
 #if (SYSTEM == 1) || (SYSTEM == 2)
   if (SPIFFS.exists("/station_alt.txt")) {
     File altF = SPIFFS.open("/station_alt.txt", FILE_READ);
-    float loaded_alt = altF.readString().toFloat();
-    altF.close();
-    if (loaded_alt >= 0.0 && loaded_alt <= 5000.0) {
-      station_altitude_m = loaded_alt;
+    if (altF) { // EX1 FIX: Guard against invalid file handle
+      float loaded_alt = altF.readString().toFloat();
+      altF.close();
+      if (loaded_alt >= 0.0 && loaded_alt <= 5000.0) {
+        station_altitude_m = loaded_alt;
+      }
     }
   } else {
     // First boot: create file with default value
     File altF = SPIFFS.open("/station_alt.txt", FILE_WRITE);
-    altF.print(station_altitude_m);
-    altF.close();
+    if (altF) { // EX4 FIX companion: guard write as well
+      altF.print(station_altitude_m);
+      altF.close();
+    }
   }
   // Update LCD field display with loaded value
   snprintf(ui_data[FLD_ALTITUDE].bottomRow,
@@ -355,24 +374,37 @@ void setup() {
   // 1. Initial Load from Persistent Files
   if (SPIFFS.exists("/rf_fw.txt")) {
     File f = SPIFFS.open("/rf_fw.txt", FILE_READ);
-    last_fw_res = f.readString().toFloat();
-    f.close();
+    if (f) { // EX2 FIX: Null handle returns "", toFloat()=0 → false data wipe!
+      last_fw_res = f.readString().toFloat();
+      f.close();
+    } else {
+      last_fw_res = DEFAULT_RF_RESOLUTION; // Safe fallback prevents false
+                                           // change detection
+    }
   } else {
     last_fw_res = DEFAULT_RF_RESOLUTION;
     File f = SPIFFS.open("/rf_fw.txt", FILE_WRITE);
-    f.print(DEFAULT_RF_RESOLUTION);
-    f.close();
+    if (f) {
+      f.print(DEFAULT_RF_RESOLUTION);
+      f.close();
+    } // EX4 FIX
   }
 
   if (SPIFFS.exists("/rf_res.txt")) {
     File f = SPIFFS.open("/rf_res.txt", FILE_READ);
-    user_res = f.readString().toFloat();
-    f.close();
+    if (f) { // EX2 FIX: same pattern as rf_fw.txt
+      user_res = f.readString().toFloat();
+      f.close();
+    } else {
+      user_res = DEFAULT_RF_RESOLUTION;
+    }
   } else {
     user_res = DEFAULT_RF_RESOLUTION;
     File f = SPIFFS.open("/rf_res.txt", FILE_WRITE);
-    f.print(DEFAULT_RF_RESOLUTION);
-    f.close();
+    if (f) {
+      f.print(DEFAULT_RF_RESOLUTION);
+      f.close();
+    } // EX4 FIX
   }
 
   // 2. Scenario Resolution
@@ -381,11 +413,15 @@ void setup() {
     active_res = DEFAULT_RF_RESOLUTION;
     rf_res_changed = true;
     File f1 = SPIFFS.open("/rf_fw.txt", FILE_WRITE);
-    f1.print(DEFAULT_RF_RESOLUTION);
-    f1.close();
+    if (f1) {
+      f1.print(DEFAULT_RF_RESOLUTION);
+      f1.close();
+    } // EX4 FIX
     File f2 = SPIFFS.open("/rf_res.txt", FILE_WRITE);
-    f2.print(DEFAULT_RF_RESOLUTION);
-    f2.close();
+    if (f2) {
+      f2.print(DEFAULT_RF_RESOLUTION);
+      f2.close();
+    } // EX4 FIX
   } else {
     active_res = user_res;
     rf_res_changed = false;
@@ -615,11 +651,11 @@ void setup() {
     File verTemp = SPIFFS.open("/firmware.doc", FILE_READ);
     if (!verTemp) {
       debugln("Failed to open firmware.doc for reading");
-    } // #TRUEFIX
-    temp = verTemp.readStringUntil('\n');
-    verTemp.close();
-
-    temp.trim(); // By ANTIGRAVITY: trim() modifies in place and returns void
+    } else { // v7.67: Guard against null file dereference
+      temp = verTemp.readStringUntil('\n');
+      verTemp.close();
+      temp.trim();
+    }
     if (strcmp(UNIT_VER, temp.c_str())) {
       debug("Firmware in SPIFFs file is ");
       debugln(temp.c_str());
@@ -630,9 +666,10 @@ void setup() {
       File verTemp1 = SPIFFS.open("/firmware.doc", FILE_WRITE);
       if (!verTemp1) {
         debugln("Failed to open firmware.doc for writing");
-      } // #TRUEFIX
-      verTemp1.print(UNIT_VER);
-      verTemp1.close();
+      } else { // v7.67: Guard null deref
+        verTemp1.print(UNIT_VER);
+        verTemp1.close();
+      }
       debug("Firmware ver stored in SPIFFS is ");
       debugln(UNIT_VER);
       debugln("Deleting unsent data and resetting rf...");
@@ -759,7 +796,7 @@ void setup() {
   // Task creation and spawning
   xTaskCreatePinnedToCore(rtcRead, "rtcReadTask", 8192, NULL, 2, &rtcRead_h,
                           1); // Core 1
-  xTaskCreatePinnedToCore(scheduler, "schedulerTask", 12288, NULL, 3,
+  xTaskCreatePinnedToCore(scheduler, "schedulerTask", 14336, NULL, 3,
                           &scheduler_h, 1); // Core 1
   xTaskCreatePinnedToCore(gprs, "gprsTask", 16384, NULL, 2, &gprs_h,
                           0); // Core 0

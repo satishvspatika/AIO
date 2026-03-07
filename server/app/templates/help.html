@@ -64,30 +64,39 @@
                 </tr>
                 <tr>
                     <td class="py-2 pr-6 font-bold text-white">Status</td>
-                    <td class="py-2 text-slate-400"><span class="badge-ok">✓ OK</span> = All subsystems healthy. <span
-                            class="badge-fail">✗ PD_CDM_NDM</span> = Partially Down + CDM fault + No Data Mode active.
-                        Hover for full status code.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white">Firmware</td>
-                    <td class="py-2 text-slate-400">Current firmware version running on the device. <span
-                            class="badge-ota">OTA↑</span> badge = device version differs from group target — will update
-                        on next check-in.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white">Data Today / Yest</td>
-                    <td class="py-2 text-slate-400"><strong class="text-white">Today</strong> = number of
-                        15-min data records successfully generated since the 08:45 AM rollover. <strong
-                            class="text-white">Yest</strong> = final count for the previous closed meteorological day.
-                        <br>
-                        <span class="text-[10px] text-blue-300">Note: "First" count inside station detail refers to the
-                            successful server-delivery count.</span>
+                    <td class="py-2 text-slate-400">
+                        The server calculates a <strong class="text-white">Ground Truth Objective Health Score</strong>
+                        by analyzing battery, signal, offline time, and data gaps.
+                        <ul class="list-disc ml-4 mt-1 space-y-1">
+                            <li><span class="badge-ok" style="padding:0px 4px;">✓ OK</span> = System healthy (Score
+                                100).</li>
+                            <li><span class="px-1 rounded text-[10px] uppercase font-bold"
+                                    style="background:#0f172a; color:#cbd5e1; border: 1px solid #475569;">ℹ INFO</span>
+                                = Minor issue (e.g. 5+ HTTP fails).</li>
+                            <li><span class="px-1 rounded text-[10px] uppercase font-bold"
+                                    style="background:#451a03; color:#fcd34d; border: 1px solid #b45309;">⚠ WARN</span>
+                                = Degraded (e.g. Battery <3.6V, 10+ HTTP fails).</li>
+                            <li><span class="badge-fail shadow-sm" style="padding:0px 4px;">✗ CRITICAL</span> = Action
+                                required (Battery <3.4V, Offline> 7 hrs).</li>
+                        </ul>
                     </td>
                 </tr>
                 <tr>
-                    <td class="py-2 pr-6 font-bold text-white">Reg Fails</td>
-                    <td class="py-2 text-slate-400">Number of times the modem failed to register on the cellular network
-                        in the last session. <span class="text-red-400">Red if &gt;3</span> = connectivity problem.</td>
+                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Tdy/Ydy Sent/Stored</td>
+                    <td class="py-2 text-slate-400">
+                        <strong class="text-white">Sent:</strong> Total records pushed to server (either directly or
+                        recovered from backlog).<br>
+                        <strong class="text-white">Stored:</strong> Total 15-min data records successfully recorded and
+                        saved to local memory.
+                    </td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Tdy/Ydy HTTP/Backlogs</td>
+                    <td class="py-2 text-slate-400">
+                        <strong class="text-white">HTTP:</strong> Records pushed directly on-time via standard HTTP.<br>
+                        <strong class="text-white">Backlogs:</strong> Old/missed records recovered later via FTP batch
+                        or HTTP sequential retry.
+                    </td>
                 </tr>
                 <tr>
                     <td class="py-2 pr-6 font-bold text-white">Last Seen</td>
@@ -144,6 +153,29 @@
                         command is queued immediately. On next check-in, only this station will update — all other
                         stations in the group are unaffected. Use for testing a new firmware on one device before
                         rolling out to a whole group.</p>
+                </div>
+            </div>
+            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
+                <span class="btn-sm mt-0.5" style="background:#064e3b; color:#a7f3d0; border-color:#047857;">GPS
+                    FIX</span>
+                <div>
+                    <div class="text-sm font-bold text-white mb-1">Force GPS Re-acquisition (GET_GPS)</div>
+                    <p class="text-xs text-slate-400">Forces the station to turn on its GPS module, acquire a fresh
+                        location fix, save it to persistent memory (SPIFFS), and report the new coordinates on the next
+                        check-in. The server also sends this <strong class="text-blue-300">automatically</strong> if it
+                        detects a missing or invalid GPS location.</p>
+                </div>
+            </div>
+            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
+                <span class="btn-sm mt-0.5" style="background:#7f1d1d; color:#fecaca; border-color:#b91c1c;">CLR
+                    FTP</span>
+                <div>
+                    <div class="text-sm font-bold text-white mb-1">Clear FTP Backlog (CLEAR_FTP_QUEUE)</div>
+                    <p class="text-xs text-slate-400">Safely commands the station to delete its internal <code
+                            class="text-red-300">ftpunsent.txt</code> queue file. Use this if a station has a massive
+                        unrecoverable backlog that is causing HTTP memory/timeout crashes. The server also sends this
+                        <strong class="text-blue-300">automatically</strong> if the unsent queue exceeds 50 records.
+                    </p>
                 </div>
             </div>
             <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
@@ -210,45 +242,85 @@
 
     <!-- ── STATUS CODE LEGEND ─────────────────────────────────── -->
     <div class="card p-5 mb-6">
-        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🔍 Health Status Code Legend</h2>
-        <p class="text-xs text-slate-500 mb-3">The Health Status field is a combination of flags separated by
-            underscores. Each part is decoded below.</p>
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🔍 Health Status & Error Legend</h2>
+
+        <!-- ── EXPLANATION OF DIFFERENTIATION ────────────────────── -->
+        <div class="bg-blue-900/20 border border-blue-800 rounded-lg p-3 mb-4">
+            <h3 class="text-blue-300 text-[10px] font-bold uppercase mb-1">How we differentiate Transmission vs.
+                Recording:</h3>
+            <p class="text-[11px] text-slate-400 leading-relaxed">
+                The server compares <strong class="text-white">Yesterday Stored</strong> (records saved on the device SD
+                card) vs. <strong class="text-white">Yesterday Sent</strong> (records successfully received by the
+                server).
+                <br>• If <strong class="text-orange-400">Stored = 96</strong> but <strong class="text-orange-400">Sent <
+                        96</strong> → Purely a <strong class="text-white">Transmission</strong> issue.
+                        <br>• If <strong class="text-red-400">Stored < 96</strong> → This is a <strong
+                                    class="text-white">Recording</strong> issue (the station missed its 15-min slots).
+            </p>
+        </div>
+
         <table class="w-full text-xs">
             <thead>
                 <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
+                    <th class="pb-2 pr-6 text-left">Category</th>
                     <th class="pb-2 pr-6 text-left">Code</th>
-                    <th class="pb-2 text-left">Meaning</th>
+                    <th class="pb-2 text-left">Diagnostic Meaning</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-slate-800">
+                <!-- ── TRANSMISSION ERRORS ── -->
                 <tr>
-                    <td class="py-2 pr-6"><span class="badge-ok">OK</span></td>
-                    <td class="py-2 text-slate-400">All subsystems nominal. No faults detected.</td>
+                    <td class="py-2 pr-2 text-[9px] text-orange-500 font-bold align-top">TRANSMISSION</td>
+                    <td class="py-2 pr-6 text-red-400 font-mono font-bold">GPRS-Er</td>
+                    <td class="py-2 text-slate-400">Device has data on SD card (\(Stored > 0\)), but **Zero** records
+                        migrated to server. Modem/Network failure.</td>
                 </tr>
                 <tr>
-                    <td class="py-2 pr-6 text-red-300 font-mono">PD</td>
-                    <td class="py-2 text-slate-400"><strong class="text-white">Partially Down</strong> — Some data slots
-                        were not recorded or uploaded in a session.</td>
+                    <td class="py-2 pr-2 text-[9px] text-orange-500 font-bold align-top">TRANSMISSION</td>
+                    <td class="py-2 pr-6 text-orange-400 font-mono font-bold">NDM</td>
+                    <td class="py-2 text-slate-400">**Night Data Missing** (11PM-5AM window gaps). Data exists on SD but
+                        failed to migrate due to midnight signal/battery.</td>
                 </tr>
                 <tr>
-                    <td class="py-2 pr-6 text-red-300 font-mono">CDM</td>
-                    <td class="py-2 text-slate-400"><strong class="text-white">Continuous Data Missing</strong> —
-                        Multiple consecutive recording slots failed. Station may need a field visit.</td>
+                    <td class="py-2 pr-2 text-[9px] text-orange-500 font-bold align-top">TRANSMISSION</td>
+                    <td class="py-2 pr-6 text-orange-300 font-mono font-bold">PD</td>
+                    <td class="py-2 text-slate-400">**Performance Delay**. More than 10 random gaps in server data,
+                        despite being recorded locally.</td>
+                </tr>
+
+                <!-- ── RECORDING ERRORS ── -->
+                <tr>
+                    <td class="py-2 pr-2 text-[9px] text-red-500 font-bold align-top">RECORDING</td>
+                    <td class="py-2 pr-6 text-red-500 font-mono font-bold">CDM</td>
+                    <td class="py-2 text-slate-400">**Closing Data Missing**. Gaps in device storage (Stored < 96).
+                            Station failed to save records.</td>
+                </tr>
+
+                <!-- ── COMBINED ERRORS ── -->
+                <tr>
+                    <td class="py-2 pr-2 text-[9px] text-slate-500 font-bold align-top">COMBINED</td>
+                    <td class="py-2 pr-6 text-red-600 font-mono font-bold text-[11px]">PD_CDM</td>
+                    <td class="py-2 text-slate-400">Both failures: Sent < Stored AND Stored < 96. Random transmission
+                            gaps combined with recording gaps.</td>
                 </tr>
                 <tr>
-                    <td class="py-2 pr-6 text-red-300 font-mono">NDM</td>
-                    <td class="py-2 text-slate-400"><strong class="text-white">No Data Mode</strong> — Device has not
-                        successfully uploaded data for an extended period.</td>
+                    <td class="py-2 pr-2 text-[9px] text-slate-500 font-bold align-top">COMBINED</td>
+                    <td class="py-2 pr-6 text-red-700 font-mono font-bold text-[10px]">PD_NDM_CDM</td>
+                    <td class="py-2 text-slate-400">**Triple Failure**. Night Data gaps, Random gaps, and Storage gaps
+                        all occurring at once.</td>
+                </tr>
+
+                <!-- ── HARDWARE ERRORS ── -->
+                <tr>
+                    <td class="py-2 pr-2 text-[9px] text-blue-500 font-bold align-top">HARDWARE</td>
+                    <td class="py-2 pr-6 text-red-500 font-mono font-bold">TH-Er</td>
+                    <td class="py-2 text-slate-400">**Temp/Humi sensor failed**. Elevated to a primary error status
+                        because hardware failure requires immediate attention.</td>
                 </tr>
                 <tr>
-                    <td class="py-2 pr-6 text-red-300 font-mono">BFAIL</td>
-                    <td class="py-2 text-slate-400"><strong class="text-white">Battery FAIL</strong> — Battery voltage
-                        dangerously low. Immediate attention required.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 text-green-300 font-mono">BOK</td>
-                    <td class="py-2 text-slate-400"><strong class="text-white">Battery OK</strong> — Battery voltage
-                        within acceptable range.</td>
+                    <td class="py-2 pr-2 text-[9px] text-blue-500 font-bold align-top">HARDWARE</td>
+                    <td class="py-2 pr-6 text-red-500 font-mono font-bold">RF-Er</td>
+                    <td class="py-2 text-slate-400">**Rainfall sensor failed**. Hardware/input failure.</td>
                 </tr>
             </tbody>
         </table>

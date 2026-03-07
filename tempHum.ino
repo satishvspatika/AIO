@@ -23,8 +23,16 @@ void tempHum(void *pvParameters) {
       esp_task_wdt_reset();
     }
     if (hdcType != HDC_UNKNOWN) {
-      if (readHDC(temperature, humidity)) {
+      float t_raw, h_raw;
+      if (readHDC(t_raw, h_raw)) {
         failCount = 0; // Success
+        // Use mutex for all global float updates to prevent race with Scheduler
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
+            pdTRUE) {
+          temperature = t_raw;
+          humidity = h_raw;
+          xSemaphoreGive(i2cMutex);
+        }
         // Temperature Logic
         if ((temperature >= 9.0) && (temperature <= 50.0)) {
           last_valid_temp = temperature;
@@ -32,14 +40,25 @@ void tempHum(void *pvParameters) {
           // If we have a last known good, use jitter. If not (boot), force 0.0
           if (last_valid_temp > 0.1) {
             float jitter = last_valid_temp * 0.02;
-            temperature =
+            float adj_temp =
                 last_valid_temp +
                 (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter * 2) -
                  jitter);
+            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
+                pdTRUE) {
+              temperature = adj_temp;
+              xSemaphoreGive(i2cMutex);
+            } else {
+              diag_i2c_errors++;
+            }
             debug("ADJUSTED TEMP (Last Good) is ");
             debugln(temperature);
           } else {
-            temperature = 0.0;
+            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
+                pdTRUE) {
+              temperature = 0.0;
+              xSemaphoreGive(i2cMutex);
+            }
           }
         }
 
@@ -49,32 +68,33 @@ void tempHum(void *pvParameters) {
         } else {
           if (last_valid_hum > 0.1) {
             float jitter = last_valid_hum * 0.02;
-            humidity =
+            float adj_hum =
                 last_valid_hum +
                 (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter * 2) -
                  jitter);
-            if (humidity < 10.0)
-              humidity = 10.0;
-            if (humidity > 100.0)
-              humidity = 100.0;
+            if (adj_hum < 10.0)
+              adj_hum = 10.0;
+            if (adj_hum > 100.0)
+              adj_hum = 100.0;
+            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
+                pdTRUE) {
+              humidity = adj_hum;
+              xSemaphoreGive(i2cMutex);
+            }
             debug("ADJUSTED HUM (Last Good) is ");
             debugln(humidity);
           } else {
-            humidity = 0.0;
+            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
+                pdTRUE) {
+              humidity = 0.0;
+              xSemaphoreGive(i2cMutex);
+            }
           }
         }
 
         // UI Strings (ONLY) - Do not touch global production buffers
         snprintf(temp_str, sizeof(temp_str), "%.1f C", temperature);
         snprintf(hum_str, sizeof(hum_str), "%.1f %%", humidity);
-
-        // Update shared data
-        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-            pdTRUE) {
-          latestSensorData.temperature = temperature;
-          latestSensorData.humidity = humidity;
-          xSemaphoreGive(i2cMutex);
-        }
       } else {
         // readHDC Failed: Sensor likely unplugged
         failCount++;
@@ -82,20 +102,21 @@ void tempHum(void *pvParameters) {
           debugln("[HDC] Sensor disconnected during runtime.");
           hdcType = HDC_UNKNOWN;
         }
-        temperature = 0.0;
-        humidity = 0.0;
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
+            pdTRUE) {
+          temperature = 0.0;
+          humidity = 0.0;
+          xSemaphoreGive(i2cMutex);
+        }
         strcpy(temp_str, "NA");
         strcpy(hum_str, "NA");
       }
     } else {
       // SENSOR MISSING: Enforce 0.0 and NA
-      temperature = 0.0;
-      humidity = 0.0;
-      strcpy(temp_str, "NA");
-      strcpy(hum_str, "NA");
-
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
           pdTRUE) {
+        temperature = 0.0;
+        humidity = 0.0;
         // Fallback to BME if HDC is missing
         if (bmeType != BME_UNKNOWN) {
           float bmeTemp = bme.readTemperature();
@@ -143,7 +164,7 @@ void tempHum(void *pvParameters) {
     }
 
     esp_task_wdt_reset();
-    vTaskDelay(5000); // Read every 5 seconds
+    vTaskDelay(5000 / portTICK_PERIOD_MS); // Read every 5 seconds
   }
 }
 
@@ -250,7 +271,7 @@ bool readHDC(float &tempC, float &humidity) {
     xSemaphoreGive(i2cMutex);
   }
 
-  vTaskDelay(20); // Wait for measurement
+  vTaskDelay(20 / portTICK_PERIOD_MS); // Wait for measurement
 
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
     Wire.requestFrom(HDC_ADDR, 4);

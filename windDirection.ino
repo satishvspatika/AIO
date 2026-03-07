@@ -24,7 +24,7 @@ void windDirection(void *pvParameters) {
         minVal = raw;
       if (raw > maxVal)
         maxVal = raw;
-      vTaskDelay(10);
+      vTaskDelay(10 / portTICK_PERIOD_MS);
     }
     int tempWindDir = sum / 10;
     int spread = maxVal - minVal;
@@ -68,6 +68,6 @@ void windDirection(void *pvParameters) {
     prev_wd_ok = wd_ok;
     snprintf(windDir_str, sizeof(windDir_str), "%03d deg", windDir);
 
-    vTaskDelay(1000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 }

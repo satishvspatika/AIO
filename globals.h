@@ -61,8 +61,12 @@ extern volatile bool force_ftp_daily; // v5.80: Command piggyback — FTP_DAILY
                                       // (specific date file)
 extern char
     ftp_daily_date[12]; // v5.80: Date string for FTP_DAILY e.g. "20260228"
-extern volatile bool force_reboot;       // v5.68: Command piggyback
-extern volatile bool force_ota;          // v5.68: Command piggyback
+extern volatile bool force_reboot; // v5.68: Command piggyback
+extern volatile bool force_ota;    // v5.68: Command piggyback
+extern volatile bool
+    force_gps_refresh; // v7.59: Server-requested GPS re-acquire
+extern volatile bool
+    force_clear_ftp_queue; // v7.59: Server-requested FTP backlog clear
 extern volatile bool ota_writing_active; // v6.88: Prevent FS collision
 extern int ota_fail_count;
 extern char ota_fail_reason[48];
@@ -90,17 +94,17 @@ void reconstructSentMasks();
 void markFileAsDelivered(const char *fileName);
 
 /************************************************************************************************/
-#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "KSNDMC_TWS"; // UNIT :
+#define SYSTEM 2               // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "SPATIKA_GEN"; // UNIT :
 //                                0:  KSNDMC_TRG  BIHAR_TRG
 //                                1:  KSNDMC_TWS KSNDMC_TWS-AP
 //                                2:  KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.47"
+#define FIRMWARE_VERSION "5.48"
 
-#define DEBUG 0 // Set to 1 for serial debug, 0 for production (Saves space)
+#define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
 #define ENABLE_WEBSERVER 0       // Set to 0 to remove WebServer
 #define ENABLE_PRESSURE_SENSOR 0 // Set to 0 to disable BMP/BME
@@ -122,6 +126,9 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 /************************************************************************************************/
 
 #define FILLGAP 1
+#define FORCE_2G_ONLY                                                          \
+  1 // v7.54: BSNL Fallback. Forces AT+CNMP=13 on boot to skip 60s of failed 4G
+    // auto-negotiation
 
 // Spatika Health Server (Contabo VPS — plain HTTP, no SSL needed)
 #define HEALTH_SERVER_IP "75.119.148.192"
@@ -344,7 +351,7 @@ char cur_file[32], unsent_file[32], new_file[32],
     temp_file[50]; // Dddmmyyyy.txt
 char station_name[16];
 char chip_id[13]; // Unique ESP32 Chip ID
-char calib_state[5], calib_text[16], calib_content[16];
+char calib_state[5], calib_text[40], calib_content[16];
 String content;
 char ftpunsent_file[50];
 char ftpdaily_file[50];
@@ -368,7 +375,7 @@ float li_bat, li_bat_val;
 RTC_DATA_ATTR float lati, longi;
 RTC_DATA_ATTR float gps_latitude, gps_longitude;
 
-char httpPostRequest[125], httpContent[12];
+char httpPostRequest[256], httpContent[12];
 char append_text[100],
     store_text[100];      // Increased from 65 to 100 for safety #TRUEFIX
 char ftpappend_text[100]; // Increased from 65 to 100 for safety #TRUEFIX
@@ -377,10 +384,10 @@ int cur_fld_no = 0;
 char ftp_station[16]; // AG2 from int so that alphanumeric can be stored
 size_t len;
 char last_logged[16];
-char http_data[300]; // AG1
-char sample_cum_rf[7], sample_inst_rf[7], sample_temp[7], sample_hum[7],
-    sample_avgWS[7], sample_WD[4], sample_bat[5], ftpsample_avgWS[6],
-    ftpsample_cum_rf[6];
+char http_data[350]; // AG1
+char sample_cum_rf[10], sample_inst_rf[10], sample_temp[10], sample_hum[10],
+    sample_avgWS[10], sample_WD[10], sample_bat[10], ftpsample_avgWS[10],
+    ftpsample_cum_rf[10];
 char ht_data[80]; // AG1
 char apn_str[20];
 char reg_status[16];
@@ -429,16 +436,32 @@ RTC_DATA_ATTR int diag_daily_http_fails = 0; // Total failures today
 RTC_DATA_ATTR int diag_rejected_count =
     0; // Track consecutive "Rejected" (Time) errors
 
+// v6.0: Extreme Deep-Dive Diagnostics (for comprehensive health monitoring)
+RTC_DATA_ATTR int diag_stack_min_rtc = 9999;
+RTC_DATA_ATTR int diag_stack_min_sched = 9999;
+RTC_DATA_ATTR int diag_stack_min_gprs = 9999;
+RTC_DATA_ATTR int diag_stack_min_ui = 9999;
+RTC_DATA_ATTR int diag_i2c_errors = 0;
+RTC_DATA_ATTR int diag_modem_temp = -99;
+RTC_DATA_ATTR char diag_network_type[12] = "NA";
+RTC_DATA_ATTR int diag_last_rssi = 0;
+RTC_DATA_ATTR int diag_min_rssi = 0;
+RTC_DATA_ATTR int diag_max_rssi = -140;
+
 // v5.49 Splitted Diagnostic Trackers for Golden Data Reporting
 RTC_DATA_ATTR int diag_ndm_count = 0;      // Today
 RTC_DATA_ATTR int diag_ndm_count_prev = 0; // Reported at 09:45
-RTC_DATA_ATTR char diag_cdm_status[10] = "OK";
+RTC_DATA_ATTR char diag_cdm_status[20] =
+    "PENDING"; // P8 FIX: Default to PENDING - set to OK only after confirmed
+               // delivery
 RTC_DATA_ATTR int diag_pd_count = 0;      // Today
 RTC_DATA_ATTR int diag_pd_count_prev = 0; // Reported at 09:45
 RTC_DATA_ATTR int diag_first_http_count = 0;
 RTC_DATA_ATTR int diag_first_http_count_prev = 0;
 RTC_DATA_ATTR int diag_net_data_count = 0;
 RTC_DATA_ATTR int diag_net_data_count_prev = 0;
+RTC_DATA_ATTR int diag_last_rollover_day =
+    -1; // v5.49: Robust rollover tracking
 
 RTC_DATA_ATTR uint32_t diag_http_time_total = 0; // Total ms spent in HTTP POST
 RTC_DATA_ATTR uint32_t diag_sent_mask_cur[3] = {0, 0, 0};
@@ -459,8 +482,6 @@ RTC_DATA_ATTR char diag_http_fail_reason[16] = "NONE";
 // modem-on time)
 RTC_DATA_ATTR char cached_server_ip[32] = "";
 RTC_DATA_ATTR char cached_server_domain[64] = "";
-RTC_DATA_ATTR uint32_t diag_sent_mask[3] = {0, 0,
-                                            0}; // 96 bits for sample delivery
 
 // Health Report Retry Logic (persists across deep sleep)
 RTC_DATA_ATTR int health_last_sent_hour = -1;
@@ -577,6 +598,12 @@ void tempHum(void *pvParameters);
 void bmeTask(void *pvParameters);
 void windSpeed(void *pvParameters);
 void windDirection(void *pvParameters);
+// Task Handles (for stack monitoring and state tracking)
+extern TaskHandle_t scheduler_h, gprs_h, lcdkeypad_h, rtcRead_h;
+extern TaskHandle_t tempHum_h, bmeTask_h, windSpeed_h, windDirection_h;
+extern volatile bool ota_silent_mode;
+extern int active_cid;
+
 void rtcRead(void *pvParameters);
 
 // Function Prototypes
@@ -595,7 +622,7 @@ int send_at_cmd_data(char *payload, String charArray);
 void send_http_data();
 bool send_health_report(bool useJitter = true);
 void send_unsent_data();
-void send_ftp_file(char *fileName);
+void send_ftp_file(char *fileName, bool isDailyFTP);
 void start_gprs();
 void send_sms();
 void process_sms(char msg_no);
@@ -612,7 +639,7 @@ void copyFile(const char *sourcePath, const char *destPath);
 void flushSerialSIT();
 bool copyFile_legacy(String fileName);
 void validate_ulp_counters();
-int read_line(char *src, char *dest, char delim_chr);
+int read_line(char *src, char *dest, int max_len, char delim_chr);
 void parse_and_convert_clbs_response(const char *response, int year1,
                                      int month1, int day1, int hour1,
                                      int minute1, int seconds1);

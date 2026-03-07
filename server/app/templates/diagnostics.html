@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% block title %}Spatika | Hardware Diagnostics{% endblock %}
+
+{% block extra_head %}
+<style>
+    .diag-section {
+        background: #1a1f2e;
+    }
+
+    .heat-ok {
+        color: #4ade80;
+    }
+
+    .heat-warm {
+        color: #facc15;
+    }
+
+    .heat-hot {
+        color: #f87171;
+    }
+
+    .rssi-good {
+        color: #4ade80;
+    }
+
+    .rssi-weak {
+        color: #facc15;
+    }
+
+    .rssi-bad {
+        color: #f87171;
+    }
+
+    .stack-ok {
+        color: #94a3b8;
+    }
+
+    .stack-low {
+        color: #facc15;
+        font-weight: 700;
+    }
+
+    .stack-crit {
+        color: #f87171;
+        font-weight: 700;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+{# ── Page Header ─────────────────────────────────────────────────────────── #}
+<div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+    <div>
+        <h1 class="text-2xl font-black text-white">🔬 Hardware Diagnostics</h1>
+        <p class="text-slate-400 text-sm mt-1">
+            Deep firmware telemetry — one row per station (latest check-in).
+            <span class="text-slate-600">Dashboard &amp; Fleet views are not affected by this data.</span>
+        </p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+        <a href="/csv/diagnostics" class="btn-sm btn-grn">📥 Snapshot CSV</a>
+        <a href="/csv/diagnostics/full" class="btn-sm btn-blu">📂 Full History CSV</a>
+    </div>
+</div>
+
+{# ── Main Diagnostics Table ─────────────────────────────────────────────── #}
+{% if reports %}
+<div class="glass rounded-xl overflow-hidden mb-8">
+    <div class="overflow-x-auto">
+        <table class="w-full text-left text-[11px]">
+            <thead>
+                <tr class="bg-slate-800/70 text-slate-400 uppercase text-[9px] tracking-widest">
+                    <th class="px-4 py-3">Station</th>
+                    <th class="px-4 py-3">Last Seen</th>
+                    <th class="px-4 py-3">Firmware</th>
+                    <th class="px-4 py-3">Carrier</th>
+                    <th class="px-4 py-3 text-center">Net Type</th>
+                    <th class="px-4 py-3 text-center">Modem °C</th>
+                    <th class="px-4 py-3 text-center">RSSI Min / Max</th>
+                    <th class="px-4 py-3 text-center">I2C Errs</th>
+                    <th class="px-4 py-3 text-center">Stack — RTC / Sched / GPRS / UI</th>
+                    <th class="px-4 py-3 text-center">Heap</th>
+                    <th class="px-4 py-3 text-center">Uptime</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-700/30">
+                {% for r in reports %}
+                <tr class="hover:bg-slate-700/20 transition-colors">
+
+                    {# Station #}
+                    <td class="px-4 py-3 font-black text-blue-400">
+                        <a href="/station/{{ r.stn_id }}" class="hover:underline">{{ r.stn_id }}</a>
+                    </td>
+
+                    {# Last Seen #}
+                    <td class="px-4 py-3 text-slate-500">{{ r.time_ago }}</td>
+
+                    {# Firmware #}
+                    <td class="px-4 py-3 font-mono text-slate-400">{{ r.ver }}</td>
+
+                    {# Carrier #}
+                    <td class="px-4 py-3 text-slate-400">{{ r.carrier }}</td>
+
+                    {# Network Type #}
+                    <td class="px-4 py-3 text-center">
+                        {% if r.net_type in ('LTE', 'EGPRS') %}
+                        <span
+                            class="bg-blue-900/40 text-blue-300 border border-blue-800/50 px-2 py-0.5 rounded text-[9px]">{{
+                            r.net_type }}</span>
+                        {% elif r.net_type == 'GPRS' %}
+                        <span class="bg-green-900/40 text-green-300 px-2 py-0.5 rounded text-[9px]">GPRS</span>
+                        {% elif r.net_type == 'GSM' %}
+                        <span class="bg-slate-700 text-slate-400 px-2 py-0.5 rounded text-[9px]">GSM</span>
+                        {% else %}
+                        <span class="text-slate-600">{{ r.net_type }}</span>
+                        {% endif %}
+                    </td>
+
+                    {# Modem Temperature #}
+                    <td class="px-4 py-3 text-center font-bold">
+                        {% if r.m_temp == 0 %}
+                        <span class="text-slate-600">—</span>
+                        {% elif r.m_temp > 60 %}
+                        <span class="heat-hot">{{ r.m_temp }}°</span>
+                        {% elif r.m_temp > 50 %}
+                        <span class="heat-warm">{{ r.m_temp }}°</span>
+                        {% else %}
+                        <span class="heat-ok">{{ r.m_temp }}°</span>
+                        {% endif %}
+                    </td>
+
+                    {# RSSI Window #}
+                    <td class="px-4 py-3 text-center">
+                        {% if r.min_rssi == 0 and r.max_rssi == 0 %}
+                        <span class="text-slate-600">— / —</span>
+                        {% else %}
+                        <span
+                            class="{% if r.min_rssi < -90 %}rssi-bad{% elif r.min_rssi < -75 %}rssi-weak{% else %}rssi-good{% endif %}">{{
+                            r.min_rssi }}</span>
+                        <span class="text-slate-600 mx-1">/</span>
+                        <span
+                            class="{% if r.max_rssi < -90 %}rssi-bad{% elif r.max_rssi < -75 %}rssi-weak{% else %}rssi-good{% endif %}">{{
+                            r.max_rssi }}</span>
+                        <span class="text-slate-600 ml-1 text-[9px]">dBm</span>
+                        {% endif %}
+                    </td>
+
+                    {# I2C Errors #}
+                    <td class="px-4 py-3 text-center">
+                        {% if r.i2c_errs > 10 %}
+                        <span class="heat-hot font-bold">{{ r.i2c_errs }}</span>
+                        {% elif r.i2c_errs > 0 %}
+                        <span class="heat-warm">{{ r.i2c_errs }}</span>
+                        {% else %}
+                        <span class="text-slate-600">0</span>
+                        {% endif %}
+                    </td>
+
+                    {# Stack Usage (min watermarks) #}
+                    <td class="px-4 py-3 text-center font-mono">
+                        {% for val in [r.stack_rtc, r.stack_sched, r.stack_gprs, r.stack_ui] %}
+                        {% if val == 0 %}
+                        <span class="text-slate-600">—</span>
+                        {% elif val < 256 %} <span class="stack-crit">{{ val }}</span>
+                            {% elif val < 512 %} <span class="stack-low">{{ val }}</span>
+                                {% else %}
+                                <span class="stack-ok">{{ val }}</span>
+                                {% endif %}
+                                {% if not loop.last %}<span class="text-slate-700 mx-0.5">/</span>{% endif %}
+                                {% endfor %}
+                    </td>
+
+                    {# Free Heap #}
+                    <td class="px-4 py-3 text-center text-slate-400">{{ r.free_heap_kb }}K</td>
+
+                    {# Uptime #}
+                    <td class="px-4 py-3 text-center text-slate-500">{{ r.uptime_hrs }}h</td>
+
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="glass rounded-xl p-12 text-center text-slate-500">
+    No diagnostic data available yet. Data will appear after the first device check-in with the new firmware.
+</div>
+{% endif %}
+
+{# ── Legend ─────────────────────────────────────────────────────────────── #}
+<div class="grid grid-cols-1 md:grid-cols-3 gap-5 mt-4">
+
+    <div class="glass p-5 rounded-xl border-l-4 border-slate-600">
+        <h3 class="text-xs font-bold text-white mb-3 uppercase tracking-wider">📦 Stack Watermarks</h3>
+        <ul class="text-[11px] space-y-1.5 text-slate-400">
+            <li><span class="stack-ok">■</span> ≥ 512 bytes — <b>Safe</b></li>
+            <li><span class="stack-low">■</span> 256–511 bytes — <b>Watch</b> (headroom shrinking)</li>
+            <li><span class="stack-crit">■</span> &lt; 256 bytes — <b>Critical</b> (overflow risk)</li>
+            <li><span class="text-slate-600">—</span> — <b>No Data</b> (old firmware)</li>
+        </ul>
+        <p class="text-[10px] text-slate-600 mt-3">Tracks the all-time minimum free stack bytes per task since last
+            reboot. Persistent via RTC RAM across deep sleep.</p>
+    </div>
+
+    <div class="glass p-5 rounded-xl border-l-4 border-slate-600">
+        <h3 class="text-xs font-bold text-white mb-3 uppercase tracking-wider">📡 Signal &amp; Network</h3>
+        <ul class="text-[11px] space-y-1.5 text-slate-400">
+            <li><span class="rssi-good">■</span> RSSI ≥ −75 dBm — <b>Strong</b></li>
+            <li><span class="rssi-weak">■</span> −90 to −75 dBm — <b>Marginal</b></li>
+            <li><span class="rssi-bad">■</span> &lt; −90 dBm — <b>Weak / Dropping</b></li>
+        </ul>
+        <p class="text-[10px] text-slate-600 mt-3">Min/Max tracks the worst and best signal seen during all HTTP
+            transmission windows in the current boot session.</p>
+    </div>
+
+    <div class="glass p-5 rounded-xl border-l-4 border-slate-600">
+        <h3 class="text-xs font-bold text-white mb-3 uppercase tracking-wider">🌡 I2C &amp; Modem Temp</h3>
+        <ul class="text-[11px] space-y-1.5 text-slate-400">
+            <li><span class="heat-ok">■</span> Temp ≤ 50°C — <b>Normal</b></li>
+            <li><span class="heat-warm">■</span> 51–60°C — <b>Elevated</b> (check enclosure)</li>
+            <li><span class="heat-hot">■</span> &gt; 60°C — <b>Hot</b> (thermal throttling risk)</li>
+            <li class="pt-1">I2C Errors &gt; 0 — Bus contention or loose sensor cable.</li>
+        </ul>
+    </div>
+
+</div>
+
+{% endblock %}
