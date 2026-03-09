@@ -116,15 +116,17 @@
                 <td class="p-3 font-mono text-center text-slate-300 whitespace-nowrap">
                     {{ r.net_cnt_prev or 0 }} / {{ r.prev_stored or 0 }}
                 </td>
-                <td class="p-3 font-mono text-center text-blue-300" title="Today: Direct HTTP / Recovered">
+                <td class="p-3 font-mono text-center text-blue-300" title="Today: Direct HTTP / HTTP+FTP Recovered">
                     {% set http = r.http_suc_cnt or 0 %}
-                    {% set ftp = (r.net_cnt or 0) - http %}
-                    {{ http }} / {{ ftp if ftp > 0 else 0 }}
+                    {% set ret = r.http_ret_cnt or 0 %}
+                    {% set ftp = r.ftp_suc_cnt or 0 %}
+                    {{ http }} / {{ ftp + ret }}
                 </td>
-                <td class="p-3 font-mono text-center text-blue-300" title="Yesterday: Direct HTTP / Recovered">
+                <td class="p-3 font-mono text-center text-blue-300" title="Yesterday: Direct HTTP / HTTP+FTP Recovered">
                     {% set http_p = r.http_suc_cnt_prev or 0 %}
-                    {% set ftp_p = (r.net_cnt_prev or 0) - http_p %}
-                    {{ http_p }} / {{ ftp_p if ftp_p > 0 else 0 }}
+                    {% set ret_p = r.http_ret_cnt_prev or 0 %}
+                    {% set ftp_p = r.ftp_suc_cnt_prev or 0 %}
+                    {{ http_p }} / {{ ftp_p + ret_p }}
                 </td>
                 <td class="p-3 text-slate-500 text-[11px] whitespace-nowrap" title="{{ r.reported_at }}">
                     {{ r.time_ago }}

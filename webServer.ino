@@ -712,144 +712,117 @@ void handleFileList() {
   if (query.length() > 0) {
     // --- MODE: GLOBAL SEARCH ---
     html += "<h3>Search Results for '" + query + "'</h3>";
-    while (file) {
-      String fileName = file.name();
-      String fName = fileName;
-      if (fName.startsWith("/"))
-        fName = fName.substring(1);
+    html += "</div>";
+    count++;
+  }
+  file.close(); // v5.49 Build 5: FIX LEAK
+  file = root.openNextFile();
+}
+if (count == 0)
+  html += "<p>" + s_nf + "</p>";
+}
+else if (year == "") {
+  // --- MODE: YEAR LIST (ROOT) ---
+  html += "<h3>" + s_sy + "</h3>";
+  bool years[100] = {0}; // 2000-2099 map
 
-      if (fileName.endsWith(".txt") && fileName.indexOf(station_name) != -1 &&
-          fileName.indexOf(query) != -1) {
-        if (!fileName.startsWith("/"))
-          fileName = "/" + fileName;
-        html += "<div class='file-item'>";
-        html += "<strong>" + fileName + "</strong> (" + String(file.size()) +
-                " B)<br><br>";
-        html += "<a href='/viewfile?file=" + fileName +
-                "' class='btn btn-view'>" + s_view + "</a>";
-        html += "<a href='/download?file=" + fileName +
-                "' class='btn btn-dl'>" + s_dl + "</a>";
-        html += "</div>";
-        count++;
-      }
-      file = root.openNextFile();
-    }
-    if (count == 0)
-      html += "<p>" + s_nf + "</p>";
-
-  } else if (year == "") {
-    // --- MODE: YEAR LIST (ROOT) ---
-    html += "<h3>" + s_sy + "</h3>";
-    bool years[100] = {0}; // 2000-2099 map
-
-    while (file) {
-      String fileName = file.name();
-      if (fileName.endsWith(".txt") && fileName.indexOf(station_name) != -1) {
-        // Extract YYYY: Station_YYYYMMDD.txt. Find last '_'.
-        int idx = fileName.lastIndexOf('_');
-        if (idx != -1 && fileName.length() > idx + 4) {
-          String yStr = fileName.substring(idx + 1, idx + 5);
-          int yVal = yStr.toInt();
-          if (yVal >= 2000 && yVal < 2100)
-            years[yVal - 2000] = true;
-        }
-      }
-      file = root.openNextFile();
-    }
-
-    for (int i = 0; i < 100; i++) {
-      if (years[i]) {
-        int yVal = 2000 + i;
-        html += "<a href='/files?year=" + String(yVal) +
-                "' class='folder-item'>" + String(yVal) + "</a>";
-        count++;
+  while (file) {
+    String fileName = file.name();
+    if (fileName.endsWith(".txt") && fileName.indexOf(station_name) != -1) {
+      // Extract YYYY: Station_YYYYMMDD.txt. Find last '_'.
+      int idx = fileName.lastIndexOf('_');
+      if (idx != -1 && fileName.length() > idx + 4) {
+        String yStr = fileName.substring(idx + 1, idx + 5);
+        int yVal = yStr.toInt();
+        if (yVal >= 2000 && yVal < 2100)
+          years[yVal - 2000] = true;
       }
     }
-    if (count == 0)
-      html += "<p>" + s_nf + "</p>";
-
-  } else if (month == "") {
-    // --- MODE: MONTH LIST (YEAR SELECTED) ---
-    html += "<h3>" + year + " > " + s_sm + "</h3>";
-    bool months[13] = {0}; // 1-12
-
-    while (file) {
-      String fileName = file.name();
-      if (fileName.endsWith(".txt") && fileName.indexOf(station_name) != -1) {
-        int idx = fileName.lastIndexOf('_'); // ..._YYYYMMDD.txt
-        if (idx != -1 && fileName.length() > idx + 6) {
-          String fYear = fileName.substring(idx + 1, idx + 5);
-          if (fYear == year) {
-            String mStr = fileName.substring(idx + 5, idx + 7);
-            int mVal = mStr.toInt();
-            if (mVal >= 1 && mVal <= 12)
-              months[mVal] = true;
-          }
-        }
-      }
-      file = root.openNextFile();
-    }
-
-    const char *monthNames[] = {"",        "January",   "February", "March",
-                                "April",   "May",       "June",     "July",
-                                "August",  "September", "October",  "November",
-                                "December"};
-    for (int i = 1; i <= 12; i++) {
-      if (months[i]) {
-        String mPad = (i < 10) ? "0" + String(i) : String(i);
-        html += "<a href='/files?year=" + year + "&month=" + mPad +
-                "' class='folder-item'>" + String(monthNames[i]) + " (" + mPad +
-                ")</a>";
-        count++;
-      }
-    }
-    if (count == 0)
-      html += "<p>No logs found for " + year + ".</p>";
-
-  } else {
-    // --- MODE: FILE LIST (YEAR + MONTH SELECTED) ---
-    html += "<h3>" + year + " > " + month + "</h3>";
-    String filter = "_" + year + month; // Match ..._YYYYMM...
-
-    while (file) {
-      String fileName = file.name();
-      if (fileName.endsWith(".txt") && fileName.indexOf(station_name) != -1 &&
-          fileName.indexOf(filter) != -1) {
-        if (!fileName.startsWith("/"))
-          fileName = "/" + fileName;
-        html += "<div class='file-item'>";
-        html += "<strong>" + fileName + "</strong> (" + String(file.size()) +
-                " B)<br><br>";
-        html += "<a href='/viewfile?file=" + fileName +
-                "' class='btn btn-view'>" + s_view + "</a>";
-        html += "<a href='/download?file=" + fileName +
-                "' class='btn btn-dl'>" + s_dl + "</a>";
-        html += "</div>";
-        count++;
-      }
-      file = root.openNextFile();
-    }
-    if (count == 0)
-      html += "<p>No logs found for " + year + "-" + month + ".</p>";
+    file.close(); // v5.49 Build 5: FIX LEAK
+    file = root.openNextFile();
   }
 
-  html += "<br>";
-  if (month != "") {
-    String btn_back_year =
-        isKan ? "ಹಿಂದಕ್ಕೆ ಹೋಗಿ (Back to " + year + ")" : "Back to " + year;
-    html += "<a href='/files?year=" + year +
-            "' class='btn' style='background-color:#17a2b8;'>" + btn_back_year +
-            "</a> ";
+  for (int i = 0; i < 100; i++) {
+    if (years[i]) {
+      int yVal = 2000 + i;
+      html += "<a href='/files?year=" + String(yVal) +
+              "' class='folder-item'>" + String(yVal) + "</a>";
+      count++;
+    }
   }
-  if (year != "")
-    html += "<a href='/files' class='btn' "
-            "style='background-color:#007bff;'>" +
-            s_byears + "</a> ";
-  html += "<a href='/' class='btn' style='background-color:#28a745;'>" +
-          s_bhome + "</a>";
+  if (count == 0)
+    html += "<p>" + s_nf + "</p>";
+}
+else if (month == "") {
+  // --- MODE: MONTH LIST (YEAR SELECTED) ---
+  html += "<h3>" + year + " > " + s_sm + "</h3>";
+  bool months[13] = {0}; // 1-12
 
-  html += "</body></html>";
-  server.send(200, "text/html", html);
+  while (file) {
+    String fileName = file.name();
+    if (fileName.endsWith(".txt") && fileName.indexOf(station_name) != -1) {
+      int idx = fileName.lastIndexOf('_'); // ..._YYYYMMDD.txt
+      if (idx != -1 && fileName.length() > idx + 6) {
+        String fYear = fileName.substring(idx + 1, idx + 5);
+        if (fYear == year) {
+          String mStr = fileName.substring(idx + 5, idx + 7);
+          int mVal = mStr.toInt();
+          if (mVal >= 1 && mVal <= 12)
+            months[mVal] = true;
+        }
+      }
+    }
+    file.close(); // v5.49 Build 5: FIX LEAK
+    file = root.openNextFile();
+  }
+
+  const char *monthNames[] = {
+      "",     "January", "February",  "March",   "April",    "May",     "June",
+      "July", "August",  "September", "October", "November", "December"};
+  for (int i = 1; i <= 12; i++) {
+    if (months[i]) {
+      String mPad = (i < 10) ? "0" + String(i) : String(i);
+      html += "<a href='/files?year=" + year + "&month=" + mPad +
+              "' class='folder-item'>" + String(monthNames[i]) + " (" + mPad +
+              ")</a>";
+      count++;
+    }
+  }
+  if (count == 0)
+    html += "<p>No logs found for " + year + ".</p>";
+}
+else {
+  // --- MODE: FILE LIST (YEAR + MONTH SELECTED) ---
+  html += "<h3>" + year + " > " + month + "</h3>";
+  String filter = "_" + year + month; // Match ..._YYYYMM...
+
+  html += "</div>";
+  count++;
+}
+file.close(); // v5.49 Build 5: FIX LEAK
+file = root.openNextFile();
+}
+if (count == 0)
+  html += "<p>No logs found for " + year + "-" + month + ".</p>";
+}
+
+html += "<br>";
+if (month != "") {
+  String btn_back_year =
+      isKan ? "ಹಿಂದಕ್ಕೆ ಹೋಗಿ (Back to " + year + ")" : "Back to " + year;
+  html += "<a href='/files?year=" + year +
+          "' class='btn' style='background-color:#17a2b8;'>" + btn_back_year +
+          "</a> ";
+}
+if (year != "")
+  html += "<a href='/files' class='btn' "
+          "style='background-color:#007bff;'>" +
+          s_byears + "</a> ";
+html += "<a href='/' class='btn' style='background-color:#28a745;'>" + s_bhome +
+        "</a>";
+
+html += "</body></html>";
+server.send(200, "text/html", html);
 }
 
 // --- Handle File Download (/download?file=...) ---

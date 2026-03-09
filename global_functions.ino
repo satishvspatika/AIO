@@ -197,6 +197,7 @@ void copyFilesFromSPIFFSToSD(const char *dirname) {
         sourceFile.close();
       }
     }
+    file.close(); // v5.49 Build 5: FIX LEAK
     file = root.openNextFile();
   }
 }
@@ -221,6 +222,7 @@ void removeFilesFromSPIFFS(const char *dirname) {
       debugln(fileName);
       SPIFFS.remove(fileName);
     }
+    file.close(); // v5.49 Build 5: FIX LEAK
     file = root.openNextFile();
   }
 }
@@ -245,6 +247,7 @@ void delete_multiple_files(const char *station) {
       debugln(fileName);
       SPIFFS.remove(fileName);
     }
+    file.close(); // v5.49 Build 5: FIX LEAK
     file = root.openNextFile();
   }
 }
@@ -302,32 +305,35 @@ void recoverI2CBus() {
 }
 
 /**
- * Persists current coordinates to SPIFFS
+ * Persists current coordinates and timestamp (v5.49) to SPIFFS
  */
 void saveGPS() {
-  File file = SPIFFS.open("/gps_coords.txt", FILE_WRITE);
+  File file = SPIFFS.open("/gps_fix.txt", FILE_WRITE);
   if (file) {
-    file.printf("%.6f,%.6f", lati, longi);
+    file.printf("%.6f,%.6f,%d,%d,%d", lati, longi, current_day, current_month,
+                current_year);
     file.close();
-    debugln("[GPS] Location persisted to SPIFFS");
+    gps_fix_dd = current_day;
+    gps_fix_mm = current_month;
+    gps_fix_yy = current_year;
+    debugln("[GPS] Location and Date persisted to SPIFFS");
   }
 }
 
 /**
- * Loads last known coordinates from SPIFFS
+ * Loads last known coordinates and timestamp (v5.49) from SPIFFS
  */
 void loadGPS() {
-  if (SPIFFS.exists("/gps_coords.txt")) {
-    File file = SPIFFS.open("/gps_coords.txt", FILE_READ);
+  if (SPIFFS.exists("/gps_fix.txt")) {
+    File file = SPIFFS.open("/gps_fix.txt", FILE_READ);
     if (file) {
       String line = file.readString();
-      int commaIndex = line.indexOf(',');
-      if (commaIndex != -1) {
-        lati = line.substring(0, commaIndex).toFloat();
-        longi = line.substring(commaIndex + 1).toFloat();
-        debugf2("[GPS] Loaded from SPIFFS: %.6f, %.6f\n", lati, longi);
-      }
       file.close();
+      if (sscanf(line.c_str(), "%f,%f,%d,%d,%d", &lati, &longi, &gps_fix_dd,
+                 &gps_fix_mm, &gps_fix_yy) >= 2) {
+        debugf5("[GPS] Loaded from SPIFFS: %.6f,%.6f (Fix: %02d/%02d/%d)\n",
+                lati, longi, gps_fix_dd, gps_fix_mm, gps_fix_yy);
+      }
     }
   } else {
     debugln("[GPS] No persisted location found.");
@@ -609,55 +615,86 @@ void subtractUnsentFromMask(const char *uFile) {
   if (!f)
     return;
 
-  // Tomorrow's date (for Current Day file check)
-  int t_dd = current_day, t_mm = current_month, t_yy = current_year;
-  next_date(&t_dd, &t_mm, &t_yy);
+  bool isFtpFile =
+      (strstr(uFile, ".kwd") != NULL || strstr(uFile, ".swd") != NULL ||
+       strstr(uFile, "ftpunsent") != NULL);
 
   while (f.available()) {
     String line = f.readStringUntil('\n');
-    if (line.length() < 15)
+    line.trim();
+    if (line.length() < 10)
       continue;
 
-    // Format: 04,2026-02-25,09:45,...
-    int firstComma = line.indexOf(',');
-    int secondComma = line.indexOf(',', firstComma + 1);
-    if (firstComma == -1 || secondComma == -1)
-      continue;
+    int sNum = -1;
+    int d_year = current_year, d_month = current_month,
+        d_day = current_day; // Default if unparseable
 
-    int sNum = line.substring(0, firstComma).toInt();
-    String sDate = line.substring(firstComma + 1, secondComma);
-
-    char tomStr[16];
-    snprintf(tomStr, sizeof(tomStr), "%04d-%02d-%02d", t_yy, t_mm, t_dd);
+    if (isFtpFile) {
+      // FTP format: stnId;YYYY-MM-DD,HH:MM;...
+      int semi1 = line.indexOf(';');
+      if (semi1 == -1)
+        continue;
+      int semi2 = line.indexOf(';', semi1 + 1);
+      if (semi2 == -1)
+        continue;
+      String dateTime = line.substring(semi1 + 1, semi2); // "YYYY-MM-DD,HH:MM"
+      if (dateTime.length() >= 10) {
+        d_year = dateTime.substring(0, 4).toInt();
+        d_month = dateTime.substring(5, 7).toInt();
+        d_day = dateTime.substring(8, 10).toInt();
+      }
+      int commaIdx = dateTime.indexOf(',');
+      if (commaIdx == -1)
+        continue;
+      String timeStr = dateTime.substring(commaIdx + 1); // "HH:MM"
+      int colonIdx = timeStr.indexOf(':');
+      if (colonIdx == -1)
+        continue;
+      int h = timeStr.substring(0, colonIdx).toInt();
+      int m = timeStr.substring(colonIdx + 1).toInt();
+      int raw = h * 4 + m / 15;
+      sNum = (raw + 61) % 96;
+    } else {
+      // CSV format: sampleNo,YYYY-MM-DD,... OR format:
+      // sampleNo,YYYY-MM-DD,HH:MM,...
+      int commaIdx = line.indexOf(',');
+      if (commaIdx == -1)
+        continue;
+      sNum = line.substring(0, commaIdx).toInt();
+      int comma2 = line.indexOf(',', commaIdx + 1);
+      if (comma2 != -1) {
+        String sDate = line.substring(commaIdx + 1, comma2);
+        if (sDate.length() >= 10) {
+          d_year = sDate.substring(0, 4).toInt();
+          d_month = sDate.substring(5, 7).toInt();
+          d_day = sDate.substring(8, 10).toInt();
+        }
+      }
+    }
 
     if (sNum >= 0 && sNum <= 95) {
+      // Calculate 'NOW' meteorological close date
+      int cur_dd = current_day, cur_mm = current_month, cur_yy = current_year;
+      int curr_h = (current_hour < 24) ? current_hour : 0;
+      int curr_m = (current_min < 60) ? current_min : 0;
+      int curr_sNum = (curr_h * 4 + curr_m / 15 + 61) % 96;
+      if (curr_sNum <= 60) {
+        next_date(&cur_dd, &cur_mm, &cur_yy);
+      }
+
+      // Calculate 'RECORD' meteorological close date
+      int rec_dd = d_day, rec_mm = d_month, rec_yy = d_year;
+      if (sNum <= 60) {
+        next_date(&rec_dd, &rec_mm, &rec_yy);
+      }
+
+      bool isToday = (cur_yy == rec_yy && cur_mm == rec_mm && cur_dd == rec_dd);
+
       // Subtraction Logic: Clear the bit if found in unsent file
-      if (sDate == tomStr ||
-          (sDate == String(current_year) + "-" +
-                        (current_month < 10 ? "0" : "") +
-                        String(current_month) + "-" +
-                        (current_day < 10 ? "0" : "") + String(current_day) &&
-           sNum <= 60)) {
-        // This is part of 'Current' met day if it matches Tomorrow's date
-        // OR Today's date with Sample >= 61 (08:45 AM+)
-        // Wait, my logic above is slightly inverted.
-        // Let's use a simpler heuristic:
-        // Current Met Day records have date = Today (if Time >= 08:45) OR
-        // Tomorrow (if Time <= 08:30). Yesterday Met Day records have date =
-        // Today (if Time <= 08:30) OR Yesterday (if Time >= 08:45).
-
-        // Actually, the most robust way is to check the same logic used in
-        // send_at_cmd_data
-        int h = (current_hour < 24) ? current_hour : 0;
-        int m = (current_min < 60) ? current_min : 0;
-        int timeline_idx = h * 4 + m / 15;
-        timeline_idx = (timeline_idx + 61) % 96;
-
-        if (sNum <= timeline_idx || timeline_idx < 5) {
-          diag_sent_mask_cur[sNum / 32] &= ~(1UL << (sNum % 32));
-        } else {
-          diag_sent_mask_prev[sNum / 32] &= ~(1UL << (sNum % 32));
-        }
+      if (isToday) {
+        diag_sent_mask_cur[sNum / 32] &= ~(1UL << (sNum % 32));
+      } else {
+        diag_sent_mask_prev[sNum / 32] &= ~(1UL << (sNum % 32));
       }
     }
   }
@@ -744,6 +781,8 @@ void markFileAsDelivered(const char *fileName) {
       continue;
 
     int sNum = -1;
+    int d_year = current_year, d_month = current_month,
+        d_day = current_day; // Default if unparseable
 
     if (isFtpFile) {
       // FTP format: stnId;YYYY-MM-DD,HH:MM;...
@@ -755,6 +794,11 @@ void markFileAsDelivered(const char *fileName) {
       if (semi2 == -1)
         continue;
       String dateTime = line.substring(semi1 + 1, semi2); // "YYYY-MM-DD,HH:MM"
+      if (dateTime.length() >= 10) {
+        d_year = dateTime.substring(0, 4).toInt();
+        d_month = dateTime.substring(5, 7).toInt();
+        d_day = dateTime.substring(8, 10).toInt();
+      }
       int commaIdx = dateTime.indexOf(',');
       if (commaIdx == -1)
         continue;
@@ -769,18 +813,42 @@ void markFileAsDelivered(const char *fileName) {
       int raw = h * 4 + m / 15;
       sNum = (raw + 61) % 96;
     } else {
-      // CSV format: sampleNo,DATE,...
+      // CSV format: sampleNo,YYYY-MM-DD,HH:MM,...
       int commaIdx = line.indexOf(',');
       if (commaIdx == -1)
         continue;
       sNum = line.substring(0, commaIdx).toInt();
+      int comma2 = line.indexOf(',', commaIdx + 1);
+      if (comma2 != -1) {
+        String sDate = line.substring(commaIdx + 1, comma2);
+        if (sDate.length() >= 10) {
+          d_year = sDate.substring(0, 4).toInt();
+          d_month = sDate.substring(5, 7).toInt();
+          d_day = sDate.substring(8, 10).toInt();
+        }
+      }
     }
 
     if (sNum >= 0 && sNum <= 95) {
-      int current_s_idx = current_hour * 4 + current_min / 15;
-      current_s_idx = (current_s_idx + 61) % 96;
+      // v5.49 Build 5: STRICT DATE VERIFICATION
+      // Calculate 'NOW' meteorological close date
+      int cur_dd = current_day, cur_mm = current_month, cur_yy = current_year;
+      int curr_h = (current_hour < 24) ? current_hour : 0;
+      int curr_m = (current_min < 60) ? current_min : 0;
+      int curr_sNum = (curr_h * 4 + curr_m / 15 + 61) % 96;
+      if (curr_sNum <= 60) {
+        next_date(&cur_dd, &cur_mm, &cur_yy);
+      }
 
-      if (sNum <= current_s_idx) {
+      // Calculate 'RECORD' meteorological close date
+      int rec_dd = d_day, rec_mm = d_month, rec_yy = d_year;
+      if (sNum <= 60) {
+        next_date(&rec_dd, &rec_mm, &rec_yy);
+      }
+
+      bool isToday = (cur_yy == rec_yy && cur_mm == rec_mm && cur_dd == rec_dd);
+
+      if (isToday) {
         if (!(diag_sent_mask_cur[sNum / 32] & (1UL << (sNum % 32)))) {
           diag_sent_mask_cur[sNum / 32] |= (1UL << (sNum % 32));
           diag_ftp_success_count++;

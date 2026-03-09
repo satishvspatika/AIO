@@ -128,6 +128,14 @@ void setup() {
     diag_last_rssi = 0;
     diag_min_rssi = 0;
     diag_max_rssi = -140;
+
+    // Reset Accuracy Counters on Power-On to prevent garbage spikes
+    total_wind_pulses_32 = 0;
+    last_sched_wind_pulses_32 = 0;
+    last_raw_wind_count = wind_count.val; // Sync with HW
+    total_rf_pulses_32 = 0;
+    last_sched_rf_pulses_32 = 0;
+    last_raw_rf_count = rf_count.val; // Sync with HW
   }
 
   // Pre-load essential system data: Try NVS (Preferences) first for robustness

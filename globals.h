@@ -102,7 +102,7 @@ char UNIT[15] = "SPATIKA_GEN"; // UNIT :
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.48"
+#define FIRMWARE_VERSION "5.49"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
@@ -334,7 +334,8 @@ char *startptr;
 int send_status;
 bool valid_dt, valid_time;
 // SCHEDULER (GLOBAL)
-int sync_mode, gprs_mode, data_mode, sampleNo;
+volatile int sync_mode, gprs_mode, data_mode;
+int sampleNo;
 int rf_cls_dd, rf_cls_mm,
     rf_cls_yy; // this is for storing the rf close date from RTC date
 int rf_cls_ram_dd, rf_cls_ram_mm,
@@ -374,11 +375,13 @@ float li_bat, li_bat_val;
 
 RTC_DATA_ATTR float lati, longi;
 RTC_DATA_ATTR float gps_latitude, gps_longitude;
+RTC_DATA_ATTR int gps_fix_dd = 0, gps_fix_mm = 0,
+                  gps_fix_yy = 0; // GPS age tracking
 
 char httpPostRequest[256], httpContent[12];
-char append_text[100],
-    store_text[100];      // Increased from 65 to 100 for safety #TRUEFIX
-char ftpappend_text[100]; // Increased from 65 to 100 for safety #TRUEFIX
+char append_text[160],
+    store_text[160];      // Increased to 160 for better safety
+char ftpappend_text[160]; // Increased to 160 for better safety
 int cur_mode = 0;
 int cur_fld_no = 0;
 char ftp_station[16]; // AG2 from int so that alphanumeric can be stored
@@ -435,6 +438,15 @@ RTC_DATA_ATTR int diag_consecutive_http_fails = 0;
 RTC_DATA_ATTR int diag_daily_http_fails = 0; // Total failures today
 RTC_DATA_ATTR int diag_rejected_count =
     0; // Track consecutive "Rejected" (Time) errors
+
+// Accuracy Counters (v5.49): Use 32-bit accumulators to prevent 16-bit ULP
+// wraps and spikes
+RTC_DATA_ATTR uint32_t total_wind_pulses_32 = 0;
+RTC_DATA_ATTR uint32_t last_sched_wind_pulses_32 = 0;
+RTC_DATA_ATTR uint16_t last_raw_wind_count = 0; // Raw 16-bit ULP snapshot
+RTC_DATA_ATTR uint32_t total_rf_pulses_32 = 0;
+RTC_DATA_ATTR uint32_t last_sched_rf_pulses_32 = 0;
+RTC_DATA_ATTR uint16_t last_raw_rf_count = 0; // Raw 16-bit ULP snapshot
 
 // v6.0: Extreme Deep-Dive Diagnostics (for comprehensive health monitoring)
 RTC_DATA_ATTR int diag_stack_min_rtc = 9999;
@@ -629,6 +641,11 @@ void process_sms(char msg_no);
 int setup_ftp();
 void fetchFromHttpAndUpdate(char *fileName);
 void copyFromSPIFFSToFS(char *dateFile);
+// I2C Protection (v5.49)
+void protectI2CPins();
+void unprotectI2CPins();
+
+// MODEM / GPRS
 String waitForResponse(String expectedResponse, int timeout);
 void disableWDT();
 void saveYearToSPIFFS(int year);

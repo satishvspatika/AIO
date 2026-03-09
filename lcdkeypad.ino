@@ -85,9 +85,21 @@ void IRAM_ATTR onTimer() {
 // LCD Timer ISR callback function
 void IRAM_ATTR lcdTimer() {
   portENTER_CRITICAL_ISR(&timerMux2);
-  lcdkeypad_start = 0;   // Set the flag when the timer interrupts
+  lcdkeypad_start = 0; // Set the flag when the timer interrupts
+  // protectI2CPins() cannot be called from ISR safely, but GPIO write is fast
   digitalWrite(32, LOW); // Turn OFF power to LCD (5V)
   portEXIT_CRITICAL_ISR(&timerMux2);
+}
+
+// v5.49: Pin protection helpers for electrical stability
+void protectI2CPins() {
+  pinMode(21, INPUT); // High impedance - prevent back-feeding
+  pinMode(22, INPUT);
+}
+
+void unprotectI2CPins() {
+  pinMode(21, INPUT_PULLUP);
+  pinMode(22, INPUT_PULLUP);
 }
 
 void lcdkeypad(void *pvParameters) {
@@ -209,7 +221,8 @@ void lcdkeypad(void *pvParameters) {
 
     // Capture the transition for logging only
     if (last_lcd_state == 1 && lcdkeypad_start == 0) {
-      debugln("LCD Timeout detected.");
+      debugln("LCD Timeout detected. Protecting Pins.");
+      protectI2CPins();
     }
     last_lcd_state = lcdkeypad_start;
 
@@ -227,6 +240,7 @@ void lcdkeypad(void *pvParameters) {
       // If LCD is not started OR the timer hasn't been initialized yet
       if (lcdkeypad_start == 0 || lcd_timer == NULL) {
         debugln("[UI] Activating LCD Power (GPIO 32)...");
+        unprotectI2CPins();                    // Restore I2C lines BEFORE 5V
         digitalWrite(32, HIGH);                // Turn ON power to LCD (5V)
         vTaskDelay(1000 / portTICK_PERIOD_MS); // Wait for power stabilization
                                                // (Increased to 1s)
@@ -261,8 +275,9 @@ void lcdkeypad(void *pvParameters) {
             pdTRUE) {
           debugln("[UI] I2C Mutex Acquired. Initializing LCD hardware...");
 
-          // Re-assert I2C pins with consistent frequency
-          Wire.begin(I2C_SDA, I2C_SCL, 100000);
+          // v5.49: REDUNDANT Wire.begin() REMOVED to avoid disturbing other
+          // tasks. Pins already initialized by unprotectI2CPins().
+          // Wire.begin(I2C_SDA, I2C_SCL, 100000);
 
           lcd.init();
           lcd.display();   // Ensure display is active
@@ -1242,9 +1257,10 @@ void lcdkeypad(void *pvParameters) {
                         SPIFFS.remove(fullPath);
                         deleted_count++;
                       }
-
+                      file.close(); // v5.49 Build 5: FIX LEAK
                       file = root.openNextFile();
                     }
+                    root.close();
 
                     debugf1("[UI] Deleted %d old station files\n",
                             deleted_count);
@@ -1425,8 +1441,10 @@ void lcdkeypad(void *pvParameters) {
                           debugln(fullPath);
                           SPIFFS.remove(fullPath);
                         }
+                        file.close(); // v5.49 Build 5: FIX LEAK
                         file = root.openNextFile();
                       }
+                      root.close();
                       lcd.clear();
                       lcd.print("CLEAN! REBOOTING");
                       debugln("[UI] Factory Reset Complete. Restarting...");

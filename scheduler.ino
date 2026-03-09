@@ -238,6 +238,8 @@ void scheduler(void *pvParameters) {
       int mins_into = 0;         // Hoisted for goto safety
       File file1;
       int last_sampleNo = 0;
+      uint32_t captured_rf = 0, captured_wind = 0; // Hoisted for goto safety
+      uint16_t curr_rf_raw = 0, rf_raw_delta = 0;  // Accuracy snapshots
       char content_buf[256];
       char tmp_parse[32];
       float last_instRF = 0, last_cumRF = 0;
@@ -293,9 +295,18 @@ void scheduler(void *pvParameters) {
       // -----------------------------------------------------------------------
 
 #if (SYSTEM == 0) || (SYSTEM == 2)
-      rf_value = (float)rf_count.val * RF_RESOLUTION; // **NEW
-      rf_count.val =
-          0; // Reset immediately to capture new tips during GPRS wait
+      // 32-bit RF Accumulation (Handles 16-bit ULP wrap without reset)
+      curr_rf_raw = rf_count.val;
+      rf_raw_delta = (curr_rf_raw >= last_raw_rf_count)
+                         ? (curr_rf_raw - last_raw_rf_count)
+                         : (65536 + curr_rf_raw - last_raw_rf_count);
+      total_rf_pulses_32 += rf_raw_delta;
+      last_raw_rf_count = curr_rf_raw;
+
+      captured_rf = total_rf_pulses_32 - last_sched_rf_pulses_32;
+      last_sched_rf_pulses_32 = total_rf_pulses_32;
+
+      rf_value = (float)captured_rf * RF_RESOLUTION;
 
       // v5.52 Sanity Cap: If rf_value exceeds 50mm in 15 minutes
       // (= 200mm/hr, beyond any recorded Indian rainfall event), the pin
@@ -333,9 +344,10 @@ void scheduler(void *pvParameters) {
 // TWS
 #if (SYSTEM == 1) || (SYSTEM == 2)
       debugln();
-      totalWindPulses = (float)wind_count.val;
-      wind_count.val =
-          0; // Reset immediately to capture new pulses during GPRS wait
+      // total_wind_pulses_32 is updated every 1s by windSpeed task
+      captured_wind = total_wind_pulses_32 - last_sched_wind_pulses_32;
+      last_sched_wind_pulses_32 = total_wind_pulses_32;
+      totalWindPulses = (float)captured_wind;
       prev_wind_count = 0; // Reset instantaneous tracker to prevent spikes
 
       // debug("TOTAL NUMBER OF PULSES IN 15 mins is ");
@@ -613,7 +625,7 @@ void scheduler(void *pvParameters) {
       debugln();
 
       // Robust Rollover Detection (v5.48): Use Date mismatch to trigger rest
-      if (current_day != diag_last_rollover_day) {
+      if (rf_cls_dd != diag_last_rollover_day) {
         debugln("[SCHED] 🗓 Day Change Detected. Performing Rollover...");
         diag_last_rollover_day = current_day;
 
@@ -2419,13 +2431,13 @@ void scheduler(void *pvParameters) {
       if (SPIFFS.exists(unsent_file)) {
         File file4 = SPIFFS.open(unsent_file, FILE_READ);
         if (file4) {
-          String content = file4.readString();
-          file4.close();
-          if (content.length() > 0) {
-            debugln("\n--- UNSENT DATA START ---");
-            debug(content); // Burst print via macro (Rule 43)
-            debugln("--- UNSENT DATA END ---\n");
+          debugln("\n--- UNSENT DATA START ---");
+          while (file4.available()) {
+            String line = file4.readStringUntil('\n');
+            debug(line); // Burst print per line
           }
+          file4.close();
+          debugln("--- UNSENT DATA END ---\n");
         }
       }
 #endif
@@ -2435,13 +2447,13 @@ void scheduler(void *pvParameters) {
       if (SPIFFS.exists(ftpunsent_file)) {
         File file4 = SPIFFS.open(ftpunsent_file, FILE_READ);
         if (file4) {
-          String content = file4.readString();
-          file4.close();
-          if (content.length() > 0) {
-            debugln("\n--- UNSENT DATA START ---");
-            debug(content); // Burst print via macro (Rule 43)
-            debugln("--- UNSENT DATA END ---\n");
+          debugln("\n--- UNSENT DATA START ---");
+          while (file4.available()) {
+            String line = file4.readStringUntil('\n');
+            debug(line); // Burst print per line
           }
+          file4.close();
+          debugln("--- UNSENT DATA END ---\n");
         }
       }
 #endif

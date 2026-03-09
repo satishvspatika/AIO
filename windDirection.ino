@@ -38,7 +38,9 @@ void windDirection(void *pvParameters) {
     static int wd_fault_count = 0;
     if (tempWindDir == 0 && spread == 0) {
       wd_fault_count++;
-      if (wd_fault_count > 30)
+      // v5.49: Increased threshold to 300 (~5 mins) to prevent false 'NA'
+      // at stable North
+      if (wd_fault_count > 300)
         wd_ok = false;
     } else {
       wd_fault_count = 0;

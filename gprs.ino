@@ -802,6 +802,8 @@ void prepare_data_and_send() {
   // Fails after retry will trigger FTP backlog storage.
 
   if (success_count == 1) {
+    diag_consecutive_http_fails = 0; // v5.49 Build 5: Reset fail streaks
+    diag_consecutive_reg_fails = 0;
     if (data_mode == eCurrentData) {
       diag_first_http_count++;
     }
@@ -1455,24 +1457,22 @@ void send_http_data() {
 #endif
 
   } else { // Handle failure to send current data
-    debugln("*** Current data couldn't be sent. Backlog will be handled if "
-            "connection is stable.");
+    debugln("*** Current data couldn't be sent. Backlog will be handled "
+            "independently.");
 
-    // diag_pd_count is now handled by scheduler on file write for accurate
-    // "Stored Today" total. v5.41 NDM Tracking (9 PM to 6 AM)
-    if (record_hr >= 21 || record_hr < 6) {
-      diag_ndm_count++;
-      debugf1("[Health] NDM Increment: Fail during night hours. Count: %d\n",
-              diag_ndm_count);
-    }
+    // v5.49 Build 5: NDM tracking is now handled EXCLUSIVELY by the scheduler
+    // on successful record write to SPIFFS. This prevents double-counting
+    // and ensures NDM represents "Processed Night Data" volume accurately.
+    // diag_daily_http_fails is already incremented inside send_at_cmd_data().
+  }
 
 #if (SYSTEM == 1 || SYSTEM == 2)
-    // v5.58: Skip FTP rescue if HTTP fails.
-    // If Primary transport failed, don't waste power on secondary.
-    debugln(
-        "[Rescue] HTTP Failed. Skipping FTP backlog attempt to save power.");
-#endif
+  // v5.49 Build 5: INDEPENDENT FTP TRIGGER
+  // Decoupled from HTTP Success. FTP serves as the robust rescue layer.
+  if (gprs_mode == eGprsSignalOk && (signal_lvl > -96)) {
+    send_unsent_data();
   }
+#endif
 
   // v5.64: Pruned buffers & Selective SMS
   SerialSIT.println("AT+HTTPTERM");
@@ -1552,7 +1552,7 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
   int unsent_cnt = countStored(ftpunsent_file);
 
   // v7.62: Power-Saving FTP Gating logic (User Request)
-  // 1. Threshold Met: At least 4 records (1 hour of data)
+  // 1. Threshold Met: At least 6 records (1.5 hours of data, v5.49 Build 5)
   // 2. Scheduled Sync Slots: 00:00, 06:00, 12:00, 18:00 (Synoptic hours)
   // 3. Final Day Cleanup: 08:45 AM (IST) to ensure all data for the
   // meteorological day is cleared
@@ -1560,7 +1560,7 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
       (record_min == 0) &&
       (record_hr == 0 || record_hr == 6 || record_hr == 12 || record_hr == 18);
   bool morning_cleanup = (record_hr == 8 && record_min == 45);
-  bool should_push = (unsent_cnt >= 4) ||
+  bool should_push = (unsent_cnt >= 6) ||
                      (unsent_cnt > 0 && (scheduled_slot || morning_cleanup));
 
   if (signal_lvl > -95 && should_push && SPIFFS.exists(ftpunsent_file)) {
@@ -1965,9 +1965,11 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
                 debugln("File removal failed");
               }
             }
+            file.close(); // v5.49 Build 5: FIX LEAK - Close file handle before
+                          // next iteration
             file = root.openNextFile();
           }
-          file.close();
+          root.close();
 
           // Success Cleanup: Remove the temporary file from cellular module
           // storage
@@ -2008,9 +2010,9 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
                 vTaskDelay(100 / portTICK_PERIOD_MS);
                 SPIFFS.remove(prefixedFileName);
               }
+              file.close(); // v5.49 Build 5: FIX LEAK
               file = root.openNextFile();
             }
-            file.close();
             root.close();
           }
         }
@@ -2196,6 +2198,7 @@ int send_at_cmd_data(char *payload, String charArray) {
       SerialSIT.println("AT+HTTPTERM");
       waitForResponse("OK", 2000);
     }
+    diag_daily_http_fails++; // Increment on failure
     return 0;
   }
 
@@ -2249,28 +2252,46 @@ int send_at_cmd_data(char *payload, String charArray) {
     // drift>90s)
     sync_rtc_from_server_tm(payload_ptr, false);
 
-    // v7.67: Unified unique success tracking & Mask update
+    // v5.49 Build 5: STRICT DATE VERIFICATION for HTTP Success Tracking
     if (temp_sampleNo >= 0 && temp_sampleNo <= MAX_SAMPLE_NO) {
-      int h_idx = (current_hour < 24) ? current_hour : 0;
-      int m_idx = (current_min < 60) ? current_min : 0;
-      int timeline_idx = (h_idx * 4 + m_idx / 15 + 61) % 96;
-      bool isToday = (temp_sampleNo <= timeline_idx || timeline_idx < 5);
+      // Calculate 'NOW' meteorological close date
+      int cur_dd = current_day, cur_mm = current_month, cur_yy = current_year;
+      int curr_h = (current_hour < 24) ? current_hour : 0;
+      int curr_m = (current_min < 60) ? current_min : 0;
+      int curr_sNum = (curr_h * 4 + curr_m / 15 + 61) % 96;
+      if (curr_sNum <= 60) {
+        next_date(&cur_dd, &cur_mm, &cur_yy);
+      }
+
+      // Calculate 'RECORD' meteorological close date
+      int rec_dd = temp_day, rec_mm = temp_month, rec_yy = temp_year;
+      if (temp_sampleNo <= 60) {
+        next_date(&rec_dd, &rec_mm, &rec_yy);
+      }
+
+      bool isToday = (cur_yy == rec_yy && cur_mm == rec_mm && cur_dd == rec_dd);
       uint32_t bit = (1UL << (temp_sampleNo % 32));
       bool alreadySent = isToday
                              ? (diag_sent_mask_cur[temp_sampleNo / 32] & bit)
                              : (diag_sent_mask_prev[temp_sampleNo / 32] & bit);
 
       if (!alreadySent) {
-        if (data_mode == eCurrentData) {
-          diag_http_success_count++;
-        } else if (data_mode == eUnsentData) {
-          diag_http_retry_count++;
-        }
-
-        if (isToday)
+        if (isToday) {
           diag_sent_mask_cur[temp_sampleNo / 32] |= bit;
-        else
+          if (data_mode == eCurrentData && diag_http_success_count < 96) {
+            diag_http_success_count++;
+          } else if (data_mode == eUnsentData && diag_http_retry_count < 96) {
+            diag_http_retry_count++;
+          }
+        } else {
           diag_sent_mask_prev[temp_sampleNo / 32] |= bit;
+          if (data_mode == eCurrentData && diag_http_success_count_prev < 96) {
+            diag_http_success_count_prev++;
+          } else if (data_mode == eUnsentData &&
+                     diag_http_retry_count_prev < 96) {
+            diag_http_retry_count_prev++;
+          }
+        }
       }
     }
 
@@ -2288,7 +2309,7 @@ int send_at_cmd_data(char *payload, String charArray) {
     return 1;
   } else {
     debugln("GPRS SEND : It is a Failure");
-    diag_daily_http_fails++;
+    // diag_daily_http_fails++; // This is now handled outside this function
 
     // v6.85: Trigger RTC resync on rejection
     if (strstr(payload_ptr, "Rejected") || strstr(payload_ptr, "rejected")) {

@@ -41,12 +41,19 @@ void windSpeed(void *pvParameters) {
       esp_task_wdt_reset();
     }
 
-    // Store current count in buffer
-    pulseBuffer[bufferIndex] = wind_count.val;
+    // 32-Bit Accumulation (Handles ULP 16-bit wraps safely)
+    uint16_t current_count = wind_count.val;
+    uint16_t raw_delta = (current_count >= last_raw_wind_count)
+                             ? (current_count - last_raw_wind_count)
+                             : (65536 + current_count - last_raw_wind_count);
+    total_wind_pulses_32 += raw_delta;
+    last_raw_wind_count = current_count;
+
+    // Store current count in buffer for INSTANTANEOUS calculation
+    pulseBuffer[bufferIndex] = current_count;
 
     // Get count from X seconds ago (circularly)
     int oldestIndex = (bufferIndex + 1) % BUFFER_SIZE;
-    uint16_t current_count = pulseBuffer[bufferIndex];
     uint16_t older_count = pulseBuffer[oldestIndex];
 
     // Calculate delta using the 5-second window

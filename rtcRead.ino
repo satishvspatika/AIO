@@ -194,21 +194,42 @@ void resync_time() {
   csqstr = strstr(response_char, "+CLBS");
 
   if (csqstr != NULL) {
-    // Safe to parse
-    int parsed = sscanf(csqstr, "+CLBS: %d,%f,%f,%d,%d/%d/%d,%d:%d:%d", &tmp,
-                        &lati, &longi, &tmp3, &year1, &month1, &day1, &hour1,
-                        &minute1, &seconds1);
-
-    if (parsed == 10) {
-      debugln("CLBS data parsed successfully");
-      parse_and_convert_clbs_response(response_char, year1, month1, day1, hour1,
-                                      minute1, seconds1);
-      badReads = 0;
-    } else {
-      debug("Warning: sscanf parsed only ");
-      debugln(parsed);
+    // Robust Manual Parsing for +CLBS:
+    // <err>,<lat>,<long>,<alt>,<year/mm/dd,hh:mm:ss> Handles SIMCOM 7672
+    // response format variations (with or without quotes)
+    char *p = strchr(csqstr, ':');
+    if (p) {
+      p++; // Skip ':'
+      tmp = atoi(p);
+      p = strchr(p, ',');
+      if (p) {
+        lati = atof(++p);
+        p = strchr(p, ',');
+        if (p) {
+          longi = atof(++p);
+          p = strchr(p, ',');
+          if (p) {
+            tmp3 = atoi(++p); // skip altitude
+            p = strchr(p, ',');
+            if (p) {
+              p++; // Skip comma
+              // Handle optional quotes around date string
+              if (*p == '"')
+                p++;
+              if (sscanf(p, "%d/%d/%d,%d:%d:%d", &year1, &month1, &day1, &hour1,
+                         &minute1, &seconds1) == 6) {
+                debugln("[RTC] CLBS data parsed successfully (Manual)");
+                parse_and_convert_clbs_response(response_char, year1, month1,
+                                                day1, hour1, minute1, seconds1);
+                badReads = 0;
+              } else {
+                debugln("[RTC] Error: Date/Time parsing failed");
+              }
+            }
+          }
+        }
+      }
     }
-
   } else {
     debugln("Error: +CLBS not found in response - will retry later");
     // Removed ESP.restart() to prevent boot loops on poor signal

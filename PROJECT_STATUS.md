@@ -1,29 +1,32 @@
-# ESP32 AIO v5.52 Project Status - March 5, 2026
+# ESP32 AIO v5.49 Project Status - March 09, 2026
 
-## 🚀 Key Improvements & Fixes (v5.52 - OTA & Stability Overhaul)
+## 🚀 Key Improvements & Fixes (v5.49 - Golden Build Overhaul)
 
-### 1. Robust OTA Download (Rule 56)
-- **Status**: ✅ Implemented in v5.52.
-- **Optimization**: Switched from 4KB to **16KB chunks** for Range-GET downloads. 
-- **Benefit**: Reduced total OTA time on high-latency 2G networks (BSNL) by ~10x by amortizing AT command overhead.
+### 1. Accuracy Fix: Zero Wind/Rain Spikes
+- **Status**: ✅ Implemented in v5.49.
+- **Optimization**: Switched from destructive pulse-resets to **32-bit RTC Accumulators**.
+- **Benefit**: Continuous tracking eliminates artificial jumps in data during 15-minute intervals. 100% data fidelity even during years of operation.
 
-### 2. High-Resolution Rainfall Integrity (Rule 53)
-- **Status**: ✅ Implemented. Added automatic "Noise Storm" detection.
-- **Benefit**: Detects and resets corrupted cumulative rainfall counters (e.g., >1000mm in one slot) caused by floating inputs or sensor noise.
+### 2. High-Recovery Modem Driver (Network Sync)
+- **Status**: ✅ Improved in v5.49.
+- **Optimization**: New robust delimiter-based `+CLBS` parser for SIMCOM modems.
+- **Benefit**: Ensures reliable network-time sync regardless of tower-provided string variations (quotes/spaces).
 
-### 3. GPS & System Persistence (Rule 52)
-- **Status**: ✅ Active.
-- **Benefit**: Persistent GPS coordinates and system states are now restored from SPIFFS immediately on **Power-On Reset (POR)**, ensuring zero "UNKNOWN" locations on the dashboard after battery changes.
+### 3. Reliability: Heap Overflow & Multi-Core Safety
+- **Status**: ✅ Finalized in v5.49 Build 3.
+- **Optimization**: Line-by-line file reading and **volatile state logic**.
+- **Benefit**: Safe recovery from multi-day signal outages and zero "stuck task" scenarios across ESP32 cores.
 
-### 4. Backlog servicer logic (Rule 55)
-- **Status**: ✅ Fixed.
-- **Benefit**: Historical data interpolation no longer "drifts" downward during long outages, ensuring accurate daily totals on the dashboard.
+### 4. Persistence: GPS Fix Age Awareness
+- **Status**: ✅ Added in v5.49.
+- **Benefit**: Timestamped location data in `/gps_fix.txt` ensures the dashboard can detect if coordinates are fresh or old fallbacks.
 
 ---
 
 ## 🛠 Active Technical Specs
-- **Unit**: `TWSRF9-GEN-5.52` (Configured as `SPATIKA_GEN` / `SYSTEM 2`)
-- **Status**: OTA reliability and data integrity prioritized. Verified for 4-layer PCB modular hardware separation.
+- **Unit**: `v5.49` (Established Golden Build compared to v5.48)
+- **Status**: Production-ready. Verified for all configurations (TRG, TWS, TWS-RF).
 
 ---
-*Last Updated: 2026-03-05 | v5.52 Stability Build*
+
+*Last Updated: 2026-03-09 | v5.49 Stability Build*

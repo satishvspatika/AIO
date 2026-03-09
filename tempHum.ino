@@ -26,70 +26,47 @@ void tempHum(void *pvParameters) {
       float t_raw, h_raw;
       if (readHDC(t_raw, h_raw)) {
         failCount = 0; // Success
-        // Use mutex for all global float updates to prevent race with Scheduler
+        // v5.49: Atomic update of both variables under a single mutex lock
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
             pdTRUE) {
-          temperature = t_raw;
-          humidity = h_raw;
-          xSemaphoreGive(i2cMutex);
-        }
-        // Temperature Logic
-        if ((temperature >= 9.0) && (temperature <= 50.0)) {
-          last_valid_temp = temperature;
-        } else {
-          // If we have a last known good, use jitter. If not (boot), force 0.0
-          if (last_valid_temp > 0.1) {
-            float jitter = last_valid_temp * 0.02;
-            float adj_temp =
+          // Temperature Logic: Winter-hardened range (-40 to +85)
+          if ((t_raw >= -40.0) && (t_raw <= 85.0)) {
+            temperature = t_raw;
+            last_valid_temp = temperature;
+          } else if (last_valid_temp > -40.1) {
+            float jitter = last_valid_temp * 0.01;
+            temperature =
                 last_valid_temp +
                 (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter * 2) -
                  jitter);
-            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-                pdTRUE) {
-              temperature = adj_temp;
-              xSemaphoreGive(i2cMutex);
-            } else {
-              diag_i2c_errors++;
-            }
-            debug("ADJUSTED TEMP (Last Good) is ");
-            debugln(temperature);
+            // Allow slow drift of the fault data
+            // To prevent runaway drift, we DO NOT re-anchor the valid point to
+            // the noise
           } else {
-            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-                pdTRUE) {
-              temperature = 0.0;
-              xSemaphoreGive(i2cMutex);
-            }
+            temperature = 0.0;
           }
-        }
 
-        // Humidity Logic
-        if (humidity >= 10.0 && humidity <= 100.0) {
-          last_valid_hum = humidity;
-        } else {
-          if (last_valid_hum > 0.1) {
-            float jitter = last_valid_hum * 0.02;
-            float adj_hum =
+          // Humidity Logic
+          if (h_raw >= 0.0 && h_raw <= 100.0) {
+            humidity = h_raw;
+            last_valid_hum = humidity;
+          } else if (last_valid_hum > 0.1) {
+            float jitter = last_valid_hum * 0.01;
+            humidity =
                 last_valid_hum +
                 (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter * 2) -
                  jitter);
-            if (adj_hum < 10.0)
-              adj_hum = 10.0;
-            if (adj_hum > 100.0)
-              adj_hum = 100.0;
-            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-                pdTRUE) {
-              humidity = adj_hum;
-              xSemaphoreGive(i2cMutex);
-            }
-            debug("ADJUSTED HUM (Last Good) is ");
-            debugln(humidity);
-          } else {
-            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-                pdTRUE) {
+            if (humidity < 0.0)
               humidity = 0.0;
-              xSemaphoreGive(i2cMutex);
-            }
+            if (humidity > 100.0)
+              humidity = 100.0;
+            // Removed: last_valid_hum = humidity; // DO NOT update anchor with
+            // noise
+          } else {
+            humidity = 0.0;
           }
+
+          xSemaphoreGive(i2cMutex);
         }
 
         // UI Strings (ONLY) - Do not touch global production buffers
@@ -274,6 +251,16 @@ bool readHDC(float &tempC, float &humidity) {
   vTaskDelay(20 / portTICK_PERIOD_MS); // Wait for measurement
 
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+    // v5.49: HDC20x0/HDC2022 Register Pointer Reset
+    if (hdcType == HDC_2022) {
+      Wire.beginTransmission(HDC_ADDR);
+      Wire.write(0x00); // Reset pointer to Data Reg (Temp L)
+      if (Wire.endTransmission(false) != 0) {
+        xSemaphoreGive(i2cMutex);
+        return false;
+      }
+    }
+
     Wire.requestFrom(HDC_ADDR, 4);
     if (Wire.available() == 4) {
       uint8_t b1 = Wire.read();
