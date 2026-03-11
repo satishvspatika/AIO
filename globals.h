@@ -1,6 +1,8 @@
 #ifndef GATEWAY_GLOBALS_H
 #define GATEWAY_GLOBALS_H
 
+#define ENABLE_WEBSERVER 0 // Set to 0 to remove WebServer overhead
+
 #ifdef ARDUINO
 #include "driver/rtc_io.h"
 #include "esp32/ulp.h"
@@ -17,8 +19,10 @@
 #include <SD.h>
 #include <SPIFFS.h>
 #include <Update.h>
-#include <WebServer.h>
 #include <WiFi.h>
+#if ENABLE_WEBSERVER == 1
+#include <WebServer.h>
+#endif
 #include <Wire.h>
 #include <esp_attr.h>
 #include <esp_task_wdt.h>
@@ -53,8 +57,9 @@ extern BME_Type bmeType;
 extern bool httpInitiated;
 extern bool health_in_progress;
 extern bool timeSyncRequired;
-extern bool
+extern volatile bool
     primary_data_delivered; // v5.51: Track session success for backlog gating
+extern volatile bool skip_primary_http; // v7.88: Skip live upload on duplicates
 extern volatile bool
     force_ftp; // v5.68: Command piggyback — FTP_BACKLOG (unsent backlog)
 extern volatile bool force_ftp_daily; // v5.80: Command piggyback — FTP_DAILY
@@ -71,6 +76,8 @@ extern volatile bool ota_writing_active; // v6.88: Prevent FS collision
 extern int ota_fail_count;
 extern char ota_fail_reason[48];
 extern char ota_cmd_param[128];       // v75: Target binary name from dashboard
+extern int last_cmd_id;               // v7.92: Command ID for feedback
+extern char last_cmd_res[64];         // v7.92: Result message for feedback
 extern volatile bool ota_silent_mode; // Rule 43: Stop all log leakage
 
 // SAFETY BUFFER: Reserve 512 bytes at the start of RTC Memory to prevent
@@ -86,34 +93,36 @@ void graceful_modem_shutdown();
 void start_deep_sleep();
 void flushSerialSIT();
 bool verify_bearer_or_recover();
-int send_at_cmd_data(char *payload, String charArray);
+int send_at_cmd_data(char *payload, String response_arg);
 void get_signal_strength();
 void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
                        bool *hasUnresolvedNDM);
 void reconstructSentMasks();
 void markFileAsDelivered(const char *fileName);
+void convert_gmt_to_ist(struct tm *gmt_time);
+void sync_rtc_from_server_tm(const char *body, bool is_ntp);
+void recoverI2CBus();
 
 /************************************************************************************************/
-#define SYSTEM 2               // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "SPATIKA_GEN"; // UNIT :
+#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 //                                0:  KSNDMC_TRG  BIHAR_TRG
 //                                1:  KSNDMC_TWS KSNDMC_TWS-AP
 //                                2:  KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.49"
+#define FIRMWARE_VERSION "5.50"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
-#define ENABLE_WEBSERVER 0       // Set to 0 to remove WebServer
 #define ENABLE_PRESSURE_SENSOR 0 // Set to 0 to disable BMP/BME
 #define ENABLE_HEALTH_REPORT                                                   \
   1 // Master Switch: Set to 1 to enable automated health reporting
-#define TEST_HEALTH_EVERY_SLOT                                                 \
-  0 // (Gated by ENABLE_HEALTH_REPORT) 1 for 15-min testing, 0 for daily.
-
-#define ENABLE_ESPNOW 0 // Set to 0 to remove ESP-NOW footprint (SAVES SPACE)
+#define TEST_HEALTH_DEFAULT                                                    \
+  1 // Default: 1 (Enabled - 15 min), 0 (Disabled - Daily)
+int test_health_every_slot = TEST_HEALTH_DEFAULT;
+#define TEST_HEALTH_EVERY_SLOT test_health_every_slot
 
 #define DEFAULT_RF_RESOLUTION 0.5
 float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
@@ -203,9 +212,9 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 #define WIND_DIR_MAX 360
 
 // Station altitude for Sea Level Pressure correction
-// Default: 900.0m (Mahalakshmipuram, Bengaluru)
-// This value is loaded from SPIFFS at boot and can be changed via LCD menu
-float station_altitude_m = 900.0; // Runtime configurable (meters)
+// Only relevant for KSNDMC_TWS-AP (BME280 pressure sensor enabled)
+// Loaded from /station_alt.txt on SPIFFS. Default 0.0 = no correction applied
+float station_altitude_m = 0.0; // Runtime configurable (meters)
 #define SEALEVEL_CALC_FACTOR 44330.769
 
 // Fill signal strength constants
@@ -345,7 +354,7 @@ int time_to_sleep;
 
 float bat_val = 0.0;
 
-char battery[6], solar_sense[6];
+char battery[10], solar_sense[10];
 int solar_conn = 0;
 
 char cur_file[32], unsent_file[32], new_file[32],
@@ -412,9 +421,6 @@ RTC_DATA_ATTR int diag_reg_count = 0;      // Number of cycles
 RTC_DATA_ATTR int diag_reg_worst = 0;      // Max seconds for single reg
 RTC_DATA_ATTR int diag_gprs_fails = 0;     // Total registration timeouts
 RTC_DATA_ATTR int diag_last_reset_reason = 0;
-RTC_DATA_ATTR int diag_reg_count_total_cycles = 0;
-RTC_DATA_ATTR uint32_t diag_total_uptime_hrs = 0;
-RTC_DATA_ATTR unsigned long diag_last_health_millis = 0;
 RTC_DATA_ATTR bool diag_rtc_battery_ok = true;
 RTC_DATA_ATTR int diag_consecutive_reg_fails = 0;
 RTC_DATA_ATTR int diag_stored_apn_fails = 0;
@@ -436,6 +442,12 @@ RTC_DATA_ATTR bool diag_rain_calc_invalid = false;
 RTC_DATA_ATTR bool diag_rain_reset = false;
 RTC_DATA_ATTR int diag_consecutive_http_fails = 0;
 RTC_DATA_ATTR int diag_daily_http_fails = 0; // Total failures today
+RTC_DATA_ATTR int diag_http_present_fails =
+    0; // v7.70: Consecutive current-slot fails — resets on HTTP success
+RTC_DATA_ATTR int diag_http_cum_fails =
+    0; // v7.70: Cumulative monthly HTTP fails — resets on 1st of month
+RTC_DATA_ATTR int diag_cum_fail_reset_month =
+    -1; // v7.70: Last month cum counter was reset
 RTC_DATA_ATTR int diag_rejected_count =
     0; // Track consecutive "Rejected" (Time) errors
 
@@ -447,18 +459,6 @@ RTC_DATA_ATTR uint16_t last_raw_wind_count = 0; // Raw 16-bit ULP snapshot
 RTC_DATA_ATTR uint32_t total_rf_pulses_32 = 0;
 RTC_DATA_ATTR uint32_t last_sched_rf_pulses_32 = 0;
 RTC_DATA_ATTR uint16_t last_raw_rf_count = 0; // Raw 16-bit ULP snapshot
-
-// v6.0: Extreme Deep-Dive Diagnostics (for comprehensive health monitoring)
-RTC_DATA_ATTR int diag_stack_min_rtc = 9999;
-RTC_DATA_ATTR int diag_stack_min_sched = 9999;
-RTC_DATA_ATTR int diag_stack_min_gprs = 9999;
-RTC_DATA_ATTR int diag_stack_min_ui = 9999;
-RTC_DATA_ATTR int diag_i2c_errors = 0;
-RTC_DATA_ATTR int diag_modem_temp = -99;
-RTC_DATA_ATTR char diag_network_type[12] = "NA";
-RTC_DATA_ATTR int diag_last_rssi = 0;
-RTC_DATA_ATTR int diag_min_rssi = 0;
-RTC_DATA_ATTR int diag_max_rssi = -140;
 
 // v5.49 Splitted Diagnostic Trackers for Golden Data Reporting
 RTC_DATA_ATTR int diag_ndm_count = 0;      // Today
@@ -502,12 +502,6 @@ RTC_DATA_ATTR bool diag_fw_just_updated = false; // v5.76: Post-OTA Trigger
 RTC_DATA_ATTR bool rtc_daily_sync_done =
     false; // v5.46: Server-time daily RTC sync
 
-String response;
-String rssiStr;
-String spiffs_stn_name;
-
-const char *resp;
-const char *charArray;
 volatile bool gprs_started = false;
 int badReads = 0;
 
@@ -552,8 +546,8 @@ RTC_DATA_ATTR float last_valid_hum = 65.0;
 // RF
 float rf_value, current_rf_value, calib_rf_float;
 int rf_res_edit_state = 0; // 0:Idle, 1:Password, 2:Editing
-char cum_rf[7], inst_rf[7], inst_temp[7], avg_cum_rf[7];
-char ftpcum_rf[6];
+char cum_rf[10], inst_rf[10], inst_temp[10], avg_cum_rf[10];
+char ftpcum_rf[10];
 float avg_cumRF, new_current_cumRF, new_current_instRF;
 
 // T/H , WS and WD
@@ -562,7 +556,7 @@ float temperature, humidity, windSpCount, cur_wind_speed, pressure;
 float cur_avg_wind_speed;
 int windDir;
 float sea_level_pressure;
-char inst_hum[7], avg_wind_speed[7], inst_wd[7];
+char inst_hum[10], avg_wind_speed[10], inst_wd[10];
 char pres_str[20] = "NA";
 
 // RTC
@@ -577,14 +571,10 @@ char signature[20]; // 2023-02-23,11:15
 volatile bool rtcTimeChanged = false;
 bool signature_valid = false;
 
-// ESP-NOW permanently disabled - peer fields removed
-// See espnow.ino stub for restoration notes
-volatile int espnow_start = 0; // Legacy - unused
+// LCD and Navigation
 volatile int wakeup_reason_is; // ACTIVE: used by all wakeup logic
 volatile int lcdkeypad_start = 0;
 int temp_count_rf, calib_count_rf, calib_flag;
-int send_espnow = 0; // Legacy - unused
-int peer_added = 0;  // Legacy - unused
 
 char rf_str[10], calib_rf[10], temp_str[16], hum_str[16], windSpeedInst_str[16],
     prevWindSpeedAvg_str[7], windDir_str[16];
@@ -605,7 +595,6 @@ char time_now[6];
 // Task Prototypes
 void lcdkeypad(void *pvParameters);
 void gprs(void *pvParameters);
-void espnow(void *pvParameters);
 void tempHum(void *pvParameters);
 void bmeTask(void *pvParameters);
 void windSpeed(void *pvParameters);
@@ -630,7 +619,7 @@ void resync_time();
 char *parse_http_head(char *response, char *check);
 void next_date(int *Nd, int *Nm, int *Ny);
 void previous_date(int *Cd, int *Cm, int *Cy);
-int send_at_cmd_data(char *payload, String charArray);
+int send_at_cmd_data(char *payload, String response_arg);
 void send_http_data();
 bool send_health_report(bool useJitter = true);
 void send_unsent_data();
@@ -641,6 +630,7 @@ void process_sms(char msg_no);
 int setup_ftp();
 void fetchFromHttpAndUpdate(char *fileName);
 void copyFromSPIFFSToFS(char *dateFile);
+void loadGPS();
 // I2C Protection (v5.49)
 void protectI2CPins();
 void unprotectI2CPins();
@@ -722,7 +712,8 @@ enum UI_FIELD_ID {
   FLD_TEMP,
   FLD_HUMIDITY,
   FLD_PRESSURE,
-  FLD_ALTITUDE, // #1: Station altitude for MSLP correction (BME only)
+  FLD_ALTITUDE,   // #1: Station altitude for MSLP correction (BME only)
+  FLD_HTTP_FAILS, // v7.70: Present/Cumulative HTTP failure stats
   FLD_LCD_OFF,
   FLD_COUNT // Total count
 };
@@ -763,7 +754,9 @@ ui_data_t ui_data[FLD_COUNT] = {
     {20, "Humidity (%)", "NA", eLive},               // 22
     {24, "Pressure (hPa)", "NA", eLive},             // 23
     {26, "Station Alt (m)", "900", eNumeric},        // 24 BME only
-    {22, "TURN OFF LCD", "YES?", eDisplayOnly}       // 25
+    {27, "HTTP FAIL STATS", "PR:0 CUM:0",
+     eLive},                                   // 25 v7.70: HTTP fail counters
+    {22, "TURN OFF LCD", "YES?", eDisplayOnly} // 26
 };
 
 extern TaskHandle_t webServer_h;

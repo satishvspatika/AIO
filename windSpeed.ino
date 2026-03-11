@@ -26,8 +26,12 @@ void windSpeed(void *pvParameters) {
     strcpy(prevWindSpeedAvg_str, "NA");
   }
 
-  // Initialize buffer with current value
+  // v7.78: Stabilization protocol. Ignore first 5s of boot noise.
+  vTaskDelay(5000 / portTICK_PERIOD_MS);
+
+  // Initialize buffer with current value AFTER stability period
   uint16_t initial_count = wind_count.val;
+  last_raw_wind_count = initial_count;
   for (int i = 0; i < BUFFER_SIZE; i++) {
     pulseBuffer[i] = initial_count;
   }

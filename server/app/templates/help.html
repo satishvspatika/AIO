@@ -10,6 +10,180 @@
     <p class="text-sm text-slate-500 mb-8">Complete guide to the Spatika Health Monitoring System — how to read every
         column, use every feature, and traverse the ecosystem.</p>
 
+    <!-- ── HEALTH STATUS & ERROR LEGEND (PRIORITY) ─────────────────── -->
+    <div class="card p-5 mb-6 border-l-4 border-purple-500 shadow-lg shadow-purple-900/10">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🔍 Health Status & Error Legend</h2>
+
+        <!-- ── DATA DAY EXPLANATION ─────────────────────────────── -->
+        <div class="bg-blue-900/20 border border-blue-800 rounded-lg p-3 mb-4">
+            <h3 class="text-blue-300 text-[10px] font-bold uppercase mb-1">📅 Meteorological Day Boundary</h3>
+            <p class="text-[11px] text-slate-400 leading-relaxed">
+                The data day runs from <strong class="text-white">8:45 AM (prev day) → 8:30 AM (today)</strong> — 96
+                slots of 15 minutes each.<br>
+                • <strong class="text-orange-400">YDY Sent</strong> = how many of yesterday's 96 records the server
+                actually received via all channels.<br>
+                • <strong class="text-orange-400">YDY Stored</strong> = how many records the device successfully saved
+                to its internal memory.<br>
+                • A station is <strong class="text-green-400">fully healthy</strong> if ≥86 YDY records are on server
+                and the 8:30 AM closing record arrived.
+            </p>
+        </div>
+
+        <!-- ── VERDICT FLAG DEFINITIONS ─────────────────────────── -->
+        <h3 class="text-slate-400 text-[10px] font-bold uppercase mb-2 mt-4">Flag Definitions</h3>
+        <table class="w-full text-xs mb-6">
+            <thead>
+                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
+                    <th class="pb-2 pr-4 text-left">Flag</th>
+                    <th class="pb-2 pr-4 text-left">Stands For</th>
+                    <th class="pb-2 pr-4 text-left">Trigger Rule</th>
+                    <th class="pb-2 text-left">What It Means</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+                <tr>
+                    <td class="py-2 pr-4 text-orange-300 font-mono font-bold">PD</td>
+                    <td class="py-2 pr-4 text-slate-300">Partial Data</td>
+
+                    <td class="py-2 pr-4 text-slate-500 font-mono text-[10px]">96 − YDY_sent ≥ 10</td>
+                    <td class="py-2 text-slate-400">≥10 records from yesterday are missing from server. Indicates
+                        intermittent GPRS or local memory issues.
+                        <br><strong class="text-slate-200">Suffix (X/96):</strong> Shows "Arrival Efficiency" — total
+                        records on server vs 96 expected.
+                    </td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-4 text-yellow-400 font-mono font-bold">NDM</td>
+                    <td class="py-2 pr-4 text-slate-300">Night Data Missing</td>
+                    <td class="py-2 pr-4 text-slate-500 font-mono text-[10px]">ndm_cnt &gt; 18 (of 36 night slots)</td>
+                    <td class="py-2 text-slate-400">&gt;50% of night slots (9 PM → 6 AM) were not transmitted <strong
+                            class="text-white">live</strong>. Backlog recovery later does NOT clear this. <strong
+                            class="text-yellow-300">Primary indicator of battery/solar failure at night.</strong></td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">CDM</td>
+                    <td class="py-2 pr-4 text-slate-300">Closing Data Missing</td>
+                    <td class="py-2 pr-4 text-slate-500 font-mono text-[10px]">cdm_sts = FAIL</td>
+                    <td class="py-2 text-slate-400">The <strong class="text-white">8:30 AM closing record</strong> for
+                        yesterday is missing. Ensures the very last packet of the data day arrived.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-4 text-red-600 font-mono font-bold">GPRS-Er</td>
+                    <td class="py-2 pr-4 text-slate-300">GPRS Error</td>
+                    <td class="py-2 pr-4 text-slate-500 font-mono text-[10px]">sent=0, stored&gt;0</td>
+                    <td class="py-2 text-slate-400">Device recorded data locally but zero records reached the server.
+                        Total modem or SIM failure.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- ── SENSOR / HARDWARE FLAGS ───────────────────────────── -->
+        <h3 class="text-slate-400 text-[10px] font-bold uppercase mb-2">Sensor / Hardware Flags (Detection Method)</h3>
+        <p class="text-[11px] text-slate-500 mb-3">These codes are reported directly by the ESP32 firmware during its
+            startup and hourly self-diagnostics. They indicate physical sensor or wiring failures.</p>
+        <table class="w-full text-xs mb-6">
+            <thead>
+                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
+                    <th class="pb-2 pr-4 text-left">Code</th>
+                    <th class="pb-2 pr-4 text-left">Sensor</th>
+                    <th class="pb-2 text-left">Detection Method ("How it's Detected")</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+                <tr>
+                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">TH-Er</td>
+                    <td class="py-2 pr-4 text-slate-300">Temp / Humidity</td>
+                    <td class="py-2 text-slate-400">Firmware fails to communicate with the HDC1080 sensor over the
+                        <strong class="text-white">I²C bus</strong>. Detected if the sensor address does not respond or
+                        returns a "Bus Busy" error.
+                    </td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">RF-Er</td>
+                    <td class="py-2 pr-4 text-slate-300">Rainfall</td>
+                    <td class="py-2 text-slate-400">Detected if the tipping bucket reed switch input remains in a fixed,
+                        illegal state or if the cumulative count fails an internal consistency check during startup.
+                    </td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">WS-Er</td>
+                    <td class="py-2 pr-4 text-slate-300">Wind Speed</td>
+                    <td class="py-2 text-slate-400">Detected when the frequency output from the anemometer is logically
+                        impossible (e.g. constant zero during periods of high wind pressure) or if the pulse counter
+                        circuit is open.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">WD-Er</td>
+                    <td class="py-2 pr-4 text-slate-300">Wind Direction</td>
+                    <td class="py-2 text-slate-400">Detected via <strong class="text-white">ADC Voltage
+                            Monitoring</strong>. If the potentiometer wiper returns a voltage outside the 0V–3.3V range
+                        (Short or Open circuit).</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">RTC-Er</td>
+                    <td class="py-2 pr-4 text-slate-300">Real-Time Clock</td>
+                    <td class="py-2 text-slate-400">Detected if the <strong class="text-white">DS1307</strong> module
+                        returns an invalid date/time (e.g. Year 1970) or fails to respond to I²C polling.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">SYS-Er</td>
+                    <td class="py-2 pr-4 text-slate-300">System/Memory</td>
+                    <td class="py-2 text-slate-400">General firmware error, such as <strong class="text-white">SPIFFS
+                            Full</strong>, SD Card Init Failure, or Internal Memory corruption check failure.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- ── VERDICT COMBINATIONS ──────────────────────────────── -->
+        <h3 class="text-slate-400 text-[10px] font-bold uppercase mb-2">Common Verdicts (Dashboard Examples)</h3>
+        <table class="w-full text-xs">
+            <thead>
+                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
+                    <th class="pb-2 pr-3 text-left">Verdict</th>
+                    <th class="pb-2 text-left">Meaning / Trigger Scenario</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+                <tr>
+                    <td class="py-2 pr-3"><span class="badge-ok">✓ OK</span></td>
+                    <td class="py-2 text-slate-400">Fully healthy. All data received, no sensor errors.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-3"><span class="badge-fail">✗ PD(X/96) CDM</span></td>
+                    <td class="py-2 text-slate-400">Missing records + 8:30 missing. <strong
+                            class="text-yellow-300">Normal for New Installations</strong> on Day 1.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-3"><span class="badge-fail">✗ NDM(X/36)</span></td>
+                    <td class="py-2 text-slate-400">Data is complete, but night transmissions failed. <strong
+                            class="text-yellow-300">Battery health warning.</strong> Check/replace battery.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-3"><span class="badge-fail">✗ PD(X/96)_TH-Er</span></td>
+                    <td class="py-2 text-slate-400">Incomplete data arrival <strong class="text-white">PLUS</strong> a
+                        temperature sensor failure. Likely a wiring issue affecting both signal and I2C.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-3"><span class="badge-fail">✗ RTC-Er</span></td>
+                    <td class="py-2 text-slate-400">Hardware clock failure. Timestamps will be incorrect. Replace
+                        internal button cell battery.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- ── SCENARIO NOTE ────────────────────────────────────── -->
+        <div class="mt-4 p-3 bg-slate-900/50 border border-slate-700 rounded-lg">
+            <h4 class="text-white text-[10px] font-bold uppercase mb-1">💡 Note: Offline Behavior</h4>
+            <p class="text-[11px] text-slate-400 leading-relaxed">
+                The <strong class="text-white">Status</strong> verdict reflects the hardware and data health from the
+                <strong class="text-white">last report</strong> received.
+                If a station goes silent, its Status will remain as its last known condition (e.g., WS-Er).
+                The <strong class="text-white">Last Seen</strong> column is the definitive indicator of current
+                connectivity.
+            </p>
+        </div>
+    </div>
+
     <!-- ── NAVIGATION ─────────────────────────────────────────── -->
     <div class="card p-5 mb-6">
         <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🗺️ How to Navigate This System</h2>
@@ -54,54 +228,42 @@
             <tbody class="divide-y divide-slate-800">
                 <tr>
                     <td class="py-2 pr-6 font-bold text-blue-300">Station</td>
-                    <td class="py-2 text-slate-400">Unique Station ID set in the ESP32 NVS memory (e.g. <code
-                            class="text-white">WS0034</code>). Click to open full history.</td>
+                    <td class="py-2 text-slate-400">Unique Station ID. Click to open history & commands.</td>
                 </tr>
                 <tr>
                     <td class="py-2 pr-6 font-bold text-green-300">Group</td>
-                    <td class="py-2 text-slate-400">The firmware deployment group this station belongs to, derived from
-                        its Unit Type + System Mode.</td>
+                    <td class="py-2 text-slate-400">Derived from Unit Type + Mode. Used for group-wide OTA deployments.
+                    </td>
                 </tr>
                 <tr>
                     <td class="py-2 pr-6 font-bold text-white">Status</td>
                     <td class="py-2 text-slate-400">
-                        The server calculates a <strong class="text-white">Ground Truth Objective Health Score</strong>
-                        by analyzing battery, signal, offline time, and data gaps.
+                        Hardware/Data health from the <strong class="text-white">last report</strong> received.
                         <ul class="list-disc ml-4 mt-1 space-y-1">
-                            <li><span class="badge-ok" style="padding:0px 4px;">✓ OK</span> = System healthy (Score
-                                100).</li>
-                            <li><span class="px-1 rounded text-[10px] uppercase font-bold"
-                                    style="background:#0f172a; color:#cbd5e1; border: 1px solid #475569;">ℹ INFO</span>
-                                = Minor issue (e.g. 5+ HTTP fails).</li>
-                            <li><span class="px-1 rounded text-[10px] uppercase font-bold"
-                                    style="background:#451a03; color:#fcd34d; border: 1px solid #b45309;">⚠ WARN</span>
-                                = Degraded (e.g. Battery <3.6V, 10+ HTTP fails).</li>
-                            <li><span class="badge-fail shadow-sm" style="padding:0px 4px;">✗ CRITICAL</span> = Action
-                                required (Battery <3.4V, Offline> 7 hrs).</li>
+                            <li><span class="badge-ok" style="padding:0px 4px;">✓ OK</span> = System healthy.</li>
+                            <li><span class="badge-fail shadow-sm" style="padding:0px 4px;">✗ ERROR</span> =
+                                Hardware/Data issue detected (Sensor fail, PD, NDM, etc).</li>
                         </ul>
                     </td>
                 </tr>
                 <tr>
                     <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Tdy/Ydy Sent/Stored</td>
                     <td class="py-2 text-slate-400">
-                        <strong class="text-white">Sent:</strong> Total records pushed to server (either directly or
-                        recovered from backlog).<br>
-                        <strong class="text-white">Stored:</strong> Total 15-min data records successfully recorded and
-                        saved to local memory.
+                        <strong class="text-white">Sent:</strong> Records on server.<br>
+                        <strong class="text-white">Stored:</strong> Records saved to device local memory (SPIFFS).
                     </td>
                 </tr>
                 <tr>
                     <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Tdy/Ydy HTTP/Backlogs</td>
                     <td class="py-2 text-slate-400">
-                        <strong class="text-white">HTTP:</strong> Records pushed directly on-time via standard HTTP.<br>
-                        <strong class="text-white">Backlogs:</strong> Old/missed records recovered later via FTP batch
-                        or HTTP sequential retry.
+                        <strong class="text-white">HTTP:</strong> Standard success.<br>
+                        <strong class="text-white">Backlogs:</strong> Recovered missed data.
                     </td>
                 </tr>
                 <tr>
                     <td class="py-2 pr-6 font-bold text-white">Last Seen</td>
-                    <td class="py-2 text-slate-400">Relative time since the last health check-in (e.g. "5m ago"). Hover
-                        for the exact IST timestamp. Stations check in every 15 minutes by default.</td>
+                    <td class="py-2 text-slate-400">Time since last check-in. Indicates <strong
+                            class="text-blue-300">Current Connectivity</strong>. Hover for exact timestamp.</td>
                 </tr>
             </tbody>
         </table>
@@ -240,91 +402,8 @@
         </div>
     </div>
 
-    <!-- ── STATUS CODE LEGEND ─────────────────────────────────── -->
-    <div class="card p-5 mb-6">
-        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🔍 Health Status & Error Legend</h2>
 
-        <!-- ── EXPLANATION OF DIFFERENTIATION ────────────────────── -->
-        <div class="bg-blue-900/20 border border-blue-800 rounded-lg p-3 mb-4">
-            <h3 class="text-blue-300 text-[10px] font-bold uppercase mb-1">How we differentiate Transmission vs.
-                Recording:</h3>
-            <p class="text-[11px] text-slate-400 leading-relaxed">
-                The server compares <strong class="text-white">Yesterday Stored</strong> (records saved on the device SD
-                card) vs. <strong class="text-white">Yesterday Sent</strong> (records successfully received by the
-                server).
-                <br>• If <strong class="text-orange-400">Stored = 96</strong> but <strong class="text-orange-400">Sent <
-                        96</strong> → Purely a <strong class="text-white">Transmission</strong> issue.
-                        <br>• If <strong class="text-red-400">Stored < 96</strong> → This is a <strong
-                                    class="text-white">Recording</strong> issue (the station missed its 15-min slots).
-            </p>
-        </div>
 
-        <table class="w-full text-xs">
-            <thead>
-                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
-                    <th class="pb-2 pr-6 text-left">Category</th>
-                    <th class="pb-2 pr-6 text-left">Code</th>
-                    <th class="pb-2 text-left">Diagnostic Meaning</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-800">
-                <!-- ── TRANSMISSION ERRORS ── -->
-                <tr>
-                    <td class="py-2 pr-2 text-[9px] text-orange-500 font-bold align-top">TRANSMISSION</td>
-                    <td class="py-2 pr-6 text-red-400 font-mono font-bold">GPRS-Er</td>
-                    <td class="py-2 text-slate-400">Device has data on SD card (\(Stored > 0\)), but **Zero** records
-                        migrated to server. Modem/Network failure.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-2 text-[9px] text-orange-500 font-bold align-top">TRANSMISSION</td>
-                    <td class="py-2 pr-6 text-orange-400 font-mono font-bold">NDM</td>
-                    <td class="py-2 text-slate-400">**Night Data Missing** (11PM-5AM window gaps). Data exists on SD but
-                        failed to migrate due to midnight signal/battery.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-2 text-[9px] text-orange-500 font-bold align-top">TRANSMISSION</td>
-                    <td class="py-2 pr-6 text-orange-300 font-mono font-bold">PD</td>
-                    <td class="py-2 text-slate-400">**Performance Delay**. More than 10 random gaps in server data,
-                        despite being recorded locally.</td>
-                </tr>
-
-                <!-- ── RECORDING ERRORS ── -->
-                <tr>
-                    <td class="py-2 pr-2 text-[9px] text-red-500 font-bold align-top">RECORDING</td>
-                    <td class="py-2 pr-6 text-red-500 font-mono font-bold">CDM</td>
-                    <td class="py-2 text-slate-400">**Closing Data Missing**. Gaps in device storage (Stored < 96).
-                            Station failed to save records.</td>
-                </tr>
-
-                <!-- ── COMBINED ERRORS ── -->
-                <tr>
-                    <td class="py-2 pr-2 text-[9px] text-slate-500 font-bold align-top">COMBINED</td>
-                    <td class="py-2 pr-6 text-red-600 font-mono font-bold text-[11px]">PD_CDM</td>
-                    <td class="py-2 text-slate-400">Both failures: Sent < Stored AND Stored < 96. Random transmission
-                            gaps combined with recording gaps.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-2 text-[9px] text-slate-500 font-bold align-top">COMBINED</td>
-                    <td class="py-2 pr-6 text-red-700 font-mono font-bold text-[10px]">PD_NDM_CDM</td>
-                    <td class="py-2 text-slate-400">**Triple Failure**. Night Data gaps, Random gaps, and Storage gaps
-                        all occurring at once.</td>
-                </tr>
-
-                <!-- ── HARDWARE ERRORS ── -->
-                <tr>
-                    <td class="py-2 pr-2 text-[9px] text-blue-500 font-bold align-top">HARDWARE</td>
-                    <td class="py-2 pr-6 text-red-500 font-mono font-bold">TH-Er</td>
-                    <td class="py-2 text-slate-400">**Temp/Humi sensor failed**. Elevated to a primary error status
-                        because hardware failure requires immediate attention.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-2 text-[9px] text-blue-500 font-bold align-top">HARDWARE</td>
-                    <td class="py-2 pr-6 text-red-500 font-mono font-bold">RF-Er</td>
-                    <td class="py-2 text-slate-400">**Rainfall sensor failed**. Hardware/input failure.</td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
 
     <!-- ── COMMANDS & QUEUE ───────────────────────────────────── -->
     <div class="card p-5 mb-6">

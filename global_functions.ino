@@ -48,8 +48,7 @@ void start_deep_sleep() {
   int sleep_seconds;
 
   // Handle hour rollover (e.g., 59 minutes -> next hour at 0 minutes)
-  // v5.46: Offset reduced to 30s (was 60s). Server-time RTC sync keeps us
-  // aligned.
+  // v7.89: Reverted to +30s offset for maximum stability.
   if (next_boundary_min >= 60) {
     next_boundary_min = 0;
     sleep_seconds = (60 - current_min) * 60 - current_sec + 30;
@@ -271,37 +270,38 @@ void recoverI2CBus() {
   // End any existing Wire session
   Wire.end();
 
-  // Switch SDA/SCL to GPIO output mode
-  pinMode(I2C_SDA, OUTPUT);
+  // Switch SCL to output to drive clock pulses
   pinMode(I2C_SCL, OUTPUT);
-
-  // Digital write both high
-  digitalWrite(I2C_SDA, HIGH);
   digitalWrite(I2C_SCL, HIGH);
+
+  // Switch SDA to input to MONITOR if it is released
+  pinMode(I2C_SDA, INPUT_PULLUP);
+  vTaskDelay(1 / portTICK_PERIOD_MS);
 
   // If SDA is stuck low, pulse SCL up to 9 times to "clock out" the hanging
   // data bit
+  bool recovered = false;
   for (int i = 0; i < 10; i++) {
     if (digitalRead(I2C_SDA) == HIGH) {
       debugf1("[I2C] Bus released after %d pulses\n", i);
+      recovered = true;
       break;
     }
     digitalWrite(I2C_SCL, LOW);
-    delayMicroseconds(5);
+    delayMicroseconds(10);
     digitalWrite(I2C_SCL, HIGH);
-    delayMicroseconds(5);
+    delayMicroseconds(10);
   }
 
-  // Final check
-  if (digitalRead(I2C_SDA) == LOW) {
+  if (!recovered) {
     debugln("[I2C] ❌ Recovery failed: SDA still stuck low!");
   } else {
     debugln("[I2C] ✅ Recovery successful.");
   }
 
   // Re-initialize Wire
-  Wire.begin(I2C_SDA, I2C_SCL);
-  Wire.setClock(100000); // Standard 100kHz for robustness
+  Wire.begin(I2C_SDA, I2C_SCL, 100000);
+  Wire.setTimeOut(I2C_TIMEOUT_MS);
 }
 
 /**
@@ -493,7 +493,7 @@ void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
 }
 
 // One-time reconstruction of sent masks from SPIFFS files (Session Recovery)
-bool backfill_done = false;
+RTC_DATA_ATTR bool backfill_done = false;
 
 void scanFileToMask(const char *fName, uint32_t *mask) {
   if (!SPIFFS.exists(fName))
@@ -525,8 +525,8 @@ int countStored(const char *fName) {
   int count = 0;
   while (f.available()) {
     String line = f.readStringUntil('\n');
-    // v7.59: Minimum 20 chars to skip corrupt/partial lines; cap at 96
-    if (line.length() >= 20 && line.indexOf(',') != -1) {
+    // v7.70: Relaxed length to 10 for safety; check for comma
+    if (line.length() >= 10 && line.indexOf(',') != -1) {
       count++;
       if (count >= 96)
         break; // v7.59: Cap — ghost gap-fill cannot inflate beyond one day
@@ -702,7 +702,11 @@ void subtractUnsentFromMask(const char *uFile) {
 }
 
 void reconstructSentMasks() {
-  if (backfill_done || rtc_get_reset_reason(0) == DEEPSLEEP_RESET)
+  if (backfill_done)
+    return;
+
+  // v7.80: Allow recovery on Deep Sleep if counters are zero (RTC Wiped)
+  if (rtc_get_reset_reason(0) == DEEPSLEEP_RESET && diag_pd_count > 0)
     return;
 
   debugln("[GoldenData] Starting Sent Mask Reconstruction from SPIFFS...");
@@ -738,14 +742,23 @@ void reconstructSentMasks() {
     previous_date(&prev_dd, &prev_mm, &prev_yy);
   }
 
-  snprintf(prevFile, sizeof(prevFile), "/%s_%04d%02d%02d.txt", station_name,
+  snprintf(prevFile, sizeof(prevFile), "/%s_%04d%02d%02d.txt", cleanStn,
            prev_yy, prev_mm, prev_dd);
+  if (!SPIFFS.exists(prevFile)) {
+    // Try legacy format with raw station_name (might have trailing spaces)
+    snprintf(prevFile, sizeof(prevFile), "/%s_%04d%02d%02d.txt", station_name,
+             prev_yy, prev_mm, prev_dd);
+  }
   scanFileToMask(prevFile, diag_sent_mask_prev);
   diag_pd_count_prev = countStored(prevFile);
   diag_ndm_count_prev = countNightStored(prevFile);
 
-  snprintf(curFile, sizeof(curFile), "/%s_%04d%02d%02d.txt", station_name,
-           cur_yy, cur_mm, cur_dd);
+  snprintf(curFile, sizeof(curFile), "/%s_%04d%02d%02d.txt", cleanStn, cur_yy,
+           cur_mm, cur_dd);
+  if (!SPIFFS.exists(curFile)) {
+    snprintf(curFile, sizeof(curFile), "/%s_%04d%02d%02d.txt", station_name,
+             cur_yy, cur_mm, cur_dd);
+  }
   scanFileToMask(curFile, diag_sent_mask_cur);
   diag_pd_count = countStored(curFile);
   diag_ndm_count = countNightStored(curFile);
@@ -754,6 +767,21 @@ void reconstructSentMasks() {
   // 2. Subtract records that are currently in 'Unsent' files
   subtractUnsentFromMask("/unsent.txt");
   subtractUnsentFromMask("/ftpunsent.txt");
+
+  // 3. Restore Sent Counters from the reconstructed Masks
+  int cur_sent = 0;
+  int prev_sent = 0;
+  for (int i = 0; i < 96; i++) {
+    if (diag_sent_mask_cur[i / 32] & (1UL << (i % 32)))
+      cur_sent++;
+    if (diag_sent_mask_prev[i / 32] & (1UL << (i % 32)))
+      prev_sent++;
+  }
+  diag_http_success_count = cur_sent;
+  diag_http_success_count_prev = prev_sent;
+  diag_first_http_count =
+      cur_sent; // v7.86 Reconstruct from mask so values make sense after boot
+  diag_first_http_count_prev = prev_sent;
 
   backfill_done = true;
   debugln("[GoldenData] Reconstruction Complete (Sent-Accurate).");
@@ -851,16 +879,93 @@ void markFileAsDelivered(const char *fileName) {
       if (isToday) {
         if (!(diag_sent_mask_cur[sNum / 32] & (1UL << (sNum % 32)))) {
           diag_sent_mask_cur[sNum / 32] |= (1UL << (sNum % 32));
-          diag_ftp_success_count++;
+          if (diag_ftp_success_count < 96)
+            diag_ftp_success_count++;
         }
       } else {
         if (!(diag_sent_mask_prev[sNum / 32] & (1UL << (sNum % 32)))) {
           diag_sent_mask_prev[sNum / 32] |= (1UL << (sNum % 32));
-          diag_ftp_success_count_prev++;
+          if (diag_ftp_success_count_prev < 96)
+            diag_ftp_success_count_prev++;
         }
       }
     }
   }
   f.close();
   debugf1("[GoldenData] Marked records from %s as DELIVERED.\n", fileName);
+}
+void reset_all_diagnostics() {
+  debugln("[SYS] Resetting all diagnostic counters...");
+
+  // Primary counters
+  diag_net_data_count = 0;
+  diag_net_data_count_prev = 0;
+  diag_pd_count = 0;
+  diag_pd_count_prev = 0;
+  diag_ndm_count = 0;
+  diag_ndm_count_prev = 0;
+  diag_first_http_count = 0;
+  diag_first_http_count_prev = 0;
+
+  // HTTP Metrics
+  diag_consecutive_http_fails = 0;
+  diag_daily_http_fails = 0;
+  diag_http_present_fails = 0;
+  diag_http_cum_fails = 0;
+  diag_http_time_total = 0;
+  diag_http_success_count = 0;
+  diag_http_success_count_prev = 0;
+  diag_http_retry_count = 0;
+  diag_http_retry_count_prev = 0;
+  diag_ftp_success_count = 0;
+  diag_ftp_success_count_prev = 0;
+
+  // Registration metrics
+  diag_consecutive_reg_fails = 0;
+  diag_consecutive_sim_fails = 0;
+  diag_reg_count = 0;
+  diag_reg_time_total = 0;
+  diag_reg_worst = 0;
+  strcpy(diag_reg_fail_type, "NONE");
+
+  // Pulse / Accuracy counters (v5.49)
+  total_wind_pulses_32 = 0;
+  last_sched_wind_pulses_32 = 0;
+  last_raw_wind_count = 0;
+  total_rf_pulses_32 = 0;
+  last_sched_rf_pulses_32 = 0;
+  last_raw_rf_count = 0;
+  diag_last_rf_val = 0;
+
+  // Sensor diagnostic flags
+  diag_ws_same_count = 0;
+  diag_temp_cv = false;
+  diag_hum_cv = false;
+  diag_ws_cv = false;
+  diag_temp_erv = false;
+  diag_hum_erv = false;
+  diag_ws_erv = false;
+  diag_temp_erz = false;
+  diag_hum_erz = false;
+  diag_rain_jump = false;
+  diag_rain_calc_invalid = false;
+  diag_rain_reset = false;
+
+  // Status flags
+  strcpy(diag_cdm_status, "PENDING");
+  strcpy(diag_http_fail_reason, "NONE");
+  diag_rejected_count = 0;
+
+  // Masks
+  for (int i = 0; i < 3; i++) {
+    diag_sent_mask_cur[i] = 0;
+    diag_sent_mask_prev[i] = 0;
+  }
+
+  // Force a fresh Daily/Health cycle
+  health_last_sent_day = -1;
+  health_last_sent_hour = -1;
+  diag_last_rollover_day = -1;
+
+  debugln("[SYS] Diagnostics cleaned.");
 }

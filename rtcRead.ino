@@ -18,6 +18,7 @@ byte data[7];
 void rtcRead(void *pvParameters) {
 
   esp_task_wdt_add(NULL);
+  String response;
   signature[16] = 0;
 
   rtcReady = false;
@@ -43,34 +44,41 @@ void rtcRead(void *pvParameters) {
     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
         pdTRUE) { // #TRUEFIX
 
-      Wire.beginTransmission(RTC_ADDRESS);
-      Wire.write(0x00);
-      Wire.endTransmission();
-
-      int bytes = Wire.requestFrom(RTC_ADDRESS, 7);
-      if (bytes == 7) {
-        for (int i = 0; i < 7; i++) {
-          data[i] = Wire.read();
+      int read_retries = 0;
+      while (read_retries < 3) {
+        Wire.beginTransmission(RTC_ADDRESS);
+        Wire.write(0x00);
+        if (Wire.endTransmission() == 0) {
+          int bytes = Wire.requestFrom(RTC_ADDRESS, 7);
+          if (bytes == 7) {
+            for (int i = 0; i < 7; i++) {
+              data[i] = Wire.read();
+            }
+            rtc_ok = true;
+            rtcReady = true;
+            break; // Success!
+          }
         }
-        rtc_ok = true;
-      } else {
-        debugln("****RTC read incomplete");
+
+        read_retries++;
+        debugf1("****RTC read incomplete (Try %d/3)\n", read_retries);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        if (read_retries == 1)
+          recoverI2CBus(); // Attempt I2C recovery
       }
 
       xSemaphoreGive(i2cMutex);
     } else {
-      diag_i2c_errors++;
     }
 
     if (!rtc_ok) {
       fail_count++;
       if (fail_count == 30) {
-        debugln("[RTC] I2C Failure. Attempting Bus Reset...");
-        Wire.end();
-        delay(100);
-        Wire.begin(I2C_SDA, I2C_SCL, 100000);
-        Wire.setTimeOut(I2C_TIMEOUT_MS);
-        delay(100);
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
+            pdTRUE) {
+          recoverI2CBus(); // Use unified recovery logic
+          xSemaphoreGive(i2cMutex);
+        }
       }
       if (fail_count > 60) {
         debugln("[RTC] Persistent Hardware Failure! Restarting...");
@@ -152,7 +160,7 @@ void rtcRead(void *pvParameters) {
 }
 
 void resync_time() {
-
+  String response;
   int response_no;
   int tmp, tmp3;
   char tmp2[16];

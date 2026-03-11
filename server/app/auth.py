@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Request, Response, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from app.services.health_eval import ist_filter
 import secrets
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+templates.env.filters["ist"] = ist_filter
 
 USERS = {
     "satishv": {"password": "friend", "role": "supervisor"},

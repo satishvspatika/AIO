@@ -1,0 +1,66 @@
+--- Building for 8MB Flash ESP32 (Default) ---
+--- Using partition file: partitions.csv ---
+WARNING: library LiquidCrystal I2C claims to run on avr architecture(s) and may be incompatible with your current board which runs on esp32 architecture(s).
+In file included from /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:25:
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'bool send_health_report(bool)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4638:62: error: 'act' was not declared in this scope
+ 4638 |           debugln("[Health] ❌ HTTP Action Failed, Resp: " + act);
+      |                                                              ^~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:246:22: note: in definition of macro 'debugln'
+  246 |       Serial.println(__VA_ARGS__);                                             \
+      |                      ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: At global scope:
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4654:1: error: 'SerialSIT' does not name a type; did you mean 'Serial'?
+ 4654 | SerialSIT.println("AT+CGEREP=2");
+      | ^~~~~~~~~
+      | Serial
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4655:16: error: expected constructor, destructor, or type conversion before '(' token
+ 4655 | waitForResponse("OK", 1000);
+      |                ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4656:1: error: 'SerialSIT' does not name a type; did you mean 'Serial'?
+ 4656 | SerialSIT.println("AT+CREG=1");
+      | ^~~~~~~~~
+      | Serial
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4657:16: error: expected constructor, destructor, or type conversion before '(' token
+ 4657 | waitForResponse("OK", 1000);
+      |                ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4658:1: error: 'SerialSIT' does not name a type; did you mean 'Serial'?
+ 4658 | SerialSIT.println("AT+CEREG=1");
+      | ^~~~~~~~~
+      | Serial
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4659:16: error: expected constructor, destructor, or type conversion before '(' token
+ 4659 | waitForResponse("OK", 1000);
+      |                ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4660:1: error: expected unqualified-id before 'return'
+ 4660 | return success;
+      | ^~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4661:1: error: expected declaration before '}' token
+ 4661 | }
+      | ^
+Multiple libraries were found for "WiFi.h"
+  Used: /Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi
+  Not used: /Users/satishkripavasan/Documents/Arduino/libraries/WiFiEspAT
+
+[92mUsed library[0m            [92mVersion[0m [90mPath[0m
+[93mKeypad[0m                  3.1.1   [90m/Users/satishkripavasan/Documents/Arduino/libraries/Keypad-master[0m
+[93mLiquidCrystal I2C[0m       1.1.2   [90m/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C[0m
+[93mWire[0m                    3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Wire[0m
+[93mPreferences[0m             3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Preferences[0m
+[93mRTClib[0m                  2.1.4   [90m/Users/satishkripavasan/Documents/Arduino/libraries/RTClib[0m
+[93mAdafruit BusIO[0m          1.17.4  [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_BusIO[0m
+[93mSD[0m                      3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SD[0m
+[93mFS[0m                      3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/FS[0m
+[93mSPI[0m                     3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SPI[0m
+[93mSPIFFS[0m                  3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SPIFFS[0m
+[93mUpdate[0m                  3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Update[0m
+[93mWiFi[0m                    3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi[0m
+[93mNetworking[0m              3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Network[0m
+[93mHULP[0m                    2.0.1   [90m/Users/satishkripavasan/Documents/Arduino/libraries/HULP-master[0m
+[93mAdafruit BME280 Library[0m 2.3.0   [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_BME280_Library[0m
+[93mAdafruit Unified Sensor[0m 1.1.15  [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_Unified_Sensor[0m
+[93mESPmDNS[0m                 3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/ESPmDNS[0m
+
+[92mUsed platform[0m [92mVersion[0m [90mPath[0m
+[93mesp32:esp32[0m   3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6[0m
+Error during build: exit status 1
+--- Compilation FAILED ---

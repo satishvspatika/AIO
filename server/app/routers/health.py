@@ -16,16 +16,16 @@ _SKIP_FIELDS = {"id", "reported_at"}
 
 # Known type hints — anything not listed defaults to TEXT
 _INT_FIELDS  = {
-    "system","reset_reason","rtc_ok","uptime_hrs","signal","reg_fails","reg_worst",
-    "http_fails","net_cnt","net_cnt_prev","cur_stored","prev_stored",
+    "system","reset_reason","rtc_ok","signal","reg_fails",
+    "http_fails","net_cnt","net_cnt_prev","prev_stored",
     "http_suc_cnt","http_suc_cnt_prev","http_ret_cnt","http_ret_cnt_prev",
     "ftp_suc_cnt","ftp_suc_cnt_prev","ndm_cnt","pd_cnt","first_http",
-    "spiffs_kb","spiffs_total_kb","ota_fails","rtc_ok","first_http",
+    "spiffs_kb","spiffs_total_kb","ota_fails",
     "consec_reg_fails","consec_http_fails","consec_sim_fails",
-    "spiffs_free_kb","free_heap_kb","unsent_count","slot_no","ws_same_cnt",
-    "stack_rtc","stack_sched","stack_gprs","stack_ui","i2c_errs","m_temp","min_rssi","max_rssi"
+    "unsent_count",
+    "http_present_fails","http_cum_fails"               # v7.70
 }
-_FLOAT_FIELDS = {"bat_v","sol_v","reg_avg","http_avg"}
+_FLOAT_FIELDS = {"bat_v","sol_v"}
 
 
 def get_db():
@@ -141,6 +141,18 @@ async def health(request: Request, db: Session = Depends(get_db)):
         report = HealthReport(**report_kwargs)
         db.add(report)
 
+        # ── Step 2.5: Command Feedback Processing ────────────────────────────
+        last_cmd_id = data.get("last_cmd_id")
+        last_cmd_res = data.get("last_cmd_res", "N/A")
+        if last_cmd_id and str(last_cmd_id).isdigit():
+            cmd_id_int = int(last_cmd_id)
+            if cmd_id_int > 0:
+                cmd_entry = db.query(CommandQueue).filter_by(id=cmd_id_int).first()
+                if cmd_entry:
+                    cmd_entry.result = str(last_cmd_res)[:64]
+                    cmd_entry.completed_at = datetime.datetime.now()
+                    print(f"[CMD FEEDBACK] {stn_id} ID:{cmd_id_int} -> {cmd_entry.result}")
+
         # ── Step 3: Handle OTA Auto-Lock ──────────────────────────────────────
         if ota_fails >= 3:
             setting = db.query(StationSettings).filter_by(stn_id=stn_id).first()
@@ -158,9 +170,11 @@ async def health(request: Request, db: Session = Depends(get_db)):
         if pending:
             cmd       = pending.cmd
             cmd_param = pending.cmd_param
+            cmd_id    = pending.id
             pending.executed_at = datetime.datetime.now()
-            print(f"[CMD] {stn_id} → {cmd} ({cmd_param})")
+            print(f"[CMD] {stn_id} → {cmd} (ID:{cmd_id})")
         else:
+            cmd_id = 0
             # ── Auto-Command Priority Chain ──────────────────────────────────
             # Priority: Manual CMD > OTA_CHECK > CLEAR_FTP_QUEUE > GET_GPS
             setting  = db.query(StationSettings).filter_by(stn_id=stn_id).first()
@@ -199,7 +213,8 @@ async def health(request: Request, db: Session = Depends(get_db)):
             "stored": True,
             "tm": datetime.datetime.now().strftime("%y%m%d%H%M%S"),
             "cmd": cmd,
-            "p": cmd_param
+            "p": cmd_param,
+            "id": cmd_id
         }
         content = json.dumps(resp_data)
         return Response(

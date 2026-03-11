@@ -29,8 +29,6 @@ bool initBME() {
       debugln("[BME] Init: SENSOR NOT FOUND!");
     }
     xSemaphoreGive(i2cMutex);
-  } else {
-    diag_i2c_errors++;
   }
   return success;
 }
@@ -69,7 +67,6 @@ void bmeTask(void *pvParameters) {
         }
         xSemaphoreGive(i2cMutex);
       } else {
-        diag_i2c_errors++;
       }
     } else {
       // SENSOR MISSING: enforce 0.0 and NA

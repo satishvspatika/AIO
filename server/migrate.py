@@ -36,12 +36,6 @@ def migrate():
             print(f"Error adding 'ota_fail_reason': {e}")
 
     try:
-        cursor.execute("ALTER TABLE health_reports ADD COLUMN cur_stored INTEGER DEFAULT 0;")
-        print("✓ Column 'cur_stored' added.")
-    except sqlite3.OperationalError as e:
-        if "duplicate" not in str(e): print(e)
-
-    try:
         cursor.execute("ALTER TABLE health_reports ADD COLUMN prev_stored INTEGER DEFAULT 0;")
         print("✓ Column 'prev_stored' added.")
     except sqlite3.OperationalError as e:
@@ -87,26 +81,24 @@ def migrate():
     for col, dtype, default in [
         ("http_fails",       "INTEGER", "0"),
         ("http_fail_reason", "TEXT",    "'NONE'"),
-        ("http_avg",         "REAL",    "0.0"),
+        ("net_cnt",          "INTEGER", "0"),
         ("net_cnt_prev",     "INTEGER", "0"),
-        ("reg_fail_type",    "TEXT",    "'NONE'"),
-        ("reg_worst",        "INTEGER", "0"),
         ("first_http",       "INTEGER", "0"),
+        ("spiffs_kb",        "INTEGER", "0"),
         ("spiffs_total_kb",  "INTEGER", "4640"),
         ("calib",            "TEXT",    "'NA'"),
         ("ndm_cnt",          "INTEGER", "0"),
         ("pd_cnt",           "INTEGER", "0"),
-        ("cdm_sts",          "TEXT",    "'OK'"),
-        # ── Deep Diagnostics (v7.59 new firmware fields) ────────────────────
-        ("stack_rtc",        "INTEGER", "0"),
-        ("stack_sched",      "INTEGER", "0"),
-        ("stack_gprs",       "INTEGER", "0"),
-        ("stack_ui",         "INTEGER", "0"),
-        ("i2c_errs",         "INTEGER", "0"),
-        ("m_temp",           "INTEGER", "0"),
-        ("net_type",         "TEXT",    "'NONE'"),
-        ("min_rssi",         "INTEGER", "0"),
-        ("max_rssi",         "INTEGER", "0"),
+        ("cdm_sts",          "TEXT",    "'PENDING'"),
+        ("reg_fails",        "INTEGER", "0"),
+        ("reg_fail_reason",  "TEXT",    "'NONE'"),
+        ("reset_reason",     "INTEGER", "0"),
+        ("http_present_fails", "INTEGER", "0"),
+        ("http_cum_fails",   "INTEGER", "0"),
+        ("consec_reg_fails", "INTEGER", "0"),
+        ("consec_http_fails","INTEGER", "0"),
+        ("consec_sim_fails", "INTEGER", "0"),
+        ("unsent_count",     "INTEGER", "0"),
     ]:
         try:
             cursor.execute(f"ALTER TABLE health_reports ADD COLUMN {col} {dtype} DEFAULT {default};")
@@ -116,6 +108,19 @@ def migrate():
                 print(f"→ Column '{col}' already exists.")
             else:
                 print(f"Error adding '{col}': {e}")
+    # ── v7.92: Command Feedback Loop ──
+    for col, dtype, default in [
+        ("result",       "TEXT",     "'SENT'"),
+        ("completed_at", "DATETIME", "NULL"),
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE command_queue ADD COLUMN {col} {dtype} DEFAULT {default};")
+            print(f"✓ Column '{col}' added to command_queue.")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                print(f"→ Column '{col}' already exists in command_queue.")
+            else:
+                print(f"Error adding '{col}' to command_queue: {e}")
 
     conn.commit()
     conn.close()

@@ -5,10 +5,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from app.database import SessionLocal
 from app.models import HealthReport, FirmwareRegistry, CommandQueue, StationSettings
+from app.services.health_eval import evaluate, ist_filter
 import csv, io, datetime
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+templates.env.filters["ist"] = ist_filter
 
 
 def get_db():
@@ -32,23 +34,36 @@ def get_latest_per_station(db):
     ).order_by(HealthReport.reported_at.desc()).all()
 
 
+def _g(r, attr, default=None):
+    """Safe getattr — returns default if column not yet in DB model."""
+    return getattr(r, attr, default)
+
+
 def _all_fields_row(r):
     """Returns a flat list of all health report fields for CSV export."""
+    # v7.86: Offset to IST
+    ist_time = r.reported_at + datetime.timedelta(hours=5, minutes=30) if r.reported_at else None
+    
     return [
-        r.reported_at, r.stn_id, r.unit_type, r.system,
-        r.health_sts, r.sensor_sts,
-        r.bat_v, r.sol_v, r.signal,
-        r.net_cnt, r.net_cnt_prev,
-        r.reg_fails, r.reg_avg, r.reg_worst, r.reg_fail_type,
-        r.http_fails, r.http_fail_reason, r.http_avg,
-        r.ndm_cnt, r.pd_cnt, r.cdm_sts, r.first_http,
-        r.uptime_hrs, r.reset_reason, r.rtc_ok,
-        r.spiffs_kb, r.spiffs_total_kb, r.sd_sts,
-        r.calib, r.ver, r.carrier, r.iccid, r.gps,
-        r.ota_fails, r.ota_fail_reason,
-        # v7.59 Diagnostics
-        r.stack_rtc, r.stack_sched, r.stack_gprs, r.stack_ui,
-        r.i2c_errs, r.m_temp, r.net_type, r.min_rssi, r.max_rssi
+        ist_time, _g(r, "stn_id"), _g(r, "unit_type"), _g(r, "system"),
+        _g(r, "health_sts"), _g(r, "sensor_sts"),
+        _g(r, "bat_v"), _g(r, "sol_v"), _g(r, "signal"),
+        _g(r, "net_cnt"), _g(r, "net_cnt_prev"),
+        _g(r, "prev_stored"),
+        _g(r, "reg_fails"), _g(r, "consec_reg_fails"),
+        _g(r, "http_fails"), _g(r, "http_fail_reason"),
+        _g(r, "http_suc_cnt"), _g(r, "http_suc_cnt_prev"),
+        _g(r, "http_ret_cnt"), _g(r, "http_ret_cnt_prev"),
+        _g(r, "http_present_fails", 0), _g(r, "http_cum_fails", 0),    # v7.70
+        _g(r, "ftp_suc_cnt"), _g(r, "ftp_suc_cnt_prev"),
+        _g(r, "ndm_cnt"), _g(r, "pd_cnt"), _g(r, "cdm_sts"), _g(r, "first_http"),
+        _g(r, "unsent_count"),
+        _g(r, "reset_reason"), _g(r, "rtc_ok"),
+        _g(r, "spiffs_kb"), _g(r, "spiffs_total_kb"),
+        _g(r, "sd_sts"), _g(r, "calib"), _g(r, "ver"), _g(r, "carrier"), _g(r, "iccid"), _g(r, "gps"),
+        _g(r, "ota_fails"), _g(r, "ota_fail_reason"),
+        _g(r, "consec_http_fails"), _g(r, "consec_sim_fails"),
+        " | ".join(evaluate(r).get("reasons", [])) or evaluate(r).get("verdict", "OK")
     ]
 
 
@@ -57,16 +72,23 @@ ALL_FIELDS_HEADER = [
     "Health_Status", "Sensor_Status",
     "Battery_V", "Solar_V", "Signal_dBm",
     "Net_Count_Current", "Net_Count_PrevDay",
-    "Reg_Fails", "Reg_Avg_ms", "Reg_Worst_ms", "Reg_Fail_Type",
-    "HTTP_Fails", "HTTP_Fail_Reason", "HTTP_Avg_ms",
+    "Stored_PrevDay",
+    "Reg_Fails", "Consec_Reg_Fails",
+    "HTTP_Fails", "HTTP_Fail_Reason",
+    "HTTP_Suc_Current", "HTTP_Suc_PrevDay",
+    "HTTP_Retry_Current", "HTTP_Retry_PrevDay",
+    "HTTP_Present_Fails", "HTTP_Cum_Monthly_Fails",    # v7.70
+    "FTP_Suc_Current", "FTP_Suc_PrevDay",
     "NDM_Count", "PD_Count", "CDM_Status", "First_HTTP_Count",
-    "Uptime_Hours", "Reset_Reason_Code", "RTC_OK",
-    "SPIFFS_Used_KB", "SPIFFS_Total_KB", "SD_Card_Status",
-    "Calibration", "Firmware_Version", "Carrier", "ICCID", "GPS_LatLon",
+    "Unsent_Count",
+    "Reset_Reason_Code", "RTC_OK",
+    "SPIFFS_Used_KB", "SPIFFS_Total_KB",
+    "SD_Card_Status", "Calibration_Info", "Firmware_Version", "Carrier", "ICCID", "GPS_LatLon",
     "OTA_Fails", "OTA_Fail_Reason",
-    "Stack_Min_RTC", "Stack_Min_Sched", "Stack_Min_GPRS", "Stack_Min_UI",
-    "I2C_Errors", "Modem_Temp_C", "Network_Type", "Min_RSSI_dBm", "Max_RSSI_dBm"
+    "Consec_HTTP_Fails", "Consec_SIM_Fails",
+    "Calculated_Verdict"
 ]
+
 
 
 from app.services.ota_service import needs_ota
@@ -110,6 +132,19 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             if any("BATT" in str(reason) for reason in r.eval["reasons"]):
                 low_bat += 1
 
+            # v5.49 & v7.90: Sort Priority Arrangement
+            # Order: BIHAR-TRG, KSNDMC-TRG, KSNDMC-TWS, KSNDMC-ADDON, SPATIKA-TRG, SPATIKA-ADDON
+            ut = (r.unit_type or r.ver or "").upper()
+            sys = r.system
+            r.sort_priority = 99
+            
+            if "BIH" in ut and sys == 0: r.sort_priority = 1
+            elif "DMC" in ut and sys == 0: r.sort_priority = 2
+            elif "DMC" in ut and sys == 1: r.sort_priority = 3
+            elif "DMC" in ut and sys == 2: r.sort_priority = 4
+            elif "GEN" in ut and sys == 0: r.sort_priority = 5
+            elif "GEN" in ut and sys == 2: r.sort_priority = 6
+
             # Relative time
             if r.reported_at:
                 delta     = now - r.reported_at
@@ -118,12 +153,17 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             else:
                 r.time_ago = "?"
 
+
             # Pending command badge
             r.pending = db.query(CommandQueue).filter_by(
                 stn_id=r.stn_id, executed_at=None
             ).first()
 
+        # Final Sort: priority, then station ID
+        reports.sort(key=lambda x: (x.sort_priority, x.stn_id))
+
         return templates.TemplateResponse("dashboard.html", {
+
             "request": request, "reports": reports,
             "total": total, "alarms": alarms,
             "ota_pending": ota_pending, "low_bat": low_bat,
@@ -174,8 +214,27 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
         is_exempt = (setting.ota_exempt == 1) if setting else False
 
         now = datetime.datetime.now()
+        today = datetime.date.today()
         for r in history:
-            r.eval = evaluate(r, now)
+            if r.reported_at and r.reported_at.date() < today:
+                # Historical record: evaluate relative to report time + 1h
+                # This preserves the health verdict as it was when filed,
+                # instead of always showing OFFLINE for old records.
+                eval_now = r.reported_at + datetime.timedelta(hours=1)
+            else:
+                eval_now = now   # Today's records: use real wall clock
+            r.eval = evaluate(r, eval_now)
+
+        # v7.93: Determine category for 'Back to Fleet' deep-linking
+        category_id = None
+        latest_report = raw_history[0] if raw_history else None
+        if latest_report:
+            fw = db.query(FirmwareRegistry).filter_by(
+                unit_type=latest_report.unit_type,
+                system_mode=latest_report.system
+            ).first()
+            if fw:
+                category_id = fw.category_id
 
         return templates.TemplateResponse(
             "station.html", {
@@ -183,7 +242,8 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
                 "stn_id": stn_id,
                 "history": history,
                 "commands": commands,
-                "is_exempt": is_exempt
+                "is_exempt": is_exempt,
+                "category_id": category_id
             }
         )
     except Exception as e:

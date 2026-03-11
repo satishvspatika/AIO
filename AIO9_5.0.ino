@@ -38,11 +38,12 @@ extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask,
 int wired = 1; // Integrated is 1 or Standalone LCD module is 0
 const int chipSelect = SS;
 bool ws_ok = true;
-bool wd_ok = false;
+bool wd_ok = true; // WD sensor wired on all KSNDMC_TWS field units
 
 TaskHandle_t scheduler_h;
 TaskHandle_t gprs_h; // http,sms,ftp,dota
-bool primary_data_delivered = false;
+volatile bool primary_data_delivered = false;
+volatile bool skip_primary_http = false;
 volatile bool force_ftp = false;
 volatile bool force_ftp_daily = false;
 char ftp_daily_date[12] = "";
@@ -56,12 +57,11 @@ volatile bool ota_writing_active = false;
 volatile bool ota_silent_mode = false; // Rule 43
                                        // v6.88
 char ota_cmd_param[128] = "";
+RTC_DATA_ATTR int last_cmd_id = 0;
+RTC_DATA_ATTR char last_cmd_res[64] = "N/A";
 int ota_fail_count = 0;
 char ota_fail_reason[48] = "NONE";
 bool health_in_progress = false;
-#if ENABLE_ESPNOW == 1
-TaskHandle_t espnow_h; // tx,rx from UI
-#endif
 TaskHandle_t lcdkeypad_h; // UI
 TaskHandle_t tempHum_h;
 TaskHandle_t bmeTask_h;
@@ -106,36 +106,24 @@ void setup() {
   // Record Reset Reason and Increment Uptime
   RESET_REASON rr = rtc_get_reset_reason(0);
   diag_last_reset_reason = (int)rr;
-  if (rr == DEEPSLEEP_RESET) {
-    diag_reg_count_total_cycles++; // 15-min cycles
-    diag_total_uptime_hrs = diag_reg_count_total_cycles / 4;
-  } else {
-    // POWER ON / WDT RESET: Initialize RTC safety variables if they look like
-    // junk
+  
+  // v7.93: Only wipe counters on HARD Power-On (1). 
+  // Preserve on EXT_CPU_RESET (14) and DEEPSLEEP (5) for better testing resilience.
+  if (rr != POWERON_RESET && rr != DEEPSLEEP_RESET) {
+    debugf("[BOOT] Preserving counters for reset reason: %d\n", (int)rr);
+  } else if (rr == POWERON_RESET) {
+    debugln("[BOOT] Power-On Reset. Initializing RTC variables.");
     if (last_valid_temp < -20.0 || last_valid_temp > 60.0)
       last_valid_temp = 26.0;
     if (last_valid_hum < 0.0 || last_valid_hum > 100.0)
       last_valid_hum = 65.0;
 
-    // Reset deep diagnostics on Power-On only
-    diag_stack_min_rtc = 9999;
-    diag_stack_min_sched = 9999;
-    diag_stack_min_gprs = 9999;
-    diag_stack_min_ui = 9999;
-    diag_i2c_errors = 0;
-    diag_modem_temp = -99;
-    strcpy(diag_network_type, "NA");
-    diag_last_rssi = 0;
-    diag_min_rssi = 0;
-    diag_max_rssi = -140;
-
-    // Reset Accuracy Counters on Power-On to prevent garbage spikes
     total_wind_pulses_32 = 0;
     last_sched_wind_pulses_32 = 0;
-    last_raw_wind_count = wind_count.val; // Sync with HW
+    last_raw_wind_count = wind_count.val;
     total_rf_pulses_32 = 0;
     last_sched_rf_pulses_32 = 0;
-    last_raw_rf_count = rf_count.val; // Sync with HW
+    last_raw_rf_count = rf_count.val;
   }
 
   // Pre-load essential system data: Try NVS (Preferences) first for robustness
@@ -154,9 +142,11 @@ void setup() {
       strcpy(temp, station_name + 2);
       strcpy(station_name, temp);
     }
+    test_health_every_slot = prefs.getInt("test_health", TEST_HEALTH_DEFAULT);
+    debug("Health Mode: ");
+    debugln(test_health_every_slot == 1 ? "PULSE (15m)" : "DAILY (11am)");
+    
     strcpy(ftp_station, station_name);
-    debug("Loaded Station ID from NVS: ");
-    debugln(station_name);
   } else {
     // If NVS empty, try SPIFFS (Legacy/First Run)
     if (SPIFFS.exists("/station.doc")) {
@@ -348,20 +338,24 @@ void setup() {
   }
 
   // Station Altitude Load (for MSLP calculation) - #1 Fix
+  // Only meaningful for KSNDMC_TWS-AP (BME280 pressure sensor enabled)
 #if (SYSTEM == 1) || (SYSTEM == 2)
+  bool is_ap_unit = (strstr(UNIT, "-AP") != NULL);
   if (SPIFFS.exists("/station_alt.txt")) {
     File altF = SPIFFS.open("/station_alt.txt", FILE_READ);
-    if (altF) { // EX1 FIX: Guard against invalid file handle
+    if (altF) {
       float loaded_alt = altF.readString().toFloat();
       altF.close();
       if (loaded_alt >= 0.0 && loaded_alt <= 5000.0) {
         station_altitude_m = loaded_alt;
       }
     }
-  } else {
-    // First boot: create file with default value
+  } else if (is_ap_unit) {
+    // First boot of a TWS-AP unit: create file with default 900m
+    // (user must update via LCD menu for actual site altitude)
+    station_altitude_m = 900.0;
     File altF = SPIFFS.open("/station_alt.txt", FILE_WRITE);
-    if (altF) { // EX4 FIX companion: guard write as well
+    if (altF) {
       altF.print(station_altitude_m);
       altF.close();
     }
@@ -849,13 +843,7 @@ void setup() {
                           &windDirection_h, 1); // Core 1
 #endif
 
-#if ENABLE_ESPNOW == 1
-  if (wired == 0) {
-    xTaskCreatePinnedToCore(espnow, "espnowTask", 4096, NULL, 2, &espnow_h,
-                            0); // Core 0
-  } else
-#endif
-      if (wired == 1) {
+  if (wired == 1) {
     xTaskCreatePinnedToCore(lcdkeypad, "lcdkeypadTask", 4096, NULL, 2,
                             &lcdkeypad_h, 0); // Core 0
     if (wakeup_reason_is != timer) {
@@ -940,6 +928,10 @@ void progressCallBack(size_t currSize, size_t totalSize) {
 }
 
 void initialize_hw() {
+  // v7.79: Mandatory Stability Breather. Give pins & radio time to settle
+  // before attaching peripherals or loading ULP counts.
+  vTaskDelay(5000 / portTICK_PERIOD_MS);
+
   // Setup Legacy ADC (To prevent driver_ng conflicts in Core 3.x)
   adc1_config_width(ADC_WIDTH_BIT_12);
   adc1_config_channel_atten(ADC1_CHANNEL_5,
@@ -1061,8 +1053,9 @@ void loop() {
       ((sync_mode == eHttpStop) || (sync_mode == eSMSStop) ||
        (sync_mode == eExceptionHandled)) &&
       (lcdkeypad_start == 0) && (wifi_active == false) &&
-      (health_in_progress == false) && (force_reboot == false) &&
-      (force_ota == false) && (ota_writing_active == false)) {
+      (httpInitiated == false) && (health_in_progress == false) &&
+      (force_reboot == false) && (force_ota == false) &&
+      (ota_writing_active == false)) {
     debugln("[PWR] All tasks done. Entering Deep Sleep...");
     esp_task_wdt_reset(); // Final pet before sleep
     start_deep_sleep();
@@ -1135,10 +1128,9 @@ void ULP_COUNTING(uint32_t us) {
   debug("[ULP] Init. HW Reason: ");
   debugln((int)reason);
 
-  // Clear ULP variables on Power-On reset (1), External Reset (14), or if we
-  // are forcing a sync fix
-  if (reason == 1 || reason == 14) {
-    debugln("[ULP] Hard Reset/PowerOn. Wiping ULP counters.");
+  // v7.93: Only wipe on HARD Power-On (1). 
+  if (reason == 1) {
+    debugln("[ULP] Hard Power-On. Wiping ULP counters.");
     rf_count.val = 0;
     cur_state.val = 0;
     prev_state.val = 0;
@@ -1179,7 +1171,7 @@ void ULP_COUNTING(uint32_t us) {
 
       // States are different, start debouncing
       I_MOVI(R3, 0), I_ST(R2, R3, U_PREV_STATE), // prev_state = current
-      I_MOVI(R0, 5),                             // Debounce = 5ms
+      I_MOVI(R0, 25),                            // v7.93: Debounce increased to 25ms
       I_ST(R0, R3, U_DEBOUNCE_CNT),
       M_BX(4), // Skip to next sensor while debouncing
 
@@ -1232,6 +1224,10 @@ void ULP_COUNTING(uint32_t us) {
       M_BXZ(5),                          // If curr is 0, exit
 
       // Rising Edge!
+      // v7.93: 1ms wait after rising edge for internal settling
+      I_HALT(), 
+      I_GPIO_READ(GPIO_NUM_35), M_BXZ(5), // Confirm it's still High 1ms later
+
       I_LD(R0, R3, U_WIND_COUNT), I_ADDI(R0, R0, 1), I_ST(R0, R3, U_WIND_COUNT),
 
       M_LABEL(5), I_HALT()};

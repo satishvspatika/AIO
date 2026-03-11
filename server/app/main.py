@@ -4,11 +4,12 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import engine
 from app.models import Base
-from app.routers import health, dashboard, ota, commands, summary, diagnostics
+from app.routers import health, dashboard, ota, commands, summary
 from app.auth import router as auth_router, SESSIONS
 
 # Ensure all DB tables exist at startup
 Base.metadata.create_all(bind=engine)
+
 
 app = FastAPI(title="Spatika Health API v3.0")
 
@@ -19,7 +20,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # We need to protect UI routes: /, /dashboard, /station, /cmd, /ota, /delete
         
         # Determine if path is protected UI route
-        protected_prefixes = ("/dashboard", "/station", "/cmd", "/ota", "/delete", "/clear-queue", "/clear-ota-queue", "/toggle-ota-lock", "/summary", "/diagnostics", "/csv")
+        protected_prefixes = ("/dashboard", "/station", "/cmd", "/ota", "/delete", "/clear-queue", "/clear-ota-queue", "/toggle-ota-lock", "/summary", "/csv")
         
         # Skip auth for builds (so ESP32 can download binaries)
         if request.url.path.startswith("/builds"):
@@ -62,7 +63,6 @@ app.include_router(dashboard.router)
 app.include_router(ota.router)
 app.include_router(commands.router)
 app.include_router(summary.router)
-app.include_router(diagnostics.router)
 
 # Serve the firmware builds directory statically
 # This makes binaries available at http://server-ip/builds/FW_S6_SPATIKA_GEN.bin

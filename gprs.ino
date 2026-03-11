@@ -16,6 +16,7 @@ void flushSerialSIT() {
 // RTC. force=true: apply even on first call (rejection path) force=false: apply
 // only once per day if drift > 90s (success path)
 void sync_rtc_from_server_tm(const char *payload, bool force) {
+  String response;
   if (!payload)
     return;
 
@@ -27,8 +28,10 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
         current_day; // M1 FIX: was never updated — reset fired every wake cycle
   }
 
-  // On success path (force=false): run at 10:00 AM, once per day
-  if (!force && (current_hour != 10 || rtc_daily_sync_done))
+  // v7.87: Correct at midnight or first successful check-in of each day.
+  // force=true for Rejection path (always syncs).
+  // force=false for Success path (syncs only once per day).
+  if (!force && rtc_daily_sync_done)
     return;
 
   // Find "tm":"YYMMDDHHMMSS" in payload
@@ -139,6 +142,7 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
 
 void gprs(void *pvParameters) {
   esp_task_wdt_add(NULL);
+  String response;
 
   for (;;) {
     esp_task_wdt_reset();
@@ -342,6 +346,7 @@ void gprs(void *pvParameters) {
           if (diag_fw_just_updated && gprs_mode == eGprsSignalOk) {
             is_ota_confirm = true;
             diag_fw_just_updated = false; // Reset persistent flag
+            strcpy(last_cmd_res, "Success: OTA Updated");
             strcpy(diag_cdm_status, "Firmware Updated");
             // Refresh Location via Fresh CLBS
             get_gps_coordinates();
@@ -351,13 +356,21 @@ void gprs(void *pvParameters) {
             health_in_progress = true; // Block deep sleep
           }
 
-          debugln("[BATT] Proceeding with Spatika Upload regardless of battery "
-                  "voltage.");
-          sync_mode = eHttpStarted;
-          send_http_data();
-          primary_data_delivered =
-              (success_count == 1); // v5.51 Track session success
-          httpInitiated = false;
+          if (!skip_primary_http) {
+            debugln(
+                "[BATT] Proceeding with Spatika Upload regardless of battery "
+                "voltage.");
+            sync_mode = eHttpStarted;
+            send_http_data();
+            primary_data_delivered =
+                (success_count == 1); // v5.51 Track session success
+          } else {
+            debugln("[SCHED] Skipping Duplicate Upload. Checking "
+                    "Backlog/Health...");
+            primary_data_delivered = true; // Assume 'Success' to allow backlog
+          }
+//          httpInitiated = false; // Moved to end of cycle to prevent race with loopTask sleep
+
 
           if (health_in_progress) {
 #if ENABLE_HEALTH_REPORT == 1
@@ -397,11 +410,12 @@ void gprs(void *pvParameters) {
             debugln("[Health] Skip: Health reporting disabled.");
             health_in_progress = false; // Allow sleep
 #endif
+            debugln("[GPRS] Automations finished. Checking for Piggybacked Commands...");
           }
+
         } else if (gprs_mode == eGprsSignalForStoringOnly) {
+          debugln("[GPRS] Signal too weak for HTTP. Storing data to backlog.");
           store_current_unsent_data();
-          sync_mode = eHttpStop;
-          httpInitiated = false;
         }
       }
     }
@@ -409,6 +423,7 @@ void gprs(void *pvParameters) {
     // --- REMOTE COMMAND EXECUTION (Command Piggybacking) ---
     if (force_reboot) {
       debugln("[CMD] Remote HARD REBOOT triggered. Killing Modem Power...");
+      strcpy(last_cmd_res, "Success: Rebooting...");
       digitalWrite(26, LOW); // Kill VCC to A7672S
       vTaskDelay(2000 / portTICK_PERIOD_MS);
       debugln("[CMD] Restarting ESP32...");
@@ -462,8 +477,10 @@ void gprs(void *pvParameters) {
       if (lati != 0 || longi != 0) {
         saveGPS(); // Persist to SPIFFS for next boot
         debugf2("[CMD] GPS acquired: %.6f, %.6f\n", lati, longi);
+        strcpy(last_cmd_res, "Success: GPS Refreshed");
       } else {
         debugln("[CMD] GPS re-acquire failed. Will retry next cycle.");
+        strcpy(last_cmd_res, "Fail: No GPS Fix");
       }
       force_gps_refresh = false;
     }
@@ -472,15 +489,27 @@ void gprs(void *pvParameters) {
     if (force_clear_ftp_queue) {
       debugln(
           "[CMD] CLEAR_FTP_QUEUE: Removing ftpunsent.txt by server request...");
+      bool cleared = false;
       if (SPIFFS.exists("/ftpunsent.txt")) {
         SPIFFS.remove("/ftpunsent.txt");
         debugln("[CMD] /ftpunsent.txt cleared.");
+        cleared = true;
       }
       if (SPIFFS.exists("/ftpremain.txt")) {
         SPIFFS.remove("/ftpremain.txt");
         debugln("[CMD] /ftpremain.txt cleared.");
+        cleared = true;
       }
+      strcpy(last_cmd_res, cleared ? "Success: Queue Cleared" : "Success: Already Empty");
       force_clear_ftp_queue = false;
+    }
+
+    // v7.90: Final Cycle Reset - Move here to ensure COMMANDS (OTA/FTP/GPS)
+    // finish before loopTask triggers deep sleep.
+    if (httpInitiated) {
+      debugln("[GPRS] Cycle fully complete (including Commands). Allowing sleep.");
+      sync_mode = eHttpStop;
+      httpInitiated = false;
     }
 
     esp_task_wdt_reset();
@@ -491,6 +520,7 @@ void gprs(void *pvParameters) {
 }
 
 void start_gprs() {
+  String response;
   // Power ON GPRS
   digitalWrite(26, HIGH);               // Power on GPRS module
   vTaskDelay(500 / portTICK_PERIOD_MS); // v5.64: Reduced from 1s for fast-boot
@@ -592,6 +622,7 @@ int parseHttpDate(const char *dateStr, struct tm *tm) {
 
 void prepare_data_and_send() {
   esp_task_wdt_reset();
+  const char *charArray;
 
   if (data_mode == eCurrentData) {
 
@@ -806,6 +837,14 @@ void prepare_data_and_send() {
     diag_consecutive_reg_fails = 0;
     if (data_mode == eCurrentData) {
       diag_first_http_count++;
+      diag_http_success_count++; // v7.86 Track total live HTTP successes
+      // v7.70: Present fails resets on any current-slot success
+      diag_http_present_fails = 0;
+      snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
+               sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "PR:%d CUM:%d",
+               diag_http_present_fails, diag_http_cum_fails);
+    } else if (data_mode == eUnsentData) {
+      diag_http_retry_count++; // v7.86 Track total backlog HTTP successes
     }
   }
   vTaskDelay(200 / portTICK_PERIOD_MS);
@@ -917,6 +956,17 @@ void prepare_data_and_send() {
       if (success_count == 1) {
         diag_consecutive_reg_fails = 0;
         diag_consecutive_http_fails = 0;
+        if (data_mode == eCurrentData) {
+          // v7.70: Retry succeeded — reset present fails
+          diag_http_present_fails = 0;
+          diag_http_success_count++; // v7.86
+          diag_first_http_count++;   // v7.86
+          snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
+                   sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "PR:%d CUM:%d",
+                   diag_http_present_fails, diag_http_cum_fails);
+        } else if (data_mode == eUnsentData) {
+          diag_http_retry_count++; // v7.86
+        }
         if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
           debugln("[HTTP] Retry succeeded.");
           xSemaphoreGive(serialMutex);
@@ -932,8 +982,22 @@ void prepare_data_and_send() {
     if (success_count == 0) { // Complete failure
       diag_consecutive_http_fails++;
       diag_daily_http_fails++;
-      debugf1("[RECOVERY] Consecutive HTTP Fails: %d\n",
-              diag_consecutive_http_fails);
+      if (data_mode == eCurrentData) {
+        // v7.70: Monthly cum reset on 1st of month
+        if (current_day == 1 && diag_cum_fail_reset_month != current_month) {
+          diag_http_cum_fails = 0;
+          diag_cum_fail_reset_month = current_month;
+          debugln("[HTTP] Monthly cum fail counter reset (1st of month).");
+        }
+        diag_http_present_fails++;
+        diag_http_cum_fails++;
+        snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
+                 sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "PR:%d CUM:%d",
+                 diag_http_present_fails, diag_http_cum_fails);
+      }
+      debugf1("[RECOVERY] Consec HTTP Fails: %d", diag_consecutive_http_fails);
+      debugf1(" | Present: %d", diag_http_present_fails);
+      debugf1(" | CumMth: %d\n", diag_http_cum_fails);
 
       if (data_mode == eCurrentData) {
         char current_record[record_length + 1];
@@ -1086,15 +1150,19 @@ void prepare_data_and_send() {
         }
 #endif
 
-        debugln("Current/Closing data not sent to unsent.txt is ");
+        debugln("!!! Persistent Server Rejection/Failure !!!");
+        debugln("The failed record was: ");
         debugln(current_record);
+        debugln("Backlog delivery will be attempted in future cycles.");
+
       } // closes if(data_mode == eCurrentData)
     }   // closes if(success_count == 0)
   }     // closes if(SPIFFS.exists(temp_file))
 } // closes prepare_data_and_send()
 
 void send_http_data() {
-
+  String response;
+  const char *charArray;
   /*
    * PREPARE HTTP PARAMS
    */
@@ -1521,7 +1589,8 @@ void send_daily_file(
   }
 }
 
-void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
+void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
+                          // *charArray;
   debugln("Entering FTP mode and checking if data period is correct for "
           "sending and if there is any file to be sent");
   int ftp_year = rf_cls_yy % 100;
@@ -1558,12 +1627,13 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
   // meteorological day is cleared
   bool scheduled_slot =
       (record_min == 0) &&
-      (record_hr == 0 || record_hr == 6 || record_hr == 12 || record_hr == 18);
+      (record_hr % 3 == 0);
   bool morning_cleanup = (record_hr == 8 && record_min == 45);
   bool should_push = (unsent_cnt >= 6) ||
                      (unsent_cnt > 0 && (scheduled_slot || morning_cleanup));
 
-  if (signal_lvl > -95 && should_push && SPIFFS.exists(ftpunsent_file)) {
+  if (signal_lvl > -95 && (should_push || force_ftp) &&
+      SPIFFS.exists(ftpunsent_file)) {
     // v7.54: BSNL Carrier Congestion Breather
     // Switching from HTTP POST to FTP immediately causes Socket Zombies and
     // drops the modem into an '85' signal panic loop. Force a 5s tower release
@@ -1722,20 +1792,21 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
 } // end send_unsent_data
 
 void send_ftp_file(char *fileName, bool isDailyFTP) {
+  String response;
+  const char *response_char;
+  const char *charArray; // Added as per instruction
+  const char *resp;      // Added as per instruction
   // Use a local module-safe path (removes leading slash for cellular module
   // commands)
   char *modulePath = (fileName[0] == '/') ? &fileName[1] : fileName;
 
   char gprs_xmit_buf[300];
-  String response;
   String rssiStr;
-  const char *resp;
   int rssiIndex, rssiEndIndex, retries, registration;
   int handle_no;
   const char *ftpCharArray;
   char *csqstr;
   int success;
-  const char *response_char;
   int total_no_of_bytes;
   int s = 0,
       fileSize = 0; // Fixed shadowed and uninitialized local variables
@@ -1838,7 +1909,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
         bool upload_success = false;
 
         snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-                 "AT+CFTPSPUTFILE=\"%s\",1", modulePath);
+                 "AT+CFTPSPUTFILE=\"C:/%s\",0", modulePath);
 
         while (ftp_put_retries <= MAX_FTP_PUT_RETRIES) {
           esp_task_wdt_reset();
@@ -1873,7 +1944,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
             while ((millis() - put_start) < 60000) {
               esp_task_wdt_reset();
               vTaskDelay(500 / portTICK_PERIOD_MS);
-              while (SerialSIT.available()) {
+          while (SerialSIT.available()) {
                 char cc = SerialSIT.read();
                 if (response1.length() < 2048)
                   response1 += cc;
@@ -1894,6 +1965,8 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
 
           if (response1.indexOf("+CFTPSPUTFILE: 0") != -1) {
             upload_success = true;
+            if (isDailyFTP) strcpy(last_cmd_res, "Success: Daily FTP OK");
+            else strcpy(last_cmd_res, "Success: Backlog FTP OK");
             break;
           } else {
             debugln("FTP PUT failed. Checking recovery...");
@@ -1918,6 +1991,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
         }
 
         if (upload_success) {
+          // last_cmd_res already set in the loop
           diag_consecutive_reg_fails =
               0; // RESET counter on any successful data upload
           markFileAsDelivered(fileName); // v5.48 Track recovered records
@@ -1979,6 +2053,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
           waitForResponse("OK", 5000);
         } else {
           debugln("Did not succeed in FTP ..");
+          strcpy(last_cmd_res, "Fail: FTP PUT Error");
           // Failed: Clean up ONLY the temporary .swd/.kwd copies.
           // DO NOT delete 'temp_file' or 'ftpunsent_file' (Source Data) so we
           // can retry later.
@@ -2005,10 +2080,14 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
               String fileName1 = file.name();
               if (fileName1.endsWith(pattern)) {
                 String prefixedFileName = prefix + fileName1;
-                debugf("Removing file (failure cleanup): %s\n",
-                       prefixedFileName.c_str());
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                SPIFFS.remove(prefixedFileName);
+                // v7.91: Targeted cleanup. Only remove if it matches the active
+                // filename.
+                if (prefixedFileName == String(fileName)) {
+                  debugf("Removing file (failure cleanup): %s\n",
+                         prefixedFileName.c_str());
+                  vTaskDelay(100 / portTICK_PERIOD_MS);
+                  SPIFFS.remove(prefixedFileName);
+                }
               }
               file.close(); // v5.49 Build 5: FIX LEAK
               file = root.openNextFile();
@@ -2078,6 +2157,7 @@ void copyFile(const char *sourcePath, const char *destPath) {
 }
 
 void graceful_modem_shutdown() {
+  String response;
   // session_unstable = true only on ACTUAL failures (reg fails > 0).
   // eHttpStop / eSMSStop mean the session COMPLETED successfully.
   // v5.67: Removed erroneous (sync_mode == eHttpStop) from this condition.
@@ -2104,6 +2184,7 @@ void graceful_modem_shutdown() {
 }
 
 void send_sms() {
+  String response;
   vTaskDelay(500 /
              portTICK_PERIOD_MS); // TRG8-3.0.5g reduced from 1min to 500ms
   int msg_no;
@@ -2123,9 +2204,11 @@ void send_sms() {
   sync_mode = eSMSStop;
 }
 
-int send_at_cmd_data(char *payload, String charArray) {
+int send_at_cmd_data(char *payload, String response_arg) {
   unsigned long start = millis();
   esp_task_wdt_reset();
+  String response;
+  const char *charArray = response_arg.c_str(); // Use local pointer
 
   // v5.42: Fast-fail if HTTP session was never successfully initialized.
   // Prevents burning ~47s on back-to-back HTTPDATA + HTTPACTION timeouts
@@ -2140,6 +2223,7 @@ int send_at_cmd_data(char *payload, String charArray) {
     ;
   // v5.45: Capping timeout at 5000ms. Most A7672S firmwares reject > 5s with
   // ERROR.
+  char ht_data[80];
   snprintf(ht_data, sizeof(ht_data), "AT+HTTPDATA=%d,5000", i);
 
   debugf1("Payload is %s", payload);
@@ -2278,19 +2362,8 @@ int send_at_cmd_data(char *payload, String charArray) {
       if (!alreadySent) {
         if (isToday) {
           diag_sent_mask_cur[temp_sampleNo / 32] |= bit;
-          if (data_mode == eCurrentData && diag_http_success_count < 96) {
-            diag_http_success_count++;
-          } else if (data_mode == eUnsentData && diag_http_retry_count < 96) {
-            diag_http_retry_count++;
-          }
         } else {
           diag_sent_mask_prev[temp_sampleNo / 32] |= bit;
-          if (data_mode == eCurrentData && diag_http_success_count_prev < 96) {
-            diag_http_success_count_prev++;
-          } else if (data_mode == eUnsentData &&
-                     diag_http_retry_count_prev < 96) {
-            diag_http_retry_count_prev++;
-          }
         }
       }
     }
@@ -2335,9 +2408,20 @@ int send_at_cmd_data(char *payload, String charArray) {
 }
 
 void store_current_unsent_data() {
-  vTaskDelay(100 / portTICK_PERIOD_MS);
-  char finalStringBuffer[100];
-  strcpy(finalStringBuffer, store_text); // strcpy handles null termination
+  char finalStringBuffer[160] = {0};
+  char last_rec_file[50];
+  snprintf(last_rec_file, sizeof(last_rec_file), "/lastrecorded_%s.txt",
+           station_name);
+
+  if (SPIFFS.exists(last_rec_file)) {
+    File f = SPIFFS.open(last_rec_file, FILE_READ);
+    if (f) {
+      size_t readLen =
+          f.readBytes(finalStringBuffer, sizeof(finalStringBuffer) - 1);
+      finalStringBuffer[readLen] = '\0';
+      f.close();
+    }
+  }
 
 #if SYSTEM == 0
   snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
@@ -2455,6 +2539,8 @@ void store_current_unsent_data() {
  */
 
 void get_signal_strength() {
+  String response, rssiStr;
+  const char *resp;
 
   debugln("************************");
   debugln("GETTING SIGNAL STRENGTH ");
@@ -2470,39 +2556,33 @@ void get_signal_strength() {
 
   int invalid_signal_count = 0;
   // rssi 0 = -113dBm. Continuous -113 is essentially no signal.
-  while (((signal_lvl == 0) || (signal_lvl <= -113)) &&
+  while ((signal_lvl == 0) &&
          (retries < 120)) { // 120 loops @ 500ms = 60s max timeout
     esp_task_wdt_reset();
     SerialSIT.println("AT+CSQ");
     response = waitForResponse("+CSQ ", 1000);
-    rssiIndex = response.indexOf("+CSQ: "); // int
-    if (rssiIndex != -1) {                  // #TRUEFIX
+    rssiIndex = response.indexOf("+CSQ: ");
+    if (rssiIndex != -1) {
       rssiIndex += 6;
-      rssiEndIndex = response.indexOf(",", rssiIndex);         // int
-      if (rssiEndIndex != -1) {                                // #TRUEFIX
-        rssiStr = response.substring(rssiIndex, rssiEndIndex); // String
+      rssiEndIndex = response.indexOf(",", rssiIndex);
+      if (rssiEndIndex != -1) {
+        rssiStr = response.substring(rssiIndex, rssiEndIndex);
       } else {
-        rssiStr = "0"; // Default
+        rssiStr = "0";
       }
     } else {
-      rssiStr = "0"; // Default
+      rssiStr = "0";
     }
     resp = rssiStr.c_str();
-    signal_strength =
-        (-113 + 2 * (atoi(resp))); // convert char to int usng atoi()
+    signal_strength = (-113 + 2 * (atoi(resp)));
     debug("Signal strength IN gprs task is ");
     debugln(signal_strength);
     if (signal_strength != 85) {
       signal_lvl = signal_strength;
-      if (signal_lvl != -113) {
-        diag_last_rssi = signal_lvl;
-        if (diag_last_rssi < diag_min_rssi)
-          diag_min_rssi = diag_last_rssi;
-        if (diag_last_rssi > diag_max_rssi)
-          diag_max_rssi = diag_last_rssi;
-      }
-      debug("Signal Level is ");
-      debugln(signal_lvl);
+      // v5.50 Optimization: Exit instantly if we get a valid reading,
+      // even if it is -113dBm (modem is alive but signal is zero).
+      // No point looping for 60s if the modem is clearly reporting low signal.
+      break;
     } else {
       invalid_signal_count++;
       // If we see "No Signal" (-113 or 85) for 30s (60 polls), move to
@@ -2513,9 +2593,12 @@ void get_signal_strength() {
         break;
       }
     }
+    debug("Signal Level is ");
+    debugln(signal_lvl);
     retries++;
     vTaskDelay(500 / portTICK_PERIOD_MS); // High-frequency polling
   }
+
   // CLAMP: Modem returns 85 for "No Signal". Convert to -111 sentinel.
   if (signal_strength == 85 || signal_strength > 31) {
     signal_strength = -111;
@@ -2529,6 +2612,8 @@ void get_signal_strength() {
 // USSD Discovery Removed - Inefficient for release
 
 void get_network() {
+  String response;
+  const char *resp;
   debugln();
   debugln("************************");
   debugln("GETTING NETWORK ");
@@ -2650,6 +2735,7 @@ full_discovery:
 }
 
 void get_registration() {
+  String response;
   esp_task_wdt_reset();
   debugln();
   debugln("************************");
@@ -2937,6 +3023,20 @@ void get_registration() {
                 !isBSNL; // For BSNL it's GPRS/3G. For others it's LTE bearer.
             strcpy(reg_status, (qreg == 1) ? "GPRS:Home:OK" : "GPRS:Roam:OK");
             is_registered = true;
+          } else {
+            // v7.87: Track exact failure reasons
+            if (signal_lvl <= -109 || signal_lvl == 0 || signal_lvl == 99) {
+              strcpy(diag_reg_fail_type, "NO_SIGNAL");
+            } else if (qreg == 0) {
+              strcpy(diag_reg_fail_type, "NOT_SRCH");
+            } else if (qreg == 2) {
+              strcpy(diag_reg_fail_type, "SEARCHING");
+            } else if (qreg == 3) {
+              strcpy(diag_reg_fail_type, "DENIED");
+            } else {
+              snprintf(diag_reg_fail_type, sizeof(diag_reg_fail_type),
+                       "UNKNOWN(%d)", qreg);
+            }
           }
         }
       }
@@ -2955,7 +3055,7 @@ void get_registration() {
       diag_reg_worst = time_taken;
     gprs_mode = eGprsSignalOk;
     debugln("Registration Successful.");
-    updateDeepHealth(); // v7.59: Capture RAT/Network type fresh after attach
+    debugln("Registration Successful.");
   } else {
     diag_gprs_fails++;
     diag_consecutive_reg_fails++;
@@ -2972,6 +3072,7 @@ void get_registration() {
 }
 
 void get_a7672s() {
+  String response;
   debugln("--- GPRS SETTING PDP ---");
   //      SerialSIT.println("AT+CPSI?");
   //      response = waitForResponse("+CPSI", 5000);
@@ -3145,7 +3246,10 @@ void get_a7672s() {
  *
  */
 
+// SMS & FTP functions below
+
 void process_sms(char msg_no) {
+  String response;
   char *csqstr, c, *ptr, msg_rcvd_number[100] = {0};
   int i, response_no;
 
@@ -3259,6 +3363,7 @@ void process_sms(char msg_no) {
 }
 
 void prepare_and_send_status(char *gsm_no) {
+  String response;
   int response_no;
   char msg_type[9];
   char status_response[256];
@@ -3362,6 +3467,7 @@ void prepare_and_send_status(char *gsm_no) {
 }
 
 void get_gps_coordinates() {
+  String response;
   int tmp;
   float lat, lon;
   const char *response_char;
@@ -3401,6 +3507,7 @@ void get_gps_coordinates() {
 }
 
 void get_lat_long_date_time(char *gsm_no) {
+  String response;
   int response_no;
   int tmp, tmp3;
   char tmp2[16];
@@ -3578,11 +3685,12 @@ bool isBufferSanityOK(uint8_t *buf, int len, int offset) {
 int setup_ftp() {
   flushSerialSIT(); // Clear leftover data from previous task
   char gprs_xmit_buf[300];
-  String response; // Local for safety
+  String response, rssiStr;
+  const char *resp;
   const char *ftpServer;
   const char *ftpUser;
   const char *ftpPassword;
-  int portName;
+  int portName, rssiIndex, result;
 
   if ((strstr(UNIT, "BIHAR_TRG")) || (strstr(UNIT, "BIHAR_TEST"))) {
     // Bihar
@@ -3646,7 +3754,8 @@ int setup_ftp() {
 #endif
   }
 
-  int result = -1;
+  send_daily = 0; // Ensure flag is reset after use
+  result = -1;
 
   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
            "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",0", ftpServer, portName,
@@ -3726,6 +3835,7 @@ int setup_ftp() {
 }
 
 void fetchFromHttpAndUpdate(char *fileName) {
+  String response;
   int handle_no;
   char gprs_xmit_buf[300];
   int total_no_of_bytes = 0;
@@ -4154,7 +4264,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
 }
 
 void copyFromSPIFFSToFS(char *dateFile) {
-
+  String response;
   char SPIFFSFile[30], fileName[30];
   snprintf(SPIFFSFile, sizeof(SPIFFSFile), "/%s_%s.txt", station_name,
            dateFile);
@@ -4232,9 +4342,9 @@ void copyFromSPIFFSToFS(char *dateFile) {
     ftp_login_flag = setup_ftp();
 
     if (ftp_login_flag == 1) {
-      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSPUTFILE=\"%s\",1",
-               fileName); // FILEHANDLE,offset,(0:start of file 1:cur pos of
-                          // pointer 2: end of file
+      char *modulePath = (fileName[0] == '/') ? &fileName[1] : fileName;
+      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSPUTFILE=\"C:/%s\",0",
+               modulePath); 
       SerialSIT.println(gprs_xmit_buf); // FTP client context
       response = waitForResponse("+CFTPSPUTFILE: 0", 150000); // 120000
       debug("Response of AT+CFTPSPUTFILE ");
@@ -4366,12 +4476,6 @@ bool send_health_report(bool useJitter) {
   // v5.45: Carrier Congestion Breather after FTP (Special for BSNL)
   vTaskDelay(5000 / portTICK_PERIOD_MS);
 
-  // v6.68: Graceful Reset (Term only). Do NOT use CIPSHUT as it kills the
-  // bearer!
-  SerialSIT.println("AT+HTTPTERM");
-  waitForResponse("OK", 3000);
-  vTaskDelay(2000 / portTICK_PERIOD_MS);
-
   // v5.45: Purity Guard - Silence all network noise during transmission
   SerialSIT.println("AT+CGEREP=0");
   waitForResponse("OK", 1000);
@@ -4380,7 +4484,12 @@ bool send_health_report(bool useJitter) {
   SerialSIT.println("AT+CEREG=0");
   waitForResponse("OK", 1000);
 
-  // --- v7.00: PREPARE PAYLOAD BEFORE AT COMMANDS (ZERO GAP) ---
+  if (diag_pd_count == 0 && current_year > 2024) {
+    debugln("[Health] Counters zero, reconstructing...");
+    reconstructSentMasks();
+  }
+
+  // --- PREPARE PAYLOAD (ZERO GAP) ---
   checkRainfallIntegrity();
   char cleanStn[16];
   strncpy(cleanStn, station_name, 15);
@@ -4398,30 +4507,7 @@ bool send_health_report(bool useJitter) {
   analyzeFileHealth(diag_sent_mask_prev, &diag_net_data_count_prev,
                     &unresolvedPD, &unresolvedNDM);
 
-  char sensor_info[48];
-  if (SYSTEM == 0)
-    snprintf(sensor_info, sizeof(sensor_info), "RF-OK");
-  else if (SYSTEM == 1)
-    snprintf(sensor_info, sizeof(sensor_info), "TH-%s,B-%s,WS-%s,WD-%s",
-             (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"),
-             (bmeType == BME_UNKNOWN ? "NA" : "OK"), (ws_ok ? "OK" : "FAIL"),
-             (wd_ok ? "OK" : "FAIL"));
-  else
-    snprintf(sensor_info, sizeof(sensor_info), "TH-%s,RF-OK,WS-%s,WD-%s",
-             (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"), (ws_ok ? "OK" : "FAIL"),
-             (wd_ok ? "OK" : "FAIL"));
-
-  char gps_str[32];
-  // v7.53: Use "NA" when GPS not yet acquired instead of ambiguous
-  // 0.000000,0.000000
-  if (lati == 0.0 && longi == 0.0)
-    snprintf(gps_str, sizeof(gps_str), "NA");
-  else
-    snprintf(gps_str, sizeof(gps_str), "%.6f,%.6f", lati, longi);
-
   char h_status[256] = "";
-  // v7.53: Bounded H_FAULT to prevent strcat stack overflow with many
-  // simultaneous faults
 #define H_FAULT(f)                                                             \
   do {                                                                         \
     size_t _rem = sizeof(h_status) - strlen(h_status) - 1;                     \
@@ -4431,6 +4517,7 @@ bool send_health_report(bool useJitter) {
     if (_rem > 0)                                                              \
       strncat(h_status, f, _rem);                                              \
   } while (0)
+
   if (diag_last_reset_reason == 15)
     H_FAULT("BROWNOUT");
   if (diag_last_reset_reason == 7 || diag_last_reset_reason == 8 ||
@@ -4441,285 +4528,307 @@ bool send_health_report(bool useJitter) {
     H_FAULT("RTC_FAIL");
   if (unresolvedPD)
     H_FAULT("PD");
-  if (strcmp(diag_cdm_status, "OK") != 0 && current_hour >= 9)
+  if (strcmp(diag_cdm_status, "OK") != 0 && current_hour >= 9 &&
+      diag_last_rollover_day > 0) // v7.83: Skip CDM on very first boot
     H_FAULT("CDM");
   if (unresolvedNDM)
     H_FAULT("NDM");
-  // v7.62: Flag SPIFF-Er if records are missing from storage (Ideally 96 for
-  // Yesterday)
-  if (current_hour >= 9 && diag_pd_count_prev < 96)
-    H_FAULT("SPIFF-Er");
   if (lati == 0.0 && longi == 0.0)
     H_FAULT("NO_GPS");
-
-  if (SYSTEM != 0) {
-    if (diag_temp_cv)
-      H_FAULT("Temp_CV");
-    if (diag_hum_cv)
-      H_FAULT("Humi_CV");
-    if (diag_ws_cv)
-      H_FAULT("WS_CV");
-    if (diag_temp_erv)
-      H_FAULT("Temp_ERV");
-    if (diag_hum_erv)
-      H_FAULT("Humi_ERV");
-    if (diag_ws_erv)
-      H_FAULT("WS_ERV");
-  }
-  if (SYSTEM != 1) {
-    if (diag_rain_jump)
-      H_FAULT("Rain_JUMP");
-    if (diag_rain_calc_invalid)
-      H_FAULT("Rain_CALC_ERR");
-    if (diag_rain_reset)
-      H_FAULT("Rain_RESET");
-  }
-  if (li_bat_val < 3.4)
-    H_FAULT("BATT_CRIT");
-  else if (li_bat_val < 3.6)
-    H_FAULT("BATT_LOW");
   if (h_status[0] == '\0')
     strcpy(h_status, "OK");
 
-  char prevFile[32];
-  char curFile[32];
-  int cur_dd = current_day, cur_mm = current_month, cur_yy = current_year;
-  int prev_dd = current_day, prev_mm = current_month, prev_yy = current_year;
-  int h = (current_hour < 24) ? current_hour : 0;
-  int m = (current_min < 60) ? current_min : 0;
-  int sampleNo = h * 4 + m / 15;
-  sampleNo = (sampleNo + 61) % 96;
-  if (sampleNo <= 60) {
-    next_date(&cur_dd, &cur_mm, &cur_yy);
-  } else {
-    previous_date(&prev_dd, &prev_mm, &prev_yy);
+  char sensor_info[48];
+  snprintf(sensor_info, sizeof(sensor_info), "TH-%s,WS-%s,WD-%s",
+           (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"), (ws_ok ? "OK" : "FAIL"),
+           (wd_ok ? "OK" : "FAIL"));
+
+  char gps_str[32];
+  if (lati == 0.0 && longi == 0.0)
+    snprintf(gps_str, sizeof(gps_str), "NA");
+  else
+    snprintf(gps_str, sizeof(gps_str), "%.6f,%.6f", lati, longi);
+
+  int spiffs_used = SPIFFS.usedBytes() / 1024;
+  int spiffs_total = SPIFFS.totalBytes() / 1024;
+
+  // Count records in unsent.txt and ftpunsent.txt for unsent_count
+  int unsent_count = 0;
+  const char *unsent_files[] = {"/unsent.txt", "/ftpunsent.txt"};
+  for (int i = 0; i < 2; i++) {
+    File uf = SPIFFS.open(unsent_files[i], FILE_READ);
+    if (uf) {
+      while (uf.available()) {
+        if (uf.read() == '\n')
+          unsent_count++;
+      }
+      uf.close();
+    }
   }
-  snprintf(prevFile, sizeof(prevFile), "/%s_%04d%02d%02d.txt", cleanStn,
-           prev_yy, prev_mm, prev_dd);
-  snprintf(curFile, sizeof(curFile), "/%s_%04d%02d%02d.txt", cleanStn, cur_yy,
-           cur_mm, cur_dd);
 
-  // v5.50: Removed countStored(SD_FILE) dependency.
-  // We now use fast RTC-backed counters for health reports.
-  int cur_stored = diag_pd_count;
-  int prev_stored = diag_pd_count_prev;
+  // Construction of Calibration String for System 0 & 2
+  char calib_report[48] = "NA";
+  if (calib_year > 2000) {
+    snprintf(calib_report, sizeof(calib_report), "CLB-%s (%04d-%02d-%02d)",
+             (calib_sts == 1 ? "OK" : "FAIL"), calib_year, calib_month,
+             calib_day);
+  }
 
-  // v7.59: Compute additional diagnostic values just before payload build
-  updateDeepHealth(); // Fetch latest modem temp and current network type
-  int unsent_count = countStored("/ftpunsent.txt"); // FTP backlog depth
-  int free_heap_kb = (int)(ESP.getFreeHeap() / 1024);
-  int spiffs_total = (int)(SPIFFS.totalBytes() / 1024);
-  int spiffs_used = (int)(SPIFFS.usedBytes() / 1024);
-  int spiffs_free_kb = spiffs_total - spiffs_used;
-  // slot_no: current 15-min slot index (0=08:45 ... 95=08:30 next day)
-  int slot_no_now = (current_hour * 4 + current_min / 15 + 61) % 96;
+  // v7.92: Command Feedback Payload Construction
+  char feedback[128] = "";
+  if (last_cmd_id > 0) {
+    snprintf(feedback, sizeof(feedback),
+             ",\"last_cmd_id\":%d,\"last_cmd_res\":\"%s\"", last_cmd_id,
+             last_cmd_res);
+  }
 
-  char jsonBody[1600]; // v7.59: Expanded to 1600 for 8 new diagnostic fields
+  // v7.83: Full payload — all columns now populated on server
+  // Buffer: ~1280 bytes to accommodate all new fields
+  char jsonBody[1280];
   int msgLen = snprintf(
       jsonBody, sizeof(jsonBody),
       "{\"stn_id\":\"%s\",\"unit_type\":\"%s\",\"system\":%d,"
-      "\"health_sts\":\"%s\",\"sensor_sts\":\"%s\","
-      "\"reset_reason\":%d,\"rtc_ok\":%d,\"uptime_hrs\":%u,"
+      "\"health_sts\":\"%s\",\"sensor_sts\":\"%s\",\"rtc_ok\":%d,"
       "\"bat_v\":%.2f,\"sol_v\":%.2f,\"signal\":%d,"
-      "\"reg_fails\":%d,\"reg_avg\":%.1f,\"reg_worst\":%d,\"reg_fail_type\":"
-      "\"%s\","
-      "\"consec_reg_fails\":%d,\"consec_http_fails\":%d,\"consec_sim_fails\":"
-      "%d,"
-      "\"http_fails\":%d,\"http_fail_reason\":\"%s\",\"http_avg\":%.1f,"
-      "\"http_suc_cnt\":%d,\"cdm_sts\":\"%s\","
-      "\"spiffs_kb\":%d,\"spiffs_free_kb\":%d,\"spiffs_total_kb\":%d,"
-      "\"free_heap_kb\":%d,\"sd_sts\":\"%s\","
-      "\"ver\":\"%s\",\"carrier\":\"%s\","
-      "\"iccid\":\"%s\",\"gps\":\"%s\",\"ota_fails\":%d,\"ota_fail_reason\":"
-      "\"%s\","
-      "\"ndm_cnt\":%d,\"pd_cnt\":%d,\"first_http\":%d,\"net_cnt\":%d,"
-      "\"net_cnt_prev\":%d,\"cur_stored\":%d,\"prev_stored\":%d,"
-      "\"http_suc_cnt_prev\":%d,\"http_ret_cnt\":%d,"
-      "\"http_ret_cnt_prev\":%d,\"ftp_suc_cnt\":%d,\"ftp_suc_cnt_prev\":%d,"
-      "\"unsent_count\":%d,\"slot_no\":%d,\"ws_same_cnt\":%d,"
-      "\"stack_rtc\":%d,\"stack_sched\":%d,\"stack_gprs\":%d,\"stack_ui\":%d,"
-      "\"i2c_errs\":%d,\"m_temp\":%d,\"net_type\":\"%s\","
-      "\"min_rssi\":%d,\"max_rssi\":%d}",
-      cleanStn, UNIT, SYSTEM, h_status, sensor_info, diag_last_reset_reason,
-      (diag_rtc_battery_ok ? 1 : 0), diag_total_uptime_hrs, li_bat_val,
-      solar_val, signal_lvl, diag_gprs_fails,
-      (diag_reg_count > 0 ? (float)diag_reg_time_total / diag_reg_count : 0),
-      diag_reg_worst, diag_reg_fail_type, diag_consecutive_reg_fails,
-      diag_consecutive_http_fails, diag_consecutive_sim_fails,
-      diag_daily_http_fails, diag_http_fail_reason,
-      ((diag_http_success_count + diag_http_retry_count) > 0
-           ? (float)diag_http_time_total /
-                 (diag_http_success_count + diag_http_retry_count) / 1000.0f
-           : 0),
-      diag_http_success_count, diag_cdm_status, spiffs_used, spiffs_free_kb,
-      spiffs_total, free_heap_kb, (sd_card_ok ? "OK" : "FAIL"), UNIT_VER,
-      carrier, cached_iccid, gps_str, ota_fail_count,
-      (ota_fail_count > 0 ? ota_fail_reason : "NONE"), diag_ndm_count,
-      diag_pd_count, diag_first_http_count, diag_net_data_count,
-      diag_net_data_count_prev, cur_stored, prev_stored,
-      diag_http_success_count_prev, diag_http_retry_count,
-      diag_http_retry_count_prev, diag_ftp_success_count,
-      diag_ftp_success_count_prev, unsent_count, slot_no_now,
-      diag_ws_same_count, diag_stack_min_rtc, diag_stack_min_sched,
-      diag_stack_min_gprs, diag_stack_min_ui, diag_i2c_errors, diag_modem_temp,
-      diag_network_type, diag_min_rssi, diag_max_rssi);
+      "\"net_cnt\":%d,"
+      "\"http_suc_cnt\":%d,\"http_ret_cnt\":%d,\"ftp_suc_cnt\":%d,"
+      "\"net_cnt_prev\":%d,\"prev_stored\":%d,"
+      "\"http_suc_cnt_prev\":%d,\"http_ret_cnt_prev\":%d,\"ftp_suc_cnt_prev\":%"
+      "d,"
+      "\"reg_fails\":%d,\"reg_fail_reason\":\"%s\",\"reset_reason\":%d,"
+      "\"spiffs_kb\":%d,\"spiffs_total_kb\":%d,"
+      "\"unsent_count\":%d,"
+      "\"ver\":\"%s\",\"iccid\":\"%s\",\"gps\":\"%s\","
+      "\"cdm_sts\":\"%s\","
+      "\"calib\":\"%s\"," // v7.86
+      "\"ndm_cnt\":%d,\"pd_cnt\":%d"
+      "%s}", // v7.92: Custom Feedback Block
+      cleanStn, UNIT, SYSTEM, h_status, sensor_info,
+      (diag_rtc_battery_ok ? 1 : 0), li_bat_val, solar_val, signal_lvl,
+      diag_net_data_count,          // net_cnt        → Tdy Sent (Live)
+      diag_http_success_count,      // http_suc_cnt   → Tdy HTTP
+      diag_http_retry_count,        // http_ret_cnt   → Tdy Backlogs
+      diag_ftp_success_count,       // ftp_suc_cnt    → Tdy Backlogs (FTP)
+      diag_net_data_count_prev,     // net_cnt_prev   → Ydy Sent
+      diag_pd_count_prev,           // prev_stored    → Ydy Stored
+      diag_http_success_count_prev, // http_suc_cnt_prev → Ydy HTTP
+      diag_http_retry_count_prev,   // http_ret_cnt_prev → Ydy Backlogs
+      diag_ftp_success_count_prev,  // ftp_suc_cnt_prev  → Ydy Backlogs (FTP)
+      diag_gprs_fails, diag_reg_fail_type, // reg_fails & reason
+      diag_last_reset_reason,              // reset_reason
+      spiffs_used, spiffs_total,           // spiffs_kb / spiffs_total_kb
+      unsent_count,                        // unsent_count
+      UNIT_VER, cached_iccid, gps_str,
+      diag_cdm_status, // cdm_sts → server evaluates CDM from this
+      calib_report,    // calibration info
+      diag_ndm_count, diag_pd_count,
+      feedback); // v7.92
 
-  if (useJitter) {
+  if (useJitter)
     vTaskDelay(random(0, 5000) / portTICK_PERIOD_MS);
-  } else {
-    // v7.08: Rule 15 Mandatory Breather if jitter is off (e.g. following
-    // FTP)
-    vTaskDelay(3000 / portTICK_PERIOD_MS);
-  }
+  else
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
 
   bool success = false;
   for (int attempt = 1; attempt <= 3; attempt++) {
-    debugf2("[Health] Attempt %d/%d\n", attempt, 3);
-
-    // v7.04: Verify bearer INSIDE the loop to catch carrier drops during
-    // switching
-    if (!verify_bearer_or_recover()) {
-      debugln("[Health] Bearer lost in loop. Recovering...");
+    debugf1("[Health] Attempt %d/3\n", attempt);
+    if (!verify_bearer_or_recover())
       continue;
-    }
 
-    // v7.65: Mandatory cleanup before starting a new report to avoid 714
-    // sockets
-    SerialSIT.println("AT+HTTPTERM");
+    // v7.79: Total Silence Protocol (Rule 10/27)
+    SerialSIT.println("AT+CGEREP=0");
     waitForResponse("OK", 1000);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+    // Rule 12/24: Extended Breather after host switch
+    SerialSIT.println("AT+HTTPTERM");
+    waitForResponse("OK", 5000);
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    flushSerialSIT();
 
     SerialSIT.println("AT+HTTPINIT");
     if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
-      debugln("[Health] HTTPINIT Failed. Forcing Bearer Nuke...");
-      SerialSIT.println("AT+HTTPTERM");
-      waitForResponse("OK", 1000);
+      debugln("[Health] ❌ HTTPINIT Failed. Bearer Nuke...");
       SerialSIT.println("AT+CGACT=0,1");
-      waitForResponse("OK", 3000);
-      vTaskDelay(3000 / portTICK_PERIOD_MS);
+      waitForResponse("OK", 5000);
       continue;
     }
 
-    // --- CRITICAL LEAN HANDSHAKE BLOCK ---
-    flushSerialSIT();
-    SerialSIT.println("AT+HTTPPARA=\"CID\",1");
-    waitForResponse("OK", 1000);
-
-    // v7.04: URL Sanitization - Match successful main upload pattern
-    // (explicit :80)
-    snprintf(ht_data, sizeof(ht_data),
+    bool step_fail = false;
+    // Rule 59: Lean Sequence (Fast burst, no gaps)
+    char ht_url[150];
+    snprintf(ht_url, sizeof(ht_url),
              "AT+HTTPPARA=\"URL\",\"http://%s:%s/health\"", HEALTH_SERVER_IP,
              HEALTH_SERVER_PORT);
-    SerialSIT.println(ht_data);
-    waitForResponse("OK", 1000);
+    SerialSIT.println(ht_url);
+    waitForResponse("OK", 2000);
 
-    // v7.04: Standard Headers (Matches successful main upload pattern)
-    SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
+    SerialSIT.println("AT+HTTPPARA=\"CID\",1");
     waitForResponse("OK", 1000);
 
     SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
     waitForResponse("OK", 1000);
+    SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
+    waitForResponse("OK", 1000);
 
-    snprintf(ht_data, sizeof(ht_data), "AT+HTTPDATA=%d,5000", msgLen);
-    SerialSIT.println(ht_data);
+    // Headers & Format
+    if (!step_fail) {
+      debugf1("[Health] Payload size: %d bytes\n", msgLen);
 
-    if (waitForResponse("DOWNLOAD", 8000).indexOf("DOWNLOAD") != -1) {
-      vTaskDelay(200 / portTICK_PERIOD_MS);
-      SerialSIT.write(jsonBody, msgLen);
-      waitForResponse("OK", 5000);
+      char ht_data_cmd[64];
+      // v7.75: Increased prompt wait to 10s for high-latency 2G
+      snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,5000", msgLen);
+      SerialSIT.println(ht_data_cmd);
 
-      SerialSIT.println("AT+HTTPACTION=1");
-      waitForResponse("OK", 2000);
-      String act = waitForResponse("+HTTPACTION:", 25000);
-      debugln("[Health] Resp: " + act);
+      String act = "";
+      if (waitForResponse("DOWNLOAD", 12000).indexOf("DOWNLOAD") != -1) {
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+        SerialSIT.write(jsonBody, msgLen);
+        if (waitForResponse("OK", 6000).indexOf("OK") != -1) {
 
-      if (act.indexOf("200") != -1) {
-        success = true;
+          SerialSIT.println("AT+HTTPACTION=1");
+          waitForResponse("OK", 3000);
 
-        // v7.05: Fetch actual response body to process commands
-        // (REBOOT/OTA_CHECK)
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        SerialSIT.println("AT+HTTPREAD=0,512");
-        // BUG-5 Fix: Wait for "+HTTPREAD:" not "+HTTPREAD: 0" — the
-        // response contains the actual byte count, not literally "0".
-        String body = waitForResponse("+HTTPREAD:", 10000);
-        debugln("[Health] Body: " + body);
+          // v7.79: Increased total wait to 45s for BSNL 2G saturation
+          act = waitForResponse("+HTTPACTION:", 45000);
+          debugln("[Health] Resp: " + act);
 
-        // v5.46: Sync RTC from the Health Report server time (JSON "tm":
-        // field)
-        sync_rtc_from_server_tm(body.c_str(), false);
+          if (act.indexOf("200") != -1) {
+            success = true;
+          } else if (act.indexOf("714") != -1 || act.indexOf("706") != -1) {
+            // Rule 19/104: Nuke on Socket Zombie
+            debugln("[Health] 🧟 Zombie Socket (714/706). Nuking Bearer "
+                    "Context...");
+            SerialSIT.println("AT+HTTPTERM");
+            waitForResponse("OK", 2000);
+            SerialSIT.println("AT+CGACT=0,1");
+            waitForResponse("OK", 5000);
+            vTaskDelay(5000 / portTICK_PERIOD_MS);
+          }
+          vTaskDelay(500 / portTICK_PERIOD_MS);
+          SerialSIT.println("AT+HTTPREAD=0,512");
+          String body = waitForResponse("+HTTPREAD:", 10000);
+          debugln("[Health] Body: " + body);
 
-        if (body.indexOf("\"REBOOT\"") != -1) {
-          debugln("[Health] CMD: REBOOT received!");
-          force_reboot = true;
-        }
-
-        if (body.indexOf("\"OTA_CHECK\"") != -1) {
-          debugln("[Health] CMD: OTA_CHECK received!");
-          force_ota = true;
-          int pTag = body.indexOf("\"p\"");
-          if (pTag == -1)
-            pTag = body.indexOf("\"cmd_param\"");
-          if (pTag != -1) {
-            int valStart = body.indexOf(":", pTag);
+          // v7.92: Parse Command ID for feedback loop
+          int idTag = body.indexOf("\"id\"");
+          if (idTag != -1) {
+            int valStart = body.indexOf(":", idTag);
             if (valStart != -1) {
-              int quoteStart = body.indexOf("\"", valStart);
-              if (quoteStart != -1) {
-                int quoteEnd = body.indexOf("\"", quoteStart + 1);
-                if (quoteEnd != -1) {
-                  String param = body.substring(quoteStart + 1, quoteEnd);
-                  strncpy(ota_cmd_param, param.c_str(),
-                          sizeof(ota_cmd_param) - 1);
-                  ota_cmd_param[sizeof(ota_cmd_param) - 1] = '\0';
-                  debugf1("[Health] Target Binary: %s\n", ota_cmd_param);
+              String idStr = "";
+              for (int k = valStart + 1; k < body.length(); k++) {
+                char ch = body[k];
+                if (isdigit(ch))
+                  idStr += ch;
+                else if (idStr.length() > 0)
+                  break;
+              }
+              if (idStr.length() > 0) {
+                last_cmd_id = idStr.toInt();
+                strcpy(last_cmd_res, "PENDING"); // Reset result
+              }
+            }
+          }
+
+          // Command Processing
+          sync_rtc_from_server_tm(body.c_str(), false);
+          if (body.indexOf("\"REBOOT\"") != -1) {
+            force_reboot = true;
+            strcpy(last_cmd_res, "Success: Rebooting");
+          }
+          if (body.indexOf("\"OTA_CHECK\"") != -1) {
+            force_ota = true;
+            // Parse target binary if present (p or cmd_param)
+            int pTag = body.indexOf("\"p\"");
+            if (pTag == -1)
+              pTag = body.indexOf("\"cmd_param\"");
+            if (pTag != -1) {
+              int valStart = body.indexOf(":", pTag);
+              if (valStart != -1) {
+                int q1 = body.indexOf("\"", valStart);
+                if (q1 != -1) {
+                  int q2 = body.indexOf("\"", q1 + 1);
+                  if (q2 != -1) {
+                    String param = body.substring(q1 + 1, q2);
+                    strncpy(ota_cmd_param, param.c_str(),
+                            sizeof(ota_cmd_param) - 1);
+                    ota_cmd_param[sizeof(ota_cmd_param) - 1] = '\0';
+                  }
                 }
               }
             }
           }
-        }
+          if (body.indexOf("\"FTP_BACKLOG\"") != -1)
+            force_ftp = true;
+          if (body.indexOf("\"FTP_DAILY\"") != -1) {
+            force_ftp_daily = true;
+            // Parse target date if present (p)
+            int pTag = body.indexOf("\"p\"");
+            if (pTag != -1) {
+              int valStart = body.indexOf(":", pTag);
+              if (valStart != -1) {
+                int q1 = body.indexOf("\"", valStart);
+                if (q1 != -1) {
+                  int q2 = body.indexOf("\"", q1 + 1);
+                  if (q2 != -1) {
+                    String param = body.substring(q1 + 1, q2);
+                    strncpy(ftp_daily_date, param.c_str(),
+                            sizeof(ftp_daily_date) - 1);
+                    ftp_daily_date[sizeof(ftp_daily_date) - 1] = '\0';
+                  }
+                }
+              }
+            }
+          }
+          if (body.indexOf("\"GET_GPS\"") != -1)
+            force_gps_refresh = true;
+          if (body.indexOf("\"CLEAR_FTP_QUEUE\"") != -1)
+            force_clear_ftp_queue = true;
 
-        // v7.59: GET_GPS — server requests a GPS fix (sent when gps=="NA")
-        if (body.indexOf("\"GET_GPS\"") != -1) {
-          debugln("[Health] CMD: GET_GPS received — will re-acquire on next "
-                  "cycle");
-          force_gps_refresh = true;
-        }
+          if (body.indexOf("\"INTERVAL\"") != -1) {
+            int pTag = body.indexOf("\"p\"");
+            if (pTag != -1) {
+              int valStart = body.indexOf(":", pTag);
+              if (valStart != -1) {
+                String valStr = "";
+                for (int k = valStart + 1; k < body.length(); k++) {
+                  if (isdigit(body[k])) valStr += body[k];
+                  else if (valStr.length() > 0) break;
+                }
+                if (valStr.length() > 0) {
+                  int mins = valStr.toInt();
+                  Preferences prefs;
+                  prefs.begin("sys-config", false);
+                  if (mins <= 15) {
+                    test_health_every_slot = 1;
+                    strcpy(last_cmd_res, "Success: 15m Mode");
+                  } else {
+                    test_health_every_slot = 0;
+                    strcpy(last_cmd_res, "Success: 24h Mode");
+                  }
+                  prefs.putInt("test_health", test_health_every_slot);
+                  prefs.end();
+                }
+              }
+            }
+          }
 
-        // v7.59: CLEAR_FTP_QUEUE — server clears bloated/corrupt backlog
-        if (body.indexOf("\"CLEAR_FTP_QUEUE\"") != -1) {
-          debugln("[Health] CMD: CLEAR_FTP_QUEUE received");
-          force_clear_ftp_queue = true;
-        }
 
-        SerialSIT.println("AT+HTTPTERM");
-        waitForResponse("OK", 1000);
-        break;
-      } else if (act.indexOf("714") != -1 || act.indexOf("706") != -1) {
-        // v7.07: Handle "Socket Zombie" Rule 15
-        if (attempt < 3) {
-          debugln("[Health] Transient 706/714. Soft-resetting HTTP stack for "
-                  "retry...");
-          SerialSIT.println("AT+HTTPTERM");
-          waitForResponse("OK", 2000);
-          vTaskDelay(2000 /
-                     portTICK_PERIOD_MS); // v7.08: Breather before loop restart
-        } else {
-          debugln("[Health] Persistent 706/714. Final Attempt: Forcing Bearer "
-                  "Deactivation...");
           SerialSIT.println("AT+HTTPTERM");
           waitForResponse("OK", 1000);
-          SerialSIT.println("AT+CGACT=0,1");
-          waitForResponse("OK", 3000);
-          vTaskDelay(3000 / portTICK_PERIOD_MS); // M6 FIX: was 10x too long
+          break; // Success exit
+        } else {
+          debugln("[Health] ❌ HTTP Action Failed, Resp: " + act);
         }
       } else {
-        SerialSIT.println("AT+HTTPTERM");
-        waitForResponse("OK", 1000);
+        debugln("[Health] ❌ Data Load Timeout/Error");
       }
     } else {
-      SerialSIT.println("AT+HTTPTERM");
-      waitForResponse("OK", 2000);
+      debugln("[Health] ❌ DOWNLOAD Prompt Failed");
     }
+
+    // Final cleanup before retry
+    SerialSIT.println("AT+HTTPTERM");
+    waitForResponse("OK", 2000);
     vTaskDelay(2000 / portTICK_PERIOD_MS);
   }
 

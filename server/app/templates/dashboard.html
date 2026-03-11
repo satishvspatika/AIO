@@ -35,7 +35,6 @@
             class="hidden px-2 py-0.5 rounded bg-blue-900/50 text-blue-300 text-[10px] uppercase font-bold border border-blue-700/50">Filtered</span>
     </div>
     <div class="flex space-x-2">
-        <button onclick="exportVisibleCSV()" class="btn-sm btn-pur">📥 Export Filtered CSV</button>
         <button onclick="toggleMap()" class="btn-sm btn-blu" id="map-btn">🗺️ Show Map</button>
         <a href="/csv/summary" class="btn-sm btn-grn">📊 Export All CSV</a>
         {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') ==
@@ -66,7 +65,7 @@
                 <th class="p-3 text-left whitespace-nowrap">Station</th>
                 <th class="p-3 text-left whitespace-nowrap">Group</th>
                 <th class="p-3 text-left whitespace-nowrap">Status</th>
-                <th class="p-3 text-center whitespace-nowrap">Tdy Sent/Stored</th>
+                <th class="p-3 text-center whitespace-nowrap">Tdy Sent (Live)</th>
                 <th class="p-3 text-center whitespace-nowrap">Ydy Sent/Stored</th>
                 <th class="p-3 text-center whitespace-nowrap"
                     title="Today: On-time HTTP pushes / HTTP+FTP Backlog Recovered">Tdy HTTP/Backlogs</th>
@@ -92,7 +91,10 @@
                     <input type="checkbox" class="stn-checkbox" value="{{ r.stn_id }}" onchange="updateBulkDeleteBtn()">
                     {% endif %}
                 </td>
-                <td class="p-3 font-bold text-blue-300 whitespace-nowrap">{{ r.stn_id }}</td>
+                <td class="p-3 font-bold text-blue-300 whitespace-nowrap">
+                    {{ r.stn_id }}
+                </td>
+
                 <td class="p-3 text-slate-400 text-[10px] leading-tight">
                     {{ r.fw_group.display_name if r.fw_group else (r.unit_type or '?')|truncate(15) }}
                 </td>
@@ -111,7 +113,7 @@
                     {% endif %}
                 </td>
                 <td class="p-3 font-mono text-center text-slate-300 whitespace-nowrap">
-                    {{ r.net_cnt or 0 }} / {{ r.cur_stored or 0 }}
+                    {{ r.net_cnt or 0 }}
                 </td>
                 <td class="p-3 font-mono text-center text-slate-300 whitespace-nowrap">
                     {{ r.net_cnt_prev or 0 }} / {{ r.prev_stored or 0 }}
@@ -129,7 +131,7 @@
                     {{ http_p }} / {{ ftp_p + ret_p }}
                 </td>
                 <td class="p-3 text-slate-500 text-[11px] whitespace-nowrap" title="{{ r.reported_at }}">
-                    {{ r.time_ago }}
+                    {{ r.reported_at|ist }}
                 </td>
                 {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role')
                 == 'supervisor') %}
@@ -270,46 +272,6 @@
             wrap.classList.add('hidden');
             btn.textContent = '🗺️ Show Map';
         }
-    };
-
-    window.exportVisibleCSV = function () {
-        console.log("Exporting visible rows...");
-        const rows = Array.from(document.querySelectorAll('.row-item')).filter(r => r.style.display !== 'none');
-        if (rows.length === 0) { alert('No filtered data to export.'); return; }
-
-        let csv = 'Station,Group,Status,Firmware,Battery_V,Solar_V,Today_Packets,Yesterday_Packets,RegFails,LastSeen\n';
-        rows.forEach(r => {
-            try {
-                const cells = r.cells;
-                const data = [
-                    cells[1].innerText.trim(), // Station
-                    cells[2].innerText.trim(), // Group
-                    cells[3].innerText.replace('✓', '').replace('✗', '').trim(), // Status
-                    cells[4].innerText.replace('OTA↑', '').trim(), // Firmware
-                    (cells[5].innerText.split('/')[0] || "").replace('V', '').trim(), // Batt
-                    (cells[5].innerText.split('/')[1] || "").replace('V', '').trim(), // Solar
-                    (cells[6].innerText.split('/')[0] || "").trim(), // Today
-                    (cells[6].innerText.split('/')[1] || "").trim(), // Yesterday
-                    cells[7].innerText.trim(), // Reg Fails
-                    cells[8].innerText.trim()  // Last Seen
-                ];
-                // Escape for CSV (quotes around fields, escape existing quotes)
-                const cleanData = data.map(val => `"${String(val).replace(/"/g, '""')}"`);
-                csv += cleanData.join(',') + '\n';
-            } catch (err) {
-                console.warn("Row Export Error:", err);
-            }
-        });
-
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.setAttribute("href", url);
-        link.setAttribute("download", `fleet_filtered_${new Date().toISOString().split('T')[0]}.csv`);
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
     };
 
     // 3. Page Initialization

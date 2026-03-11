@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import SessionLocal
 from app.models import FirmwareRegistry, HealthReport, CommandQueue
+from app.services.health_eval import ist_filter
 from app.services.ota_service import get_numeric_ver
 import os, shutil
 
 router    = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+templates.env.filters["ist"] = ist_filter
 BUILDS_DIR = "/app/builds"
 
 

@@ -1312,6 +1312,7 @@ void lcdkeypad(void *pvParameters) {
                     // Change
                     debugln("[UI] Station Changed: Scheduling Automatic GPS & "
                             "Health Report");
+                    reset_all_diagnostics(); // Ensure clean start for new ID
                     sync_mode = eStartupGPS;
                     cur_fld_no = FLD_SEND_GPS;
                     strcpy(ui_data[FLD_SEND_GPS].bottomRow, "INITIALIZING...");
@@ -1445,6 +1446,8 @@ void lcdkeypad(void *pvParameters) {
                         file = root.openNextFile();
                       }
                       root.close();
+                      reset_all_diagnostics(); // Reset all RTC RAM diagnostic
+                                               // counters
                       lcd.clear();
                       lcd.print("CLEAN! REBOOTING");
                       debugln("[UI] Factory Reset Complete. Restarting...");

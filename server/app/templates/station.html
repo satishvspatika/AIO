@@ -7,7 +7,7 @@
 <!-- Header -->
 <div class="mb-5 flex justify-between items-start">
     <div>
-        <a href="/dashboard" class="text-slate-500 text-xs hover:text-white transition">← Back to Fleet</a>
+        <a href="/summary{% if category_id %}#tab-{{ category_id }}{% endif %}" class="text-slate-500 text-xs hover:text-white transition">← Back to Fleet</a>
         <h1 class="text-2xl font-black text-blue-300 mt-1">{{ stn_id }}</h1>
         <p class="text-xs text-slate-500 mt-0.5">Full history — last {{ history|length }} health reports</p>
     </div>
@@ -15,38 +15,6 @@
         <a href="/station/{{ stn_id }}/csv" class="btn-sm bg-blue-600 hover:bg-blue-500 text-white">📥 Download History
             CSV</a>
 
-        <div class="relative inline-block text-left dropdown">
-            <button onclick="toggleDropdown(event, 'drop-header')"
-                class="btn-sm bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center space-x-1">
-                <span>⚡ Remote Commands</span>
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                </svg>
-            </button>
-            <div id="drop-header"
-                class="dropdown-content hidden absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-slate-900 border border-slate-700 z-50 py-1">
-                <a href="/cmd/{{ stn_id }}/REBOOT" class="block px-4 py-2 text-xs text-red-400 hover:bg-slate-800"
-                    onclick="return confirm('Queue REBOOT for {{ stn_id }}?')">↺ Queue REBOOT</a>
-                <a href="/cmd/{{ stn_id }}/CLEAR_FTP_QUEUE"
-                    class="block px-4 py-2 text-xs text-red-500 hover:bg-slate-800"
-                    onclick="return confirm('Clear FTP unsent queue on device {{ stn_id }}?')">🗑 Queue CLEAR FTP
-                    QUEUE</a>
-                <a href="/cmd/{{ stn_id }}/GET_GPS" class="block px-4 py-2 text-xs text-blue-400 hover:bg-slate-800"
-                    onclick="return confirm('Force {{ stn_id }} to acquire a new GPS fix?')">📍 Queue GET GPS</a>
-                <a href="/cmd/{{ stn_id }}/FTP_BACKLOG"
-                    class="block px-4 py-2 text-xs text-green-400 hover:bg-slate-800">↑ Queue FTP BACKLOG</a>
-                <button onclick="promptFtpDaily('{{ stn_id }}')"
-                    class="w-full text-left block px-4 py-2 text-xs text-green-400 hover:bg-slate-800 border-b border-slate-700">↑
-                    Queue FTP
-                    DAILY</button>
-                <a href="/cmd/{{ stn_id }}/INTERVAL?param=15"
-                    class="block px-4 py-2 text-xs text-purple-400 hover:bg-slate-800"
-                    onclick="return confirm('Set station to check in every 15 minutes?')">⏱ 15 Min Health Check</a>
-                <a href="/cmd/{{ stn_id }}/INTERVAL?param=1440"
-                    class="block px-4 py-2 text-xs text-purple-400 hover:bg-slate-800"
-                    onclick="return confirm('Set station to check in once a day (1440 mins)?')">⏱ 24 Hr Health Check</a>
-            </div>
-        </div>
         {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') ==
         'supervisor') %}
         <a href="/toggle-ota-lock/{{ stn_id }}"
@@ -75,18 +43,43 @@
 
 {% if request.state.user and request.state.user.role == 'supervisor' %}
 <!-- Individual OTA Upload Panel -->
-<div class="card p-4 mb-5 border-yellow-900/40">
-    <h3 class="text-xs font-bold text-yellow-400 uppercase tracking-wider mb-3">
-        🚀 Deploy Custom Firmware to {{ stn_id }} Only
-    </h3>
-    <form action="/station/{{ stn_id }}/ota" method="post" enctype="multipart/form-data"
-        class="flex items-center space-x-3 flex-wrap gap-2">
-        <input type="text" name="ver" placeholder="Target ver e.g. 5.80"
-            class="bg-slate-900 border border-slate-700 px-3 py-1.5 rounded text-white text-xs w-44" required>
-        <input type="file" name="file" accept=".bin" class="text-xs text-slate-400" required>
-        <button type="submit" class="btn-sm btn-yel">🚀 Deploy to {{ stn_id }}</button>
-    </form>
+<div class="card p-4 mb-5 border-yellow-900/40 relative overflow-hidden">
+    <div class="flex justify-between items-start">
+        <div class="flex-1">
+            <h3 class="text-xs font-bold text-yellow-400 uppercase tracking-wider mb-3">
+                🚀 Deploy Custom Firmware to {{ stn_id }} Only
+            </h3>
+            <form action="/station/{{ stn_id }}/ota" method="post" enctype="multipart/form-data"
+                class="flex items-center space-x-3 flex-wrap gap-2">
+                <input type="text" name="ver" placeholder="Target ver e.g. 5.80"
+                    class="bg-slate-900 border border-slate-700 px-3 py-1.5 rounded text-white text-xs w-44" required>
+                <input type="file" name="file" accept=".bin" class="text-xs text-slate-400" required>
+                <button type="submit" class="btn-sm btn-yel">🚀 Deploy to {{ stn_id }}</button>
+            </form>
+        </div>
+
+        {% if history and history|length > 0 %}
+        {% set latest = history[0] %}
+        {% if (latest.system == 0 or latest.system == 2) and latest.calib and latest.calib != 'NA' %}
+        <div class="ml-4 p-3 bg-slate-800/50 rounded-lg border border-green-500/20 text-right">
+            <div class="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Last Calibration</div>
+            <div class="text-xs font-mono text-green-400 font-bold">{{ latest.calib }}</div>
+        </div>
+        {% endif %}
+        {% endif %}
+    </div>
 </div>
+{% elif history and history|length > 0 %}
+{% set latest = history[0] %}
+{% if (latest.system == 0 or latest.system == 2) and latest.calib and latest.calib != 'NA' %}
+<div class="card p-4 mb-5 border-green-900/40 flex justify-between items-center">
+    <h3 class="text-xs font-bold text-green-400 uppercase tracking-wider">Calibration Status</h3>
+    <div class="p-2 bg-slate-800/50 rounded-lg border border-green-500/20 text-right">
+        <div class="text-[10px] text-slate-500 uppercase tracking-widest mb-0.5">Last Calibration</div>
+        <div class="text-xs font-mono text-green-400 font-bold">{{ latest.calib }}</div>
+    </div>
+</div>
+{% endif %}
 {% endif %}
 
 <!-- Remote Command History -->
@@ -102,13 +95,14 @@
                     <th class="p-2">Command</th>
                     <th class="p-2">Parameters</th>
                     <th class="p-2">Requested At</th>
-                    <th class="p-2 text-right">Execution Status</th>
+                    <th class="p-2">Execution Status</th>
+                    <th class="p-2 text-right">Device Feedback</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-slate-800">
                 {% if not commands %}
                 <tr>
-                    <td colspan="4" class="p-4 text-center text-slate-600 italic">No commands found for this station.
+                    <td colspan="5" class="p-4 text-center text-slate-600 italic">No commands found for this station.
                     </td>
                 </tr>
                 {% endif %}
@@ -116,13 +110,21 @@
                 <tr class="hover:bg-slate-800/20">
                     <td class="p-2 font-bold text-slate-300">{{ c.cmd }}</td>
                     <td class="p-2 text-slate-500 font-mono">{{ c.cmd_param or '-' }}</td>
-                    <td class="p-2 text-slate-400">{{ c.created_at.strftime('%m-%d %H:%M') if c.created_at else '-' }}
+                    <td class="p-2 text-slate-400">{{ c.created_at|ist if c.created_at else '-' }}
                     </td>
-                    <td class="p-2 text-right">
+                    <td class="p-2">
                         {% if c.executed_at %}
-                        <span class="text-green-500">✓ Executed ({{ c.executed_at.strftime('%H:%M') }})</span>
+                        <span class="text-green-500">✓ Sent ({{ c.executed_at.strftime('%H:%M') }})</span>
                         {% else %}
                         <span class="text-yellow-500 animate-pulse">⏳ Pending...</span>
+                        {% endif %}
+                    </td>
+                    <td class="p-2 text-right">
+                        {% if c.completed_at %}
+                        <div class="font-bold text-blue-300 text-[10px]">{{ c.result }}</div>
+                        <div class="text-[8px] text-slate-600">{{ c.completed_at.strftime('%H:%M') }} Feedback</div>
+                        {% else %}
+                        <span class="text-slate-700 italic">-</span>
                         {% endif %}
                     </td>
                 </tr>
@@ -154,13 +156,14 @@
                     <th class="p-3 w-8"></th>
                     {% endif %}
                     <th class="p-3">Time (IST)</th>
+                    <th class="p-3">Calib</th>
                     <th class="p-3">Health</th>
                     <th class="p-3">Sensor</th>
                     <th class="p-3">Firmware</th>
                     <th class="p-3">Batt / Sol</th>
                     <th class="p-3">Sig</th>
                     <th class="p-3">Net / SPIFFS</th>
-                    <th class="p-3">Prev / First</th>
+                    <th class="p-3">Prev / First HTTP</th>
                     <th class="p-3">Reg Fail(Rsn)</th>
                     <th class="p-3">HTTP Fail(Rsn)</th>
                     {% if request.state.user and (request.state.user.role == 'supervisor' or
@@ -179,7 +182,10 @@
                         {% endif %}
                     </td>
                     <td class="p-3 font-mono text-slate-400 text-[11px]">
-                        {{ r.reported_at.strftime('%m-%d %H:%M:%S') if r.reported_at else '?' }}
+                        {{ r.reported_at|ist }}
+                    </td>
+                    <td class="p-3 font-mono text-[10px] leading-tight text-slate-400">
+                        {{ r.calib if r.calib and r.calib != 'NA' else '-' }}
                     </td>
                     <td class="p-3">
                         {% if r.eval.verdict == 'OK' %}
@@ -218,7 +224,7 @@
                     </td>
                     <td
                         class="p-3 leading-tight {% if r.reg_fails and r.reg_fails > 3 %}text-red-400 font-bold{% else %}text-slate-400{% endif %}">
-                        {{ r.reg_fails or 0 }} <br><span class="text-[9px] text-slate-500">{{ (r.reg_fail_type or
+                        {{ r.reg_fails or 0 }} <br><span class="text-[9px] text-slate-500">{{ (r.reg_fail_reason or
                             'NONE')[:10] }}</span>
                     </td>
                     <td
@@ -298,15 +304,22 @@
     // Must attach to window so HTML onClick handler can find it
     window.toggleDropdown = function (event, id) {
         event.stopPropagation();
+        const el = document.getElementById(id);
+        const isShown = el.classList.contains('show');
+
+        // Close all other dropdowns
         document.querySelectorAll('.dropdown-content').forEach(d => {
-            if (d.id !== id) d.classList.add('hidden');
+            if (d.id !== id) d.classList.remove('show');
         });
-        document.getElementById(id).classList.toggle('hidden');
+
+        // Toggle current
+        if (isShown) el.classList.remove('show');
+        else el.classList.add('show');
     };
 
     window.onclick = function (event) {
         if (!event.target.matches('button') && !event.target.closest('button')) {
-            document.querySelectorAll('.dropdown-content').forEach(d => d.classList.add('hidden'));
+            document.querySelectorAll('.dropdown-content').forEach(d => d.classList.remove('show'));
         }
     };
 </script>

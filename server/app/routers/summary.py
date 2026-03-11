@@ -4,12 +4,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import SessionLocal
 from app.models import HealthReport, FirmwareRegistry
+from app.services.health_eval import ist_filter, evaluate
 from app.services.ota_service import get_numeric_ver
 import datetime, os
 BUILDS_DIR = "/app/builds"
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+templates.env.filters["ist"] = ist_filter
 
 
 def get_db():
@@ -31,11 +33,28 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
       - Last active station in each group
     """
     try:
-        fws     = db.query(FirmwareRegistry).order_by(FirmwareRegistry.category_id).all()
+        fws = db.query(FirmwareRegistry).all()
+        
+        # v5.49 & v7.90: Custom Group Sorting
+        # Order: BIHAR-TRG, KSNDMC-TRG, KSNDMC-TWS, KSNDMC-ADDON, SPATIKA-TRG, SPATIKA-ADDON
+        def get_priority(fw):
+            ut = (fw.unit_type or "").upper()
+            sys = fw.system_mode
+            if "BIH" in ut and sys == 0: return 1
+            if "DMC" in ut and sys == 0: return 2
+            if "DMC" in ut and sys == 1: return 3
+            if "DMC" in ut and sys == 2: return 4
+            if "GEN" in ut and sys == 0: return 5
+            if "GEN" in ut and sys == 2: return 6
+            return 99 + fw.category_id
+
+        fws.sort(key=get_priority)
         groups  = []
 
         for fw in fws:
+            fw.sort_priority = get_priority(fw) # Pass to template
             # Check if actual file exists on disk
+
             fw.file_exists = os.path.exists(os.path.join(BUILDS_DIR, f"FW_S{fw.category_id}_{fw.unit_type}.bin"))
 
             # Get latest report per station within this group
@@ -56,6 +75,7 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
 
             now = datetime.datetime.now()
             for r in latest_reports:
+                r.eval = evaluate(r, now) # Populate server evaluation
                 if r.reported_at:
                     delta = now - r.reported_at
                     mins = int(delta.total_seconds() / 60)
@@ -68,9 +88,10 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
                 1 for r in latest_reports
                 if r.ver and get_numeric_ver(r.ver) == get_numeric_ver(fw.current_ver)
             )
-            ok_count   = sum(1 for r in latest_reports if r.health_sts == "OK")
+            # v7.90: Base health status on SERVER evaluation - essence same
+            ok_count   = sum(1 for r in latest_reports if r.eval["verdict"] == "OK")
             fail_count = total_seen - ok_count
-            low_bat    = sum(1 for r in latest_reports if r.bat_v and r.bat_v < 3.6)
+            low_bat    = sum(1 for r in latest_reports if "BATT" in str(r.eval["reasons"]))
 
             groups.append({
                 "fw":            fw,
