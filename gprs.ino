@@ -2543,7 +2543,11 @@ void store_current_unsent_data() {
 
   File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
   if (ftpfile2) {
-    ftpfile2.println(finalStringBuffer); // v7.65: Force newline to prevent smashed records
+    if (strlen(ftpappend_text) > 0) {
+      ftpfile2.print(ftpappend_text); // Use proper semicolon FTP format
+    } else {
+      ftpfile2.print(finalStringBuffer); // Fallback
+    }
     ftpfile2.close();
   } else {
     debugln("Failed to open ftpunsent.txt for appending (store_current)");
@@ -2553,7 +2557,7 @@ void store_current_unsent_data() {
         "issue ");
   debugln("************************");
   debug("ftpunsent is ");
-  debugln(finalStringBuffer);
+  debugln(ftpappend_text);
 #endif
 
   // v5.50: Update HTTP fail counters even when bypassing send_http_data()
