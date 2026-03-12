@@ -604,6 +604,18 @@ void lcdkeypad(void *pvParameters) {
                 lcd.setCursor(0, 1);
                 snprintf(line1, sizeof(line1), "%-16s",
                          ui_data[cur_fld_no].bottomRow);
+                
+                // v5.50: Blink logic for "PLEASE WAIT.." manual queue
+                bool is_pending = (pending_manual_status && cur_fld_no == FLD_SEND_STATUS) || 
+                                 (pending_manual_gps && cur_fld_no == FLD_SEND_GPS);
+                
+                if (is_pending) {
+                    if ((millis() / 500) % 2 == 0) {
+                        memset(line1, ' ', 16);
+                        line1[16] = '\0';
+                    }
+                    show_now = 1; // Keep redraw active for blinking
+                }
                 lcd.print(line1);
               }
               disp_fld_no = cur_fld_no;
@@ -949,11 +961,13 @@ void lcdkeypad(void *pvParameters) {
               strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "SENDING...");
               show_now = 1;
             } else {
-              // Provide feedback when busy
-              debugln("Button: SEND STATUS ignored - HTTP in progress");
-              strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "BUSY-TRY LATER");
+              // v5.50: Queue for subsequent handling rather than rejecting
+              debugln("Button: SEND STATUS queued - automation in progress");
+              pending_manual_status = true;
+              strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "PLEASE WAIT..  ");
               show_now = 1;
-              vTaskDelay(2000 / portTICK_PERIOD_MS);
+              vTaskDelay(3000 / portTICK_PERIOD_MS);
+              // Result resets to "YES ?" after showing queue status
               strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "YES ?           ");
               show_now = 1;
             }
@@ -965,10 +979,13 @@ void lcdkeypad(void *pvParameters) {
               strcpy(ui_data[FLD_SEND_GPS].bottomRow, "SENDING...");
               show_now = 1;
             } else {
-              debugln("Button: SEND GPS ignored - HTTP in progress");
-              strcpy(ui_data[FLD_SEND_GPS].bottomRow, "BUSY-TRY LATER");
+              // v5.50: Queue for subsequent handling rather than rejecting
+              debugln("Button: SEND GPS queued - automation in progress");
+              pending_manual_gps = true;
+              strcpy(ui_data[FLD_SEND_GPS].bottomRow, "PLEASE WAIT..  ");
               show_now = 1;
-              vTaskDelay(2000 / portTICK_PERIOD_MS);
+              vTaskDelay(3000 / portTICK_PERIOD_MS);
+              // Result resets to "YES ?" after showing queue status
               strcpy(ui_data[FLD_SEND_GPS].bottomRow, "YES ?           ");
               show_now = 1;
             }

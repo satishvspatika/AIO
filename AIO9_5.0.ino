@@ -43,7 +43,7 @@ bool wd_ok = true; // WD sensor wired on all KSNDMC_TWS field units
 TaskHandle_t scheduler_h;
 TaskHandle_t gprs_h; // http,sms,ftp,dota
 volatile bool primary_data_delivered = false;
-volatile bool skip_primary_http = false;
+RTC_DATA_ATTR volatile bool skip_primary_http = false; // v5.50: Survive warm resets (volatile Fix)
 volatile bool force_ftp = false;
 volatile bool force_ftp_daily = false;
 char ftp_daily_date[12] = "";
@@ -78,6 +78,13 @@ void IRAM_ATTR ext0_isr() {
   portEXIT_CRITICAL_ISR(&timerMux0);
 }
 
+// v7.93: This is a reserved block for ULP code.
+// It is placed here to prevent newly recovered counts from being wiped by the first-boot
+// day-change. Tracking variables like last_processed_sample_idx and
+// fresh_boot_check_done are now in globals.h (RTC_DATA_ATTR) for
+// persistence.
+RTC_DATA_ATTR uint8_t ulp_code_reserve[512] = {0}; // Moved from globals.h (Bug#3 Fix)
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -108,11 +115,11 @@ void setup() {
   diag_last_reset_reason = (int)rr;
   
   // v7.93: Only wipe counters on HARD Power-On (1). 
-  // Preserve on EXT_CPU_RESET (14) and DEEPSLEEP (5) for better testing resilience.
-  if (rr != POWERON_RESET && rr != DEEPSLEEP_RESET) {
-    debugf("[BOOT] Preserving counters for reset reason: %d\n", (int)rr);
-  } else if (rr == POWERON_RESET) {
-    debugln("[BOOT] Power-On Reset. Initializing RTC variables.");
+  // Preserve on DEEPSLEEP (5) for better testing resilience.
+  // v5.50: Also treat EXT_CPU_RESET (14) and SW_CPU_RESET (12) as fresh starts.
+  // Reason 12 is triggered by 'DELETE DATA' or manually via ESP.restart().
+  if (rr == POWERON_RESET || rr == EXT_CPU_RESET || rr == 12) {
+    debugf("[BOOT] Fresh Start (Reason %d). Initializing RTC variables.\n", (int)rr);
     if (last_valid_temp < -20.0 || last_valid_temp > 60.0)
       last_valid_temp = 26.0;
     if (last_valid_hum < 0.0 || last_valid_hum > 100.0)
@@ -120,10 +127,36 @@ void setup() {
 
     total_wind_pulses_32 = 0;
     last_sched_wind_pulses_32 = 0;
-    last_raw_wind_count = wind_count.val;
+    last_raw_wind_count = wind_count.val; // v5.50: Anchor to hw to prevent spike
     total_rf_pulses_32 = 0;
     last_sched_rf_pulses_32 = 0;
-    last_raw_rf_count = rf_count.val;
+    last_raw_rf_count = rf_count.val;  // v5.50: Anchor to hw to prevent spike
+
+    // v5.50 Bug#10 Fix: Reset diagnostic counters on DELETE DATA (SW_CPU_RESET)
+    // so they don't carry stale values into fresh logs (explains netcount=42 issue)
+    if (rr == 12) {
+      strcpy(diag_cdm_status, "PENDING");
+      diag_pd_count = 0;
+      diag_ndm_count = 0;
+      diag_net_data_count = 0;
+      diag_net_data_count_prev = 0;
+      diag_http_success_count = 0;
+      diag_http_success_count_prev = 0;
+      diag_ftp_success_count = 0;
+      diag_ftp_success_count_prev = 0;
+      diag_consecutive_http_fails = 0;
+      diag_daily_http_fails = 0;
+      diag_http_present_fails = 0;
+      diag_http_cum_fails = 0;
+      diag_rejected_count = 0;
+      diag_sent_mask_cur[0] = 0; diag_sent_mask_cur[1] = 0; diag_sent_mask_cur[2] = 0;
+      diag_sent_mask_prev[0] = 0; diag_sent_mask_prev[1] = 0; diag_sent_mask_prev[2] = 0;
+      last_processed_sample_idx = -1; // Force scheduler re-entry
+      fresh_boot_check_done = false;  // Allow fresh boot validation
+      debugln("[BOOT] DELETE DATA detected. All diagnostic counters cleared.");
+    }
+  } else {
+    debugf("[BOOT] Preserving counters for reset reason: %d\n", (int)rr);
   }
 
   // Pre-load essential system data: Try NVS (Preferences) first for robustness
@@ -1224,10 +1257,7 @@ void ULP_COUNTING(uint32_t us) {
       M_BXZ(5),                          // If curr is 0, exit
 
       // Rising Edge!
-      // v7.93: 1ms wait after rising edge for internal settling
-      I_HALT(), 
-      I_GPIO_READ(GPIO_NUM_35), M_BXZ(5), // Confirm it's still High 1ms later
-
+      // v5.50 FIX: Removed faulty I_HALT() that killed the Wind counter.
       I_LD(R0, R3, U_WIND_COUNT), I_ADDI(R0, R0, 1), I_ST(R0, R3, U_WIND_COUNT),
 
       M_LABEL(5), I_HALT()};

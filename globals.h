@@ -82,7 +82,7 @@ extern volatile bool ota_silent_mode; // Rule 43: Stop all log leakage
 
 // SAFETY BUFFER: Reserve 512 bytes at the start of RTC Memory to prevent
 // ULP Program Code (loaded at offset 0) from overwriting C variables.
-RTC_DATA_ATTR uint8_t ulp_code_reserve[512] = {0};
+extern RTC_DATA_ATTR uint8_t ulp_code_reserve[512];
 
 // ESP-NOW permanently disabled (v5.40+) - includes removed
 // #include <esp_now.h>
@@ -104,8 +104,8 @@ void sync_rtc_from_server_tm(const char *body, bool is_ntp);
 void recoverI2CBus();
 
 /************************************************************************************************/
-#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "KSNDMC_TWS"; // UNIT :
+#define SYSTEM 2               // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "SPATIKA_GEN"; // UNIT :
 //                                0:  KSNDMC_TRG  BIHAR_TRG
 //                                1:  KSNDMC_TWS KSNDMC_TWS-AP
 //                                2:  KSNDMC_ADDON SPATIKA_GEN
@@ -178,9 +178,10 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 #define MINUTES_PER_SAMPLE 15
 
 // Signal strength constants
-#define SIGNAL_STRENGTH_NO_DATA -87
-#define SIGNAL_STRENGTH_GAP_FILLED -88
-#define SIGNAL_STRENGTH_PREV_DAY_GAP -89
+#define SIGNAL_STRENGTH_NO_DATA -112      // v5.51: Was -87 (shifted to avoid real signal overlap)
+#define SIGNAL_STRENGTH_GAP_FILLED -113    // v5.51: Was -88
+#define SIGNAL_STRENGTH_MISSING_DATA -111  // Official "No Data" marker
+#define SIGNAL_STRENGTH_PREV_DAY_GAP -114  // v5.51: Was -89
 #define SIGNAL_STRENGTH_MIN_RANGE -130
 #define SIGNAL_STRENGTH_MAX_RANGE -110
 
@@ -569,11 +570,14 @@ RTC_DATA_ATTR int last_recorded_hr = 0;
 RTC_DATA_ATTR int last_recorded_min = 0;
 char signature[20]; // 2023-02-23,11:15
 volatile bool rtcTimeChanged = false;
-bool signature_valid = false;
+RTC_DATA_ATTR bool signature_valid = false;
+RTC_DATA_ATTR bool pending_manual_status = false; // v5.50: Queue manual SMS if busy
+RTC_DATA_ATTR bool pending_manual_gps = false;    // v5.50: Queue manual GPS if busy
 
 // LCD and Navigation
 volatile int wakeup_reason_is; // ACTIVE: used by all wakeup logic
 volatile int lcdkeypad_start = 0;
+extern int wired;
 int temp_count_rf, calib_count_rf, calib_flag;
 
 char rf_str[10], calib_rf[10], temp_str[16], hum_str[16], windSpeedInst_str[16],
@@ -627,7 +631,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP);
 void start_gprs();
 void send_sms();
 void process_sms(char msg_no);
-int setup_ftp();
+int setup_ftp(int transMode = 0);
 void fetchFromHttpAndUpdate(char *fileName);
 void copyFromSPIFFSToFS(char *dateFile);
 void loadGPS();

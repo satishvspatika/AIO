@@ -33,7 +33,7 @@ void scheduler(void *pvParameters) {
   snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
 
   char fileName[50];
-  snprintf(fileName, sizeof(fileName), "/TWS_099997_250821_001900.kwd");
+  // Dummy test file path removed (Bug#6 fix)
 
 #if DEBUG == 1
   debugln();
@@ -193,7 +193,6 @@ void scheduler(void *pvParameters) {
     }
 
     // v7.83: FS Reconstruction (SPIFFS -> RTC RAM) moved after rollover check
-    // to prevent newly recovered counts from being wiped by the first-boot
     // day-change. Tracking variables like last_processed_sample_idx and
     // fresh_boot_check_done are now in globals.h (RTC_DATA_ATTR) for
     // persistence.
@@ -214,7 +213,6 @@ void scheduler(void *pvParameters) {
     slot_min = slot_total_mins % 60;
 
     // skip_primary_http reset moved to new slot detection block
-
 
     current_sample_idx =
         slot_hr * SAMPLES_PER_HOUR + slot_min / MINUTES_PER_SAMPLE;
@@ -238,7 +236,6 @@ void scheduler(void *pvParameters) {
       last_processed_sample_idx = current_sample_idx;
       skip_primary_http = false; // Reset on new slot processing start
 
-
       // PREVENT SLEEP: Flag active operation so loop() doesn't sleep if LCD
       // turns off
       if (sync_mode != eSMSStart && sync_mode != eGPSStart) {
@@ -259,7 +256,13 @@ void scheduler(void *pvParameters) {
       }
 
       // Declarations handled at top of loop for goto safety
-      bool is_fresh_boot = (wakeup_reason_is == 0);
+      // v5.50 Bug#1 Fix: Also detect fresh boot if last reset was SW_CPU_RESET
+      // (DELETE DATA). wakeup_reason_is only covers PowerOn (==0); SW_CPU_RESET
+      // boots as wakeup_reason==0 but only if no prior sleep occurred.
+      // diag_last_reset_reason is always accurate.
+      bool is_fresh_boot = (wakeup_reason_is == 0) ||
+                           (diag_last_reset_reason == 12) ||
+                           (diag_last_reset_reason == 14);
 
       // OPTIMIZATION: Immediate Sleep on Fresh Boot with UI Option
       // We ONLY do this check on the very first pass of the scheduler.
@@ -312,6 +315,16 @@ void scheduler(void *pvParameters) {
       rf_raw_delta = (curr_rf_raw >= last_raw_rf_count)
                          ? (curr_rf_raw - last_raw_rf_count)
                          : (65536 + curr_rf_raw - last_raw_rf_count);
+
+      // v5.52 refinement: If delta is huge (> 65000), it means the ULP
+      // counter is now LOWER than before. This is usually a hardware
+      // reset/fiddle, not a rollover. Instead of discarding the tips,
+      // we assume it reset to 0, so the 'delta' is simply the new count.
+      if (rf_raw_delta >= 65000) {
+        debugln("[Rain] ULP Hardware Reset detected. Resyncing count.");
+        rf_raw_delta = curr_rf_raw;
+      }
+
       // v7.79 delta-cap: Ignore massive surges (electrical noise)
       if (rf_raw_delta > 5000) {
         debugf1("[Rain] 🛡️ Ignoring Delta Surge: %d (Noise)\n",
@@ -361,6 +374,23 @@ void scheduler(void *pvParameters) {
 // TWS
 #if (SYSTEM == 1) || (SYSTEM == 2)
       debugln();
+      // v5.50: Seed any ULP pulses the windSpeed task hasn't processed yet
+      // (race condition on first wakeup — windSpeed task has 5s boot delay).
+      // Direct ULP read compensates for the stabilization gap.
+      {
+        uint16_t current_ulp_wind = wind_count.val;
+        uint16_t ulp_delta =
+            (current_ulp_wind >= last_raw_wind_count)
+                ? (current_ulp_wind - last_raw_wind_count)
+                : (65536 + current_ulp_wind - last_raw_wind_count);
+        if (ulp_delta > 0) {
+          total_wind_pulses_32 += ulp_delta;
+          last_raw_wind_count =
+              current_ulp_wind; // Sync so windSpeed task doesn't double-count
+          debugf1("[SCHED] Seeded %d ULP wind pulses from direct ULP read.\n",
+                  ulp_delta);
+        }
+      }
       // total_wind_pulses_32 is updated every 1s by windSpeed task
       captured_wind = total_wind_pulses_32 - last_sched_wind_pulses_32;
       last_sched_wind_pulses_32 = total_wind_pulses_32;
@@ -589,11 +619,15 @@ void scheduler(void *pvParameters) {
       // NO_DATA markers.
       // Variables now declared at top of block (hoisted)
 
-      if (is_fresh_boot) {
-        debugln("Fresh boot detected. Skipping data logging (no history). "
-                "Checking for Commands.");
+      // v5.50 FIX: Use fresh_boot_check_done to ensure we ONLY skip the VERY
+      // first record after boat. Subsequent 15-min intervals should be logged
+      // even if the reset reason '12' persists in memory.
+      if (is_fresh_boot && !fresh_boot_check_done) {
+        debugln("Fresh boot detected. Skipping first record for sensor "
+                "stabilization.");
         data_writing_initiated = 0;
-        // Proceed to TRIGGER_HTTP so we still connect for Time Sync & OTA check
+        skip_primary_http = true;
+        fresh_boot_check_done = true; // DO NOT SKIP NEXT TIME
       } else {
         data_writing_initiated = 1;
       }
@@ -612,18 +646,17 @@ void scheduler(void *pvParameters) {
       r_m = (current_min / 15) * 15;
       r_h = current_hour;
 
-/*
-      if (current_min % 15 == 0) {
-        r_m -= 15;
-        if (r_m < 0) {
-          r_m = 45;
-          r_h--;
-          if (r_h < 0)
-            r_h = 23;
-        }
-      }
-      */
-
+      /*
+            if (current_min % 15 == 0) {
+              r_m -= 15;
+              if (r_m < 0) {
+                r_m = 45;
+                r_h--;
+                if (r_h < 0)
+                  r_h = 23;
+              }
+            }
+            */
 
       temp_day = current_day;
       temp_month = current_month;
@@ -768,9 +801,17 @@ void scheduler(void *pvParameters) {
         len = strlen(content_buf); // Update len properly
 
         if (len == 0) {
-          debugln("Error: Read empty content from file!");
-          vTaskDelay(1000 / portTICK_PERIOD_MS); // Wait on error
-          continue; // Skip parsing if content is empty
+          debugln("Error: Read empty content from file! Deleting corrupt empty "
+                  "file and treating as fresh start.");
+          // v5.50: Do NOT loop forever. Delete the empty file so that the
+          // file-not-found path below creates a clean first record this cycle.
+          SPIFFS.remove(cur_file);
+          is_fresh_boot =
+              true; // v5.51: Force clean start (bypass morning gaps)
+          vTaskDelay(500 / portTICK_PERIOD_MS);
+          // Fall through: the file-not-found branch handles fresh file
+          // creation. We use a goto to jump past the file-exists block.
+          goto HANDLE_NO_FILE;
         }
         debug("The last line of the file is :");
         debugln(content_buf);
@@ -798,9 +839,8 @@ void scheduler(void *pvParameters) {
           debugln("Duplicate sample detected (RF). Data already logged.");
           data_writing_initiated = 0;
           skip_primary_http = true; // No need to hit server with a duplicate
-          httpInitiated = true;      // v5.50: Block sleep
+          httpInitiated = true;     // v5.50: Block sleep
           goto TRIGGER_HTTP;
-
         }
 
         char *p = content_buf;
@@ -864,7 +904,6 @@ void scheduler(void *pvParameters) {
           skip_primary_http = true;
           httpInitiated = true; // v5.50: Block sleep for GPRS task
           goto TRIGGER_HTTP;
-
         }
 
         char *p = content_buf;
@@ -915,9 +954,9 @@ void scheduler(void *pvParameters) {
           debugln("Duplicate sample detected (TWS-RF).");
           data_writing_initiated = 0;
           skip_primary_http = true;
-          httpInitiated = true; // v5.50: Block sleep for GPRS task health/backlog check
+          httpInitiated =
+              true; // v5.50: Block sleep for GPRS task health/backlog check
           goto TRIGGER_HTTP;
-
         }
 
         char *p = content_buf;
@@ -1470,10 +1509,12 @@ void scheduler(void *pvParameters) {
 
       } // End of SPIFFS file exists
         // **************************************************************************
-      else // ********** SPIFFS FILE IS NOT PRESENT... DEVICE STARTED AFTER A
-           // FEW DAYS.
-           // **************************************************************************
-
+        // v5.50: HANDLE_NO_FILE is also reached via goto when the file exists
+        // but was found to be empty (corrupt write / race on first boot).
+        // The empty file is deleted before the goto, so !SPIFFS.exists() is
+        // true.
+    HANDLE_NO_FILE:
+      if (!SPIFFS.exists(cur_file)) // *** SPIFFS FILE IS NOT PRESENT ***
       { // Either it is 8:45 (sample 0) data or the device is switched on
         // during
         // mid-day when the RTC NVRAM still has last recorded date as previous
@@ -1615,13 +1656,28 @@ void scheduler(void *pvParameters) {
 #endif
 
         } else {
-          debugln("GAPS IN SPIFFs/SD FILE IS APPENDED BUT WILL NOT BE SENT ... "
-                  "Signal Level = -111");
-
           int temp_hr = 8;
           int temp_min = 30;
 
+          // v5.51: If this is a fresh wipe or power-on mid-day,
+          // do NOT create the morning placeholders (Gaps 0..sampleNo-1).
+          // This fixes the "NetCount 47 after wipe" false statistics issue.
+          if (is_fresh_boot) {
+            debugln("[SCHED] Fresh boot installation. Bypassing past gaps for "
+                    "clean start.");
+            goto SKIP_START_GAPS;
+          }
+
+          debugln("GAPS IN SPIFFs/SD FILE IS APPENDED BUT WILL NOT BE SENT ... "
+                  "Signal Level = -111");
+
           for (int i = 0; i < sampleNo; i++) {
+            // Standard time calculation (used for formatting)
+            temp_min = 45 + (i * 15);
+            temp_hr = 8 + (temp_min / 60);
+            temp_min = temp_min % 60;
+            if (temp_hr >= 24)
+              temp_hr -= 24;
 
             temp_min += MINUTES_PER_SAMPLE;
             if (temp_min == 60) {
@@ -1709,71 +1765,83 @@ void scheduler(void *pvParameters) {
             if (i >= 50 && i <= 85)
               diag_ndm_count++; // 9 PM to 6 AM
           }
-
-// Write the current record
+        SKIP_START_GAPS:
+          // Write the current record ONLY if not a fresh boot/skipping data
+          if (data_writing_initiated == 1) {
 // RF
 #if SYSTEM == 0
-          // If no history found, initialize cumulative from current sensor
-          // value
-          if (new_current_cumRF == 0 && rf_value > 0) {
-            new_current_cumRF = rf_value;
-          }
-          snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(new_current_cumRF));
-          cum_rf[6] = 0;
+            // If no history found, initialize cumulative from current sensor
+            // value
+            if (new_current_cumRF == 0 && rf_value > 0) {
+              new_current_cumRF = rf_value;
+            }
+            snprintf(cum_rf, sizeof(cum_rf), "%06.2f",
+                     float(new_current_cumRF));
+            cum_rf[6] = 0;
 
-          snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%04.1f\r\n",
-                   sampleNo, current_year, current_month, current_day,
-                   record_hr, record_min, inst_rf, cum_rf, signal_strength,
-                   bat_val);
+            snprintf(append_text, sizeof(append_text),
+                     "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%04.1f\r\n",
+                     sampleNo, current_year, current_month, current_day,
+                     record_hr, record_min, inst_rf, cum_rf, signal_strength,
+                     bat_val);
 #endif
 
 // TWS
 #if SYSTEM == 1
-          snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
-                   sampleNo, current_year, current_month, current_day,
-                   record_hr, record_min, inst_temp, inst_hum, avg_wind_speed,
-                   inst_wd, signal_strength, bat_val);
-          snprintf(ftpappend_text, sizeof(ftpappend_text),
-                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
-                   stnId, current_year, current_month, current_day, record_hr,
-                   record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-                   signal_strength, bat_val);
+            snprintf(
+                append_text, sizeof(append_text),
+                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
+                sampleNo, current_year, current_month, current_day, record_hr,
+                record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                signal_strength, bat_val);
+            snprintf(ftpappend_text, sizeof(ftpappend_text),
+                     "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
+                     stnId, current_year, current_month, current_day, record_hr,
+                     record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                     signal_strength, bat_val);
 #endif
 
 // TWS-RF
 #if SYSTEM == 2
-          snprintf(
-              append_text, sizeof(append_text),
-              "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
-              sampleNo, current_year, current_month, current_day, record_hr,
-              record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-              signal_strength, bat_val);
-          // v7.53: Legacy ADDON FTP Format (63 bytes)
-          snprintf(ftpappend_text, sizeof(ftpappend_text),
-                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
-                   stnId, current_year, current_month, current_day, record_hr,
-                   record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
-                   inst_wd, signal_strength, bat_val);
+            snprintf(
+                append_text, sizeof(append_text),
+                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
+                sampleNo, current_year, current_month, current_day, record_hr,
+                record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed,
+                inst_wd, signal_strength, bat_val);
+            // v7.53: Legacy ADDON FTP Format (63 bytes)
+            snprintf(
+                ftpappend_text, sizeof(ftpappend_text),
+                "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
+                stnId, current_year, current_month, current_day, record_hr,
+                record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
+                inst_wd, signal_strength, bat_val);
 #endif
 
-          //                                          len =
-          //                                          strlen(append_text);
-          //                                          append_text[len] = '\0';
+            //                                          len =
+            //                                          strlen(append_text);
+            //                                          append_text[len] = '\0';
 
-          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-            file1.print(append_text);
-            xSemaphoreGive(fsMutex);
+            if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+              file1.print(append_text);
+              xSemaphoreGive(fsMutex);
+            } else {
+              file1.print(append_text);
+            }
+            if (sd_card_ok && sd1)
+              sd1.print(append_text);
+
+            debugln(append_text);
           } else {
-            file1.print(append_text);
+            debugln("[SCHED] Skipping write of current record (SampleNo) due "
+                    "to fresh boot session safety.");
           }
           if (diag_pd_count < 96)
             diag_pd_count++;
           if (sampleNo >= 49 && sampleNo <= 85)
             diag_ndm_count++; // 9 PM to 6 AM
 
-          debugln(append_text);
+          // End of writing block
 
           // Removed misplaced global resets. Rollover is handled at the top
           // of the loop.
@@ -2298,7 +2366,7 @@ void scheduler(void *pvParameters) {
         if (!filelastrecord) {
           debugln("Failed to open lastrecorded file for writing");
         } else { // FIX #2 Safe write
-          filelastrecord.print(store_text);
+          filelastrecord.println(store_text); // v7.65: Force newline for clean extraction
           filelastrecord.close();
         }
       }
@@ -2325,7 +2393,7 @@ void scheduler(void *pvParameters) {
         if (!filelastrecord) {
           debugln("Failed to open lastrecorded file for writing (FTP)");
         } else { // FIX #2 Safe write
-          filelastrecord.print(store_text);
+          filelastrecord.println(store_text); // v7.65: Force newline for clean extraction
           filelastrecord.close();
         }
       }
@@ -2495,7 +2563,7 @@ void scheduler(void *pvParameters) {
           debugln("\n--- UNSENT DATA START ---");
           while (file4.available()) {
             String line = file4.readStringUntil('\n');
-            debug(line); // Burst print per line
+            debugln(line); // Correct display per line
           }
           file4.close();
           debugln("--- UNSENT DATA END ---\n");
@@ -2511,7 +2579,7 @@ void scheduler(void *pvParameters) {
           debugln("\n--- UNSENT DATA START ---");
           while (file4.available()) {
             String line = file4.readStringUntil('\n');
-            debug(line); // Burst print per line
+            debugln(line); // Correct display per line
           }
           file4.close();
           debugln("--- UNSENT DATA END ---\n");
@@ -2544,8 +2612,20 @@ void scheduler(void *pvParameters) {
         // Protect manual triggers (SMS/GPS/Startup) from being overwritten
         if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
             sync_mode != eStartupGPS) {
-          sync_mode = eHttpBegin; // Force connection check on boot/duplicate
+          if (is_valid_window || timeSyncRequired) {
+            sync_mode = eHttpBegin; // Force connection check on boot/duplicate
+          } else {
+            debugln("[SCHED] Between intervals. Modem will remain OFF.");
+            sync_mode = eHttpStop; // Allow sleep
+          }
         }
+        // v7.65 Persistence: Trigger FTP backlog through the GPRS task loop
+        // to avoid collision with Health Report tasks.
+#if (SYSTEM == 1 || SYSTEM == 2)
+        if (sync_mode != eHttpStop) {
+           debugln("[SCHED] Signaling GPRS task for sequential backlog/health...");
+        }
+#endif
       } else {
         debugln();
         // Trigger HTTP after manual task is done
@@ -2581,8 +2661,6 @@ void scheduler(void *pvParameters) {
         idle_awake_start = (uint32_t)-1;
       }
     } // %15 loop
-
-    vTaskDelay(300 / portTICK_PERIOD_MS);
 
     vTaskDelay(1000 / portTICK_PERIOD_MS);
 

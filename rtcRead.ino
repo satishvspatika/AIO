@@ -63,8 +63,10 @@ void rtcRead(void *pvParameters) {
         read_retries++;
         debugf1("****RTC read incomplete (Try %d/3)\n", read_retries);
         vTaskDelay(100 / portTICK_PERIOD_MS);
-        if (read_retries == 1)
-          recoverI2CBus(); // Attempt I2C recovery
+        // v5.50 Bug#9 Fix: Only attempt I2C recovery after ALL 3 retries fail.
+        // Triggering recovery on the 1st retry could disrupt LCD/HDC mid-transaction.
+        if (read_retries == 3)
+          recoverI2CBus();
       }
 
       xSemaphoreGive(i2cMutex);

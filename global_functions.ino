@@ -507,9 +507,33 @@ void scanFileToMask(const char *fName, uint32_t *mask) {
       continue;
     int commaIdx = line.indexOf(',');
     if (commaIdx != -1) {
-      int sNum = line.substring(0, commaIdx).toInt();
+      int sNum = -1;
+      int sigVal = 0;
+      
+      // Basic CSV parse to find SampleNo and SignalStrength
+      char buf[128];
+      strncpy(buf, line.c_str(), sizeof(buf)-1);
+      buf[sizeof(buf)-1] = '\0';
+      
+      char *token;
+      token = strtok(buf, ",");
+      if (token) sNum = atoi(token);
+      
+      // Hop to field 8 (Signal Strength)
+      for (int i = 0; i < 8 && token != NULL; i++) {
+        token = strtok(NULL, ",");
+      }
+      
+      if (token) sigVal = atoi(token);
+
+      // v5.51: Skip markers that indicate placeholders, not real data delivery.
+      // -111 to -114: Safe Zone for Gaps/Placeholder markers.
       if (sNum >= 0 && sNum <= 95) {
-        mask[sNum / 32] |= (1UL << (sNum % 32));
+        // v5.52: Explicitly exclude our internal safe-zone markers
+        if (sigVal != -111 && sigVal != -112 && sigVal != -113 && sigVal != -114) { 
+          // Signal is a real GSM value (e.g. -69, -85, -101)
+          mask[sNum / 32] |= (1UL << (sNum % 32));
+        }
       }
     }
   }

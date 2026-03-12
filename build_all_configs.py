@@ -93,6 +93,9 @@ def update_globals(system, unit, disable_webserver=False):
     # Force DEBUG 0 for official builds
     content = re.sub(r'#define DEBUG \d+', '#define DEBUG 0', content)
 
+    # Force TEST_HEALTH_DEFAULT 0 for official builds (daily report only, not every slot)
+    content = re.sub(r'#define TEST_HEALTH_DEFAULT \d+', '#define TEST_HEALTH_DEFAULT 0', content)
+
     # 4MB builds: disable WebServer to fit within 1.25MB slot
     if disable_webserver:
         content = re.sub(r'#define ENABLE_WEBSERVER \d+', '#define ENABLE_WEBSERVER 0', content)

@@ -142,6 +142,7 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
 
 void gprs(void *pvParameters) {
   esp_task_wdt_add(NULL);
+  static int target_fld = FLD_SEND_STATUS; // v5.50: Moved to top for sequential queue scope
   String response;
 
   for (;;) {
@@ -163,7 +164,7 @@ void gprs(void *pvParameters) {
     // --- MANUAL TRIGGERS (Keypad) ---
     if (sync_mode == eSMSStart || sync_mode == eGPSStart ||
         sync_mode == eStartupGPS) {
-      int target_fld =
+      target_fld =
           (sync_mode == eSMSStart) ? FLD_SEND_STATUS : FLD_SEND_GPS;
 
       if (gprs_mode == eGprsInitial) {
@@ -365,11 +366,16 @@ void gprs(void *pvParameters) {
             primary_data_delivered =
                 (success_count == 1); // v5.51 Track session success
           } else {
-            debugln("[SCHED] Skipping Duplicate Upload. Checking "
-                    "Backlog/Health...");
+            debugln("[SCHED] Skipping Duplicate/Fresh Upload. Checking Backlog/Health...");
             primary_data_delivered = true; // Assume 'Success' to allow backlog
+#if (SYSTEM == 1 || SYSTEM == 2)
+            // v7.65: Handle backlog push sequentially in GPRS task
+            if (gprs_mode == eGprsSignalOk && (signal_lvl > -96)) {
+              send_unsent_data();
+            }
+#endif
+            sync_mode = eHttpStop; // v5.51 FIX: Advance state to prevent infinite loop!
           }
-//          httpInitiated = false; // Moved to end of cycle to prevent race with loopTask sleep
 
 
           if (health_in_progress) {
@@ -448,6 +454,7 @@ void gprs(void *pvParameters) {
     }
 
     if (force_ota) {
+      snprintf(ui_data[FLD_SEND_STATUS].bottomRow, sizeof(ui_data[FLD_SEND_STATUS].bottomRow), "OTA UPDATING...");
       health_in_progress = true; // Ensure sleep is blocked
       debugln("[CMD] Remote OTA_CHECK triggered. Checking for updates...");
       // v7.03: Ensure HTTP is closed from health report before OTA begins
@@ -468,6 +475,7 @@ void gprs(void *pvParameters) {
       } else {
         debugln("[GPRS] Reboot pending. Holding health_in_progress=TRUE.");
       }
+      snprintf(ui_data[FLD_SEND_STATUS].bottomRow, sizeof(ui_data[FLD_SEND_STATUS].bottomRow), "OTA FINISHED");
     }
 
     // v7.59: GET_GPS — Re-acquire GPS coordinates on server request
@@ -506,10 +514,27 @@ void gprs(void *pvParameters) {
 
     // v7.90: Final Cycle Reset - Move here to ensure COMMANDS (OTA/FTP/GPS)
     // finish before loopTask triggers deep sleep.
+    // v7.90: Final Cycle Reset - Move here to ensure COMMANDS (OTA/FTP/GPS)
+    // finish before loopTask triggers deep sleep.
     if (httpInitiated) {
-      debugln("[GPRS] Cycle fully complete (including Commands). Allowing sleep.");
-      sync_mode = eHttpStop;
-      httpInitiated = false;
+      debugln("[GPRS] Cycle fully complete (including Commands).");
+      
+      // v5.50: Sequential Handling — Check if a manual LCD command was queued
+      if (pending_manual_status) {
+        debugln("[GPRS] 💡 Found queued manual Status/SMS request. Handling now...");
+        pending_manual_status = false;
+        target_fld = FLD_SEND_STATUS; // v5.50 must set target_fld for the eSMSStart runner
+        sync_mode = eSMSStart;       // Transition to SMS flow before stopping
+      } else if (pending_manual_gps) {
+        debugln("[GPRS] 💡 Found queued manual GPS request. Handling now...");
+        pending_manual_gps = false;
+        target_fld = FLD_SEND_GPS;
+        sync_mode = eGPSStart;
+      } else {
+        debugln("[GPRS] No queued commands. Allowing sleep.");
+        sync_mode = eHttpStop;
+        httpInitiated = false;
+      }
     }
 
     esp_task_wdt_reset();
@@ -566,13 +591,21 @@ void start_gprs() {
 
   if (!sim_ready) {
     diag_consecutive_sim_fails++;
-    signal_strength = -114;
+    signal_strength = -111; // v5.52 Fix: Use MISSING_DATA (-111) not PREV_DAY (-114)
     debugln("[SIM] ERROR DETECTED (Timeout or CME).");
     strcpy(reg_status, "SIM ERROR");
     strcpy(diag_reg_fail_type, "SIM_ERR");
 
-    if (diag_consecutive_sim_fails >= 6) {
-      debugln("[SIM] PERSISTENT ERROR. Final resort: ESP32 RESTART...");
+    // v5.50: Threshold raised from 6 (1.5h) to 13 (3h15m).
+    // We now wait until at least one 3-hourly FTP scheduled window has
+    // definitively passed without recovery before forcing a hard reset.
+    // ESP.restart() is a FULL software reset: re-runs setup(), toggles modem
+    // power, reloads all tasks. RTC_DATA_ATTR variables (backlog counts, etc.)
+    // ARE preserved across this reset since it is not a hard power cycle.
+    if (diag_consecutive_sim_fails >= 13) {
+      debugf1("[SIM] PERSISTENT ERROR for %d consecutive slots (~3h15m). "
+              "Final resort: ESP32 SOFTWARE RESTART...\n",
+              diag_consecutive_sim_fails);
       vTaskDelay(1000 / portTICK_PERIOD_MS);
       ESP.restart();
     }
@@ -712,6 +745,22 @@ void prepare_data_and_send() {
 
   // v6.75: Use actual signal level (reverted hard-lock to -68)
   temp_sig = signal_lvl;
+
+  // v5.50: BOGUS DATA GUARD — After DELETE DATA all SPIFFS files are wiped.
+  // On the next boot, signature.txt is recreated as "0000-00-00,00:00"
+  // which causes temp_year=0 after sscanf. Block this slot entirely and
+  // show a clear LCD message so the user knows the unit is in fresh-start mode.
+  if (temp_year == 0) {
+    debugln("[HTTP] ⚠ Bogus date detected (year=0). Skipping HTTP — fresh "
+            "start or DELETE DATA reboot. Waiting for first valid 15-min slot.");
+    snprintf(ui_data[FLD_SEND_STATUS].bottomRow,
+             sizeof(ui_data[FLD_SEND_STATUS].bottomRow), "YES ?           ");
+    snprintf(ui_data[FLD_LAST_LOGGED].bottomRow,
+             sizeof(ui_data[FLD_LAST_LOGGED].bottomRow), "NO DATA YET");
+    sync_mode = eHttpStop;
+    success_count = 0;
+    return;
+  }
 
   if (data_mode == eClosingData) {
     temp_hr = 8;
@@ -1516,13 +1565,9 @@ void send_http_data() {
     }
 #endif
 
-#if (SYSTEM == 1 || SYSTEM == 2)
-    // For FTP systems, always attempt to send unsent data if we have
-    // signal, even if HTTP fails or is not used.
-    if (gprs_mode == eGprsSignalOk) {
-      send_unsent_data();
-    }
-#endif
+// v5.51: send_unsent_data() is called ONCE via the Independent FTP Trigger
+// below (line 1580+). Do NOT call it here again inside the HTTP-success block
+// to avoid double-upload and wasted power.
 
   } else { // Handle failure to send current data
     debugln("*** Current data couldn't be sent. Backlog will be handled "
@@ -1620,16 +1665,29 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
   snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
   int unsent_cnt = countStored(ftpunsent_file);
 
-  // v7.62: Power-Saving FTP Gating logic (User Request)
-  // 1. Threshold Met: At least 6 records (1.5 hours of data, v5.49 Build 5)
-  // 2. Scheduled Sync Slots: 00:00, 06:00, 12:00, 18:00 (Synoptic hours)
-  // 3. Final Day Cleanup: 08:45 AM (IST) to ensure all data for the
-  // meteorological day is cleared
+  // v7.63 FIX: Use current_hour/current_min (actual RTC wakeup time) instead
+  // of record_hr/record_min (data record timestamp) for scheduled-slot checks.
+  // The data timestamp (record_hr) is the FLOOR of the current time to the
+  // nearest 15-min boundary. At a 03:01 wakeup, record_hr=3 & record_min=0
+  // but at a 00:01 wakeup the record is stored under the PREVIOUS day's
+  // period (rf_close logic), causing record_hr to be 23 even though the
+  // actual wall-clock hour is 0. Using current_hour/current_min guarantees
+  // the check fires at the correct 3-hour boundary regardless of rounding.
+  //
+  // Scheduled Sync Slots: every 3 hours when minute is < 15 (wakeup window)
+  //   00:00-00:14, 03:00-03:14, 06:00-06:14, 09:00-09:14 ... 21:00-21:14
+  // Final Day Cleanup: 08:45-08:59 to clear remaining backlog before 09:00
+  // Scheduled slots fire when current_min <= 15 and hour is divisible by 3.
+  // Using <= 15 ensures a 03:15 wakeup (or similar slight overshoot) is still
+  // caught as part of the 03:00 3-hour boundary window.
   bool scheduled_slot =
-      (record_min == 0) &&
-      (record_hr % 3 == 0);
-  bool morning_cleanup = (record_hr == 8 && record_min == 45);
-  bool should_push = (unsent_cnt >= 6) ||
+      (current_min <= 15) &&
+      (current_hour % 3 == 0);
+  bool morning_cleanup = (current_hour == 8 && current_min >= 45 && current_min < 60);
+  debugf5("[FTP-Gate] unsent=%d cur_time=%02d:%02d sched=%s cleanup=%s\n",
+          unsent_cnt, current_hour, current_min,
+          scheduled_slot ? "YES" : "NO", morning_cleanup ? "YES" : "NO");
+  bool should_push = (unsent_cnt > 4) ||  // Threshold: fire immediately if >4 records
                      (unsent_cnt > 0 && (scheduled_slot || morning_cleanup));
 
   if (signal_lvl > -95 && (should_push || force_ftp) &&
@@ -1833,7 +1891,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
       debugln(response);
 
       snprintf(
-          gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSOPEN=C:/%s,0\r\n",
+          gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSOPEN=\"C:/%s\",0\r\n",
           modulePath); // 0 : if the file does not exist, it will be created
       SerialSIT.println(gprs_xmit_buf);
       response = waitForResponse("+FSOPEN", 5000);
@@ -1909,7 +1967,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
         bool upload_success = false;
 
         snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-                 "AT+CFTPSPUTFILE=\"C:/%s\",0", modulePath);
+                 "AT+CFTPSPUTFILE=\"C:/%s\",1", modulePath); // v7.65: Use absolute path and mode 1 (local file upload)
 
         while (ftp_put_retries <= MAX_FTP_PUT_RETRIES) {
           esp_task_wdt_reset();
@@ -1971,19 +2029,27 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
           } else {
             debugln("FTP PUT failed. Checking recovery...");
             if (ftp_put_retries < MAX_FTP_PUT_RETRIES) {
-              debugln("Attempting active recovery for FTP...");
+              // v7.68: Mode-Switch Recovery.
+              // Attempt 1 used Active Mode (BSNL 2G). Error 9 = data channel timeout.
+              // Attempt 2 switches to Passive Mode (Airtel 4G/firewalled networks).
+              // This covers all carrier combinations without hardcoding.
+              int next_mode = (ftp_put_retries == 0) ? 1 : 0; // Flip mode on first failure
+              debugln("[FTP] PUT failed. Switching FTP mode and re-logging in (Attempt " +
+                      String(ftp_put_retries + 2) + ")...");
+              debug("[FTP] Switching to ");
+              debugln(next_mode == 1 ? "Passive Mode (Airtel)" : "Active Mode (BSNL)");
               SerialSIT.println("AT+CFTPSLOGOUT");
               waitForResponse("+CFTPSLOGOUT: 0", 5000);
               vTaskDelay(2000 / portTICK_PERIOD_MS);
 
-              // Re-run setup_ftp to re-establish session
+              // Re-login with the opposite mode
               send_daily = 2;
-              if (setup_ftp() == 1) {
+              if (setup_ftp(next_mode) == 1) {
                 SerialSIT.println("AT+FSCD=C:/");
                 waitForResponse("OK", 5000);
               } else {
-                debugln("FTP Login Recovery failed.");
-                break; // Give up if login failed to save power
+                debugln("[FTP] Login Recovery failed for both modes.");
+                break; // Both modes failed — give up
               }
             }
             ftp_put_retries++;
@@ -2443,7 +2509,7 @@ void store_current_unsent_data() {
 
   File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
   if (file2) {
-    file2.print(finalStringBuffer);
+    file2.println(finalStringBuffer); // v7.65: Force newline to prevent smashed records
     file2.close();
   } else {
     debugln("Failed to open unsent.txt for appending (store_current)");
@@ -2473,7 +2539,7 @@ void store_current_unsent_data() {
 
   File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
   if (ftpfile2) {
-    ftpfile2.print(finalStringBuffer);
+    ftpfile2.println(finalStringBuffer); // v7.65: Force newline to prevent smashed records
     ftpfile2.close();
   } else {
     debugln("Failed to open ftpunsent.txt for appending (store_current)");
@@ -2485,6 +2551,23 @@ void store_current_unsent_data() {
   debug("ftpunsent is ");
   debugln(finalStringBuffer);
 #endif
+
+  // v5.50: Update HTTP fail counters even when bypassing send_http_data()
+  // This covers SIM errors, signal failures, and any reason HTTP was not attempted.
+  // PR (present) increments every slot missed; CUM increments permanently (monthly reset).
+  // PR is reset to 0 only upon a successful HTTP POST (in send_http_data()).
+  if (current_day == 1 && diag_cum_fail_reset_month != current_month) {
+    diag_http_cum_fails = 0;
+    diag_cum_fail_reset_month = current_month;
+    debugln("[STORE] Monthly cum fail counter reset (1st of month).");
+  }
+  diag_http_present_fails++;
+  diag_http_cum_fails++;
+  snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
+           sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "PR:%d CUM:%d",
+           diag_http_present_fails, diag_http_cum_fails);
+  debugf1("[STORE] HTTP miss counted. Present: %d", diag_http_present_fails);
+  debugf1(" | CumMth: %d\n", diag_http_cum_fails);
 
   debugln();
   debug("Current/Truncated data written store_text->finalStringBuffer to "
@@ -3682,7 +3765,7 @@ bool isBufferSanityOK(uint8_t *buf, int len, int offset) {
   return true;
 }
 
-int setup_ftp() {
+int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
   flushSerialSIT(); // Clear leftover data from previous task
   char gprs_xmit_buf[300];
   String response, rssiStr;
@@ -3779,8 +3862,22 @@ int setup_ftp() {
   SerialSIT.println("AT+CFTPSCFG=\"bindcid\",1");
   waitForResponse("OK", 2000);
 
-  SerialSIT.println("AT+CFTPSPASV=1"); // Passive Mode Mandatory for Cellular
-  waitForResponse("OK", 5000);
+  // v7.68: Mode-switchable FTP transfer mode for carrier compatibility.
+  // BSNL 2G → Active Mode (transmode=0): device opens data port, server connects back to it.
+  // Airtel 4G → Passive Mode (transmode=1): server opens data port, client connects to it.
+  // The caller selects the mode; the PUT retry loop switches mode on Error 9.
+  if (transMode == 1) {
+    debugln("[FTP] Using Passive Mode (transmode=1) — Airtel/Firewall path");
+    SerialSIT.println("AT+CFTPSCFG=\"transmode\",1");
+  } else {
+    debugln("[FTP] Using Active Mode (transmode=0) — BSNL 2G path");
+    SerialSIT.println("AT+CFTPSCFG=\"transmode\",0");
+  }
+  waitForResponse("OK", 2000);
+
+  // Enable numeric error codes for better diagnostics
+  SerialSIT.println("AT+CMEE=1");
+  waitForResponse("OK", 2000);
 
   // DNS Warm-up: Force resolution of FTP server before login (Fixes Error 13)
   debugln("[FTP] Warming up DNS...");
@@ -3808,11 +3905,11 @@ int setup_ftp() {
   SerialSIT.println(gprs_xmit_buf);
   // v5.50 Optimized: Wait 45s for login (If it hasn't succeeded by then on
   // BSNL, it likely won't)
-  response = waitForResponse("+CFTPSLOGIN:", 45000);
+  response = waitForResponse("+CFTPSLOGIN:", 60000); // v7.68: Restored 60s timeout (was 45s in v5.50)
   debugln(response);
 
-  // v5.50: Removed Active Mode retry as it usually fails during PUT on NAT
-  // networks. Instead, if login fails, a full bearer reset is better.
+  // v7.68: No login-level fallback needed — mode is controlled by caller.
+  // If login fails at the selected mode, return 0 and let the PUT retry switch modes.
 
   rssiIndex = response.indexOf("+CFTPSLOGIN:");
   if (rssiIndex != -1) {

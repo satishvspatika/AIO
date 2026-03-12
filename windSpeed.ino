@@ -29,9 +29,13 @@ void windSpeed(void *pvParameters) {
   // v7.78: Stabilization protocol. Ignore first 5s of boot noise.
   vTaskDelay(5000 / portTICK_PERIOD_MS);
 
-  // Initialize buffer with current value AFTER stability period
+  // v5.50 FIX: Do NOT re-anchor last_raw_wind_count here.
+  // It is set correctly in setup() to either:
+  //   (a) wind_count.val on fresh boot (prevents spike), or
+  //   (b) the saved RTC value on deep sleep wakeup (preserves sleep pulses).
+  // Re-anchoring here would erase all ULP pulses counted during deep sleep.
+  // Only seed the circular buffer to the current hardware value.
   uint16_t initial_count = wind_count.val;
-  last_raw_wind_count = initial_count;
   for (int i = 0; i < BUFFER_SIZE; i++) {
     pulseBuffer[i] = initial_count;
   }

@@ -355,6 +355,23 @@ The final root cause was a combination of Rule 41 (Accumulating Buffer) and Rule
 *   **Symptoms:** `+CFTPSPUTFILE: 9` (Timeout/Network Error). Because the upload failed, the full backlog file was deleted, destroying 90 genuine records permanently.
 *   **Correct approach (Queue Draining):** Never blindly rename and upload the entire `ftpunsent.txt` file. Instead, stream the file line by line. Extract a **maximum chunk of 15 records (~900 Bytes)** to an active upload file (e.g., `TWS_0301.kwd`), and mathematically push the rest of the queue into a `ftpremain.txt` file. Once chunk 1 safely uploads, rename `ftpremain.txt` back to `ftpunsent.txt` so it gracefully drains the remaining 75 records across the next 5 hourly slots. If an error occurs, no data is lost because `ftpunsent.txt` only loses 900 bytes per cycle.
 
-## 47. The FTP -> HTTP Socket Zombie
-*   **Discovery:** Transitioning immediately from a heavy HTTP POST payload directly into an FTP Backlog upload throws the modem into a `Signal 85` (Panic / No Context) state on BSNL. 
-*   **Correct approach:** Always explicitly execute a **5000ms pause** before initializing the FTP task. This serves as a "Carrier Congestion Breather," granting the tower adequate IP stack teardown time before context switching.
+## 48. The "Sequential Task" Rule (Avoiding Collision)
+*   **Discovery:** Running FTP uploads in the background of a FreeRTOS task (like `scheduler.ino`) while the main `GPRS task` is performing HTTP/Health operations causes direct UART contention.
+*   **Symptoms:** Mixed log messages, `+CFTPSLOGIN: 9` (Network Error), and unsolicited modem resets. The "AG Recovery" logic in the Health task may interpret the modem's "Busy" state as a network drop, killing the bearer right during an FTP login.
+*   **Correct approach:** **Never run GPRS operations in a separate thread from the GPRS task.** Move all FTP backlog triggers into the main `gprs.ino` loop. Ensure FTP completes fully before a Health Report or OTA check begins. 
+*   **Safety Guard:** Use the `sync_mode` and `gprs_mode` flags to gate these operations sequentially.
+
+## 57. The BSNL FTP Active vs. Passive Mode Rule (v7.68 Discovery)
+*   **Discovery:** On BSNL 2G with `ftp.spatika.net`, Passive Mode (`AT+CFTPSCFG="transmode",1`) causes **Error 9 (Timeout) on the DATA channel**, even though the FTP LOGIN (control channel) succeeds perfectly.
+*   **Root Cause:** In Passive Mode, the SERVER opens a data port and tells the CLIENT (device) to connect to it. BSNL's 2G NAT/firewall may block this server-initiated callback, preventing the data connection from forming. The result: login `+CFTPSLOGIN: 0` succeeds, then `+CFTPSPUTFILE: 9` (timeout) follows because the data socket never opened.
+*   **Symptoms:** `+CFTPSLOGIN: 0` (Login OK) followed immediately by `+CFTPSPUTFILE: 9` (Data timeout). This is NOT a login failure — it is a data channel failure.
+*   **Correct approach (v7.68):** Use **Active Mode** (`AT+CFTPSCFG="transmode",0`). In Active Mode, the CLIENT (device) opens its own listening data port and tells the server to connect to it — this works on BSNL because the device's outbound data port is reachable within the carrier's network.
+*   **Fallback:** If Active Mode login fails, attempt Passive Mode as a secondary (for firewalls that block Active). Never remove both options.
+*   **Key Lesson:** `transmode=1` (Passive) passed all our logic checks because we were testing login. The failure mode only appears **at the file transfer (PUT) stage**. Always test with an actual file upload, not just login verification.
+
+---
+### 🛠️ Session Summary (March 12, 2026 - Morning): "The Concurrency Cure"
+Fixed a critical architecture flaw where FTP backlog sends were colliding with Health Reports. By moving all FTP logic into the sequential GPRS task loop and enforcing a 5-second "Breather" (Rule 47), we eliminated the "Socket Zombie" resets that were causing FTP failures.
+
+### 🛠️ Session Summary (March 12, 2026 - Late Morning): "The BSNL Active Mode Discovery (v7.68)"
+After FTP continued failing with Error 9 (data timeout) even after the sequential fix, log analysis revealed that Passive Mode (transmode=1) was the root cause. The FTP control channel (login) always succeeded, but the DATA channel timed out because BSNL 2G blocks server-initiated callbacks required for Passive Mode. Reverted to Active Mode (transmode=0), restored the 60s login timeout, and added a Passive Mode fallback for login failures. See Rule 57.
