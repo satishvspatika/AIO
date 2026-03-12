@@ -1456,26 +1456,29 @@ void scheduler(void *pvParameters) {
                    sampleNo, temp_year, temp_month, temp_day, record_hr,
                    record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                    signal_strength, bat_val);
+          // v7.70: Strict TWS FTP Format (57 bytes)
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
-                   stnId, temp_year, temp_month, temp_day, record_hr,
+                   stnId, current_year, current_month, current_day, record_hr,
                    record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-                   signal_strength, bat_val);
+                   signal_lvl, bat_val);
 #endif
 
 #if SYSTEM == 2
+          snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f",
+                   float(new_current_cumRF));
           snprintf(
               append_text, sizeof(append_text),
               "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
               sampleNo, current_year, current_month, current_day, record_hr,
               record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-              signal_strength, bat_val);
-          // v7.53: Legacy ADDON FTP Format (63 bytes)
+              signal_lvl, bat_val);
+          // v7.70: Strict TWSRF FTP Format (63 bytes)
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, current_year, current_month, current_day, record_hr,
                    record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
-                   inst_wd, signal_strength, bat_val);
+                   inst_wd, signal_lvl, bat_val);
 #endif
 
           //                                            len =
@@ -2404,7 +2407,7 @@ void scheduler(void *pvParameters) {
         if (sampleNo != 0) {
           File ftp_file = SPIFFS.open(temp_file, FILE_APPEND);
           if (ftp_file) {
-            ftp_file.print(store_text);
+            ftp_file.print(ftpappend_text); // v7.70: Use FTP format (semicolons)
             ftp_file.close();
           } else {
             debugln("Failed to open daily ftp file for appending");
@@ -2412,7 +2415,7 @@ void scheduler(void *pvParameters) {
         } else {
           File ftp_file = SPIFFS.open(temp_file, FILE_WRITE);
           if (ftp_file) {
-            ftp_file.print(store_text);
+            ftp_file.print(ftpappend_text); // v7.70: Use FTP format (semicolons)
             ftp_file.close();
           } else {
             debugln("Failed to open daily ftp file for writing");

@@ -112,7 +112,7 @@ char UNIT[15] = "SPATIKA_GEN"; // UNIT :
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.50"
+#define FIRMWARE_VERSION "5.51"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
@@ -376,8 +376,8 @@ int s, fileSize;
 int unsent_counter = 0;
 int http_code = -1;
 int delay_val = 10000; // Delay before starting GPRS (Reduced from 15s)
-int signal_strength = 0;
-int signal_lvl = 0;
+int signal_strength = SIGNAL_STRENGTH_NO_DATA;
+int signal_lvl = SIGNAL_STRENGTH_NO_DATA;
 int sd_card_ok = 0;
 int send_daily = 0;
 float solar_val, solar;

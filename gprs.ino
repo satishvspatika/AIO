@@ -1967,7 +1967,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
         bool upload_success = false;
 
         snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-                 "AT+CFTPSPUTFILE=\"C:/%s\",1", modulePath); // v7.65: Use absolute path and mode 1 (local file upload)
+                 "AT+CFTPSPUTFILE=\"%s\",1", modulePath); // v5.38 style: drive is implied by mode 1
 
         while (ftp_put_retries <= MAX_FTP_PUT_RETRIES) {
           esp_task_wdt_reset();
@@ -2444,6 +2444,10 @@ int send_at_cmd_data(char *payload, String response_arg) {
 
     diag_http_time_total += (millis() - start);
     strcpy(diag_http_fail_reason, "NONE");
+
+    // v7.70: Ensure clean session close after success to prevent crosstalk
+    SerialSIT.println("AT+HTTPTERM");
+    waitForResponse("OK", 1000);
 
     return 1;
   } else {
@@ -4440,7 +4444,7 @@ void copyFromSPIFFSToFS(char *dateFile) {
 
     if (ftp_login_flag == 1) {
       char *modulePath = (fileName[0] == '/') ? &fileName[1] : fileName;
-      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSPUTFILE=\"C:/%s\",0",
+      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSPUTFILE=\"%s\",1",
                modulePath); 
       SerialSIT.println(gprs_xmit_buf); // FTP client context
       response = waitForResponse("+CFTPSPUTFILE: 0", 150000); // 120000
