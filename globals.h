@@ -112,7 +112,7 @@ char UNIT[15] = "SPATIKA_GEN"; // UNIT :
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.51"
+#define FIRMWARE_VERSION "5.52"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
