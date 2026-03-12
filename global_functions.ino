@@ -549,8 +549,9 @@ int countStored(const char *fName) {
   int count = 0;
   while (f.available()) {
     String line = f.readStringUntil('\n');
-    // v7.70: Relaxed length to 10 for safety; check for comma
-    if (line.length() >= 10 && line.indexOf(',') != -1) {
+    // v7.70: Relaxed length to 10 for safety; check for comma (CSV) or semicolon (FTP format)
+    // v5.52 BUG-2 FIX: FTP records use ';' not ',', so check both separators
+    if (line.length() >= 10 && (line.indexOf(',') != -1 || line.indexOf(';') != -1)) {
       count++;
       if (count >= 96)
         break; // v7.59: Cap — ghost gap-fill cannot inflate beyond one day

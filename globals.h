@@ -114,13 +114,13 @@ char UNIT[15] = "SPATIKA_GEN"; // UNIT :
 // FIRMWARE VERSION - Change here to update all version strings
 #define FIRMWARE_VERSION "5.52"
 
-#define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
+#define DEBUG 0 // Set to 1 for serial debug, 0 for production (Saves space)
 
 #define ENABLE_PRESSURE_SENSOR 0 // Set to 0 to disable BMP/BME
 #define ENABLE_HEALTH_REPORT                                                   \
   1 // Master Switch: Set to 1 to enable automated health reporting
 #define TEST_HEALTH_DEFAULT                                                    \
-  1 // Default: 1 (Enabled - 15 min), 0 (Disabled - Daily)
+  0 // Default: 1 (Enabled - 15 min), 0 (Disabled - Daily)
 int test_health_every_slot = TEST_HEALTH_DEFAULT;
 #define TEST_HEALTH_EVERY_SLOT test_health_every_slot
 
@@ -138,6 +138,7 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 #define FORCE_2G_ONLY                                                          \
   1 // v7.54: BSNL Fallback. Forces AT+CNMP=13 on boot to skip 60s of failed 4G
     // auto-negotiation
+#define FTP_CHUNK_SIZE 15 // v5.52 ENH-2: Standardized chunk size for backlog
 
 // Spatika Health Server (Contabo VPS — plain HTTP, no SSL needed)
 #define HEALTH_SERVER_IP "75.119.148.192"
@@ -178,10 +179,11 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 #define MINUTES_PER_SAMPLE 15
 
 // Signal strength constants
-#define SIGNAL_STRENGTH_NO_DATA -112      // v5.51: Was -87 (shifted to avoid real signal overlap)
-#define SIGNAL_STRENGTH_GAP_FILLED -113    // v5.51: Was -88
-#define SIGNAL_STRENGTH_MISSING_DATA -111  // Official "No Data" marker
-#define SIGNAL_STRENGTH_PREV_DAY_GAP -114  // v5.51: Was -89
+#define SIGNAL_STRENGTH_NO_DATA                                                \
+  -112 // v5.51: Was -87 (shifted to avoid real signal overlap)
+#define SIGNAL_STRENGTH_GAP_FILLED -113   // v5.51: Was -88
+#define SIGNAL_STRENGTH_MISSING_DATA -111 // Official "No Data" marker
+#define SIGNAL_STRENGTH_PREV_DAY_GAP -114 // v5.51: Was -89
 #define SIGNAL_STRENGTH_MIN_RANGE -130
 #define SIGNAL_STRENGTH_MAX_RANGE -110
 
@@ -571,8 +573,10 @@ RTC_DATA_ATTR int last_recorded_min = 0;
 char signature[20]; // 2023-02-23,11:15
 volatile bool rtcTimeChanged = false;
 RTC_DATA_ATTR bool signature_valid = false;
-RTC_DATA_ATTR bool pending_manual_status = false; // v5.50: Queue manual SMS if busy
-RTC_DATA_ATTR bool pending_manual_gps = false;    // v5.50: Queue manual GPS if busy
+RTC_DATA_ATTR bool pending_manual_status =
+    false; // v5.50: Queue manual SMS if busy
+RTC_DATA_ATTR bool pending_manual_gps =
+    false; // v5.50: Queue manual GPS if busy
 
 // LCD and Navigation
 volatile int wakeup_reason_is; // ACTIVE: used by all wakeup logic

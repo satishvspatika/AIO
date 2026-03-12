@@ -306,8 +306,8 @@ void gprs(void *pvParameters) {
       vTaskDelay(100 / portTICK_PERIOD_MS);
       if (gprs_started == false) {
         debugln("[GPRS] Powering On...");
-        signal_strength = 0;
-        signal_lvl = 0;
+        signal_strength = -111;
+        signal_lvl = -111; // v5.52 FIX: Default to -111 not 0
         strcpy(reg_status, "NA");
         start_gprs();
       }
@@ -726,6 +726,11 @@ void prepare_data_and_send() {
   snprintf(sample_bat, sizeof(sample_bat), "%04.1f", float(temp_bat));
 #endif
 #if (SYSTEM == 1) || (SYSTEM == 2)
+  // v5.52 LOOP-3 FIX: Guard against empty station name before building FTP filename
+  if (strlen(ftp_station) == 0) {
+    debugln("[FTP] Skip: ftp_station (Station ID) not configured.");
+    return;
+  }
   sample_WD[3] = 0; // AG1
   snprintf(sample_temp, sizeof(sample_temp), "%05.1f", float(temp_temp));
   snprintf(sample_hum, sizeof(sample_hum), "%05.1f", float(temp_hum));
@@ -1663,6 +1668,15 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
   // better).
   // v5.51: Power-Saving FTP Gating logic
   snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
+
+  // v5.52 RELIABILITY: Recover orphaned remainders from failed previous renames
+  if (!SPIFFS.exists(ftpunsent_file) && SPIFFS.exists("/ftpremain.txt")) {
+    debugln("[Healer] Orphaned ftpremain.txt found. Recovering to ftpunsent.txt");
+    SPIFFS.rename("/ftpremain.txt", "/ftpunsent.txt");
+  }
+
+  // v5.52 FIX: Ensure signal_lvl isn't 0 if polling failed (prevents false triggers/0000 in logs)
+  if (signal_lvl == 0) signal_lvl = SIGNAL_STRENGTH_MISSING_DATA;
   int unsent_cnt = countStored(ftpunsent_file);
 
   // v7.63 FIX: Use current_hour/current_min (actual RTC wakeup time) instead
@@ -1687,7 +1701,7 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
   debugf5("[FTP-Gate] unsent=%d cur_time=%02d:%02d sched=%s cleanup=%s\n",
           unsent_cnt, current_hour, current_min,
           scheduled_slot ? "YES" : "NO", morning_cleanup ? "YES" : "NO");
-  bool should_push = (unsent_cnt > 4) ||  // Threshold: fire immediately if >4 records
+  bool should_push = (unsent_cnt >= 2) ||  // Threshold: fire immediately if >=2 records
                      (unsent_cnt > 0 && (scheduled_slot || morning_cleanup));
 
   if (signal_lvl > -95 && (should_push || force_ftp) &&
@@ -1750,7 +1764,7 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
               line.trim();              // Kill wandering \r
               if (line.length() > 15) { // Valid data line length check
                 line += "\r\n";
-                if (linesRead < 15) {
+                if (linesRead < FTP_CHUNK_SIZE) { // v5.52 ENH-2: Use defined constant
                   if (chunk)
                     chunk.print(line);
                 } else {
@@ -1809,10 +1823,7 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
       previous_date(
           &previous_rfclose_day, &previous_rfclose_month,
           &previous_rfclose_year); // to ge the previous rf_close_date file
-      snprintf(temp_file, sizeof(temp_file), "/dailyftp_%04d%02d%02d.txt",
-               previous_rfclose_year, previous_rfclose_month,
-               previous_rfclose_day);
-
+      // v5.52 BUG-1 FIX: Removed duplicate snprintf (was copy-paste error)
       snprintf(temp_file, sizeof(temp_file), "/dailyftp_%04d%02d%02d.txt",
                previous_rfclose_year, previous_rfclose_month,
                previous_rfclose_day);
@@ -2058,22 +2069,29 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
 
         if (upload_success) {
           // last_cmd_res already set in the loop
+          diag_ftp_success_count++; // v5.52 ENH-1: Increment success counter
           diag_consecutive_reg_fails =
               0; // RESET counter on any successful data upload
           markFileAsDelivered(fileName); // v5.48 Track recovered records
 
           if (isDailyFTP) { // If Daily FTP is successful,
                             // remove the dailyftp file.
-            SPIFFS.remove(temp_file);
+            // v5.52 BUG-6 FIX: Use fileName (local/captured) not global temp_file
+            // which may have been overwritten by another code path mid-flight.
+            SPIFFS.remove(fileName);
             debug("Removed Daily FTP file: ");
-            debugln(temp_file);
+            debugln(fileName);
           } else {
             // COMMIT Queue Remainder on Success
             SPIFFS.remove("/ftpunsent.txt");
             if (SPIFFS.exists("/ftpremain.txt")) {
-              SPIFFS.rename("/ftpremain.txt", "/ftpunsent.txt");
-              debugln("[FTP] Chunk successful! ftpunsent.txt overwritten with "
-                      "remainder queue.");
+              if (SPIFFS.rename("/ftpremain.txt", "/ftpunsent.txt")) {
+                debugln("[FTP] Chunk successful! ftpunsent.txt overwritten with "
+                        "remainder queue.");
+              } else {
+                debugln("[FTP] CRITICAL ERROR: Failed to rename ftpremain.txt "
+                        "to ftpunsent.txt. Backlog records may be orphaned.");
+              }
             } else {
               debugln("Cleared ftpunsent.txt permanently after full upload.");
             }
@@ -2511,6 +2529,11 @@ void store_current_unsent_data() {
     }
   }
 
+  // v5.52 ENH-6: Warning if SPIFFS is >90% full
+  if (SPIFFS.usedBytes() > SPIFFS.totalBytes() * 0.90) {
+    debugln("[SPIFFS] WARNING: >90% full. unsent.txt write may fail.");
+  }
+
   File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
   if (file2) {
     file2.println(finalStringBuffer); // v7.65: Force newline to prevent smashed records
@@ -2529,16 +2552,43 @@ void store_current_unsent_data() {
 #if (SYSTEM == 1 || SYSTEM == 2)
   snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
 
-  // SAFETY: Hard limit on backlog file size
+  // v5.52 RELIABILITY: Instead of deleting the whole file (dangerous), 
+  // we trim the oldest records to make space if file > 150KB.
   if (SPIFFS.exists(ftpunsent_file)) {
     File f_check = SPIFFS.open(ftpunsent_file, FILE_READ);
     if (f_check.size() > 150000) {
+      size_t target_size = f_check.size();
       f_check.close();
-      debugln("[SPIFFS] ftpunsent.txt exceeds 150KB. Truncating.");
-      SPIFFS.remove(ftpunsent_file);
+      debugln("[SPIFFS] ftpunsent.txt > 150KB. Trimming oldest records...");
+      
+      // Smart Trim: Keep the most recent 100KB
+      File src = SPIFFS.open(ftpunsent_file, FILE_READ);
+      File dst = SPIFFS.open("/trim.tmp", FILE_WRITE);
+      if (src && dst) {
+        src.seek(target_size - 100000); // Jump to last 100KB
+        src.readStringUntil('\n'); // Align to next full record boundary
+        while (src.available()) {
+          dst.write(src.read());
+        }
+        src.close();
+        dst.close();
+        SPIFFS.remove(ftpunsent_file);
+        SPIFFS.rename("/trim.tmp", ftpunsent_file);
+        debugln("[SPIFFS] Trim successful. Kept most recent 100KB.");
+      } else {
+        if (src) src.close();
+        if (dst) dst.close();
+        debugln("[SPIFFS] ERROR: Trim failed. Clearing file as final fallback.");
+        SPIFFS.remove(ftpunsent_file);
+      }
     } else {
       f_check.close();
     }
+  }
+
+  // v5.52 ENH-6: Warning if SPIFFS is >90% full
+  if (SPIFFS.usedBytes() > SPIFFS.totalBytes() * 0.90) {
+    debugln("[SPIFFS] WARNING: >90% full. ftpunsent.txt write may fail.");
   }
 
   File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
@@ -2546,7 +2596,7 @@ void store_current_unsent_data() {
     if (strlen(ftpappend_text) > 0) {
       ftpfile2.print(ftpappend_text); // Use proper semicolon FTP format
     } else {
-      ftpfile2.print(finalStringBuffer); // Fallback
+      debugln("[FTP-Store] WARNING: ftpappend_text empty — skipping FTP queue write to avoid corruption.");
     }
     ftpfile2.close();
   } else {
@@ -2638,7 +2688,7 @@ void get_signal_strength() {
   debugln("************************");
   debugln();
 
-  signal_lvl = 0;
+  signal_lvl = -111; // v5.52 FIX: Default to -111 not 0
   retries = 0;
 
   // [v5.61] Pre-settle delay: modem returns 85 (not ready) on first 1-3 polls
@@ -2647,7 +2697,7 @@ void get_signal_strength() {
 
   int invalid_signal_count = 0;
   // rssi 0 = -113dBm. Continuous -113 is essentially no signal.
-  while ((signal_lvl == 0) &&
+  while ((signal_lvl == -111) &&
          (retries < 120)) { // 120 loops @ 500ms = 60s max timeout
     esp_task_wdt_reset();
     SerialSIT.println("AT+CSQ");

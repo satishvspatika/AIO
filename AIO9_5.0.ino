@@ -153,6 +153,8 @@ void setup() {
       diag_sent_mask_prev[0] = 0; diag_sent_mask_prev[1] = 0; diag_sent_mask_prev[2] = 0;
       last_processed_sample_idx = -1; // Force scheduler re-entry
       fresh_boot_check_done = false;  // Allow fresh boot validation
+      health_last_sent_day = -1;      // v5.52 LOOP-6 FIX: Reset health persistence
+      health_last_sent_hour = -1;
       debugln("[BOOT] DELETE DATA detected. All diagnostic counters cleared.");
     }
   } else {

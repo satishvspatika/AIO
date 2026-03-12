@@ -1,38 +1,32 @@
-# ESP32 AIO v5.2 Release Notes - Feb 14, 2026
+# ESP32 AIO Release Notes Summary
 
-## 🚀 Version 5.2 Enhancements: "The Resilient Engine"
+## 🚀 Latest Version: v5.52 (March 12, 2026)
+**"Stability & Precision Update"**
 
-This release transforms the project into a lean, power-efficient, and ultra-resilient reporting engine. All legacy command-handling logic has been removed to prioritize rock-solid data transmission and maximum battery life.
+This release focuses on industrial-grade reliability, introducing task-silencing during OTA to prevent crashes, fixing long-term resource leaks, and ensuring multi-century clock accuracy.
 
-### 1. Bimodal Power Discipline (Energy Harvesting)
-- **Problem**: Sending health reports to Google every 15 minutes consumes significant battery due to high-power SSL handshakes.
-- **Solution**: Automated Health Reports are now restricted to twice daily: **10:30 AM** (Morning Diagnostic) and **11:00 PM** (End-of-Day Summary).
-- **Benefit**: Saves ~30-45 seconds of high-power GPRS usage during the other 94 intervals, extending battery life significantly.
+### Key Highlights:
+- **Absolute Silence Protocol**: Tasks are paused during OTA to prevent SPIFFS collisions.
+- **Resource Integrity**: Fixed BUG-5 memory leak in file system handling.
+- **Precision Calendar**: Full Gregorian leap year rule implementation.
+- **Standardized FTP**: Fixed chunk sizes (15) for robust backlog reporting.
+- **Sanity Guards**: Protective caps for rainfall and backlog counters.
 
-### 2. Ultra-Resilient GPRS (BSNL-Safe)
-- **High-Frequency Polling**: Reduced signal strength (`AT+CSQ`) polling delay to **500ms**. Fast networks (Airtel) now finish instantly.
-- **Deep Search Patience**: Increased signal retries to **120 (60s timeout)** and registration retries to **60**. This ensures the system captures ultra-slow BSNL towers in weak signal areas.
-- **IP Stabilization**: Added a **1-second pause** after network registration to ensure the modem's internal IP stack is "calm" before the first APN request, preventing "False Start" failures.
-
-### 3. Ghost-Session Elimination (Zero Airtime Leakage)
-- **Instant Sleep**: Fixed a logic hang where the device stayed awake in `eHttpStop` or `eSMSStop` states. The device now shuts down the modem and enters Deep Sleep the moment the data transmission is complete.
-- **Expanded Safe Window**: Refined the power manager window to allow deep sleep even at the **12th minute**, maximizing power savings while maintaining a safe wake-up buffer for the next 15-minute slot.
-
-### 4. Protocol Hardening (Server Acceptance)
-- **Forceful Reset**: Integrated a brute-force `AT+CIPSHUT` command at the start of every HTTP session.
-- **Benefit**: This hard-clears any "half-open" or residual sessions from the previous slot, ensuring the server receives a "Clean Handshake" and preventing the "Rejected" status caused by session overlap.
-
-### 5. Dedicated Reporting Architecture
-- **Lean Codebase**: Stripped all obsolete and high-risk command logic including **OTA (Over-the-Air Update)**, **Remote REBOOT**, and **Remote PING** parsing.
-- **Foolproof Engine**: The system is now a dedicated reporting tool, eliminating the complexity and potential security/stability risks associated with remote command listeners.
+[View Full v5.52 Release Notes](./RELEASE_NOTES_v5.52.md)
 
 ---
-## 🛠 Current System Configuration (v5.2)
-- **Core**: ESP32-D0WD-V3 (v3.1) @ 80MHz
-- **System Type**: `2` (TWS-RF)
-- **Unit ID**: `WS1923` (Example)
-- **APN Strategy**: Smart Persistence (Airtel IoT / BSNL Fallback)
-- **Precision**: 2-decimal rainfall (0.25mm / 0.50mm res)
+
+## 🕒 Previous Versions
+
+### [v5.50 - Timing & Diagnostics](./RELEASE_NOTES_v5.50.md) (March 11, 2026)
+- Retrospective slot recording.
+- Detailed registration failure reasons (Rsn).
+- Calibration status visibility.
+
+### [v5.2 - The Resilient Engine](./RELEASE_NOTES_v5.3.md) (Feb 14, 2026)
+- Bimodal power discipline (Morning/Evening health reports).
+- BSNL-safe GPRS retries.
+- Instant-sleep logic.
 
 ---
 *Created by Antigravity AI for Spatika Information Technologies Pvt Ltd.*

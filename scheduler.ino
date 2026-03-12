@@ -32,7 +32,7 @@ void scheduler(void *pvParameters) {
   snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
   snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
 
-  char fileName[50];
+  char fileName[50] = {0}; // v5.52 BUG-4 FIX: Initialized to prevent garbage lookups
   // Dummy test file path removed (Bug#6 fix)
 
 #if DEBUG == 1
@@ -48,6 +48,7 @@ void scheduler(void *pvParameters) {
   //   file = root.openNextFile();
   // }
   file.close();
+  root.close(); // v5.52 BUG-5 FIX: Close root handle to prevent leaks
 
   vTaskDelay(50 / portTICK_PERIOD_MS);
 
@@ -2677,8 +2678,11 @@ void next_date(int *Nd, int *Nm, int *Ny) {
 
   *Nd = *Nd + 1;
 
-  if ((*(Ny) % 4 == 0) && (*Nm == 2)) {
-    prev_mm = 0;
+  // v5.52 ENH-7: Proper leap year rule (including century rule)
+  bool isLeap = (*(Ny) % 4 == 0 && (*(Ny) % 100 != 0 || *(Ny) % 400 == 0));
+
+  if (isLeap && (*Nm == 2)) {
+    prev_mm = 0; // index 0 in no_of_days is 29
   } else {
     prev_mm = *Nm;
   }
@@ -2705,7 +2709,10 @@ void previous_date(int *Cd, int *Cm, int *Cy) {
       *Cy = *Cy - 1;
     }
 
-    if ((*(Cy + 0) % 4 == 0) && (prev_mm_day == 2)) {
+    // v5.52 ENH-7: Proper leap year rule (including century rule)
+    bool isLeap = (*(Cy) % 4 == 0 && (*(Cy) % 100 != 0 || *(Cy) % 400 == 0));
+
+    if (isLeap && (prev_mm_day == 2)) {
       prev_dd_day = 29;
     } else {
       prev_dd_day = no_of_days[prev_mm_day];
