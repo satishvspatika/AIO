@@ -32,6 +32,11 @@
             onclick="return confirm('Clear ALL pending commands for {{ stn_id }}?')">
             ❌ Clear ALL Queue
         </a>
+        <a href="/cmd/{{ stn_id }}/DELETE_DATA"
+            class="btn-sm bg-orange-950/70 hover:bg-orange-800 text-orange-400 border border-orange-700/50"
+            onclick="return confirm('CRITICAL: This will trigger a REMOTE FACTORY RESET on {{ stn_id }}. All historical data on the device SPIFFS will be deleted. Configuration will be preserved. Proceed?')">
+            ⚠ Remote Factory Reset
+        </a>
         <a href="/delete/{{ stn_id }}"
             class="btn-sm bg-red-900/80 hover:bg-red-700 text-red-200 border border-red-600/50 ml-2 shadow-lg"
             onclick="return confirm('WARNING: Permanently destroy ALL records and clear the command queue for {{ stn_id }}? This action cannot be undone.')">

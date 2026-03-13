@@ -53,6 +53,7 @@ volatile bool force_gps_refresh =
     false; // v7.59: Server-requested GPS re-acquire
 volatile bool force_clear_ftp_queue =
     false; // v7.59: Server-requested FTP backlog clear
+volatile bool force_delete_data = false; // v7.94: Server-requested Factory Reset
 volatile bool ota_writing_active = false;
 volatile bool ota_silent_mode = false; // Rule 43
                                        // v6.88
@@ -127,10 +128,8 @@ void setup() {
 
     total_wind_pulses_32 = 0;
     last_sched_wind_pulses_32 = 0;
-    last_raw_wind_count = wind_count.val; // v5.50: Anchor to hw to prevent spike
     total_rf_pulses_32 = 0;
     last_sched_rf_pulses_32 = 0;
-    last_raw_rf_count = rf_count.val;  // v5.50: Anchor to hw to prevent spike
 
     // v5.50 Bug#10 Fix: Reset diagnostic counters on DELETE DATA (SW_CPU_RESET)
     // so they don't carry stale values into fresh logs (explains netcount=42 issue)
@@ -152,10 +151,17 @@ void setup() {
       diag_sent_mask_cur[0] = 0; diag_sent_mask_cur[1] = 0; diag_sent_mask_cur[2] = 0;
       diag_sent_mask_prev[0] = 0; diag_sent_mask_prev[1] = 0; diag_sent_mask_prev[2] = 0;
       last_processed_sample_idx = -1; // Force scheduler re-entry
-      fresh_boot_check_done = false;  // Allow fresh boot validation
       health_last_sent_day = -1;      // v5.52 LOOP-6 FIX: Reset health persistence
       health_last_sent_hour = -1;
-      debugln("[BOOT] DELETE DATA detected. All diagnostic counters cleared.");
+
+      // v7.94: Clear physical ULP counters too
+      rf_count.val = 0;
+      wind_count.val = 0;
+      calib_count.val = 0;
+      total_wind_pulses_32 = 0;
+      total_rf_pulses_32 = 0;
+
+      debugln("[BOOT] DELETE DATA detected. All diagnostic and sensor counters cleared.");
     }
   } else {
     debugf("[BOOT] Preserving counters for reset reason: %d\n", (int)rr);
@@ -952,6 +958,16 @@ void setup() {
     wind_count.val = 0;
     debugln("Cleanup complete. Starting fresh.");
   }
+
+  // v7.94: FINAL HARDWARE ANCHOR
+  // We MUST anchor the 'last_raw' counters to the CURRENT hardware state
+  // at the very end of setup, AFTER any ULP code loads or version-based resets.
+  // This prevents 'deltas' from old garbage or initialization jumps.
+  last_raw_wind_count = wind_count.val;
+  last_raw_rf_count = rf_count.val;
+  last_sched_wind_pulses_32 = total_wind_pulses_32;
+  last_sched_rf_pulses_32 = total_rf_pulses_32;
+  debugf2("[BOOT] ULP Anchors Synced: Wind=%u, Rain=%u\n", last_raw_wind_count, last_raw_rf_count);
 }
 
 void progressCallBack(size_t currSize, size_t totalSize) {

@@ -11,7 +11,7 @@ router = APIRouter()
 # Whitelist: only safe column names (alphanumeric + underscore)
 _SAFE_COL = re.compile(r'^[a-z][a-z0-9_]{0,63}$')
 
-# Fields never treated as data columns
+# Fields never treated as data columns in HealthReport model
 _SKIP_FIELDS = {"id", "reported_at"}
 
 # Known type hints — anything not listed defaults to TEXT
@@ -23,7 +23,8 @@ _INT_FIELDS  = {
     "spiffs_kb","spiffs_total_kb","ota_fails",
     "consec_reg_fails","consec_http_fails","consec_sim_fails",
     "unsent_count",
-    "http_present_fails","http_cum_fails"               # v7.70
+    "http_present_fails","http_cum_fails",               # v7.70
+    "last_cmd_id"                                       # v7.92
 }
 _FLOAT_FIELDS = {"bat_v","sol_v"}
 
@@ -110,8 +111,12 @@ async def health(request: Request, db: Session = Depends(get_db)):
         existing_cols = _auto_migrate(db, data)
 
         # ── Step 2: Build a HealthReport from all matching fields ─────────────
-        # Map numeric conversions & type-safe casting
-        report_kwargs = {"stn_id": stn_id, "reported_at": datetime.datetime.now()}
+        # v7.93: Explicit Timezone Handling (Database: IST, Device Sync: UTC)
+        ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+        now_ist = datetime.datetime.now(ist_tz)
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+
+        report_kwargs = {"stn_id": stn_id, "reported_at": now_ist}
 
         for key, val in data.items():
             if key in _SKIP_FIELDS:
@@ -150,7 +155,7 @@ async def health(request: Request, db: Session = Depends(get_db)):
                 cmd_entry = db.query(CommandQueue).filter_by(id=cmd_id_int).first()
                 if cmd_entry:
                     cmd_entry.result = str(last_cmd_res)[:64]
-                    cmd_entry.completed_at = datetime.datetime.now()
+                    cmd_entry.completed_at = now_ist
                     print(f"[CMD FEEDBACK] {stn_id} ID:{cmd_id_int} -> {cmd_entry.result}")
 
         # ── Step 3: Handle OTA Auto-Lock ──────────────────────────────────────
@@ -171,7 +176,7 @@ async def health(request: Request, db: Session = Depends(get_db)):
             cmd       = pending.cmd
             cmd_param = pending.cmd_param
             cmd_id    = pending.id
-            pending.executed_at = datetime.datetime.now()
+            pending.executed_at = now_ist
             print(f"[CMD] {stn_id} → {cmd} (ID:{cmd_id})")
         else:
             cmd_id = 0
@@ -211,7 +216,7 @@ async def health(request: Request, db: Session = Depends(get_db)):
         resp_data = {
             "status": "ok",
             "stored": True,
-            "tm": datetime.datetime.now().strftime("%y%m%d%H%M%S"),
+            "tm": now_utc.strftime("%y%m%d%H%M%S"),
             "cmd": cmd,
             "p": cmd_param,
             "id": cmd_id

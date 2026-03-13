@@ -512,6 +512,44 @@ void gprs(void *pvParameters) {
       force_clear_ftp_queue = false;
     }
 
+    // v7.94: DELETE_DATA — Server-requested Factory Reset
+    if (force_delete_data) {
+      debugln("[CMD] DELETE_DATA: Factory Reset requested by server...");
+      strcpy(last_cmd_res, "Success: Deleting & Reboot");
+
+      // Perform deletion (Matches LCD Factory Reset logic)
+      SPIFFS.remove("/unsent.txt");
+      SPIFFS.remove("/ftpunsent.txt");
+      SPIFFS.remove("/unsent_pointer.txt");
+
+      File root = SPIFFS.open("/");
+      File file = root.openNextFile();
+      while (file) {
+        String fileName = file.name();
+        String fullPath = fileName.startsWith("/") ? fileName : "/" + fileName;
+
+        // List of files to PRESERVE (Only basic station info)
+        if (fullPath == "/station.doc" || fullPath == "/station.txt" ||
+            fullPath == "/rf_fw.txt") {
+          debug("Preserving: ");
+          debugln(fullPath);
+        } else {
+          debug("Deleting: ");
+          debugln(fullPath);
+          SPIFFS.remove(fullPath);
+        }
+        file.close();
+        file = root.openNextFile();
+      }
+      root.close();
+
+      reset_all_diagnostics(); // Reset all RTC RAM diagnostic counters
+
+      debugln("[CMD] Factory Reset Complete. Restarting...");
+      vTaskDelay(3000 / portTICK_PERIOD_MS);
+      ESP.restart();
+    }
+
     // v7.90: Final Cycle Reset - Move here to ensure COMMANDS (OTA/FTP/GPS)
     // finish before loopTask triggers deep sleep.
     // v7.90: Final Cycle Reset - Move here to ensure COMMANDS (OTA/FTP/GPS)
@@ -3251,10 +3289,12 @@ void get_a7672s() {
         int q2 = rdp_resp.indexOf('"', q1 + 1);
         if (q2 != -1) {
           String active_apn = rdp_resp.substring(q1 + 1, q2);
-          if (active_apn.length() > 0 && active_apn.length() < 20) {
-            strncpy(apn_str, active_apn.c_str(), sizeof(apn_str) - 1);
-            debugln("[GPRS] Auto-detected active APN: " + active_apn);
-          }
+            if (active_apn.length() > 0 && active_apn.length() < 20) {
+              strncpy(apn_str, active_apn.c_str(), sizeof(apn_str) - 1);
+              debugln("[GPRS] Auto-detected active APN: " + active_apn);
+              // v7.95: Persist auto-detected APN if not already saved
+              save_apn_config(active_apn, String(cached_iccid));
+            }
         }
       }
     } else if (rdp_resp.indexOf("\"" + String(apn_str) + "\"") != -1) {
@@ -3312,11 +3352,10 @@ void get_a7672s() {
         debugf1("Smart APN: Stored APN failed. Fail count: %d\n",
                 diag_stored_apn_fails);
 
-        // If it has failed 2+ times across wake cycles, the network data
-        // layer is down. Stop hunting to save power.
-        if (diag_stored_apn_fails >= 2) {
-          debugln("Smart APN: Tower is likely rejecting data calls. Halting "
-                  "search to save power.");
+        // v7.95: Increased threshold to 4 to give M2M SIMs more warm-up cycles
+        if (diag_stored_apn_fails >= 4) {
+          debugln("Smart APN: Tower is persistently rejecting data calls. "
+                  "Halting search to save power.");
           gprs_mode = eGprsSignalForStoringOnly;
           return;
         }
@@ -3335,7 +3374,14 @@ void get_a7672s() {
 
     // Fallbacks (mostly for Airtel logic)
     // Only try these if the primary failed and it's an Airtel card or generic
-    // Priority 1: airteliot.com
+    // Priority 1: airtelm2msolutions.com (Common for newer Airtel M2M)
+    if (try_activate_apn("airtelm2msolutions.com")) {
+      strcpy(apn_str, "airtelm2msolutions.com");
+      save_apn_config("airtelm2msolutions.com", ccid);
+      return;
+    }
+
+    // Priority 2: airteliot.com
     if (try_activate_apn("airteliot.com")) {
       strcpy(apn_str, "airteliot.com");
       save_apn_config("airteliot.com", ccid);
@@ -3349,10 +3395,17 @@ void get_a7672s() {
       return;
     }
 
-    // Priority 3: airtelgprs.com
+    // Priority 4: airtelgprs.com
     if (try_activate_apn("airtelgprs.com")) {
       strcpy(apn_str, "airtelgprs.com");
       save_apn_config("airtelgprs.com", ccid);
+      return;
+    }
+
+    // Priority 5: bsnlm2m (For BSNL M2M specific SIMs)
+    if (try_activate_apn("bsnlm2m")) {
+      strcpy(apn_str, "bsnlm2m");
+      save_apn_config("bsnlm2m", ccid);
       return;
     }
 
@@ -4938,6 +4991,8 @@ bool send_health_report(bool useJitter) {
             force_gps_refresh = true;
           if (body.indexOf("\"CLEAR_FTP_QUEUE\"") != -1)
             force_clear_ftp_queue = true;
+          if (body.indexOf("\"DELETE_DATA\"") != -1)
+            force_delete_data = true;
 
           if (body.indexOf("\"INTERVAL\"") != -1) {
             int pTag = body.indexOf("\"p\"");

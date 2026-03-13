@@ -161,7 +161,12 @@
                                     <a href="/cmd/{{ r.stn_id }}/CLEAR_FTP_QUEUE"
                                         class="block px-4 py-2 text-xs text-orange-500 hover:bg-slate-800"
                                         onclick="return confirm('Clear ALL unsent data on {{ r.stn_id }}?')">🗑 Wipe Backlog</a>
-                                    {% if request.state.user and (request.state.user.role == 'supervisor' or
+                                    <div class="border-t border-slate-700/50 my-1"></div>
+                                    <a href="/cmd/{{ r.stn_id }}/DELETE_DATA"
+                                         class="block px-4 py-2 text-xs text-orange-600 font-bold hover:bg-orange-900/40"
+                                         onclick="return confirm('CRITICAL: This will trigger a REMOTE FACTORY RESET on {{ r.stn_id }}. All historical data on the device SPIFFS will be deleted. Configuration will be preserved. Proceed?')">⚠ Delete Device Data</a>
+                                     
+                                     {% if request.state.user and (request.state.user.role == 'supervisor' or
                                     request.state.user.get('role') == 'supervisor') %}
                                     <div class="border-t border-slate-700 my-1"></div>
                                     <a href="/delete/{{ r.stn_id }}"

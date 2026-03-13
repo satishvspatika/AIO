@@ -33,6 +33,7 @@ def queue_command(
         FTP_BACKLOG  — Forces an immediate sync of unsent data files (unsent.txt)
         FTP_DAILY    — Forces upload of a specific daily file. 'param' must be YYYYMMDD
         OTA_CHECK    — (auto-set by OTA router)
+        DELETE_DATA  — Deletes all data files on SPIFFS (Factory Reset)
     """
     db.add(CommandQueue(stn_id=stn_id, cmd=command, cmd_param=param))
     db.commit()

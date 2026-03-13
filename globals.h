@@ -72,6 +72,7 @@ extern volatile bool
     force_gps_refresh; // v7.59: Server-requested GPS re-acquire
 extern volatile bool
     force_clear_ftp_queue; // v7.59: Server-requested FTP backlog clear
+extern volatile bool force_delete_data; // v7.94: Server-requested Factory Reset
 extern volatile bool ota_writing_active; // v6.88: Prevent FS collision
 extern int ota_fail_count;
 extern char ota_fail_reason[48];
@@ -101,18 +102,19 @@ void reconstructSentMasks();
 void markFileAsDelivered(const char *fileName);
 void convert_gmt_to_ist(struct tm *gmt_time);
 void sync_rtc_from_server_tm(const char *body, bool is_ntp);
+void reset_all_diagnostics();
 void recoverI2CBus();
 
 /************************************************************************************************/
-#define SYSTEM 2               // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "SPATIKA_GEN"; // UNIT :
+#define SYSTEM 1               // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 //                                0:  KSNDMC_TRG  BIHAR_TRG
 //                                1:  KSNDMC_TWS KSNDMC_TWS-AP
 //                                2:  KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.52"
+#define FIRMWARE_VERSION "5.54"
 
 #define DEBUG 0 // Set to 1 for serial debug, 0 for production (Saves space)
 

@@ -743,6 +743,7 @@ void scheduler(void *pvParameters) {
           diag_http_retry_count = 0;
           diag_ftp_success_count = 0;
           diag_daily_http_fails = 0;
+          diag_stored_apn_fails = 0; // v7.95: Reset APN fail counter on new day
 
           diag_sent_mask_cur[0] = 0;
           diag_sent_mask_cur[1] = 0;

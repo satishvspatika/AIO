@@ -1,0 +1,10 @@
+Build Configuration
+===================
+SYSTEM: 2
+UNIT: SPATIKA_GEN
+Output: SPATIKA_TWSRF
+Firmware Version: 5.52
+Build Date: 2026-03-12 15:30:08.345932
+Binary Size: 1.15 MB
+Binary Path: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/SPATIKA_TWSRF_8mb/firmware.bin
+Version File: /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/builds/SPATIKA_TWSRF_8mb/fw_version.txt
