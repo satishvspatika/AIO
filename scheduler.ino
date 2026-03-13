@@ -628,6 +628,8 @@ void scheduler(void *pvParameters) {
                 "stabilization.");
         data_writing_initiated = 0;
         skip_primary_http = true;
+        dns_fallback_active = false;
+        preferred_ftp_mode = -1;
         fresh_boot_check_done = true; // DO NOT SKIP NEXT TIME
       } else {
         data_writing_initiated = 1;
@@ -729,26 +731,14 @@ void scheduler(void *pvParameters) {
           diag_http_retry_count_prev = diag_http_retry_count;
           diag_ftp_success_count_prev = diag_ftp_success_count;
 
-          // Now perform Resets for the New Day
-          diag_reg_time_total = 0;
           diag_reg_count = 0;
           diag_reg_worst = 0;
           diag_gprs_fails = 0;
           diag_pd_count = 0;
           diag_ndm_count = 0;
           diag_first_http_count = 0;
-          diag_net_data_count = 0;
-          diag_http_time_total = 0;
-          diag_http_success_count = 0;
-          diag_http_retry_count = 0;
-          diag_ftp_success_count = 0;
-          diag_daily_http_fails = 0;
-          diag_stored_apn_fails = 0; // v7.95: Reset APN fail counter on new day
-
-          diag_sent_mask_cur[0] = 0;
-          diag_sent_mask_cur[1] = 0;
-          diag_sent_mask_cur[2] = 0;
         } // End of destructive reset
+
 
         debugln("[SCHED] Rollover Complete.");
       }
@@ -2494,8 +2484,31 @@ void scheduler(void *pvParameters) {
         file5.print(append_text);
         file5.close();
         strcpy(diag_cdm_status, "PENDING"); // Mark CDM as ready to send
+
+        // v5.55: Meteorological Day Precision Reset (end of 8:30 AM)
+        // Resetting counters here ensures 8:45 AM wakeup captures the 8:30-8:45 window fresh.
+        diag_reg_time_total = 0;
+        diag_net_data_count = 0;
+        diag_http_time_total = 0;
+        diag_http_success_count = 0;
+        diag_http_retry_count = 0;
+        diag_ftp_success_count = 0;
+        diag_daily_http_fails = 0;
+        diag_stored_apn_fails = 0; 
+
+        new_current_cumRF = 0; 
+        total_rf_pulses_32 = 0;
+        last_sched_rf_pulses_32 = 0;
+        last_raw_rf_count = rf_count.val; 
+        
+        diag_sent_mask_cur[0] = 0;
+        diag_sent_mask_cur[1] = 0;
+        diag_sent_mask_cur[2] = 0;
+        
+        debugln("[SCHED] 08:30 AM Precision Reset Complete.");
         vTaskDelay(200 / portTICK_PERIOD_MS);
       }
+
 
 #if DEBUG == 1
       // SPIFFS

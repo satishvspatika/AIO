@@ -305,11 +305,14 @@ void gprs(void *pvParameters) {
     if (gprs_mode == eGprsInitial) {
       vTaskDelay(100 / portTICK_PERIOD_MS);
       if (gprs_started == false) {
-        debugln("[GPRS] Powering On...");
-        signal_strength = -111;
-        signal_lvl = -111; // v5.52 FIX: Default to -111 not 0
-        strcpy(reg_status, "NA");
-        start_gprs();
+        if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+          debugln("[GPRS] Powering On...");
+          signal_strength = -111;
+          signal_lvl = -111; 
+          strcpy(reg_status, "NA");
+          start_gprs();
+          xSemaphoreGive(modemMutex);
+        }
       }
     }
 
@@ -448,7 +451,7 @@ void gprs(void *pvParameters) {
       debugf1("[CMD] Remote FTP_DAILY triggered for date: %s\n",
               ftp_daily_date);
 #if (SYSTEM == 1 || SYSTEM == 2)
-      send_daily_file(ftp_daily_date);
+      send_ftp_file(ftp_daily_date, true);
 #endif
       force_ftp_daily = false;
     }
@@ -1150,6 +1153,8 @@ void prepare_data_and_send() {
         // trigger a Full Modem Reset. Use diag_consecutive_http_fails here
         // (NOT diag_consecutive_reg_fails — that counter is only for actual
         // registration failures and gates graceful_modem_shutdown).
+        // v5.55 SELF-HEALING: If we are failing 4 times in a row, the bearer is likely a zombie.
+        // Force a HARD MODEM RESET (GPIO 26 cycle) as per Rule 19.
         if (diag_consecutive_http_fails >= 4) {
           debugln("[RECOVERY] 4 Consecutive HTTP Fail Slots. Triggering Full "
                   "Modem Reset...");
@@ -1241,18 +1246,18 @@ void prepare_data_and_send() {
           debugln("Failed to open ftpunsent.txt for appending (TWS-RF)");
         }
 #endif
-
-        debugln("!!! Persistent Server Rejection/Failure !!!");
-        debugln("The failed record was: ");
-        debugln(current_record);
-        debugln("Backlog delivery will be attempted in future cycles.");
-
       } // closes if(data_mode == eCurrentData)
-    }   // closes if(success_count == 0)
-  }     // closes if(SPIFFS.exists(temp_file))
+    }   // closes if(success_count == 0 - second try)
+  }     // closes if(success_count == 0 - first try)
 } // closes prepare_data_and_send()
 
+
 void send_http_data() {
+  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
+    debugln("[GPRS] Error: Modem Mutex Timeout - deferring HTTP send");
+    return;
+  }
+  
   String response;
   const char *charArray;
   /*
@@ -1260,7 +1265,7 @@ void send_http_data() {
    */
 
   const char *domain = httpSet[http_no].serverName;
-  char target_ip[64] = {0};
+  // char target_ip[64] = {0}; // Removed, target_ip is now handled by httpPostRequest directly
 
   bool is_ip_format = true;
   for (int i = 0; domain[i] != '\0'; i++) {
@@ -1269,6 +1274,19 @@ void send_http_data() {
       break;
     }
   }
+
+  // v5.55: PREPARE URL (Zero-Gap Prep)
+  // Logic: Use static IP from globals.h if DNS is problematic or if first attempt fails.
+  snprintf(httpPostRequest, sizeof(httpPostRequest),
+           "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", domain,
+           httpSet[http_no].Port, httpSet[http_no].Link);
+
+  char fallbackUrl[150] = {0};
+  snprintf(fallbackUrl, sizeof(fallbackUrl),
+           "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", httpSet[http_no].IP,
+           httpSet[http_no].Port, httpSet[http_no].Link);
+
+  debugln("[GPRS] Prepared URL: " + String(httpPostRequest));
 
   // Ensure PDP context is active before doing DNS lookups or HTTP
   SerialSIT.println("AT+CGACT?");
@@ -1280,54 +1298,63 @@ void send_http_data() {
     waitForResponse("OK", 10000);
   }
 
-  if (is_ip_format) {
-    strcpy(target_ip, domain);
-  } else if (strcmp(cached_server_domain, domain) == 0 &&
-             strlen(cached_server_ip) > 5) {
-    debugln("[DNS Cache] Using cached IP for " + String(domain) + ": " +
-            String(cached_server_ip));
-    strcpy(target_ip, cached_server_ip);
-  } else {
-    debugln("[DNS Cache] Resolving " + String(domain) + "...");
-    SerialSIT.print("AT+CDNSGIP=\"");
-    SerialSIT.print(domain);
-    SerialSIT.println("\"");
-    String resp = waitForResponse("+CDNSGIP: 1", 10000);
-
-    int ip_start = resp.lastIndexOf(",\"");
-    if (ip_start != -1) {
-      int ip_end = resp.indexOf("\"", ip_start + 2);
-      if (ip_end != -1) {
-        String ip_str = resp.substring(ip_start + 2, ip_end);
-        if (ip_str.length() > 5) {
-          strncpy(cached_server_ip, ip_str.c_str(),
-                  sizeof(cached_server_ip) - 1);
-          strncpy(cached_server_domain, domain,
-                  sizeof(cached_server_domain) - 1);
-          strcpy(target_ip, cached_server_ip);
-          debugln("[DNS Cache] Resolved: " + ip_str);
+  // v5.55: SMART DNS FALLBACK (Fast-Track)
+  // v5.55 SELF-HEALING: Every 10 successful sends, or if we just recovered from a fail streak,
+  // try DNS again to see if the network has healed.
+  bool forceDnsRetry = (diag_http_success_count % 10 == 0) || (diag_consecutive_http_fails == 1);
+  
+  if (dns_fallback_active && strcmp(cached_server_domain, domain) == 0 && !forceDnsRetry) {
+     debugln("[GPRS] Smart Fallback ACTIVE. Bypassing DNS trials for " + String(domain));
+     strcpy(httpPostRequest, fallbackUrl);
+  } else if (!is_ip_format) {
+    if (strcmp(cached_server_domain, domain) == 0 && strlen(cached_server_ip) > 5) {
+        debugln("[DNS Cache] Using cached IP for " + String(domain) + ": " + String(cached_server_ip));
+        snprintf(httpPostRequest, sizeof(httpPostRequest),
+                 "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", cached_server_ip,
+                 httpSet[http_no].Port, httpSet[http_no].Link);
+    } else {
+        debugln("[DNS Cache] Resolving " + String(domain) + "...");
+        SerialSIT.print("AT+CDNSGIP=\"");
+        SerialSIT.print(domain);
+        SerialSIT.println("\"");
+        String dnsResp = waitForResponse("+CDNSGIP: 1", 8000);
+        
+        if (dnsResp.indexOf("+CDNSGIP: 1") != -1) {
+            // Success: Update cache and clear fallback flag
+            int ip_start = dnsResp.lastIndexOf(",\"");
+            if (ip_start != -1) {
+              int ip_end = dnsResp.indexOf("\"", ip_start + 2);
+              if (ip_end != -1) {
+                String ip_str = dnsResp.substring(ip_start + 2, ip_end);
+                strncpy(cached_server_ip, ip_str.c_str(), sizeof(cached_server_ip) - 1);
+                strncpy(cached_server_domain, domain, sizeof(cached_server_domain) - 1);
+                dns_fallback_active = false; // Resolved!
+                debugln("[DNS Cache] Resolved and Saved: " + ip_str);
+                snprintf(httpPostRequest, sizeof(httpPostRequest),
+                         "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", cached_server_ip,
+                         httpSet[http_no].Port, httpSet[http_no].Link);
+              }
+            }
+        } else {
+           debugln("[GPRS] DNS Failed for " + String(domain) + ". Entering Smart Fallback.");
+           dns_fallback_active = true;
+           strncpy(cached_server_domain, domain, sizeof(cached_server_domain) - 1);
+           strcpy(httpPostRequest, fallbackUrl);
+           
+           if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+            debugln("[DNS Cache] Force Deactivating CIDs 1 & 8 (Flapping)...");
+            xSemaphoreGive(serialMutex);
+          }
+          SerialSIT.println("AT+CGACT=0,1"); 
+          waitForResponse("OK", 2000);
+          SerialSIT.println("AT+CDNSCFG=\"8.8.8.8\",\"1.1.1.1\"");
+          waitForResponse("OK", 1000);
         }
-      }
-    }
-    if (target_ip[0] == '\0') {
-      if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-        debugln("[DNS Cache] Resolution failed. Falling back to domain name.");
-        debugln("[DNS Cache] Force Deactivating CIDs 1 & 8 (Flapping)...");
-        xSemaphoreGive(serialMutex);
-      }
-      SerialSIT.println("AT+CGACT=0,1"); // v7.11: Kill CID 1 too if DNS is dead
-      waitForResponse("OK", 2000);
-      SerialSIT.println("AT+CGACT=0,8"); // Cleanup noise
-      waitForResponse("OK", 2000);
-      SerialSIT.println("AT+CDNSCFG=\"8.8.8.8\",\"1.1.1.1\"");
-      waitForResponse("OK", 1000);
-      strcpy(target_ip, domain);
     }
   }
 
-  snprintf(httpPostRequest, sizeof(httpPostRequest),
-           "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", target_ip,
-           httpSet[http_no].Port, httpSet[http_no].Link);
+  // httpPostRequest is already prepared at the top or in the fallback block
+  // Removing the redundant snprintf that used target_ip
 
   // SMART BEARER CHECK: Avoid redundant CIPSHUT if connection is already live
   // especially useful during combined Health + Main data slots.
@@ -1405,9 +1432,12 @@ void send_http_data() {
   }
 
   // Restore CID Setting (Quiet)
-  SerialSIT.println(
-      "AT+HTTPPARA=\"CID\",1"); // v5.58: Hard-lock to primary CID 1
+  SerialSIT.println("AT+HTTPPARA=\"CID\",1"); // v5.58: Hard-lock to primary CID 1
   response = waitForResponse("OK", 1000);
+  
+  // v5.55: Re-send URL immediately before context variables to lock session (Rule 48 alignment)
+  SerialSIT.println(httpPostRequest);
+  waitForResponse("OK", 1000);
 
   SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
   response = waitForResponse("OK", 1000);
@@ -1648,6 +1678,7 @@ void send_http_data() {
   SerialSIT.println("AT+CGEREP=2");
   waitForResponse("OK", 1000);
 
+  xSemaphoreGive(modemMutex); // v5.55: Release modem for other tasks (like RTC sync)
 } // end of send_http_data
 
 void send_daily_file(
@@ -1921,6 +1952,11 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
   String response1;
   int result = -1;
 
+  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
+    debugln("[FTP] Error: Modem Mutex Timeout - deferring upload");
+    return;
+  }
+
   flushSerialSIT(); // Ensure UART buffer is clean before starting FTP
                     // sequence
   debugln("Initializing A7672S for FTP...");
@@ -1928,7 +1964,22 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
 
   if (SPIFFS.exists(fileName)) {
     send_daily = 2;
-    ftp_login_flag = setup_ftp();
+    
+    // v5.55: Smart FTP Mode Selection
+    // 1. If we have a previously successful mode, use it immediately.
+    // 2. Otherwise, use carrier-based heuristic.
+    int initial_ftp_mode = 0; 
+    if (preferred_ftp_mode != -1) {
+       initial_ftp_mode = preferred_ftp_mode;
+       debugln("[FTP] Using SAVED Smart Mode: " + String(initial_ftp_mode == 1 ? "Passive" : "Active"));
+    } else if (strstr(carrier, "AIRTEL") || strstr(carrier, "Airtel") || strstr(carrier, "Jio")) {
+      initial_ftp_mode = 1; 
+      debugln("[FTP] Airtel/Jio detected. Smart Default: Passive (1).");
+    } else {
+      debugln("[FTP] BSNL/Other detected. Smart Default: Active (0).");
+    }
+    
+    ftp_login_flag = setup_ftp(initial_ftp_mode);
 
     if (ftp_login_flag == 1) {
 
@@ -1955,6 +2006,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
         waitForResponse("+CFTPSLOGOUT: 0", 9000);
         SerialSIT.println("AT+CFTPSSTOP");
         waitForResponse("OK", 3000);
+        xSemaphoreGive(modemMutex);
         return;
       }
       sscanf(csqstr, "+FSOPEN: %d,", &handle_no);
@@ -1966,6 +2018,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
         waitForResponse("+CFTPSLOGOUT: 0", 9000);
         SerialSIT.println("AT+CFTPSSTOP");
         waitForResponse("OK", 3000);
+        xSemaphoreGive(modemMutex);
         return; // v7.67: Guard against null file dereference
       }
       debug("File size of the file is ");
@@ -2072,6 +2125,10 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
 
           if (response1.indexOf("+CFTPSPUTFILE: 0") != -1) {
             upload_success = true;
+            // v5.55: SAVE working mode for future iterations (Rule 48 Smart Persistence)
+            preferred_ftp_mode = (ftp_put_retries == 0) ? initial_ftp_mode : ((initial_ftp_mode == 1) ? 0 : 1);
+            debugln("[FTP] Smart Mode Saved: " + String(preferred_ftp_mode == 1 ? "Passive" : "Active"));
+            
             if (isDailyFTP) strcpy(last_cmd_res, "Success: Daily FTP OK");
             else strcpy(last_cmd_res, "Success: Backlog FTP OK");
             break;
@@ -2246,6 +2303,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
   } else {
     debugln("NO FTP UNSENT FILES TO UPLOAD ");
   }
+  xSemaphoreGive(modemMutex); // v5.55: Release modem after FTP session
 }
 
 // Function to copy a file from a source path to a destination path
@@ -2306,6 +2364,11 @@ void graceful_modem_shutdown() {
 }
 
 void send_sms() {
+  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
+    debugln("[GPRS] Error: Modem Mutex Timeout - skipping SMS check");
+    return;
+  }
+  
   String response;
   vTaskDelay(500 /
              portTICK_PERIOD_MS); // TRG8-3.0.5g reduced from 1min to 500ms
@@ -2324,6 +2387,7 @@ void send_sms() {
   debugln("Removed READ messages");
 
   sync_mode = eSMSStop;
+  xSemaphoreGive(modemMutex);
 }
 
 int send_at_cmd_data(char *payload, String response_arg) {
@@ -2829,6 +2893,12 @@ full_discovery:
   strcpy(sim_number, "NA");
   strcpy(carrier, "NA");
   apn_saved_this_sim = false; // v5.55: New SIM — force APN re-save to SPIFFS
+  
+  // v5.55 SELF-HEALING: Reset fallbacks on SIM change
+  dns_fallback_active = false;
+  preferred_ftp_mode = -1;
+  cached_server_ip[0] = '\0';
+  cached_server_domain[0] = '\0';
 
   // 1. Try CSPN (Provider Name)
   SerialSIT.println("AT+CSPN?");
@@ -3373,40 +3443,21 @@ void get_a7672s() {
     }
 
     // Fallbacks (mostly for Airtel logic)
-    // Only try these if the primary failed and it's an Airtel card or generic
-    // Priority 1: airtelm2msolutions.com (Common for newer Airtel M2M)
-    if (try_activate_apn("airtelm2msolutions.com")) {
-      strcpy(apn_str, "airtelm2msolutions.com");
-      save_apn_config("airtelm2msolutions.com", ccid);
-      return;
-    }
+    // v5.55: Expanded list for modern Airtel IoT/M2M profiles
+    const char *airtel_apns[] = {
+        "airtelm2msolutions.com", // Found on newer M2M cards
+        "airteliot.com",          // Standard for Airtel IoT
+        "iot.com",                // Generic IoT
+        "airtelgprs.com",         // Legacy Airtel
+        "bsnlm2m"                 // BSNL M2M specific
+    };
 
-    // Priority 2: airteliot.com
-    if (try_activate_apn("airteliot.com")) {
-      strcpy(apn_str, "airteliot.com");
-      save_apn_config("airteliot.com", ccid);
-      return;
-    }
-
-    // Priority 2: iot.com
-    if (try_activate_apn("iot.com")) {
-      strcpy(apn_str, "iot.com");
-      save_apn_config("iot.com", ccid);
-      return;
-    }
-
-    // Priority 4: airtelgprs.com
-    if (try_activate_apn("airtelgprs.com")) {
-      strcpy(apn_str, "airtelgprs.com");
-      save_apn_config("airtelgprs.com", ccid);
-      return;
-    }
-
-    // Priority 5: bsnlm2m (For BSNL M2M specific SIMs)
-    if (try_activate_apn("bsnlm2m")) {
-      strcpy(apn_str, "bsnlm2m");
-      save_apn_config("bsnlm2m", ccid);
-      return;
+    for (int i = 0; i < 5; i++) {
+        if (try_activate_apn(airtel_apns[i])) {
+            strcpy(apn_str, airtel_apns[i]);
+            save_apn_config(airtel_apns[i], ccid);
+            return;
+        }
     }
 
     // 3. Last Resort: GPRS Stack Reset (CGATT Reset)
@@ -3661,6 +3712,11 @@ void prepare_and_send_status(char *gsm_no) {
 }
 
 void get_gps_coordinates() {
+  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
+    debugln("[GPS] Error: Modem Mutex Timeout - skipping GPS request");
+    return;
+  }
+  
   String response;
   int tmp;
   float lat, lon;
@@ -3690,6 +3746,7 @@ void get_gps_coordinates() {
           debug("Longitude: ");
           debugln(longi, 6);
           saveGPS(); // Persist immediately
+          xSemaphoreGive(modemMutex);
           return;    // SUCCESS
         }
       }
@@ -3698,6 +3755,7 @@ void get_gps_coordinates() {
     vTaskDelay(2000 / portTICK_PERIOD_MS);
   }
   debugln("[GPS] All attempts to get fresh coordinates failed.");
+  xSemaphoreGive(modemMutex);
 }
 
 void get_lat_long_date_time(char *gsm_no) {
@@ -3995,16 +4053,35 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CDNSGIP=\"%s\"",
            ftpServer);
   SerialSIT.println(gprs_xmit_buf);
-  // v5.45 Optimized: Wait up to 20s for DNS resolution (BSNL/2G Latency)
+  // v5.55 Optimized: Wait up to 20s for DNS resolution (BSNL/2G Latency)
   response = waitForResponse("+CDNSGIP:", 20000);
   debugln(response);
-  // v5.45: DNS retry on BSNL — error 10 is transient DNS timeout
-  if (response.indexOf("+CDNSGIP: 0") != -1 || response.length() < 10) {
-    debugln("[FTP] DNS failed, retrying after 3s...");
-    vTaskDelay(3000 / portTICK_PERIOD_MS);
-    SerialSIT.println(gprs_xmit_buf); // Retry same DNS query
-    response = waitForResponse("+CDNSGIP:", 20000);
-    debugln(response);
+
+  // v5.45: DNS retry / Fallback
+  if (response.indexOf("+CDNSGIP: 1") == -1) {
+    debugln("[FTP] DNS failed. Attempting Insurance IP fallback...");
+    const char* fallbackIP = NULL;
+    // Updated with User-Verified IPs (v5.55)
+    if (strstr(ftpServer, "ksndmc.net")) fallbackIP = "117.216.42.181"; // rtdas.ksndmc.net
+    else if (strstr(ftpServer, "spatika.net")) {
+      if (strstr(ftpServer, "ftphbih") || strstr(ftpServer, "rtdasbih")) fallbackIP = "185.250.105.225";
+      else if (strstr(ftpServer, "rtdasbmsk")) fallbackIP = "164.100.130.199";
+      else fallbackIP = "144.91.104.105"; // rtdas.spatika.net
+    }
+    
+    if (fallbackIP) {
+      debugln("[FTP] Using fallback IP: " + String(fallbackIP));
+      ftpServer = fallbackIP;
+    } else {
+      debugln("[FTP] No fallback IP for this host. Retrying DNS once...");
+      vTaskDelay(3000 / portTICK_PERIOD_MS);
+      if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+        SerialSIT.println(gprs_xmit_buf); 
+        response = waitForResponse("+CDNSGIP:", 20000);
+        xSemaphoreGive(modemMutex);
+      }
+      debugln(response);
+    }
   }
 
   vTaskDelay(2000 / portTICK_PERIOD_MS); // Pre-login settling delay
@@ -4681,6 +4758,11 @@ void send_at_cmd(char *cmd, char *check, char *spl) {
  * Parameters: stn, type, gbat, ebat, sig
  */
 bool send_health_report(bool useJitter) {
+  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
+     debugln("[Health] Error: Modem Mutex Timeout - deferring report");
+     return false;
+  }
+
   // v5.45: Carrier Congestion Breather after FTP (Special for BSNL)
   vTaskDelay(5000 / portTICK_PERIOD_MS);
 
@@ -5048,6 +5130,8 @@ bool send_health_report(bool useJitter) {
   waitForResponse("OK", 1000);
   SerialSIT.println("AT+CEREG=1");
   waitForResponse("OK", 1000);
+
+  xSemaphoreGive(modemMutex); // v5.55: Release modem
   return success;
 }
 

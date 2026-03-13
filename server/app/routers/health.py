@@ -111,12 +111,11 @@ async def health(request: Request, db: Session = Depends(get_db)):
         existing_cols = _auto_migrate(db, data)
 
         # ── Step 2: Build a HealthReport from all matching fields ─────────────
-        # v7.93: Explicit Timezone Handling (Database: IST, Device Sync: UTC)
-        ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+        # v7.94: Store in UTC (Standard). Display filters will add +5:30 offset.
         now_ist = datetime.datetime.now(ist_tz)
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        now_utc = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
-        report_kwargs = {"stn_id": stn_id, "reported_at": now_ist}
+        report_kwargs = {"stn_id": stn_id, "reported_at": now_utc}
 
         for key, val in data.items():
             if key in _SKIP_FIELDS:

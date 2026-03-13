@@ -109,6 +109,10 @@ void setup() {
   if (fsMutex != NULL)
     xSemaphoreGive(fsMutex);
 
+  modemMutex = xSemaphoreCreateMutex();
+  if (modemMutex != NULL)
+    xSemaphoreGive(modemMutex);
+
   initialize_hw(); // sets CPU to 80MHz internally
 
   // Record Reset Reason and Increment Uptime
@@ -119,7 +123,9 @@ void setup() {
   // Preserve on DEEPSLEEP (5) for better testing resilience.
   // v5.50: Also treat EXT_CPU_RESET (14) and SW_CPU_RESET (12) as fresh starts.
   // Reason 12 is triggered by 'DELETE DATA' or manually via ESP.restart().
-  if (rr == POWERON_RESET || rr == EXT_CPU_RESET || rr == 12) {
+  // v5.55 SELF-HEALING: Protect metrics during maintenance reboots.
+  // If healer_reboot_in_progress is set, skip wiping counters even on Reason 12.
+  if ((rr == POWERON_RESET || rr == EXT_CPU_RESET || rr == 12) && !healer_reboot_in_progress) {
     debugf("[BOOT] Fresh Start (Reason %d). Initializing RTC variables.\n", (int)rr);
     if (last_valid_temp < -20.0 || last_valid_temp > 60.0)
       last_valid_temp = 26.0;
@@ -163,6 +169,9 @@ void setup() {
 
       debugln("[BOOT] DELETE DATA detected. All diagnostic and sensor counters cleared.");
     }
+  } else if (healer_reboot_in_progress) {
+    debugln("[BOOT] Maintenance Reboot Recovery. Preserving all Diagnostic & Sensor counters.");
+    healer_reboot_in_progress = false; // Reset for next time
   } else {
     debugf("[BOOT] Preserving counters for reset reason: %d\n", (int)rr);
   }
@@ -1107,6 +1116,27 @@ void loop() {
       (httpInitiated == false) && (health_in_progress == false) &&
       (force_reboot == false) && (force_ota == false) &&
       (ota_writing_active == false)) {
+    // v5.55 SELF-HEALING: Preventative Maintenance Reboot
+    // Triggered at midnight (sampleNo 0 or 95) if uptime exceeds 20 hours (approx).
+    // This ensures physical hardware registers are refreshed once a day.
+    if ((sampleNo == 0) && current_hour == 0 && current_min < 15) {
+       debugln("[HEAL] Scheduled Daily Maintenance Restart...");
+       healer_reboot_in_progress = true; // v5.55: Protect counters
+       vTaskDelay(2000 / portTICK_PERIOD_MS);
+       ESP.restart();
+    }
+
+    // v5.55 SAFETY VALVE: Total Communication Blackout Recovery
+    // If the system has failed for 8 consecutive cycles (~2 hours), assume 
+    // Modem/ESP peripheral state is corrupted and force a hard system reboot.
+    if (diag_consecutive_http_fails >= 8) {
+       debugln("[HEAL] CRITICAL: 8 consecutive slots failed. Forcing System Recovery Reboot...");
+       diag_consecutive_http_fails = 0; // Reset so we don't boot loop if it's a real outage
+       healer_reboot_in_progress = true; // v5.55: Protect counters
+       vTaskDelay(2000 / portTICK_PERIOD_MS);
+       ESP.restart();
+    }
+
     debugln("[PWR] All tasks done. Entering Deep Sleep...");
     esp_task_wdt_reset(); // Final pet before sleep
     start_deep_sleep();

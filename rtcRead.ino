@@ -170,9 +170,9 @@ void resync_time() {
   char status_response[256];
   char gprs_xmit_buf[300];
 
-  char *csqstr;
-  // BUG FIX: Removed local `float lati, longi;` — it shadowed the global
-  // RTC_DATA_ATTR variables, causing GPS coordinates to be silently discarded.
+  const char *csqstr;
+
+  const char *response_char;
 
   debugln("[RTC] Resync Requested. Powering on GPRS...");
   debugln();
@@ -183,18 +183,23 @@ void resync_time() {
   signal_lvl = 0;
   strcpy(reg_status, "NA");
   gprs_started = true;
-  start_gprs();
-  esp_task_wdt_reset();
-  SerialSIT.println("ATE0");
-  response = waitForResponse("OK", 3000);
-  debug("HTTP response of ATE0: ");
-  debugln(response);
+  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
+    start_gprs();
+    esp_task_wdt_reset();
+    SerialSIT.println("ATE0");
+    response = waitForResponse("OK", 3000);
+    debug("HTTP response of ATE0: ");
+    debugln(response);
 
-  const char *response_char;
-
-  vTaskDelay(5000 / portTICK_PERIOD_MS); // EX5 FIX: was bare 5000 ticks = 50s
-  SerialSIT.println("AT+CLBS=4");
-  response = waitForResponse("+CLBS:", 10000);
+    vTaskDelay(5000 / portTICK_PERIOD_MS); 
+    SerialSIT.println("AT+CLBS=4");
+    response = waitForResponse("+CLBS:", 10000);
+    xSemaphoreGive(modemMutex);
+  } else {
+    debugln("[RTC] Error: Modem Mutex Timeout - deferring resync");
+    return;
+  }
+  
   vTaskDelay(200 / portTICK_PERIOD_MS);
   debug("Response of AT+CLBS=4 is ");
   debugln(response);
@@ -207,8 +212,9 @@ void resync_time() {
     // Robust Manual Parsing for +CLBS:
     // <err>,<lat>,<long>,<alt>,<year/mm/dd,hh:mm:ss> Handles SIMCOM 7672
     // response format variations (with or without quotes)
-    char *p = strchr(csqstr, ':');
+    const char *p = strchr(csqstr, ':');
     if (p) {
+
       p++; // Skip ':'
       tmp = atoi(p);
       p = strchr(p, ',');

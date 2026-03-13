@@ -643,6 +643,7 @@ void handleFileList() {
   String query = server.arg("search");
 
   String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta "
+
                 "name='viewport' "
                 "content='width=device-width, initial-scale=1.0'>";
   html += "<title>LOG FILES</title>";
@@ -717,11 +718,12 @@ void handleFileList() {
   }
   file.close(); // v5.49 Build 5: FIX LEAK
   file = root.openNextFile();
-}
-if (count == 0)
-  html += "<p>" + s_nf + "</p>";
-}
-else if (year == "") {
+
+  if (count == 0 && query.length() > 0)
+    html += "<p>" + s_nf + "</p>";
+
+  if (year == "") {
+
   // --- MODE: YEAR LIST (ROOT) ---
   html += "<h3>" + s_sy + "</h3>";
   bool years[100] = {0}; // 2000-2099 map
@@ -750,10 +752,12 @@ else if (year == "") {
       count++;
     }
   }
-  if (count == 0)
+  if (count == 0 && year == "")
     html += "<p>" + s_nf + "</p>";
-}
-else if (month == "") {
+  
+  if (year != "" && month == "") {
+
+
   // --- MODE: MONTH LIST (YEAR SELECTED) ---
   html += "<h3>" + year + " > " + s_sm + "</h3>";
   bool months[13] = {0}; // 1-12
@@ -788,10 +792,11 @@ else if (month == "") {
       count++;
     }
   }
-  if (count == 0)
-    html += "<p>No logs found for " + year + ".</p>";
-}
-else {
+      html += "<p>No logs found for " + year + ".</p>";
+
+  if (year != "" && month != "") {
+
+
   // --- MODE: FILE LIST (YEAR + MONTH SELECTED) ---
   html += "<h3>" + year + " > " + month + "</h3>";
   String filter = "_" + year + month; // Match ..._YYYYMM...
@@ -799,12 +804,11 @@ else {
   html += "</div>";
   count++;
 }
-file.close(); // v5.49 Build 5: FIX LEAK
-file = root.openNextFile();
-}
-if (count == 0)
-  html += "<p>No logs found for " + year + "-" + month + ".</p>";
-}
+    file.close(); // v5.49 Build 5: FIX LEAK
+    file = root.openNextFile();
+    if (count == 0)
+      html += "<p>No logs found for " + year + "-" + month + ".</p>";
+
 
 html += "<br>";
 if (month != "") {

@@ -102,7 +102,8 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             (fw.unit_type + str(fw.system_mode)): fw
             for fw in db.query(FirmwareRegistry).all()
         }
-        now = datetime.datetime.now()
+        
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
         # Summary card counts
         total       = len(reports)
@@ -213,7 +214,8 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
         setting = db.query(StationSettings).filter_by(stn_id=stn_id).first()
         is_exempt = (setting.ota_exempt == 1) if setting else False
 
-        now = datetime.datetime.now()
+        
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
         today = datetime.date.today()
         for r in history:
             if r.reported_at and r.reported_at.date() < today:
