@@ -1026,9 +1026,12 @@ int get_total_backlogs() {
       File f = SPIFFS.open(files[i], FILE_READ);
       if (f) {
         while (f.available()) {
-          if (f.read() == '\n')
+          String line = f.readStringUntil('\n');
+          line.trim();
+          if (line.length() > 10) {
             total++;
-          if (total % 100 == 0) esp_task_wdt_reset(); // Keep watchdog happy
+          }
+          if (total % 50 == 0) esp_task_wdt_reset(); // Keep watchdog happy
         }
         f.close();
       }

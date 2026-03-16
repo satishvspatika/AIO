@@ -81,6 +81,14 @@ def delete_station(stn_id: str, db: Session = Depends(get_db)):
     db.commit()
     return RedirectResponse(url="/dashboard")
 
+@router.get("/delete-category/{stn_id}/{unit_type}/{system}")
+def delete_station_category(stn_id: str, unit_type: str, system: int, db: Session = Depends(get_db)):
+    """Surgical delete: Removes a station only from a specific category (e.g. KSNDMC_TWS)."""
+    from app.models import HealthReport
+    db.query(HealthReport).filter_by(stn_id=stn_id, unit_type=unit_type, system=system).delete()
+    db.commit()
+    return RedirectResponse(url="/summary")
+
 @router.get("/delete/record/{report_id}")
 def delete_record(report_id: int, db: Session = Depends(get_db)):
     record = db.query(HealthReport).filter_by(id=report_id).first()

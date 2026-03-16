@@ -732,6 +732,13 @@ void prepare_data_and_send() {
   esp_task_wdt_reset();
   const char *charArray;
 
+  // v5.56: Global Sanity Check for record content
+  if (content.length() < 10 && data_mode == eUnsentData) {
+      debugln("[HTTP] Skip: Record too short/Empty");
+      success_count = 1; // Mark as success so it moves past the gap
+      return;
+  }
+
   if (data_mode == eCurrentData) {
 
     debugln();
@@ -763,16 +770,18 @@ void prepare_data_and_send() {
       File file1 = SPIFFS.open(temp_file, FILE_READ);
       if (!file1) {
         debugln("Failed to open temp_file for reading");
-        return; // Bug #10: add early return if file1 cannot be opened.
-      }         // #TRUEFIX
+        return; 
+      }         
       s = file1.size();
       s = (s > record_length) ? s - record_length : 0;
       file1.seek(s);
       content = file1.readString(); // Read the rest of the file
       file1.close();
     }
-    charArray = content.c_str();
   }
+
+  // v5.56: Ensure pointer follows current 'content' regardless of source
+  charArray = content.c_str(); 
 
   debugln();
   debugf1("Current Data to be sent is : %s", charArray);
@@ -1619,11 +1628,21 @@ void send_http_data() {
           SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
           waitForResponse("OK", 500);
 
+          static int uCount = 0;
+          uCount++;
           debugln();
           debug("Line Number ");
-          debugln((unsent_pointer_count + record_length) / record_length);
+          debugln(uCount);
           file1.seek(unsent_pointer_count);
-          content = file1.readStringUntil('\n'); // Read the rest of the file
+          content = file1.readStringUntil('\n'); 
+          unsent_pointer_count = file1.position(); // v5.56: Use actual file position (Variable length support)
+          
+          content.trim(); 
+          if (content.length() < 10) {
+            debugln("Skipping blank/invalid line in unsent backlog.");
+            continue; 
+          }
+          
           charArray = content.c_str();
 
           // Set the data mode
@@ -1653,7 +1672,6 @@ void send_http_data() {
             debugln("Pointer to unsent_file updated ...");
             break;
           }
-          unsent_pointer_count += record_length; // Go to next record
 
         } // while loop
 
@@ -2685,7 +2703,11 @@ void store_current_unsent_data() {
 
   File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
   if (file2) {
-    file2.println(finalStringBuffer); // v7.65: Force newline to prevent smashed records
+    String cleanData = String(finalStringBuffer);
+    cleanData.trim();
+    if (cleanData.length() > 0) {
+      file2.println(cleanData); // v5.56: Trimmed write prevents double-newline gaps
+    }
     file2.close();
   } else {
     debugln("Failed to open unsent.txt for appending (store_current)");
@@ -2742,8 +2764,10 @@ void store_current_unsent_data() {
 
   File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
   if (ftpfile2) {
-    if (strlen(ftpappend_text) > 0) {
-      ftpfile2.print(ftpappend_text); // Use proper semicolon FTP format
+    String cleanFtp = String(ftpappend_text);
+    cleanFtp.trim();
+    if (cleanFtp.length() > 0) {
+      ftpfile2.println(cleanFtp); // v5.56: Trimmed write prevents double-newline gaps
     } else {
       debugln("[FTP-Store] WARNING: ftpappend_text empty — skipping FTP queue write to avoid corruption.");
     }

@@ -170,10 +170,14 @@
                                      {% if request.state.user and (request.state.user.role == 'supervisor' or
                                     request.state.user.get('role') == 'supervisor') %}
                                     <div class="border-t border-slate-700 my-1"></div>
-                                    <a href="/delete/{{ r.stn_id }}"
+                                     <a href="/delete/{{ r.stn_id }}"
                                         class="block px-4 py-2 text-xs text-red-500 hover:bg-red-900/50"
-                                        onclick="return confirm('WARNING: Permanently delete ALL records for {{ r.stn_id }}?')">🗑
-                                        Delete Station</a>
+                                        onclick="return confirm('WARNING: Permanently delete ALL records for {{ r.stn_id }} everywhere?')">🗑
+                                        Delete Station (Global)</a>
+
+                                    <a href="/delete-category/{{ r.stn_id }}/{{ fw.unit_type }}/{{ fw.system_mode }}"
+                                        class="block px-4 py-2 text-xs text-orange-400 hover:bg-orange-900/40"
+                                        onclick="return confirm('Surgical Delete: Remove {{ r.stn_id }} ONLY from the {{ fw.display_name }} group? This will fix phantom entries if the device has moved to another category.')">✂ Remove from Group</a>
                                     {% endif %}
                                 </div>
                             </div>

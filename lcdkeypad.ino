@@ -810,9 +810,10 @@ void lcdkeypad(void *pvParameters) {
                last_seen_fld = cur_fld_no;
             }
             
-            // Only scan SPIFFS if the user lingers on the screen for 2+ seconds
+            // v5.56: Only scan SPIFFS if the user lingers on the screen for 0.5 sec
+            // This prevents menu stutter while scrolling but remains responsive.
             int backlogs = diag_backlog_total;
-            if (millis() - fld_entry_time > 2000) {
+            if (millis() - fld_entry_time > 500) {
               backlogs = get_total_backlogs();
             }
 

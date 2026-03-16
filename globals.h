@@ -106,15 +106,15 @@ void reset_all_diagnostics();
 void recoverI2CBus();
 
 /************************************************************************************************/
-#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "KSNDMC_TWS"; // UNIT :
+#define SYSTEM 0              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "BIHAR_TRG"; // UNIT :
 //                                0:  KSNDMC_TRG  BIHAR_TRG
 //                                1:  KSNDMC_TWS KSNDMC_TWS-AP
 //                                2:  KSNDMC_ADDON SPATIKA_GEN
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.56"
+#define FIRMWARE_VERSION "5.57"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
