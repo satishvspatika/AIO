@@ -63,6 +63,7 @@ def _all_fields_row(r):
         _g(r, "sd_sts"), _g(r, "calib"), _g(r, "ver"), _g(r, "carrier"), _g(r, "iccid"), _g(r, "gps"),
         _g(r, "ota_fails"), _g(r, "ota_fail_reason"),
         _g(r, "consec_http_fails"), _g(r, "consec_sim_fails"),
+        _g(r, "http_backlog_cnt", 0), _g(r, "mutex_fail", 0),    # v5.56
         " | ".join(evaluate(r).get("reasons", [])) or evaluate(r).get("verdict", "OK")
     ]
 
@@ -86,6 +87,7 @@ ALL_FIELDS_HEADER = [
     "SD_Card_Status", "Calibration_Info", "Firmware_Version", "Carrier", "ICCID", "GPS_LatLon",
     "OTA_Fails", "OTA_Fail_Reason",
     "Consec_HTTP_Fails", "Consec_SIM_Fails",
+    "HTTP_Backlog_Count", "Modem_Mutex_Fails",    # v5.56
     "Calculated_Verdict"
 ]
 

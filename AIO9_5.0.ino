@@ -171,7 +171,7 @@ void setup() {
     }
   } else if (healer_reboot_in_progress) {
     debugln("[BOOT] Maintenance Reboot Recovery. Preserving all Diagnostic & Sensor counters.");
-    healer_reboot_in_progress = false; // Reset for next time
+    // healer_reboot_in_progress is reset at the very end of setup
   } else {
     debugf("[BOOT] Preserving counters for reset reason: %d\n", (int)rr);
   }
@@ -972,11 +972,23 @@ void setup() {
   // We MUST anchor the 'last_raw' counters to the CURRENT hardware state
   // at the very end of setup, AFTER any ULP code loads or version-based resets.
   // This prevents 'deltas' from old garbage or initialization jumps.
-  last_raw_wind_count = wind_count.val;
-  last_raw_rf_count = rf_count.val;
-  last_sched_wind_pulses_32 = total_wind_pulses_32;
-  last_sched_rf_pulses_32 = total_rf_pulses_32;
-  debugf2("[BOOT] ULP Anchors Synced: Wind=%u, Rain=%u\n", last_raw_wind_count, last_raw_rf_count);
+  // CRITICAL FIX: Only do this on FRESH BOOT, otherwise we clear all pulses
+  // accumulated during Deep Sleep before the scheduler can read them!
+  // Note: rr == 5 is DEEPSLEEP_RESET. We NEVER sync here if rr == 5.
+  if ((rr == POWERON_RESET || rr == EXT_CPU_RESET || rr == SW_CPU_RESET) && !healer_reboot_in_progress) {
+    last_raw_wind_count = wind_count.val;
+    last_raw_rf_count = rf_count.val;
+    last_sched_wind_pulses_32 = total_wind_pulses_32;
+    last_sched_rf_pulses_32 = total_rf_pulses_32;
+    debugf2("[BOOT] ULP Anchors Synced: Wind=%u, Rain=%u\n", last_raw_wind_count, last_raw_rf_count);
+  } else {
+    debugf2("[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=%u, Rain=%u\n", last_raw_wind_count, last_raw_rf_count);
+  }
+
+  // Final cleanup of boot flags
+  if (healer_reboot_in_progress) {
+      healer_reboot_in_progress = false;
+  }
 }
 
 void progressCallBack(size_t currSize, size_t totalSize) {
@@ -1252,7 +1264,7 @@ void ULP_COUNTING(uint32_t us) {
 
       // States are different, start debouncing
       I_MOVI(R3, 0), I_ST(R2, R3, U_PREV_STATE), // prev_state = current
-      I_MOVI(R0, 25),                            // v7.93: Debounce increased to 25ms
+      I_MOVI(R0, 10),                            // v7.95: Debounce set to 10ms
       I_ST(R0, R3, U_DEBOUNCE_CNT),
       M_BX(4), // Skip to next sensor while debouncing
 

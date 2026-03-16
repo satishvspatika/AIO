@@ -61,6 +61,8 @@ class HealthReport(Base):
     unsent_count     = Column(Integer, default=0)
     http_present_fails = Column(Integer, default=0)
     http_cum_fails   = Column(Integer, default=0)
+    http_backlog_cnt = Column(Integer, default=0) # v7.70
+    mutex_fail       = Column(Integer, default=0) # v5.55
     last_cmd_id      = Column(Integer, default=0) # v7.92
     last_cmd_res     = Column(String, default="N/A") # v7.92
     reported_at      = Column(DateTime, server_default=func.now())

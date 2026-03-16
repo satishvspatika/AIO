@@ -162,16 +162,26 @@ bool try_activate_apn(const char *apn) {
   debug("Trying APN: ");
   debugln(apn);
 
-  // 1. Force Deactivation of all known BSNL contexts for a clean state (Rule
-  // 21)
-  SerialSIT.println("AT+CGACT=0,1");
-  waitForResponse("OK", 3000);
-  SerialSIT.println("AT+CGACT=0,6");
-  waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CGACT=0,8");
-  waitForResponse("OK", 1000);
-  vTaskDelay(5000 /
-             portTICK_PERIOD_MS); // v7.11: Increased to 5s for Rule 24 (2G)
+  // 1. Exhaustive Context Cleanup (v5.56 Healer)
+  // Query what's currently active and kill it all.
+  SerialSIT.println("AT+CGACT?");
+  String active_resp = waitForResponse("OK", 3000);
+  int start_pos = 0;
+  while ((start_pos = active_resp.indexOf("+CGACT: ", start_pos)) != -1) {
+    int comma = active_resp.indexOf(',', start_pos);
+    int space = active_resp.indexOf(' ', start_pos);
+    if (comma != -1 && space != -1) {
+      int cid = active_resp.substring(space + 1, comma).toInt();
+      int status = active_resp.substring(comma + 1, comma + 2).toInt();
+      if (status == 1) { // If active, kill it
+        debugf("[GPRS] Cleanup: Deactivating Ghost CID:%d\n", cid);
+        SerialSIT.printf("AT+CGACT=0,%d\r\n", cid);
+        waitForResponse("OK", 3000);
+      }
+    }
+    start_pos += 7;
+  }
+  vTaskDelay(2000 / portTICK_PERIOD_MS); // v7.11: Stabilization
 
   // v7.13: Resilient CPIN Handshake (Rule 23)
   // The SIM controller may be busy post-refresh. Wait and retry.

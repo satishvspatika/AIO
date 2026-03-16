@@ -99,6 +99,8 @@ def migrate():
         ("consec_http_fails","INTEGER", "0"),
         ("consec_sim_fails", "INTEGER", "0"),
         ("unsent_count",     "INTEGER", "0"),
+        ("http_backlog_cnt", "INTEGER", "0"),
+        ("mutex_fail",       "INTEGER", "0"),
     ]:
         try:
             cursor.execute(f"ALTER TABLE health_reports ADD COLUMN {col} {dtype} DEFAULT {default};")

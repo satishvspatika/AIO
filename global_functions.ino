@@ -953,6 +953,8 @@ void reset_all_diagnostics() {
   diag_reg_count = 0;
   diag_reg_time_total = 0;
   diag_reg_worst = 0;
+  diag_modem_mutex_fails = 0; // v5.55
+  diag_backlog_total = 0;     // v5.55
   strcpy(diag_reg_fail_type, "NONE");
 
   // Pulse / Accuracy counters (v5.49)
@@ -966,6 +968,12 @@ void reset_all_diagnostics() {
 
   // Sensor diagnostic flags
   diag_ws_same_count = 0;
+  temp_same_count = 0;
+  hum_same_count = 0;
+  prev_15min_temp = INITIAL_PREV_TEMP;
+  prev_15min_hum = INITIAL_PREV_HUM;
+  prev_15min_ws = 0.0;
+  
   diag_temp_cv = false;
   diag_hum_cv = false;
   diag_ws_cv = false;
@@ -982,6 +990,7 @@ void reset_all_diagnostics() {
   strcpy(diag_cdm_status, "PENDING");
   strcpy(diag_http_fail_reason, "NONE");
   diag_rejected_count = 0;
+  diag_sensor_fault_sent_today = false;
 
   // Masks
   for (int i = 0; i < 3; i++) {
@@ -993,6 +1002,39 @@ void reset_all_diagnostics() {
   health_last_sent_day = -1;
   health_last_sent_hour = -1;
   diag_last_rollover_day = -1;
+  diag_http_success_count = 0;
+  diag_http_retry_count = 0;
+  diag_ftp_success_count = 0;
+  diag_http_present_fails = 0;
+  diag_http_cum_fails = 0;
+  diag_cum_fail_reset_month = -1;
 
   debugln("[SYS] Diagnostics cleaned.");
+}
+
+int get_total_backlogs() {
+  static unsigned long last_backlog_check = 0;
+  // If we checked in the last 10 seconds, return the cached value
+  if (last_backlog_check > 0 && (millis() - last_backlog_check < 10000)) {
+    return diag_backlog_total;
+  }
+
+  int total = 0;
+  const char *files[] = {"/unsent.txt", "/ftpunsent.txt"};
+  for (int i = 0; i < 2; i++) {
+    if (SPIFFS.exists(files[i])) {
+      File f = SPIFFS.open(files[i], FILE_READ);
+      if (f) {
+        while (f.available()) {
+          if (f.read() == '\n')
+            total++;
+          if (total % 100 == 0) esp_task_wdt_reset(); // Keep watchdog happy
+        }
+        f.close();
+      }
+    }
+  }
+  diag_backlog_total = total;
+  last_backlog_check = millis();
+  return total;
 }

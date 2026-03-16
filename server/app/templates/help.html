@@ -93,24 +93,34 @@
                 <tr>
                     <td class="py-2 pr-4 text-red-400 font-mono font-bold">TH-Er</td>
                     <td class="py-2 pr-4 text-slate-300">Temp / Humidity</td>
-                    <td class="py-2 text-slate-400">Firmware fails to communicate with the HDC1080 sensor over the
-                        <strong class="text-white">I²C bus</strong>. Detected if the sensor address does not respond or
-                        returns a "Bus Busy" error.
+                    <td class="py-2 text-slate-400">
+                        <ul class="list-disc ml-4 space-y-1">
+                            <li><strong class="text-white">I²C Failure:</strong> Bus busy or address not responding (<code class="text-red-300">Temp_E</code>).</li>
+                            <li><strong class="text-white">Stuck Sensor:</strong> Reading hasn't changed by 0.01 for 10 hours (<code class="text-red-300">TEMP_STUCK</code>).</li>
+                            <li><strong class="text-white">Unreal Value:</strong> Reading outside physical limits of 2°C–45°C (<code class="text-red-300">TEMP_UNREAL</code>).</li>
+                        </ul>
                     </td>
                 </tr>
                 <tr>
                     <td class="py-2 pr-4 text-red-400 font-mono font-bold">RF-Er</td>
                     <td class="py-2 pr-4 text-slate-300">Rainfall</td>
-                    <td class="py-2 text-slate-400">Detected if the tipping bucket reed switch input remains in a fixed,
-                        illegal state or if the cumulative count fails an internal consistency check during startup.
+                    <td class="py-2 text-slate-400">
+                        <ul class="list-disc ml-4 space-y-1">
+                            <li><strong class="text-white">Spike:</strong> >10mm jump in a single 15-min slot (<code class="text-red-300">RAIN_SPIKE</code>).</li>
+                            <li><strong class="text-white">Counter Reset:</strong> Cumulative count decreased without a rollover (<code class="text-red-300">RAIN_RESET</code>).</li>
+                            <li><strong class="text-white">Calculation Error:</strong> Internal pulse-to-mm math mismatch (<code class="text-red-300">RAIN_CALC</code>).</li>
+                        </ul>
                     </td>
                 </tr>
                 <tr>
                     <td class="py-2 pr-4 text-red-400 font-mono font-bold">WS-Er</td>
                     <td class="py-2 pr-4 text-slate-300">Wind Speed</td>
-                    <td class="py-2 text-slate-400">Detected when the frequency output from the anemometer is logically
-                        impossible (e.g. constant zero during periods of high wind pressure) or if the pulse counter
-                        circuit is open.</td>
+                    <td class="py-2 text-slate-400">
+                        <ul class="list-disc ml-4 space-y-1">
+                            <li><strong class="text-white">Stuck Sensor:</strong> Speed constant at 0.00 while other factors imply wind (<code class="text-red-300">WS_STUCK</code>).</li>
+                            <li><strong class="text-white">Unreal Value:</strong> Speed recorded > 60 m/s (216 km/h) — likely electrical noise (<code class="text-red-300">WS_UNREAL</code>).</li>
+                        </ul>
+                    </td>
                 </tr>
                 <tr>
                     <td class="py-2 pr-4 text-red-400 font-mono font-bold">WD-Er</td>
@@ -124,6 +134,12 @@
                     <td class="py-2 pr-4 text-slate-300">Real-Time Clock</td>
                     <td class="py-2 text-slate-400">Detected if the <strong class="text-white">DS1307</strong> module
                         returns an invalid date/time (e.g. Year 1970) or fails to respond to I²C polling.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">MUTEX-Er</td>
+                    <td class="py-2 pr-4 text-slate-300">Modem Contention</td>
+                    <td class="py-2 text-slate-400">Indicates the firmware timed out (15s) waiting for the <strong class="text-white">Modem Mutex</strong>.
+                        Signals internal software contention or a task hanging while holding the modem.</td>
                 </tr>
                 <tr>
                     <td class="py-2 pr-4 text-red-400 font-mono font-bold">SYS-Er</td>
@@ -273,8 +289,9 @@
     <div class="card p-5 mb-6">
         <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">⚡ Command Buttons Explained</h2>
         <p class="text-xs text-slate-500 mb-4">Commands are queued on the server and delivered to the device on its
-            <strong class="text-white">next health check-in</strong>. The device checks in every 15 minutes, or
-            immediately when you press SELECT on the keypad. Commands are never pushed — they wait to be pulled.
+            <strong class="text-white">next health check-in</strong>. The device checks in every 15 minutes, at 11:00 AM daily, 
+            or <strong class="text-yellow-400">immediately when a sensor fault is detected</strong> (one-time report).
+            Commands are never pushed — they wait to be pulled.
         </p>
         <div class="space-y-4">
             <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">

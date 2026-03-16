@@ -196,13 +196,38 @@ void gprs(void *pvParameters) {
           get_registration();
           get_a7672s();
 
-          strcpy(ui_data[target_fld].bottomRow, "SENDING...");
+          strcpy(ui_data[target_fld].bottomRow, "SENDING HEALTH..");
 #if ENABLE_HEALTH_REPORT == 1
-          send_health_report(false); // Manual trigger: NO JITTER
+          bool health_ok = send_health_report(false); // Manual trigger: NO JITTER
+          if (health_ok) {
+            strcpy(ui_data[target_fld].bottomRow, "HLTH: OK, SMS...");
+          } else {
+            strcpy(ui_data[target_fld].bottomRow, "HLTH FAIL, SMS..");
+          }
 #else
           debugln("[Health] Manual send skipped (disabled).");
+          strcpy(ui_data[target_fld].bottomRow, "SENDING SMS...");
 #endif
+          vTaskDelay(2000 / portTICK_PERIOD_MS);
+          
           prepare_and_send_status(universalNumber);
+
+          if (msg_sent) {
+#if ENABLE_HEALTH_REPORT == 1
+            if (health_ok) strcpy(ui_data[target_fld].bottomRow, "H:OK S:OK");
+            else strcpy(ui_data[target_fld].bottomRow, "H:FAIL S:OK");
+#else
+            strcpy(ui_data[target_fld].bottomRow, "SMS SUCCESS");
+#endif
+          } else {
+#if ENABLE_HEALTH_REPORT == 1
+            if (health_ok) strcpy(ui_data[target_fld].bottomRow, "H:OK S:FAIL");
+            else strcpy(ui_data[target_fld].bottomRow, "H:FAIL S:FAIL");
+#else
+            strcpy(ui_data[target_fld].bottomRow, "SMS FAILED");
+#endif
+          }
+
           if (sync_mode == eSMSStart)
             sync_mode = eSMSStop;
         } else if (sync_mode == eGPSStart) {
@@ -326,22 +351,13 @@ void gprs(void *pvParameters) {
             xSemaphoreGive(serialMutex);
           }
 
-          // v7.67: Health Schedule restricted to 1 Daily Window
-          // Window 1 → 11:00 AM: Primary report (after FTP/backlogs clear,
-          //                       all of yesterday's data accounted for).
-          // Within the hour window, we retry every 15-min until success.
-          // 'health_last_sent_day' is only updated on SUCCESS so retries
-          // happen automatically until the window closes at the next hour.
+          // v5.48 Daily Health Triggering (11:00 AM Primary)
           bool is_health_time = false;
           if (TEST_HEALTH_EVERY_SLOT == 1) {
             is_health_time = true;
           } else {
-            if (current_hour == 11) {
-              // Allow entry if this hour/day hasn't been successfully reported
-              if (health_last_sent_day != current_day ||
-                  health_last_sent_hour != current_hour) {
-                is_health_time = true;
-              }
+            if (current_hour == 11 && health_last_sent_day != current_day) {
+              is_health_time = true;
             }
           }
 
@@ -350,13 +366,24 @@ void gprs(void *pvParameters) {
           if (diag_fw_just_updated && gprs_mode == eGprsSignalOk) {
             is_ota_confirm = true;
             diag_fw_just_updated = false; // Reset persistent flag
-            strcpy(last_cmd_res, "Success: OTA Updated");
             strcpy(diag_cdm_status, "Firmware Updated");
             // Refresh Location via Fresh CLBS
             get_gps_coordinates();
           }
 
-          if (is_health_time || is_ota_confirm) {
+          // v5.55: One-time sensor fault trigger (Non-11:00 AM)
+          bool is_sensor_fault_trigger = false;
+          bool has_sensor_issue = diag_temp_cv || diag_hum_cv || diag_ws_cv || 
+                                 diag_temp_erv || diag_hum_erv || diag_ws_erv || 
+                                 diag_temp_erz || diag_hum_erz || diag_rain_jump ||
+                                 diag_rain_reset || diag_rain_calc_invalid;
+
+          if (has_sensor_issue && !diag_sensor_fault_sent_today && current_hour != 11) {
+              is_sensor_fault_trigger = true;
+              debugln("[Health] 🚨 Sensor issue detected! Triggering one-time fault report.");
+          }
+
+          if (is_health_time || is_ota_confirm || is_sensor_fault_trigger) {
             health_in_progress = true; // Block deep sleep
           }
 
@@ -395,6 +422,13 @@ void gprs(void *pvParameters) {
               // within the same hour window on failure.
               health_last_sent_day = current_day;
               health_last_sent_hour = current_hour;
+              
+              // v5.55: One-time fault successful - mark it so we don't spam
+              if (is_sensor_fault_trigger) {
+                diag_sensor_fault_sent_today = true;
+                debugln("[Health] One-time sensor fault report marked as SENT.");
+              }
+              
               debugln("[Health] \u2705 Report sent successfully!");
               if (strcmp(diag_cdm_status, "PENDING") == 0) {
                 strcpy(diag_cdm_status,
@@ -930,14 +964,16 @@ void prepare_data_and_send() {
   if (success_count == 1) {
     diag_consecutive_http_fails = 0; // v5.49 Build 5: Reset fail streaks
     diag_consecutive_reg_fails = 0;
+    
+    // v7.70+: PR counter resets on ANY successful HTTP/FTP (Current or Backlog)
+    diag_http_present_fails = 0;
+    snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
+             sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
+             diag_http_present_fails, diag_http_cum_fails, get_total_backlogs());
+
     if (data_mode == eCurrentData) {
       diag_first_http_count++;
       diag_http_success_count++; // v7.86 Track total live HTTP successes
-      // v7.70: Present fails resets on any current-slot success
-      diag_http_present_fails = 0;
-      snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
-               sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "PR:%d CUM:%d",
-               diag_http_present_fails, diag_http_cum_fails);
     } else if (data_mode == eUnsentData) {
       diag_http_retry_count++; // v7.86 Track total backlog HTTP successes
     }
@@ -1051,14 +1087,16 @@ void prepare_data_and_send() {
       if (success_count == 1) {
         diag_consecutive_reg_fails = 0;
         diag_consecutive_http_fails = 0;
+
+        // v7.70+: Reset present fails on successful backlog retry too
+        diag_http_present_fails = 0;
+        snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
+                 sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
+                 diag_http_present_fails, diag_http_cum_fails, get_total_backlogs());
+
         if (data_mode == eCurrentData) {
-          // v7.70: Retry succeeded — reset present fails
-          diag_http_present_fails = 0;
           diag_http_success_count++; // v7.86
           diag_first_http_count++;   // v7.86
-          snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
-                   sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "PR:%d CUM:%d",
-                   diag_http_present_fails, diag_http_cum_fails);
         } else if (data_mode == eUnsentData) {
           diag_http_retry_count++; // v7.86
         }
@@ -1078,17 +1116,17 @@ void prepare_data_and_send() {
       diag_consecutive_http_fails++;
       diag_daily_http_fails++;
       if (data_mode == eCurrentData) {
-        // v7.70: Monthly cum reset on 1st of month
-        if (current_day == 1 && diag_cum_fail_reset_month != current_month) {
+        // v7.70: Monthly cum reset logic (Robust: any day of new month triggers it)
+        if (current_month > 0 && diag_cum_fail_reset_month != current_month) {
           diag_http_cum_fails = 0;
           diag_cum_fail_reset_month = current_month;
-          debugln("[HTTP] Monthly cum fail counter reset (1st of month).");
+          debugln("[HTTP] Monthly cum fail counter reset (New Month detected).");
         }
         diag_http_present_fails++;
         diag_http_cum_fails++;
         snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
-                 sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "PR:%d CUM:%d",
-                 diag_http_present_fails, diag_http_cum_fails);
+                 sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
+                 diag_http_present_fails, diag_http_cum_fails, get_total_backlogs());
       }
       debugf1("[RECOVERY] Consec HTTP Fails: %d", diag_consecutive_http_fails);
       debugf1(" | Present: %d", diag_http_present_fails);
@@ -1255,6 +1293,7 @@ void prepare_data_and_send() {
 void send_http_data() {
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
     debugln("[GPRS] Error: Modem Mutex Timeout - deferring HTTP send");
+    diag_modem_mutex_fails++;
     return;
   }
   
@@ -1652,33 +1691,33 @@ void send_http_data() {
     // diag_daily_http_fails is already incremented inside send_at_cmd_data().
   }
 
-#if (SYSTEM == 1 || SYSTEM == 2)
-  // v5.49 Build 5: INDEPENDENT FTP TRIGGER
-  // Decoupled from HTTP Success. FTP serves as the robust rescue layer.
-  if (gprs_mode == eGprsSignalOk && (signal_lvl > -96)) {
-    send_unsent_data();
-  }
-#endif
-
   // v5.64: Pruned buffers & Selective SMS
   SerialSIT.println("AT+HTTPTERM");
   waitForResponse("OK", 3000);
   vTaskDelay(1000 / portTICK_PERIOD_MS);
 
+  // v5.50: Restore URCs BEFORE releasing mutex (Modem sequence finishing)
+  SerialSIT.println("AT+CGEREP=2");
+  waitForResponse("OK", 1000);
+
+  xSemaphoreGive(modemMutex); // v5.55: Release modem early to allow sub-calls to take it
+  
+#if (SYSTEM == 1 || SYSTEM == 2)
+  // v5.49 Build 5: INDEPENDENT FTP TRIGGER
+  // Decoupled from HTTP Success. FTP serves as the robust rescue layer.
+  if (gprs_mode == eGprsSignalOk && (signal_lvl > -96)) {
+    send_unsent_data(); // This function will internally take modemMutex
+  }
+#endif
+
   // v5.65 Selective SMS Check: Guaranteed once an hour (at Minute 0 slot)
   if (record_min == 0) {
     sync_mode = eSMSStart;
-    send_sms();
+    send_sms(); // This function will internally take modemMutex
   } else {
     debugln("[GPRS] Skipping SMS check (hourly task).");
     sync_mode = eHttpStop;
   }
-
-  // v5.50: Restore URCs for the rest of the cycle
-  SerialSIT.println("AT+CGEREP=2");
-  waitForResponse("OK", 1000);
-
-  xSemaphoreGive(modemMutex); // v5.55: Release modem for other tasks (like RTC sync)
 } // end of send_http_data
 
 void send_daily_file(
@@ -1954,6 +1993,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
 
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
     debugln("[FTP] Error: Modem Mutex Timeout - deferring upload");
+    diag_modem_mutex_fails++;
     return;
   }
 
@@ -2167,6 +2207,13 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
           diag_ftp_success_count++; // v5.52 ENH-1: Increment success counter
           diag_consecutive_reg_fails =
               0; // RESET counter on any successful data upload
+
+          // v7.70+: PR counter resets on successful FTP backlog too
+          diag_http_present_fails = 0;
+          snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
+                   sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
+                   diag_http_present_fails, diag_http_cum_fails, get_total_backlogs());
+
           markFileAsDelivered(fileName); // v5.48 Track recovered records
 
           if (isDailyFTP) { // If Daily FTP is successful,
@@ -2716,16 +2763,16 @@ void store_current_unsent_data() {
   // This covers SIM errors, signal failures, and any reason HTTP was not attempted.
   // PR (present) increments every slot missed; CUM increments permanently (monthly reset).
   // PR is reset to 0 only upon a successful HTTP POST (in send_http_data()).
-  if (current_day == 1 && diag_cum_fail_reset_month != current_month) {
+  if (current_month >0 && diag_cum_fail_reset_month != current_month) {
     diag_http_cum_fails = 0;
     diag_cum_fail_reset_month = current_month;
-    debugln("[STORE] Monthly cum fail counter reset (1st of month).");
+    debugln("[STORE] Monthly cum fail counter reset (New Month detected).");
   }
   diag_http_present_fails++;
   diag_http_cum_fails++;
   snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
-           sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "PR:%d CUM:%d",
-           diag_http_present_fails, diag_http_cum_fails);
+           sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
+           diag_http_present_fails, diag_http_cum_fails, get_total_backlogs());
   debugf1("[STORE] HTTP miss counted. Present: %d", diag_http_present_fails);
   debugf1(" | CumMth: %d\n", diag_http_cum_fails);
 
@@ -3282,6 +3329,12 @@ void get_registration() {
               strcpy(diag_reg_fail_type, "SEARCHING");
             } else if (qreg == 3) {
               strcpy(diag_reg_fail_type, "DENIED");
+              // v5.56: Immediate Recovery for Denied status
+              debugln("[GPRS] Tower DENIED (3). Attempting CGATT Reset...");
+              SerialSIT.println("AT+CGATT=0");
+              waitForResponse("OK", 3000);
+              SerialSIT.println("AT+CGATT=1");
+              waitForResponse("OK", 3000);
             } else {
               snprintf(diag_reg_fail_type, sizeof(diag_reg_fail_type),
                        "UNKNOWN(%d)", qreg);
@@ -3312,6 +3365,15 @@ void get_registration() {
     debugf1("Registration failed. Consecutive fails: %d/10\n",
             diag_consecutive_reg_fails);
 
+    // v5.56: Aggressive Modem Reset before full system reboot
+    if (diag_consecutive_reg_fails == 4 || diag_consecutive_reg_fails == 8) {
+      debugln("[GPRS] Persistent failure. Triggering MODEM HARD RESET (GPIO 26)...");
+      digitalWrite(26, LOW);
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
+      digitalWrite(26, HIGH);
+      vTaskDelay(5000 / portTICK_PERIOD_MS);
+    }
+
     if (diag_consecutive_reg_fails >= 10) {
       debugln("[GPRS] PERSISTENT REG FAIL. Resetting system...");
       vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -3339,6 +3401,31 @@ void get_a7672s() {
   SerialSIT.println("AT+CGACT?");
   response = waitForResponse("OK", 3000);
   debugln("CGACT Status: " + response);
+
+  // v5.56: Ghost Context Healer
+  // If we see any active contexts other than 1, 5, or 8, we must kill them.
+  // 2G networks often only allow ONE active context; a ghost like CID:9 
+  // will cause "Unknown Error" on CID:1 activation.
+  bool found_ghost = false;
+  int start_pos = 0;
+  while ((start_pos = response.indexOf("+CGACT: ", start_pos)) != -1) {
+    int comma = response.indexOf(',', start_pos);
+    int space = response.indexOf(' ', start_pos);
+    if (comma != -1 && space != -1) {
+      int cid = response.substring(space + 1, comma).toInt();
+      int status = response.substring(comma + 1, comma + 2).toInt();
+      if (status == 1 && cid != 1 && cid != 5 && cid != 8) {
+        debugf("[GPRS] Killing Ghost Context CID:%d\n", cid);
+        SerialSIT.printf("AT+CGACT=0,%d\r\n", cid);
+        waitForResponse("OK", 3000);
+        found_ghost = true;
+      }
+    }
+    start_pos += 7;
+  }
+  if (found_ghost) {
+     vTaskDelay(1000 / portTICK_PERIOD_MS); // Let stack stabilize
+  }
 
   active_cid = 0;
   // Prioritize 1 (Default) if active, then 5, 8.
@@ -4760,6 +4847,7 @@ void send_at_cmd(char *cmd, char *check, char *spl) {
 bool send_health_report(bool useJitter) {
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
      debugln("[Health] Error: Modem Mutex Timeout - deferring report");
+     diag_modem_mutex_fails++;
      return false;
   }
 
@@ -4825,6 +4913,18 @@ bool send_health_report(bool useJitter) {
     H_FAULT("NDM");
   if (lati == 0.0 && longi == 0.0)
     H_FAULT("NO_GPS");
+  
+  // v5.55: Add Sensor Diagnostics to Health Status
+  if (diag_temp_cv) H_FAULT("TEMP_STUCK");
+  if (diag_hum_cv) H_FAULT("HUM_STUCK");
+  if (diag_ws_cv) H_FAULT("WS_STUCK");
+  if (diag_temp_erv || diag_temp_erz) H_FAULT("TEMP_UNREAL");
+  if (diag_hum_erv || diag_hum_erz) H_FAULT("HUM_UNREAL");
+  if (diag_ws_erv) H_FAULT("WS_UNREAL");
+  if (diag_rain_jump) H_FAULT("RAIN_SPIKE");
+  if (diag_rain_reset) H_FAULT("RAIN_RESET");
+  if (diag_rain_calc_invalid) H_FAULT("RAIN_CALC");
+
   if (h_status[0] == '\0')
     strcpy(h_status, "OK");
 
@@ -4891,7 +4991,9 @@ bool send_health_report(bool useJitter) {
       "\"ver\":\"%s\",\"iccid\":\"%s\",\"gps\":\"%s\","
       "\"cdm_sts\":\"%s\","
       "\"calib\":\"%s\"," // v7.86
-      "\"ndm_cnt\":%d,\"pd_cnt\":%d"
+      "\"ndm_cnt\":%d,\"pd_cnt\":%d,"
+      "\"http_present_fails\":%d,\"http_cum_fails\":%d,"
+      "\"http_backlog_cnt\":%d,\"mutex_fail\":%d"
       "%s}", // v7.92: Custom Feedback Block
       cleanStn, UNIT, SYSTEM, h_status, sensor_info,
       (diag_rtc_battery_ok ? 1 : 0), li_bat_val, solar_val, signal_lvl,
@@ -4912,6 +5014,9 @@ bool send_health_report(bool useJitter) {
       diag_cdm_status, // cdm_sts → server evaluates CDM from this
       calib_report,    // calibration info
       diag_ndm_count, diag_pd_count,
+      diag_http_present_fails, diag_http_cum_fails,
+      get_total_backlogs(),
+      diag_modem_mutex_fails,
       feedback); // v7.92
 
   if (useJitter)
@@ -4960,20 +5065,24 @@ bool send_health_report(bool useJitter) {
     SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
     waitForResponse("OK", 1000);
 
-    // Headers & Format
+      // Headers & Format
     if (!step_fail) {
       debugf1("[Health] Payload size: %d bytes\n", msgLen);
 
+      // Pre-flush to remove any stray URCs (+CGEV etc) that block the parser
+      flushSerialSIT();
+
       char ht_data_cmd[64];
-      // v7.75: Increased prompt wait to 10s for high-latency 2G
-      snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,5000", msgLen);
+      // v7.75: Increased prompt wait to 10s for high-latency 2G (increased to 15s in v5.56)
+      snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,15000", msgLen);
       SerialSIT.println(ht_data_cmd);
 
       String act = "";
-      if (waitForResponse("DOWNLOAD", 12000).indexOf("DOWNLOAD") != -1) {
+      // Give massive allowance (25 seconds) for 2G network to allocate HTTP socket buffer space
+      if (waitForResponse("DOWNLOAD", 25000).indexOf("DOWNLOAD") != -1) {
         vTaskDelay(200 / portTICK_PERIOD_MS);
         SerialSIT.write(jsonBody, msgLen);
-        if (waitForResponse("OK", 6000).indexOf("OK") != -1) {
+        if (waitForResponse("OK", 10000).indexOf("OK") != -1) {
 
           SerialSIT.println("AT+HTTPACTION=1");
           waitForResponse("OK", 3000);

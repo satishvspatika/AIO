@@ -404,8 +404,7 @@ void scheduler(void *pvParameters) {
       //                            // Find current avg wind speed as there are
       //                            4 teeths and 15*60 secs in 15mins time
       //                            interval
-      avgPulsesPerSecond = totalWindPulses / NUM_OF_TEETH /
-                           AVG_WS_DURATION_SECONDS; // 15 mins = 900s
+      avgPulsesPerSecond = totalWindPulses / AVG_WS_DURATION_SECONDS; // 15 mins = 900s
       cur_avg_wind_speed =
           WS_CALIBRATION_FACTOR *
           avgPulsesPerSecond; // factor is 2*pi*r (r is 7cms) //
@@ -435,9 +434,20 @@ void scheduler(void *pvParameters) {
       }
 #endif
 
-      while (current_year == 0) {
-        debugln("Scheduler: Waiting for RTC sync...");
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
+      {
+        // v5.55: Added 30s safety timeout to prevent indefinite hang on first boot
+        // if RTC is dead.
+        uint32_t rtc_wait_start = millis();
+        while (current_year == 0) {
+          if (millis() - rtc_wait_start > 30000) {
+            debugln("[SCHED] Error: RTC Wait Timeout (30s). Bypassing to prevent "
+                    "task hang.");
+            break;
+          }
+          debugln("Scheduler: Waiting for RTC sync...");
+          vTaskDelay(2000 / portTICK_PERIOD_MS);
+          esp_task_wdt_reset();
+        }
       }
       debugln("Scheduler: RTC Sync acquired.");
 
@@ -543,6 +553,19 @@ void scheduler(void *pvParameters) {
 
       prev_15min_temp = check_temp;
       prev_15min_hum = check_hum;
+
+      // 3. Wind Speed Checks
+      if (cur_avg_wind_speed < 0.0 || cur_avg_wind_speed > 60.0)
+        diag_ws_erv = true;
+
+      if (abs(cur_avg_wind_speed - prev_15min_ws) < 0.01) {
+        diag_ws_same_count++;
+        if (diag_ws_same_count >= 40)
+          diag_ws_cv = true;
+      } else {
+        diag_ws_same_count = 0;
+      }
+      prev_15min_ws = cur_avg_wind_speed;
 
       // --- START OF PRODUCTION SNAPSHOT ---
       // These buffers are now PROTECTED. background tasks (tempHum) no longer
@@ -730,12 +753,18 @@ void scheduler(void *pvParameters) {
           diag_http_success_count_prev = diag_http_success_count;
           diag_http_retry_count_prev = diag_http_retry_count;
           diag_ftp_success_count_prev = diag_ftp_success_count;
-
           diag_reg_count = 0;
           diag_reg_worst = 0;
           diag_gprs_fails = 0;
           diag_pd_count = 0;
           diag_ndm_count = 0;
+          diag_http_time_total = 0;
+          diag_ftp_time_total = 0;
+          diag_daily_http_fails = 0;
+          diag_http_success_count = 0;
+          diag_http_retry_count = 0;
+          diag_ftp_success_count = 0;
+          diag_sensor_fault_sent_today = false; // Reset daily fault report flag
           diag_first_http_count = 0;
         } // End of destructive reset
 

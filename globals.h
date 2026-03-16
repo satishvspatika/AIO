@@ -106,7 +106,7 @@ void reset_all_diagnostics();
 void recoverI2CBus();
 
 /************************************************************************************************/
-#define SYSTEM 1               // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
 char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 //                                0:  KSNDMC_TRG  BIHAR_TRG
 //                                1:  KSNDMC_TWS KSNDMC_TWS-AP
@@ -114,7 +114,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.55"
+#define FIRMWARE_VERSION "5.56"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
@@ -234,8 +234,8 @@ LiquidCrystal_I2C
 SemaphoreHandle_t i2cMutex;
 SemaphoreHandle_t serialMutex;
 SemaphoreHandle_t modemMutex; // v5.55: Synchronize modem access
-SemaphoreHandle_t fsMutex; // v6.78: Mutex to prevent corruption between OTA
-                           // write and Scheduler write
+SemaphoreHandle_t fsMutex;    // v6.78: Mutex to prevent corruption between OTA
+                              // write and Scheduler write
 // SemaphoreHandle_t dataMutex;
 
 RTC_DS1307 rtc; //  RTC
@@ -418,14 +418,18 @@ RTC_DATA_ATTR bool isLTE = false;         // Track if on LTE vs GSM fallback
 // at globals.h
 RTC_DATA_ATTR float prev_15min_temp = INITIAL_PREV_TEMP;
 RTC_DATA_ATTR float prev_15min_hum = INITIAL_PREV_HUM;
+RTC_DATA_ATTR float prev_15min_ws = 0.0;
 RTC_DATA_ATTR int temp_same_count = 0;
 RTC_DATA_ATTR int hum_same_count = 0;
 
 // Field Diagnostic Insights (v5.2) - Tracked across resets
 RTC_DATA_ATTR int diag_reg_time_total = 0; // Cumulative seconds
+RTC_DATA_ATTR int diag_backlog_total = 0;  // v7.70
 RTC_DATA_ATTR int diag_reg_count = 0;      // Number of cycles
 RTC_DATA_ATTR int diag_reg_worst = 0;      // Max seconds for single reg
 RTC_DATA_ATTR int diag_gprs_fails = 0;     // Total registration timeouts
+RTC_DATA_ATTR int diag_modem_mutex_fails =
+    0; // v5.55: Resource contention tracker
 RTC_DATA_ATTR int diag_last_reset_reason = 0;
 RTC_DATA_ATTR bool diag_rtc_battery_ok = true;
 RTC_DATA_ATTR int diag_consecutive_reg_fails = 0;
@@ -456,6 +460,8 @@ RTC_DATA_ATTR int diag_cum_fail_reset_month =
     -1; // v7.70: Last month cum counter was reset
 RTC_DATA_ATTR int diag_rejected_count =
     0; // Track consecutive "Rejected" (Time) errors
+RTC_DATA_ATTR bool diag_sensor_fault_sent_today =
+    false; // v5.55: One-time fault trigger
 
 // Accuracy Counters (v5.49): Use 32-bit accumulators to prevent 16-bit ULP
 // wraps and spikes
@@ -482,6 +488,7 @@ RTC_DATA_ATTR int diag_last_rollover_day =
     -1; // v5.49: Robust rollover tracking
 
 RTC_DATA_ATTR uint32_t diag_http_time_total = 0; // Total ms spent in HTTP POST
+RTC_DATA_ATTR uint32_t diag_ftp_time_total = 0;  // Total ms spent in FTP upload
 RTC_DATA_ATTR uint32_t diag_sent_mask_cur[3] = {0, 0, 0};
 RTC_DATA_ATTR uint32_t diag_sent_mask_prev[3] = {0, 0, 0};
 RTC_DATA_ATTR int diag_http_success_count = 0; // Total successful HTTP attempts
@@ -496,12 +503,15 @@ RTC_DATA_ATTR int diag_ftp_success_count_prev = 0; // yesterday's
 RTC_DATA_ATTR char diag_reg_fail_type[16] = "NONE";
 RTC_DATA_ATTR char diag_http_fail_reason[16] = "NONE";
 
-// DNS IP Caching to prevent DNS lookup every 15 mins (Saves ~1.5 seconds modem-on time)
+// DNS IP Caching to prevent DNS lookup every 15 mins (Saves ~1.5 seconds
+// modem-on time)
 RTC_DATA_ATTR char cached_server_ip[32] = "";
 RTC_DATA_ATTR char cached_server_domain[64] = "";
 RTC_DATA_ATTR bool dns_fallback_active = false; // v5.55: Persist fallback state
-RTC_DATA_ATTR int preferred_ftp_mode = -1;      // v5.55: Persist working FTP mode (0=Act, 1=Pas)
-RTC_DATA_ATTR bool healer_reboot_in_progress = false; // v5.55: Protect counters during maintenance reboots
+RTC_DATA_ATTR int preferred_ftp_mode =
+    -1; // v5.55: Persist working FTP mode (0=Act, 1=Pas)
+RTC_DATA_ATTR bool healer_reboot_in_progress =
+    false; // v5.55: Protect counters during maintenance reboots
 
 // Health Report Retry Logic (persists across deep sleep)
 RTC_DATA_ATTR int health_last_sent_hour = -1;
@@ -767,7 +777,7 @@ ui_data_t ui_data[FLD_COUNT] = {
     {20, "Humidity (%)", "NA", eLive},               // 22
     {24, "Pressure (hPa)", "NA", eLive},             // 23
     {26, "Station Alt (m)", "900", eNumeric},        // 24 BME only
-    {27, "HTTP FAIL STATS", "PR:0 CUM:0",
+    {27, "HTTP FAIL STATS", "                ",
      eLive},                                   // 25 v7.70: HTTP fail counters
     {22, "TURN OFF LCD", "YES?", eDisplayOnly} // 26
 };
@@ -789,43 +799,52 @@ struct http_params {
 
 #if SYSTEM == 0
 struct http_params httpSet[7] = {
-    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80", "sit1040",
-     "x-www-form-urlencoded"}, // KSNDMC Original link
-    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80", "pse2420",
-     "x-www-form-urlencoded"}, // KSNDMC Server with link to accept backlog from HTTP
-    {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085", "bmsk1234",
-     "json"}, // BIHAR Govt Server
-    {"rtdasbih.spatika.net", "185.250.105.225", "/trg_gprs/upload_bih_trg_data_new", "80",
-     "bmsk12345", "json"}, // Bihar Spatika Server
+    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80",
+     "sit1040", "x-www-form-urlencoded"}, // KSNDMC Original link
+    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80",
+     "pse2420", "x-www-form-urlencoded"}, // KSNDMC Server with link to accept
+                                          // backlog from HTTP
+    {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085",
+     "bmsk1234", "json"}, // BIHAR Govt Server
+    {"rtdasbih.spatika.net", "185.250.105.225",
+     "/trg_gprs/upload_bih_trg_data_new", "80", "bmsk12345",
+     "json"}, // Bihar Spatika Server
     {"104.211.5.142", "104.211.5.142", "/esprain", "3002", "sit", "json"},
-    {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", "sit", "x-www-form-urlencoded"},
-    {"rtdas1.spatika.net", "89.32.144.163", "/hmrtdas/trg_gen", "80", "sitgen100",
-     "x-www-form-urlencoded"}, // spatika general version
+    {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", "sit",
+     "x-www-form-urlencoded"},
+    {"rtdas1.spatika.net", "89.32.144.163", "/hmrtdas/trg_gen", "80",
+     "sitgen100", "x-www-form-urlencoded"}, // spatika general version
 };
 #endif
 
 #if (SYSTEM == 1) || (SYSTEM == 2)
 struct http_params httpSet[11] = {
-    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80", "sit1040",
-     "x-www-form-urlencoded"}, // KSNDMC Original link KSNDMC_OLD
-    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80", "pse2420",
-     "x-www-form-urlencoded"}, // KSNDMC Server with link to accept backlog from HTTP : KSNDMC_TRG
-    {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085", "bmsk1234",
-     "json"}, // BIHAR Govt Server : BIHAR_TRG
-    {"rtdasbih.spatika.net", "185.250.105.225", "/trg_gprs/upload_bih_trg_data_new", "80",
-     "bmsk12345", "json"}, // Bihar Spatika Server
+    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80",
+     "sit1040", "x-www-form-urlencoded"}, // KSNDMC Original link KSNDMC_OLD
+    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80",
+     "pse2420", "x-www-form-urlencoded"}, // KSNDMC Server with link to accept
+                                          // backlog from HTTP : KSNDMC_TRG
+    {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085",
+     "bmsk1234", "json"}, // BIHAR Govt Server : BIHAR_TRG
+    {"rtdasbih.spatika.net", "185.250.105.225",
+     "/trg_gprs/upload_bih_trg_data_new", "80", "bmsk12345",
+     "json"}, // Bihar Spatika Server
     {"104.211.5.142", "104.211.5.142", "/esprain", "3002", "sit", "json"},
-    {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", "sit", "x-www-form-urlencoded"},
-    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_tws_data_v2", "80", "climate4p2013",
+    {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", "sit",
+     "x-www-form-urlencoded"},
+    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_tws_data_v2", "80",
+     "climate4p2013",
      "x-www-form-urlencoded"}, // KSNDMC Server for TWS : KSNDMC_TWS
-    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_twsrf_data_v2", "80",
-     "rfclimate5p13", "x-www-form-urlencoded"}, // KSNDMC Server for TWS-RF : KSNDMC_ADDON
-    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_tws_data_v2", "80", "climate4p2013",
-     "x-www-form-urlencoded"}, // Spatika Server for TWS 
-    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_twsrf_data_v2", "80",
-     "rfclimate5p13", "x-www-form-urlencoded"}, // Spatika Server for TWS-RF
-    {"rtdas.spatika.net", "89.32.144.163", "/tws_gprs/twsrf_gen", "80", "wsgen2014",
+    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_twsrf_data_v2",
+     "80", "rfclimate5p13",
+     "x-www-form-urlencoded"}, // KSNDMC Server for TWS-RF : KSNDMC_ADDON
+    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_tws_data_v2",
+     "80", "climate4p2013", "x-www-form-urlencoded"}, // Spatika Server for TWS
+    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_twsrf_data_v2",
+     "80", "rfclimate5p13",
      "x-www-form-urlencoded"}, // Spatika Server for TWS-RF
+    {"rtdas.spatika.net", "89.32.144.163", "/tws_gprs/twsrf_gen", "80",
+     "wsgen2014", "x-www-form-urlencoded"}, // Spatika Server for TWS-RF
 };
 #endif
 

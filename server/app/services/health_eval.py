@@ -180,11 +180,11 @@ def evaluate(r, now: datetime.datetime = None) -> dict:
     # Map internal codes to short friendly names
     # v7.75: Use exact matching to avoid "Rain_J" matching "Rain_JUMP" incorrectly
     FLAG_MAP = {
-        "Temp_E": "TH-Er", "Temp_CV": "TH-Er", "Temp_ERV": "TH-Er",
-        "Humi_E": "TH-Er", "Humi_CV": "TH-Er", "Humi_ERV": "TH-Er",
-        "Rain_R": "RF-Er", "Rain_J": "RF-Er",
+        "Temp_E": "TH-Er", "Temp_CV": "TH-Er", "Temp_ERV": "TH-Er", "TEMP_STUCK": "TH-Er", "TEMP_UNREAL": "TH-Er",
+        "Humi_E": "TH-Er", "Humi_CV": "TH-Er", "Humi_ERV": "TH-Er", "HUM_STUCK": "TH-Er", "HUM_UNREAL": "TH-Er",
+        "Rain_R": "RF-Er", "Rain_J": "RF-Er", "RAIN_SPIKE": "RF-Er", "RAIN_RESET": "RF-Er", "RAIN_CALC": "RF-Er",
         "WD_E": "WD-Er", "WD_FAIL": "WD-Er",
-        "WS_E": "WS-Er", "WS_CV": "WS-Er", "WS_ERV": "WS-Er",
+        "WS_E": "WS-Er", "WS_CV": "WS-Er", "WS_ERV": "WS-Er", "WS_STUCK": "WS-Er", "WS_UNREAL": "WS-Er",
         "RTC_F": "RTC-Er", "SPIFF": "SYS-Er", "FAIL": "SYS-Er",
         "WDOG": "SYS-Er", "BROWNOUT": "SYS-Er"
     }
@@ -200,9 +200,22 @@ def evaluate(r, now: datetime.datetime = None) -> dict:
     # HTTP Live Performance (Present Fails)
     # v7.70: Tracked LIVE current-slot failures.
     h_pres = int(getattr(r, "http_present_fails", 0) or 0)
+    h_back = int(getattr(r, "http_backlog_cnt", 0) or 0)
+    
     if h_pres > 3:
         # Live transmission is failing, forcing backlog.
         reasons.append(f"LV-Er({h_pres})")
+        demerits += 5
+        
+    if h_back > 10:
+        # Significant backlog building up
+        reasons.append(f"BL-Er({h_back})")
+        demerits += 5
+
+    # Resource Contention (v5.55)
+    m_fail = int(getattr(r, "mutex_fail", 0) or 0)
+    if m_fail > 0:
+        reasons.append(f"MUTEX-Er({m_fail})")
         demerits += 5
 
     # If the station stored a perfect 96 records yesterday, we are much more

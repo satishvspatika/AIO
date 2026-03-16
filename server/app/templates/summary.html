@@ -69,11 +69,12 @@
                         {% if fw.sort_priority < 99 %}
                         <th class="p-3 whitespace-nowrap">Calibration</th>
                         {% endif %}
-                        <th class="p-3 whitespace-nowrap">Status (Calc)</th>
-                        <th class="p-3 whitespace-nowrap">FW Report</th>
+                        <th class="p-3 whitespace-nowrap" title="Server-calculated objective health based on data gaps & sensor faults">Status (Calc)</th>
+                        <th class="p-3 whitespace-nowrap" title="Raw diagnostic string reported by the firmware">FW Report</th>
                         <th class="p-3">Firmware</th>
                         <th class="p-3 whitespace-nowrap">Batt / Sol</th>
                         <th class="p-3 text-center">Data T/Y</th>
+                        <th class="p-3 text-left whitespace-nowrap" title="Calculated objective health based on data arrival and sensor diagnostics">Status</th>
                         <th class="p-3 whitespace-nowrap">GPS</th>
                         <th class="p-3">Last Seen</th>
                         <th class="p-3 text-right">Actions</th>

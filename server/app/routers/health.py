@@ -6,6 +6,9 @@ from app.models import HealthReport, FirmwareRegistry, CommandQueue, StationSett
 from app.services.ota_service import needs_ota
 import datetime, json, re
 
+# Define IST timezone explicitly to prevent "name 'ist_tz' is not defined" error
+ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
 router = APIRouter()
 
 # Whitelist: only safe column names (alphanumeric + underscore)
@@ -23,8 +26,9 @@ _INT_FIELDS  = {
     "spiffs_kb","spiffs_total_kb","ota_fails",
     "consec_reg_fails","consec_http_fails","consec_sim_fails",
     "unsent_count",
-    "http_present_fails","http_cum_fails",               # v7.70
-    "last_cmd_id"                                       # v7.92
+    "http_present_fails","http_cum_fails","http_backlog_cnt", # v7.70
+    "last_cmd_id",                                      # v7.92
+    "mutex_fail"                                        # v5.55
 }
 _FLOAT_FIELDS = {"bat_v","sol_v"}
 

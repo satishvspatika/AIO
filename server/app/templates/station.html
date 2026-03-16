@@ -171,6 +171,7 @@
                     <th class="p-3">Prev / First HTTP</th>
                     <th class="p-3">Reg Fail(Rsn)</th>
                     <th class="p-3">HTTP Fail(Rsn)</th>
+                    <th class="p-3">Mutex / B-Log</th>
                     {% if request.state.user and (request.state.user.role == 'supervisor' or
                     request.state.user.get('role') == 'supervisor') %}
                     <th class="p-3 text-right"></th>
@@ -236,6 +237,10 @@
                         class="p-3 leading-tight {% if r.http_fails and r.http_fails > 3 %}text-red-400 font-bold{% else %}text-slate-400{% endif %}">
                         {{ r.http_fails or 0 }} <br><span class="text-[9px] text-slate-500">{{ (r.http_fail_reason or
                             'NONE')[:10] }}</span>
+                    </td>
+                    <td class="p-3 leading-tight text-slate-400">
+                        <span class="{% if r.mutex_fail and r.mutex_fail > 0 %}text-red-400 font-bold{% endif %}">M: {{ r.mutex_fail or 0 }}</span><br>
+                        <span class="text-[9px] text-slate-500">B: {{ r.http_backlog_cnt or 0 }}</span>
                     </td>
                     {% if request.state.user and (request.state.user.role == 'supervisor' or
                     request.state.user.get('role') == 'supervisor') %}

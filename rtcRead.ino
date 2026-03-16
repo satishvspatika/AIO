@@ -197,6 +197,7 @@ void resync_time() {
     xSemaphoreGive(modemMutex);
   } else {
     debugln("[RTC] Error: Modem Mutex Timeout - deferring resync");
+    diag_modem_mutex_fails++;
     return;
   }
   

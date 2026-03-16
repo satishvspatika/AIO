@@ -783,7 +783,6 @@ void lcdkeypad(void *pvParameters) {
             }
           }
 
-          // Handle "PRESS SET" for Turn Off LCD and Wifi
           else if (cur_fld_no == FLD_LCD_OFF || cur_fld_no == FLD_WIFI_ENABLE) {
             if (cur_fld_no == FLD_WIFI_ENABLE && wifi_active) {
               if (strcmp("ACTIVE", present_bottomRow) != 0) {
@@ -797,6 +796,41 @@ void lcdkeypad(void *pvParameters) {
                 lcd.print("PRESS SET       ");
                 strcpy(present_bottomRow, "PRESS SET       ");
               }
+            }
+          } else if (cur_fld_no == FLD_HTTP_FAILS) { // HTTP Fail Stats
+            char fail_stats[17];
+            // Compact format: P:X C:Y B:Z (e.g., P:1 C:999 B:9999)
+            // If B > 9999, it will show B:10K+ to save space
+            
+            // v5.56: Prevent LCD 1-sec stutter when scrolling onto this screen
+            static unsigned long fld_entry_time = 0;
+            static int last_seen_fld = -1;
+            if (cur_fld_no != last_seen_fld) {
+               fld_entry_time = millis();
+               last_seen_fld = cur_fld_no;
+            }
+            
+            // Only scan SPIFFS if the user lingers on the screen for 2+ seconds
+            int backlogs = diag_backlog_total;
+            if (millis() - fld_entry_time > 2000) {
+              backlogs = get_total_backlogs();
+            }
+
+            if (backlogs > 9999) {
+              snprintf(fail_stats, sizeof(fail_stats), "P:%d C:%d B:%dK",
+                       diag_http_present_fails, diag_http_cum_fails, backlogs / 1000);
+            } else {
+              snprintf(fail_stats, sizeof(fail_stats), "P:%d C:%d B:%d",
+                       diag_http_present_fails, diag_http_cum_fails, backlogs);
+            }
+            
+            if (strcmp(fail_stats, present_bottomRow) != 0) {
+              lcd.setCursor(0, 1);
+              char bBuf[17];
+              snprintf(bBuf, sizeof(bBuf), "%-16s", fail_stats);
+              lcd.print(bBuf);
+              strcpy(present_bottomRow, fail_stats);
+              strcpy(ui_data[cur_fld_no].bottomRow, fail_stats);
             }
           }
 
