@@ -250,6 +250,7 @@ bool try_activate_apn(const char *apn) {
 }
 
 bool verify_bearer_or_recover() {
+  ota_silent_mode = true; // Block UI/I2C tasks from interrupting
   flushSerialSIT();
 
   // 1. Determine which CID is active (Support CID 1, 5, or 8)
@@ -295,6 +296,7 @@ bool verify_bearer_or_recover() {
         }
       }
       debugln("Bearer Check: OK (Context Active & Valid IP/APN)");
+      ota_silent_mode = false;
       return true;
     } else {
       debugln("Bearer Check: FAILED (Context Active but Invalid IP). "
@@ -333,6 +335,7 @@ bearer_recovery: // Label used for ghost-session fallthrough
     }
     if (!is_registered) {
       debugln("AG Recovery: Modem deregistered after 60s wait. Aborting.");
+      ota_silent_mode = false;
       return false;
     }
     // v7.13: Rule 26 - SIM-Attach Stabilization (The 5-Second Settle)
@@ -346,8 +349,10 @@ bearer_recovery: // Label used for ghost-session fallthrough
   if (strlen(apn_str) > 0) {
     debug("AG Recovery: Attempting runtime APN -> ");
     debugln(apn_str);
-    if (try_activate_apn(apn_str))
+    if (try_activate_apn(apn_str)) {
+      ota_silent_mode = false;
       return true;
+    }
   }
 
   // 4. Fallback: Query CCID and load stored APN from SPIFFS.
@@ -356,8 +361,10 @@ bearer_recovery: // Label used for ghost-session fallthrough
   char stored_apn[20] = {0};
   if (load_apn_config(ccid, stored_apn, sizeof(stored_apn))) {
     debugf("AG Recovery: Trying stored APN -> %s\n", stored_apn);
-    if (try_activate_apn(stored_apn))
+    if (try_activate_apn(stored_apn)) {
+      ota_silent_mode = false;
       return true;
+    }
   }
 
   // v7.10: Rule 22 - Nuclear Fallback (Radio Refresh)
@@ -389,8 +396,10 @@ bearer_recovery: // Label used for ghost-session fallthrough
               "activation...");
       // Try activation again with runtime APN
       if (strlen(apn_str) > 0) {
-        if (try_activate_apn(apn_str))
+        if (try_activate_apn(apn_str)) {
+          ota_silent_mode = false;
           return true;
+        }
       }
       break;
     }
@@ -398,5 +407,6 @@ bearer_recovery: // Label used for ghost-session fallthrough
     esp_task_wdt_reset();
   }
 
+  ota_silent_mode = false;
   return false;
 }

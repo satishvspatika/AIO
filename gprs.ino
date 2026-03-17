@@ -1052,13 +1052,8 @@ void prepare_data_and_send() {
       SerialSIT.println("AT+CGACT=0,1");
       waitForResponse("OK", 2000);
       
-      SerialSIT.println("AT+SAPBR=0,1");
-      waitForResponse("OK", 2000);
-      
       vTaskDelay(5000 / portTICK_PERIOD_MS); // Crucial 5-second carrier breather
     } else {
-      SerialSIT.println("AT+SAPBR=0,1");
-      waitForResponse("OK", 1000);
       vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 
@@ -1072,9 +1067,17 @@ void prepare_data_and_send() {
         xSemaphoreGive(serialMutex);
       }
     } else {
-      // v5.58: MANDATORY Bearer Map (Fixes "Context Already Active" ghosting)
-      SerialSIT.println("AT+SAPBR=1,1");
-      waitForResponse("OK", 2000);
+      // ──────────────────────────────────────────────────────────────────
+      // FIX FOR AIRTEL 706 TCP ZOMBIE ERROR
+      // Do NOT execute AT+CIPSHUT here! verify_bearer_or_recover() just
+      // established a pristine, clean IP mapping. CIPSHUT would destroy it.
+      // ──────────────────────────────────────────────────────────────────
+      
+      // Rule 1: Silence URCs before HTTP setup (was missing in the retry block)
+      SerialSIT.println("AT+CGEREP=0");
+      waitForResponse("OK", 1000);
+      
+      flushSerialSIT(); // Clear stale UART bytes before HTTPINIT
       
       SerialSIT.println("AT+HTTPINIT");
       if (waitForResponse("OK", 5000).indexOf("OK") != -1) {
