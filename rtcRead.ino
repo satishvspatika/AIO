@@ -100,7 +100,7 @@ void rtcRead(void *pvParameters) {
     yr = 2000 + bcdToDec(data[6]);
 
     // Very simple sanity check
-    valid_dt = (yr >= 2025 && yr <= 2040 && mo >= 1 && mo <= 12 && dy >= 1 &&
+    valid_dt = (yr >= 2025 && yr <= 2060 && mo >= 1 && mo <= 12 && dy >= 1 && // v5.57 Fix: Extended from 2040 to 2060
                 dy <= 31);
     valid_time =
         (hr >= 0 && hr <= 23 && mi >= 0 && mi <= 59); // Allow hour 0 (midnight)

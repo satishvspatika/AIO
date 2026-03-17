@@ -87,6 +87,13 @@ void IRAM_ATTR ext0_isr() {
 RTC_DATA_ATTR uint8_t ulp_code_reserve[512] = {0}; // Moved from globals.h (Bug#3 Fix)
 
 void setup() {
+  // v5.57 Fix: Unconditionally clear healer flag at the very start of setup.
+  // Prevents the flag from getting permanently stuck 'true' if a WDT/brown-out
+  // reset occurs while a healer reboot is in flight. The protection logic below
+  // still works correctly — it just re-reads the flag as false and applies its
+  // own decision.
+  healer_reboot_in_progress = false;
+
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n\n[BOOT] HELLO! System starting... (Debug Enabled)");
@@ -894,7 +901,10 @@ void setup() {
 #endif
 
   if (wired == 1) {
-    xTaskCreatePinnedToCore(lcdkeypad, "lcdkeypadTask", 4096, NULL, 2,
+    // v5.57: Stack increased 4096→6144 (+2KB). lcdkeypad handles full menu
+    // navigation, snprintf formatting, and SPIFFS reads. Total stack budget
+    // for worst-case SYSTEM 1/2 is ~61KB vs ~220KB free heap — well within limits.
+    xTaskCreatePinnedToCore(lcdkeypad, "lcdkeypadTask", 6144, NULL, 2,
                             &lcdkeypad_h, 0); // Core 0
     if (wakeup_reason_is != timer) {
       digitalWrite(32, HIGH); // Power on LCD only if NOT a background wakeup
@@ -965,6 +975,11 @@ void setup() {
     SPIFFS.remove("/calib.txt");
     rf_count.val = 0;
     wind_count.val = 0;
+    // v5.57 Fix: Sync 32-bit accumulator anchors immediately after zeroing ULP
+    // counters, otherwise the next cycle delta = (new_raw - old_anchor) which
+    // can be a huge spurious number (treated as noise, but cleaner to prevent).
+    last_raw_rf_count = 0;
+    last_sched_rf_pulses_32 = total_rf_pulses_32;
     debugln("Cleanup complete. Starting fresh.");
   }
 

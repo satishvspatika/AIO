@@ -4953,9 +4953,17 @@ bool send_health_report(bool useJitter) {
     strcpy(h_status, "OK");
 
   char sensor_info[48];
+#if SYSTEM == 0
+  snprintf(sensor_info, sizeof(sensor_info), "RF-OK"); 
+#elif SYSTEM == 1
   snprintf(sensor_info, sizeof(sensor_info), "TH-%s,WS-%s,WD-%s",
            (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"), (ws_ok ? "OK" : "FAIL"),
            (wd_ok ? "OK" : "FAIL"));
+#elif SYSTEM == 2
+  snprintf(sensor_info, sizeof(sensor_info), "RF-OK,TH-%s,WS-%s,WD-%s",
+           (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"), (ws_ok ? "OK" : "FAIL"),
+           (wd_ok ? "OK" : "FAIL"));
+#endif
 
   char gps_str[32];
   if (lati == 0.0 && longi == 0.0)
@@ -4966,19 +4974,11 @@ bool send_health_report(bool useJitter) {
   int spiffs_used = SPIFFS.usedBytes() / 1024;
   int spiffs_total = SPIFFS.totalBytes() / 1024;
 
-  // Count records in unsent.txt and ftpunsent.txt for unsent_count
-  int unsent_count = 0;
-  const char *unsent_files[] = {"/unsent.txt", "/ftpunsent.txt"};
-  for (int i = 0; i < 2; i++) {
-    File uf = SPIFFS.open(unsent_files[i], FILE_READ);
-    if (uf) {
-      while (uf.available()) {
-        if (uf.read() == '\n')
-          unsent_count++;
-      }
-      uf.close();
-    }
-  }
+  // v5.57 Fix F2: Use countStored() which validates line length >= 10 chars.
+  // The old newline-counting approach had an off-by-one from trailing \n,
+  // causing the server to trigger CLEAR_FTP_QUEUE incorrectly (e.g. 49 real
+  // records + trailing \n reported as 50, one blank line reported as 1).
+  int unsent_count = countStored("/unsent.txt") + countStored("/ftpunsent.txt");
 
   // Construction of Calibration String for System 0 & 2
   char calib_report[48] = "NA";
@@ -5044,7 +5044,7 @@ bool send_health_report(bool useJitter) {
       feedback); // v7.92
 
   if (useJitter)
-    vTaskDelay(random(0, 5000) / portTICK_PERIOD_MS);
+    vTaskDelay((esp_random() % 5000) / portTICK_PERIOD_MS); // v5.57 Fix F3: HW RNG — seed-independent across deep sleep reboots
   else
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 

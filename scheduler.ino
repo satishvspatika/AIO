@@ -1426,7 +1426,7 @@ void scheduler(void *pvParameters) {
             }
             if (diag_pd_count < 96)
               diag_pd_count++;
-            if (q >= 50 && q <= 85)
+            if (q >= 49 && q <= 85) // v5.57 Fix: sample 49 = 21:00 (9 PM) was excluded. Range is 49-85 inclusive.
               diag_ndm_count++; // 9 PM to 6 AM
 #if FILLGAP == 1
             if (q < sampleNo) { // Only append GAPS (not current) to unsent
@@ -1514,7 +1514,7 @@ void scheduler(void *pvParameters) {
 
           if (diag_pd_count < 96)
             diag_pd_count++;
-          if (sampleNo >= 50 && sampleNo <= 85)
+          if (sampleNo >= 49 && sampleNo <= 85) // v5.57 Fix: sample 49 = 21:00 (9 PM)
             diag_ndm_count++; // 9 PM to 6 AM
 
           debugln();
@@ -1630,8 +1630,10 @@ void scheduler(void *pvParameters) {
             file1.print(append_text);
             xSemaphoreGive(fsMutex);
           } else {
-            debugln("[SCHED] ❌ FS Mutex Timeout on 8:45 write.");
-            file1.print(append_text);
+            // v5.57 Fix: Do NOT write without the mutex — that defeats its purpose.
+            // This path is only hit during a simultaneous OTA write (rare edge case).
+            // Skip this write; the gap-fill on the next cycle will recover it.
+            debugln("[SCHED] ⚠️ FS Mutex Timeout on 8:45 write. Skipping to prevent SPIFFS collision.");
           }
           if (sd_card_ok && sd1) {
             sd1.print(append_text);
@@ -1778,7 +1780,8 @@ void scheduler(void *pvParameters) {
               file1.print(append_text);
               xSemaphoreGive(fsMutex);
             } else {
-              file1.print(append_text);
+              // v5.57 Fix: Skip write on mutex timeout instead of writing unguarded.
+              debugln("[SCHED] ⚠️ FS Mutex Timeout on gap-fill write. Skipping.");
             }
             if (sd_card_ok && sd1) {
               sd1.print(append_text);
@@ -1786,7 +1789,7 @@ void scheduler(void *pvParameters) {
             debug(append_text);
             if (diag_pd_count < 96)
               diag_pd_count++;
-            if (i >= 50 && i <= 85)
+            if (i >= 49 && i <= 85) // v5.57 Fix: sample 49 = 21:00 (9 PM)
               diag_ndm_count++; // 9 PM to 6 AM
           }
         SKIP_START_GAPS:
@@ -1850,7 +1853,8 @@ void scheduler(void *pvParameters) {
               file1.print(append_text);
               xSemaphoreGive(fsMutex);
             } else {
-              file1.print(append_text);
+              // v5.57 Fix: Skip write on mutex timeout instead of writing unguarded.
+              debugln("[SCHED] ⚠️ FS Mutex Timeout on current-record write. Skipping.");
             }
             if (sd_card_ok && sd1)
               sd1.print(append_text);

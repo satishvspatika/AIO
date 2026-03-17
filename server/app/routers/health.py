@@ -184,7 +184,7 @@ async def health(request: Request, db: Session = Depends(get_db)):
         else:
             cmd_id = 0
             # ── Auto-Command Priority Chain ──────────────────────────────────
-            # Priority: Manual CMD > OTA_CHECK > CLEAR_FTP_QUEUE > GET_GPS
+            # Priority: Manual CMD > OTA_CHECK > TIMED_OUT_RETRY > CLEAR_FTP_QUEUE > GET_GPS
             setting  = db.query(StationSettings).filter_by(stn_id=stn_id).first()
             is_exempt = setting and setting.ota_exempt == 1
 
@@ -199,6 +199,25 @@ async def health(request: Request, db: Session = Depends(get_db)):
             else:
                 print(f"[OTA] {stn_id} is EXEMPT from OTA.")
 
+            # v5.57 Fix S4: Re-queue commands stuck as 'SENT' with no device feedback for 3h.
+            # Happens when device reboots mid-command (WDT, brown-out) and never sends result back.
+            # Only fires after OTA check so OTA always takes priority.
+            if not cmd:
+                three_hours_ago = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
+                timed_out = db.query(CommandQueue).filter(
+                    CommandQueue.stn_id == stn_id,
+                    CommandQueue.executed_at.isnot(None),
+                    CommandQueue.completed_at.is_(None),
+                    CommandQueue.result == "SENT",
+                    CommandQueue.executed_at < three_hours_ago
+                ).order_by(CommandQueue.executed_at.asc()).first()
+                if timed_out:
+                    print(f"[CMD RETRY] {stn_id}: Re-queuing {timed_out.cmd} ID:{timed_out.id} — no feedback in 3h")
+                    cmd       = timed_out.cmd
+                    cmd_param = timed_out.cmd_param or ""
+                    cmd_id    = timed_out.id
+                    timed_out.executed_at = now_ist  # Re-mark as sent now
+
             # CLEAR_FTP_QUEUE: if backlog > 50 records, server triggers a clear
             if not cmd:
                 unsent = int(data.get("unsent_count", 0) or 0)
@@ -206,12 +225,27 @@ async def health(request: Request, db: Session = Depends(get_db)):
                     cmd = "CLEAR_FTP_QUEUE"
                     print(f"[CMD] {stn_id}: FTP backlog={unsent} > 50 → CLEAR_FTP_QUEUE")
 
-            # GET_GPS: if GPS is missing and no higher-priority cmd is pending
+            # v5.57 Fix S3: GET_GPS with 24h cooldown.
+            # Previously fired on EVERY health report if GPS was missing, causing
+            # 24 x 30-90s GPS acquisition attempts per day — draining battery on
+            # stations in no-fix locations (indoor/metal enclosure deployments).
             if not cmd:
                 gps_val = str(data.get("gps", "") or "").strip()
                 if gps_val in ("NA", "0.000000,0.000000", "", "0,0"):
-                    cmd = "GET_GPS"
-                    print(f"[CMD] {stn_id}: GPS missing ({gps_val!r}) → GET_GPS")
+                    last_gps = db.query(CommandQueue).filter_by(
+                        stn_id=stn_id, cmd="GET_GPS"
+                    ).order_by(CommandQueue.created_at.desc()).first()
+                    gps_elapsed = 999999
+                    if last_gps and last_gps.created_at:
+                        created = last_gps.created_at
+                        if hasattr(created, 'tzinfo') and created.tzinfo is not None:
+                            created = created.replace(tzinfo=None)
+                        gps_elapsed = (datetime.datetime.utcnow() - created).total_seconds()
+                    if gps_elapsed > 86400:  # 24h cooldown
+                        cmd = "GET_GPS"
+                        print(f"[CMD] {stn_id}: GPS missing ({gps_val!r}) → GET_GPS")
+                    else:
+                        print(f"[CMD] {stn_id}: GPS missing but GET_GPS sent {gps_elapsed/3600:.1f}h ago — cooldown active")
 
 
         db.commit()

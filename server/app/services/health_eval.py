@@ -189,12 +189,20 @@ def evaluate(r, now: datetime.datetime = None) -> dict:
         "WDOG": "SYS-Er", "BROWNOUT": "SYS-Er"
     }
 
-    # Also detect from sensor_sts field (e.g. "TH-FAIL,WS-OK")
+    # v5.57: System-Aware Sensor Checks
+    sys_type = int(getattr(r, "system", -1))
     sens_sts = (r.sensor_sts or "").upper()
-    if "TH-FAIL" in sens_sts or "TH-ERR" in sens_sts: reasons.append("TH-Er"); demerits += 10
-    if "WS-FAIL" in sens_sts or "WS-ERR" in sens_sts: reasons.append("WS-Er"); demerits += 10
-    if "WD-FAIL" in sens_sts or "WD-ERR" in sens_sts: reasons.append("WD-Er"); demerits += 10
-    if "RF-FAIL" in sens_sts or "RF-ERR" in sens_sts: reasons.append("RF-Er"); demerits += 10
+
+    # TH, WS, WD error checks (Applicable to Systems 1, 2, or unknown)
+    if sys_type in (1, 2, -1):
+        if "TH-FAIL" in sens_sts or "TH-ERR" in sens_sts: reasons.append("TH-Er"); demerits += 10
+        if "WS-FAIL" in sens_sts or "WS-ERR" in sens_sts: reasons.append("WS-Er"); demerits += 10
+        if "WD-FAIL" in sens_sts or "WD-ERR" in sens_sts: reasons.append("WD-Er"); demerits += 10
+
+    # RF error checks (Applicable to Systems 0, 2, or unknown)
+    if sys_type in (0, 2, -1):
+        if "RF-FAIL" in sens_sts or "RF-ERR" in sens_sts: reasons.append("RF-Er"); demerits += 10
+    
     if "RTC-FAIL" in sens_sts: reasons.append("RTC-Er"); demerits += 10
 
     # HTTP Live Performance (Present Fails)
