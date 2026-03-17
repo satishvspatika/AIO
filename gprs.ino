@@ -5269,6 +5269,16 @@ bool send_health_report(bool useJitter) {
 }
 
 /*
+ *   GRACEFUL REBOOT (v5.58 Fix)
+ */
+void power_cut_modem_shutdown() {
+  debugln("[HEAL] Graceful 2 PM Maintenance Reboot Activated.");
+  sync_mode = 4; // Prevent stray UART tasks (eHttpStop equivalent)
+  digitalWrite(26, LOW); // Cut modem VCC instantly
+  vTaskDelay(3000 / portTICK_PERIOD_MS); // allow 3-second delay to settle heavy current draw
+}
+
+/*
  *   HTTP
  *  - send_health_report()
  *  - send_http_data()

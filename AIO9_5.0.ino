@@ -1144,12 +1144,12 @@ void loop() {
       (force_reboot == false) && (force_ota == false) &&
       (ota_writing_active == false)) {
     // v5.55 SELF-HEALING: Preventative Maintenance Reboot
-    // Triggered at midnight (sampleNo 0 or 95) if uptime exceeds 20 hours (approx).
-    // This ensures physical hardware registers are refreshed once a day.
-    if ((sampleNo == 0) && current_hour == 0 && current_min < 15) {
-       debugln("[HEAL] Scheduled Daily Maintenance Restart...");
+    // Triggered at 2:00 PM (sampleNo 56 or hour 14) ensuring physical hardware 
+    // registers are refreshed when solar power is optimal.
+    if ((sampleNo == 56) && current_hour == 14 && current_min < 15) {
+       debugln("[HEAL] Scheduled Daily Maintenance Restart (2:00 PM)...");
        healer_reboot_in_progress = true; // v5.55: Protect counters
-       vTaskDelay(2000 / portTICK_PERIOD_MS);
+       power_cut_modem_shutdown(); // Prevents midnight hang (heavy draw before reset)
        ESP.restart();
     }
 
