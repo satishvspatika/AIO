@@ -1029,45 +1029,55 @@ void prepare_data_and_send() {
     }
     esp_task_wdt_reset();
 
+    // v5.58: Hard-Kill 706/714 TCP Zombie Guard (Airtel Fix)
     // ─────────────────────────────────────────────────────────────────────
-    // v5.64 Fast-Retry: Skip bearer reset for transient 706/713 errors
-    // v5.42: TIMEOUT = HTTPACTION URC never arrived (network drop/server slow).
-    // Treat it as transient — don't tear down the bearer, just reinit HTTP.
-    bool transientErr = (String(diag_http_fail_reason) == "706" ||
-                         String(diag_http_fail_reason) == "713" ||
-                         String(diag_http_fail_reason) == "714" ||
-                         String(diag_http_fail_reason) == "TIMEOUT");
+    bool tcp_zombie = (String(diag_http_fail_reason) == "706" ||
+                       String(diag_http_fail_reason) == "713" ||
+                       String(diag_http_fail_reason) == "714" ||
+                       String(diag_http_fail_reason) == "TIMEOUT");
 
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 3000);
 
-    if (!transientErr) {
+    if (tcp_zombie) {
+      if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        debugln("[HTTP] TCP Zombie (706/714) detected. Executing Hard Bearer Nuke...");
+        xSemaphoreGive(serialMutex);
+      }
+      
+      // Mandatory Nuke Protocol
+      SerialSIT.println("AT+CIPSHUT");
+      waitForResponse("SHUT OK", 3000);
+      
+      SerialSIT.println("AT+CGACT=0,1");
+      waitForResponse("OK", 2000);
+      
+      SerialSIT.println("AT+SAPBR=0,1");
+      waitForResponse("OK", 2000);
+      
+      vTaskDelay(5000 / portTICK_PERIOD_MS); // Crucial 5-second carrier breather
+    } else {
       SerialSIT.println("AT+SAPBR=0,1");
       waitForResponse("OK", 1000);
       vTaskDelay(500 / portTICK_PERIOD_MS);
-    } else {
-      debugln(
-          "[HTTP] Transient error (706/713). Skipping bearer reset for speed.");
-      vTaskDelay(200 / portTICK_PERIOD_MS);
     }
 
     flushSerialSIT();
 
-    // Ensure primary bearer is actually active before retrying
-    SerialSIT.println("AT+CGACT?");
-    String cgact_resp = waitForResponse("OK", 3000);
-    if (cgact_resp.indexOf("+CGACT: " + String(active_cid) + ",1") == -1) {
+    // After a Hard Nuke (CIPSHUT), we MUST use the full recovery routine 
+    // to ensure the APN is properly re-attached and a valid IP is acquired.
+    if (!verify_bearer_or_recover()) {
       if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-        debugln("[RECOVERY] Bearer lost. Hard Re-activating CID 1...");
+        debugln("[RECOVERY] Bearer failed to recover. Skipping retry.");
         xSemaphoreGive(serialMutex);
       }
-      SerialSIT.print("AT+CGACT=1,");
-      SerialSIT.println(active_cid);
-      waitForResponse("OK", 10000);
-    }
-
-    SerialSIT.println("AT+HTTPINIT");
-    if (waitForResponse("OK", 5000).indexOf("OK") != -1) {
+    } else {
+      // v5.58: MANDATORY Bearer Map (Fixes "Context Already Active" ghosting)
+      SerialSIT.println("AT+SAPBR=1,1");
+      waitForResponse("OK", 2000);
+      
+      SerialSIT.println("AT+HTTPINIT");
+      if (waitForResponse("OK", 5000).indexOf("OK") != -1) {
       http_ready = true; // v5.42: Session live for retry attempt
       // Restore all parameters
       SerialSIT.println("AT+HTTPPARA=\"CID\",1"); // v5.58: Hard-lock
@@ -1120,6 +1130,7 @@ void prepare_data_and_send() {
         xSemaphoreGive(serialMutex);
       }
     }
+    } // End of verify_bearer_or_recover else block
 
     if (success_count == 0) { // Complete failure
       diag_consecutive_http_fails++;

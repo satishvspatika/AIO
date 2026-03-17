@@ -114,7 +114,7 @@ char UNIT[15] = "BIHAR_TRG"; // UNIT :
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.57"
+#define FIRMWARE_VERSION "5.59"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
