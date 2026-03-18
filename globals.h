@@ -114,7 +114,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.61"
+#define FIRMWARE_VERSION "5.62"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 

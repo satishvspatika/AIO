@@ -940,7 +940,7 @@ void prepare_data_and_send() {
 #if SYSTEM == 2
   // v7.53: DMC Legacy requires stn_no and %05.1f. Spatika General requires
   // stn_id.
-  if (strstr(UNIT, "SPATIKA_GEN")) {
+  if (strstr(UNIT, "SPATIKA")) {
     snprintf(http_data, sizeof(http_data),
              "stn_id=%s&rec_time=%04d-%02d-%02d,%02d:%02d&key=%s&rainfall=%05."
              "2f&temp=%s&humid=%s&w_speed=%s&w_dir=%s&signal=%04d&"
@@ -1795,12 +1795,16 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
   }
 
 #if SYSTEM == 1
-  snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd",
-           stnId, ftp_year, rf_cls_mm, rf_cls_dd, record_hr, record_min);
+  if (strstr(UNIT, "SPATIKA"))
+    snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.swd",
+             stnId, ftp_year, rf_cls_mm, rf_cls_dd, record_hr, record_min);
+  else
+    snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd",
+             stnId, ftp_year, rf_cls_mm, rf_cls_dd, record_hr, record_min);
 #endif
 
 #if SYSTEM == 2
-  if (strstr(UNIT, "SPATIKA_GEN"))
+  if (strstr(UNIT, "SPATIKA"))
     snprintf(fileName, sizeof(fileName),
              "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
              rf_cls_mm, rf_cls_dd, record_hr, record_min);
@@ -1986,12 +1990,15 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
       }
 
 #if SYSTEM == 1
-      snprintf(fileName, sizeof(fileName),
-               "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
-               rf_cls_mm, rf_cls_dd, record_hr, record_min);
+      if (strstr(UNIT, "SPATIKA"))
+        snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.swd",
+                 stnId, ftp_year, rf_cls_mm, rf_cls_dd, record_hr, record_min);
+      else
+        snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd",
+                 stnId, ftp_year, rf_cls_mm, rf_cls_dd, record_hr, record_min);
 #endif
 #if SYSTEM == 2
-      if (strstr(UNIT, "SPATIKA_GEN"))
+      if (strstr(UNIT, "SPATIKA"))
         snprintf(fileName, sizeof(fileName),
                  "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
                  rf_cls_mm, rf_cls_dd, record_hr, record_min);
@@ -2287,7 +2294,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
 
           // Remove the *.kwd files. These are the ftp files
           const char *pattern;
-          if (strstr(UNIT, "SPATIKA_GEN"))
+          if (strstr(UNIT, "SPATIKA"))
             pattern = ".swd";
           else
             pattern = ".kwd";
@@ -2338,7 +2345,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
 
           // Remove the *.kwd / .swd files.
           const char *pattern;
-          if (strstr(UNIT, "SPATIKA_GEN"))
+          if (strstr(UNIT, "SPATIKA"))
             pattern = ".swd";
           else
             pattern = ".kwd";
@@ -4091,7 +4098,7 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
   const char *ftpPassword;
   int portName, rssiIndex, result;
 
-  if ((strstr(UNIT, "BIHAR_TRG")) || (strstr(UNIT, "BIHAR_TEST"))) {
+  if (strstr(UNIT, "BIHAR")) {
     // Bihar
     if (send_daily == 1) {
       ftpServer = "ftphbih.spatika.net";
@@ -4105,8 +4112,7 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
       ftpPassword = "airdata2024";
       portName = 21;
     }
-  } else if ((strstr(UNIT, "KSNDMC_OLD")) || (strstr(UNIT, "KSNDMC_TRG")) ||
-             (strstr(UNIT, "KSNDMC_TWS"))) {
+  } else if (strstr(UNIT, "KSNDMC")) {
     // DMC
     if (send_daily == 1) {
       ftpServer = "ftp1.ksndmc.net";
@@ -4138,10 +4144,16 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
       ftpPassword = "airdata2016";
       portName = 21;
     }
-  } else if (strstr(UNIT, "SPATIKA_GEN")) {
+  } else if (strstr(UNIT, "SPATIKA")) {
 #if SYSTEM == 0
     ftpServer = "ftp.spatika.net";
     ftpUser = "trg_gen";
+    ftpPassword = "spgen123";
+    portName = 21;
+#endif
+#if SYSTEM == 1
+    ftpServer = "ftp.spatika.net";
+    ftpUser = "tws_gen";
     ftpPassword = "spgen123";
     portName = 21;
 #endif
