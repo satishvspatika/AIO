@@ -457,7 +457,7 @@ void scheduler(void *pvParameters) {
       // This ensures we have signal strength and known status before recording
       debugln("Scheduler: Waiting for GPRS task...");
       wait_gprs_timeout = 0;
-      while (gprs_mode == eGprsInitial &&
+      while (((gprs_mode == eGprsInitial) || (gprs_mode == eGprsSignalOk && !gprs_pdp_ready)) &&
              wait_gprs_timeout < 180) { // Reduced from 900s (15m) to 180s (3m)
 
         // Poll for UI Request (EXT0) every 100ms

@@ -335,6 +335,7 @@ void gprs(void *pvParameters) {
           signal_strength = -111;
           signal_lvl = -111; 
           strcpy(reg_status, "NA");
+          gprs_pdp_ready = false; // Reset PDP state
           start_gprs();
           xSemaphoreGive(modemMutex);
         }
@@ -3512,6 +3513,7 @@ void get_a7672s() {
     if (apn_match) {
       active_cid = 1;
       debugln("Context 1 is active and APN matches. Using CID 1.");
+      gprs_pdp_ready = true; // Signal ready!
     } else {
       debugln("[GPRS] Context 1 APN mismatch (Airtel auto-bearer or ghost). "
               "Clearing and reactivating with stored APN...");
@@ -3522,9 +3524,11 @@ void get_a7672s() {
   } else if (response.indexOf("+CGACT: 5,1") != -1) {
     active_cid = 5;
     debugln("Context 5 is active. Using CID 5.");
+    gprs_pdp_ready = true; // Signal ready!
   } else if (response.indexOf("+CGACT: 8,1") != -1) {
     active_cid = 8;
     debugln("Context 8 is active. Using CID 8.");
+    gprs_pdp_ready = true; // Signal ready!
   }
 
   if (active_cid != 0) {
@@ -3554,6 +3558,7 @@ void get_a7672s() {
       if (try_activate_apn(stored_apn)) {
         strncpy(apn_str, stored_apn, sizeof(apn_str) - 1);
         diag_stored_apn_fails = 0; // Reset counter on success
+        gprs_pdp_ready = true;
         return;                    // Success!
       } else {
         diag_stored_apn_fails++;
@@ -3577,6 +3582,7 @@ void get_a7672s() {
     // This covers BSNL (bsnlnet), Jio (jionet), and others.
     if (try_activate_apn(apn_str)) {
       save_apn_config(apn_str, ccid);
+      gprs_pdp_ready = true;
       return;
     }
 
@@ -3594,6 +3600,7 @@ void get_a7672s() {
         if (try_activate_apn(airtel_apns[i])) {
             strcpy(apn_str, airtel_apns[i]);
             save_apn_config(airtel_apns[i], ccid);
+            gprs_pdp_ready = true;
             return;
         }
     }
@@ -3610,11 +3617,13 @@ void get_a7672s() {
     // Final Retry of the SIM's primary APN
     if (try_activate_apn(apn_str)) {
       save_apn_config(apn_str, ccid);
+      gprs_pdp_ready = true;
       return;
     }
 
     debugln("APN: All attempts failed even after reset.");
     gprs_mode = eGprsSignalForStoringOnly;
+    gprs_pdp_ready = false;
   }
 }
 

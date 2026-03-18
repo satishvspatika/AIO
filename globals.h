@@ -106,7 +106,7 @@ void reset_all_diagnostics();
 void recoverI2CBus();
 
 /************************************************************************************************/
-#define SYSTEM 1             // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
 char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 //                                0:  KSNDMC_TRG  BIHAR_TRG
 //                                1:  KSNDMC_TWS KSNDMC_TWS-AP
@@ -114,7 +114,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.60"
+#define FIRMWARE_VERSION "5.61"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
@@ -323,6 +323,7 @@ enum {
   eGprsSignalForStoringOnly,
   eGprsSleepMode
 };                                                // gprs_mode
+volatile bool gprs_pdp_ready = false; // Add flag for PDP context readiness
 enum { eCurrentData, eClosingData, eUnsentData }; // for http
 
 enum { eEditOff, eEditOn };                   // lcdkeypad

@@ -294,6 +294,21 @@ void lcdkeypad(void *pvParameters) {
       strncpy(ui_data[FLD_RF_CALIB].bottomRow, c.c_str(), 16);
       ui_data[FLD_RF_CALIB].bottomRow[16] = '\0';
       strcpy(calib_text, c.c_str());
+
+      // v5.61: Parse historical calibration data into RTC variables for SMS/Status reports
+      int yr, mo, dy;
+      char st[8];
+      if (sscanf(calib_text, "%04d-%02d-%02d %s", &yr, &mo, &dy, st) >= 3) {
+        calib_year = yr;
+        calib_month = mo;
+        calib_day = dy;
+        if (strstr(st, "PASS"))
+          calib_sts = 1;
+        else
+          calib_sts = 0;
+        debugf("[CALIB] Loaded: %04d-%02d-%02d Status: %d\n", calib_year,
+               calib_month, calib_day, calib_sts);
+      }
     }
   }
 #endif
@@ -397,6 +412,12 @@ void lcdkeypad(void *pvParameters) {
         snprintf(calib_text, sizeof(calib_text), "%04d-%02d-%02d %s", 
                  current_year, current_month, current_day, (pass ? "PASS" : "FAIL"));
         
+        // v5.61: Update global status variables immediately (Survive Sleep for SMS/Health)
+        calib_sts = pass ? 1 : 0;
+        calib_year = current_year;
+        calib_month = current_month;
+        calib_day = current_day;
+
         File f = SPIFFS.open("/calib.txt", FILE_WRITE);
         if (f) { f.print(calib_text); f.close(); }
 
