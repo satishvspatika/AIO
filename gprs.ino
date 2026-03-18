@@ -962,11 +962,20 @@ void prepare_data_and_send() {
   debug("http_data format is ");
   debugln(http_data);
   debugln();
-  success_count = send_at_cmd_data(http_data, charArray);
+  // v5.63: Attempt 1 - Fast v3.0 logic
+  success_count = send_at_cmd_data(http_data, charArray, false);
   if (success_count == 0 && data_mode == eCurrentData) {
-    debugln("[HTTP] 1st Attempt failed. Retrying in 2s...");
+    debugln("[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt 2)...");
     vTaskDelay(2000 / portTICK_PERIOD_MS);
-    success_count = send_at_cmd_data(http_data, charArray);
+    // v5.63: Attempt 2 - Fast v3.0 logic again (Rule: 2 fast attempts before fallback)
+    success_count = send_at_cmd_data(http_data, charArray, false);
+    
+    if (success_count == 0) {
+      debugln("[HTTP] 2nd Attempt (Fast) also failed. Falling back to Robust method...");
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
+      // v5.63: Attempt 3 - Fallback to Robust handshake for weak-signal networks
+      success_count = send_at_cmd_data(http_data, charArray, true);
+    }
   }
   // v6.76: One retry added above for current data.
   // Fails after retry will trigger FTP backlog storage.
@@ -1105,7 +1114,12 @@ void prepare_data_and_send() {
         debugln("[HTTP] Retry attempt...");
         xSemaphoreGive(serialMutex);
       }
-      success_count = send_at_cmd_data(http_data, charArray);
+      // v5.63: Backlogs use Fast method first. Retries handled by prepare_data_and_send logic if needed.
+      success_count = send_at_cmd_data(http_data, charArray, false);
+      
+      // v5.63: Tower Cooldown. Airtel towers need ~3s to clear previous socket
+      // before accepting a new rapid-fire request in a backlog loop.
+      vTaskDelay(3000 / portTICK_PERIOD_MS);
 
       if (success_count == 1) {
         diag_consecutive_reg_fails = 0;
@@ -1370,50 +1384,22 @@ void send_http_data() {
      debugln("[GPRS] Smart Fallback ACTIVE. Bypassing DNS trials for " + String(domain));
      strcpy(httpPostRequest, fallbackUrl);
   } else if (!is_ip_format) {
-    if (strcmp(cached_server_domain, domain) == 0 && strlen(cached_server_ip) > 5) {
-        debugln("[DNS Cache] Using cached IP for " + String(domain) + ": " + String(cached_server_ip));
-        snprintf(httpPostRequest, sizeof(httpPostRequest),
-                 "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", cached_server_ip,
-                 httpSet[http_no].Port, httpSet[http_no].Link);
-    } else {
-        debugln("[DNS Cache] Resolving " + String(domain) + "...");
-        SerialSIT.print("AT+CDNSGIP=\"");
-        SerialSIT.print(domain);
-        SerialSIT.println("\"");
-        String dnsResp = waitForResponse("+CDNSGIP: 1", 8000);
-        
-        if (dnsResp.indexOf("+CDNSGIP: 1") != -1) {
-            // Success: Update cache and clear fallback flag
-            int ip_start = dnsResp.lastIndexOf(",\"");
-            if (ip_start != -1) {
-              int ip_end = dnsResp.indexOf("\"", ip_start + 2);
-              if (ip_end != -1) {
-                String ip_str = dnsResp.substring(ip_start + 2, ip_end);
-                strncpy(cached_server_ip, ip_str.c_str(), sizeof(cached_server_ip) - 1);
-                strncpy(cached_server_domain, domain, sizeof(cached_server_domain) - 1);
-                dns_fallback_active = false; // Resolved!
-                debugln("[DNS Cache] Resolved and Saved: " + ip_str);
-                snprintf(httpPostRequest, sizeof(httpPostRequest),
-                         "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", cached_server_ip,
-                         httpSet[http_no].Port, httpSet[http_no].Link);
-              }
-            }
-        } else {
-           debugln("[GPRS] DNS Failed for " + String(domain) + ". Entering Smart Fallback.");
-           dns_fallback_active = true;
-           strncpy(cached_server_domain, domain, sizeof(cached_server_domain) - 1);
-           strcpy(httpPostRequest, fallbackUrl);
-           
-           if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-            debugln("[DNS Cache] Force Deactivating CIDs 1 & 8 (Flapping)...");
-            xSemaphoreGive(serialMutex);
-          }
-          SerialSIT.println("AT+CGACT=0,1"); 
-          waitForResponse("OK", 2000);
-          SerialSIT.println("AT+CDNSCFG=\"8.8.8.8\",\"1.1.1.1\"");
-          waitForResponse("OK", 1000);
-        }
-    }
+  // v5.63: Reverting to v3.0 logic. Use Domain Name directly in URL.
+  // The modem's internal stack (AT+HTTPACTION) is more reliable at 
+  // resolving DNS on private Airtel APNs than manual AT+CDNSGIP.
+  snprintf(httpPostRequest, sizeof(httpPostRequest),
+           "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", domain,
+           httpSet[http_no].Port, httpSet[http_no].Link);
+
+  // v5.63: Manual DNS remains as a secondary "Diagnostic/Resolver" only if domain fails
+  // But for the primary request, we use the Domain.
+  if (!is_ip_format && (diag_consecutive_http_fails >= 2)) {
+      debugln("[DNS] Multiple fails. Attempting manual resolution...");
+      SerialSIT.print("AT+CDNSGIP=\"");
+      SerialSIT.print(domain);
+      SerialSIT.println("\"");
+      waitForResponse("+CDNSGIP: 1", 5000);
+  }
   }
 
   // httpPostRequest is already prepared at the top or in the fallback block
@@ -1461,17 +1447,13 @@ void send_http_data() {
     SerialSIT.println(gprs_xmit_buf);
     waitForResponse("OK", 1000);
   }
-  SerialSIT.println("AT+HTTPTERM");
-  waitForResponse("OK", 3000);
-  vTaskDelay(500 / portTICK_PERIOD_MS);
-
-  // v5.50: Silence URCs during critical HTTP setup
-  SerialSIT.println("AT+CGEREP=0");
-  waitForResponse("OK", 1000);
-
-  flushSerialSIT();   // v5.42: Clear stale UART bytes before HTTPINIT
-  http_ready = false; // v5.42: Reset session flag
-
+  // snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), ...); // Prepared in prepare_data_and_send()
+  
+  // v5.63: Removed AT+HTTPTERM and AT+CGEREP=0 here (interferes with Airtel stack)
+  // v3.0 logic: HTTPINIT directly!
+  vTaskDelay(50 / portTICK_PERIOD_MS); 
+  flushSerialSIT();
+  
   SerialSIT.println("AT+HTTPINIT");
   response = waitForResponse("OK", 5000);
   if (response.indexOf("OK") == -1) {
@@ -1481,22 +1463,16 @@ void send_http_data() {
     vTaskDelay(500 / portTICK_PERIOD_MS);
     flushSerialSIT();
     SerialSIT.println("AT+HTTPINIT");
-    // v5.42: CHECK the return value — if this also fails, mark session as not
-    // ready so send_at_cmd_data() fast-fails instead of burning 47s on timeouts
     if (waitForResponse("OK", 5000).indexOf("OK") != -1) {
       http_ready = true;
-      debugln("[GPRS] HTTPINIT recovered on 2nd attempt.");
-    } else {
-      debugln(
-          "[GPRS] HTTPINIT failed on both attempts. Will store to backlog.");
     }
   } else {
     http_ready = true;
   }
-
-  // Restore CID Setting (Quiet)
-  SerialSIT.println("AT+HTTPPARA=\"CID\",1"); // v5.58: Hard-lock to primary CID 1
-  response = waitForResponse("OK", 1000);
+  
+  // Restore all parameters
+  SerialSIT.println("AT+HTTPPARA=\"CID\",1");
+  waitForResponse("OK", 1000);
   
   // v5.55: Re-send URL immediately before context variables to lock session (Rule 48 alignment)
   SerialSIT.println(httpPostRequest);
@@ -1611,6 +1587,7 @@ void send_http_data() {
         } // #TRUEFIX
         fileSize = file1.size();
 
+        int backlog_processed_count = 0;
         while (unsent_pointer_count < fileSize) {
           vTaskDelay(100 / portTICK_PERIOD_MS); // iter10
 
@@ -1663,6 +1640,26 @@ void send_http_data() {
           // Set the data mode
           data_mode = eUnsentData;
           prepare_data_and_send();
+          // v5.65 FINAL PRODUCTION RULES:
+          // 1. Fail-Fast: If a record fails (success_count == 0), STOP immediately to save battery.
+          // 2. Power-Cap: Limit to 15 records per 15-min wakeup to prevent overheating/drain.
+          // 3. Tower-Breather: Mandatory 3s delay between lines to let Airtel clear the session.
+          
+          if (success_count == 0) {
+              debugln("[Power] Backlog line FAILED. Stopping to preserve battery.");
+              break;
+          }
+          
+          if (++backlog_processed_count >= 15) {
+              debugln("[Power] Backlog limit (15) reached. Saving remainder for next wakeup.");
+              // Update pointer for next time
+              File unsent_count = SPIFFS.open("/unsent_pointer.txt", FILE_WRITE);
+              if (unsent_count) {
+                  unsent_count.print(unsent_pointer_count);
+                  unsent_count.close();
+              }
+              break;
+          }
 
           if (unsent_counter ==
               6) { // if more than 5 retries , still the data is no sent
@@ -1687,6 +1684,8 @@ void send_http_data() {
             debugln("Pointer to unsent_file updated ...");
             break;
           }
+          
+          vTaskDelay(3000 / portTICK_PERIOD_MS); // Tower breather (3s)
 
         } // while loop
 
@@ -2490,7 +2489,8 @@ void send_sms() {
   xSemaphoreGive(modemMutex);
 }
 
-int send_at_cmd_data(char *payload, String response_arg) {
+// v5.63: Dynamic Handshake Support. Try Fast v3.0 first, then Robust as fallback.
+int send_at_cmd_data(char *payload, String response_arg, bool robust) {
   unsigned long start = millis();
   esp_task_wdt_reset();
   String response;
@@ -2514,22 +2514,36 @@ int send_at_cmd_data(char *payload, String response_arg) {
 
   debugf1("Payload is %s", payload);
   debugln();
-  SerialSIT.println(ht_data);
-  // v5.45: Increased timeout to 10s for high-latency BSNL 2G handshakes
-  if (waitForResponse("DOWNLOAD", 10000).indexOf("DOWNLOAD") == -1) {
-    debugln("[HTTP] AT+HTTPDATA failed (Missing DOWNLOAD).");
-    flushSerialSIT();
-    return 0; // Original returns 0
-  }
-  vTaskDelay(500 / portTICK_PERIOD_MS); // v7.00: Increased buffer prep delay
-  SerialSIT.print(payload); // v6.40: Use print to avoid trailing \r\n in body
-  response = waitForResponse("OK", 5000);
 
+  if (robust) {
+    // Robust mode for weak-signal or strict towers (BSNL, etc.)
+    snprintf(ht_data, sizeof(ht_data), "AT+HTTPDATA=%d,5000", i);
+    debugln("[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...");
+    SerialSIT.println(ht_data);
+    if (waitForResponse("DOWNLOAD", 10000).indexOf("DOWNLOAD") == -1) {
+      debugln("[HTTP] AT+HTTPDATA failed (Missing DOWNLOAD).");
+      flushSerialSIT();
+      return 0;
+    }
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+    SerialSIT.println(payload); // v3.0: use println to finalize buffer
+    waitForResponse("OK", 5000);
+  } else {
+    // v5.63 Native v3.0 Fast push! 
+    // We send command, wait for prompt byte, then push payload.
+    // This mimics v3.0's behavior while keeping the UART clean.
+    snprintf(ht_data, sizeof(ht_data), "AT+HTTPDATA=%d,1000", i);
+    debugln("[HTTP] Using Fast v3.0 Handshake...");
+    SerialSIT.println(ht_data);
+    waitForResponse("DOWNLOAD", 500); // v3.0 style clearance (500ms max)
+    
+    SerialSIT.println(payload); // v3.0: use println
+    waitForResponse("OK", 500); // Consume OK before action
+  }
+
+  // Fire Action
   SerialSIT.println("AT+HTTPACTION=1");
-  waitForResponse("OK", 2000);
-  response = waitForResponse("+HTTPACTION:",
-                             25000); // v5.45: 25s (was 45s). LTE response in
-                                     // 3-8s; 45s was dead-server waste.
+  response = waitForResponse("+HTTPACTION:", 25000);
   debug("Response of AT+HTTPACTION=1 is ");
   debugln(response);
 
@@ -3432,7 +3446,6 @@ void get_registration() {
       digitalWrite(26, HIGH);
       vTaskDelay(5000 / portTICK_PERIOD_MS);
     }
-
     if (diag_consecutive_reg_fails >= 10) {
       debugln("[GPRS] PERSISTENT REG FAIL. Resetting system...");
       vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -3443,195 +3456,68 @@ void get_registration() {
 
 void get_a7672s() {
   String response;
-  debugln("--- GPRS SETTING PDP ---");
-  //      SerialSIT.println("AT+CPSI?");
-  //      response = waitForResponse("+CPSI", 5000);
-  //      debug("HTTP response of AT+CPSI?: ");debugln(response);
+  char ccid[25];
+  get_ccid().toCharArray(ccid, 25);
+  char stored_apn[50];
 
+  debugln("--- GPRS SETTING PDP ---");
   debugln();
   debugln("************************");
   debugln("Setting PDP context ");
   debugln("************************");
   debugln();
 
-  char gprs_xmit_buf[300];
-
-  // Check active context FIRST
-  SerialSIT.println("AT+CGACT?");
-  response = waitForResponse("OK", 3000);
-  debugln("CGACT Status: " + response);
-
-  // v5.56: Ghost Context Healer
-  // If we see any active contexts other than 1, 5, or 8, we must kill them.
-  // 2G networks often only allow ONE active context; a ghost like CID:9 
-  // will cause "Unknown Error" on CID:1 activation.
-  bool found_ghost = false;
-  int start_pos = 0;
-  while ((start_pos = response.indexOf("+CGACT: ", start_pos)) != -1) {
-    int comma = response.indexOf(',', start_pos);
-    int space = response.indexOf(' ', start_pos);
-    if (comma != -1 && space != -1) {
-      int cid = response.substring(space + 1, comma).toInt();
-      int status = response.substring(comma + 1, comma + 2).toInt();
-      if (status == 1 && cid != 1 && cid != 5 && cid != 8) {
-        debugf("[GPRS] Killing Ghost Context CID:%d\n", cid);
-        SerialSIT.printf("AT+CGACT=0,%d\r\n", cid);
-        waitForResponse("OK", 3000);
-        found_ghost = true;
-      }
-    }
-    start_pos += 7;
-  }
-  if (found_ghost) {
-     vTaskDelay(1000 / portTICK_PERIOD_MS); // Let stack stabilize
-  }
-
   active_cid = 0;
-  // Prioritize 1 (Default) if active, then 5, 8.
-  if (response.indexOf("+CGACT: 1,1") != -1) {
-    // v5.52: Verify that the active context's APN matches our target SIM
-    SerialSIT.println("AT+CGCONTRDP=1");
-    String rdp_resp = waitForResponse("OK", 3000);
-    bool apn_match = false;
-    if (strlen(apn_str) == 0) {
-      // If we don't know the target APN yet, assume the active one is OK.
-      // Also extract the active APN from the response so
-      // verify_bearer_or_recover has something to compare against on
-      // subsequent retries.
-      apn_match = true;
-      // Parse APN from +CGCONTRDP: 1,5,"<apn>","ip",...
-      int q1 = rdp_resp.indexOf('"');
-      if (q1 != -1) {
-        int q2 = rdp_resp.indexOf('"', q1 + 1);
-        if (q2 != -1) {
-          String active_apn = rdp_resp.substring(q1 + 1, q2);
-            if (active_apn.length() > 0 && active_apn.length() < 20) {
-              strncpy(apn_str, active_apn.c_str(), sizeof(apn_str) - 1);
-              debugln("[GPRS] Auto-detected active APN: " + active_apn);
-              // v7.95: Persist auto-detected APN if not already saved
-              save_apn_config(active_apn, String(cached_iccid));
-            }
-        }
-      }
-    } else if (rdp_resp.indexOf("\"" + String(apn_str) + "\"") != -1) {
-      apn_match = true;
-    }
-
-    if (apn_match) {
-      active_cid = 1;
-      debugln("Context 1 is active and APN matches. Using CID 1.");
-      gprs_pdp_ready = true; // Signal ready!
-    } else {
-      debugln("[GPRS] Context 1 APN mismatch (Airtel auto-bearer or ghost). "
-              "Clearing and reactivating with stored APN...");
-      SerialSIT.println("AT+CGACT=0,1");
-      waitForResponse("OK", 5000);
-      active_cid = 0; // Force re-activation
-    }
-  } else if (response.indexOf("+CGACT: 5,1") != -1) {
-    active_cid = 5;
-    debugln("Context 5 is active. Using CID 5.");
-    gprs_pdp_ready = true; // Signal ready!
-  } else if (response.indexOf("+CGACT: 8,1") != -1) {
-    active_cid = 8;
-    debugln("Context 8 is active. Using CID 8.");
-    gprs_pdp_ready = true; // Signal ready!
-  }
-
-  if (active_cid != 0) {
-    // Log the IP address of the active context
-    SerialSIT.print("AT+CGCONTRDP=");
-    SerialSIT.println(active_cid);
-    response = waitForResponse("OK", 3000);
-    debug("IP Config: ");
-    debugln(response);
-  } else {
-    // No context active or ghost context cleared. Configure CID 1.
-    active_cid = 1;
-
-    // JUDICIOUS STABILIZATION: Allow modem stack to settle
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-
-    extern String get_ccid();
-    String ccid = String(cached_iccid);
-    if (ccid == "") {
-      ccid = get_ccid();
-    }
-    char stored_apn[20] = {0}; // Match global apn_str size
-
-    // 1. Try Stored APN
-    if (load_apn_config(ccid, stored_apn, sizeof(stored_apn))) {
-      debugln("Smart APN: Trying Stored -> " + String(stored_apn));
-      if (try_activate_apn(stored_apn)) {
-        strncpy(apn_str, stored_apn, sizeof(apn_str) - 1);
-        diag_stored_apn_fails = 0; // Reset counter on success
-        gprs_pdp_ready = true;
-        return;                    // Success!
-      } else {
-        diag_stored_apn_fails++;
-        debugf1("Smart APN: Stored APN failed. Fail count: %d\n",
-                diag_stored_apn_fails);
-
-        // v7.95: Increased threshold to 4 to give M2M SIMs more warm-up cycles
-        if (diag_stored_apn_fails >= 4) {
-          debugln("Smart APN: Tower is persistently rejecting data calls. "
-                  "Halting search to save power.");
-          gprs_mode = eGprsSignalForStoringOnly;
+  // v5.63: Native v3.0 style activation.
+  // No status queries, fire and move on.
+  if (load_apn_config(ccid, stored_apn, sizeof(stored_apn))) {
+      strncpy(apn_str, stored_apn, sizeof(apn_str) - 1);
+      if (try_activate_apn(apn_str)) {
+          vTaskDelay(3000 / portTICK_PERIOD_MS); // v5.63: Carrier Breather after success
+          gprs_pdp_ready = true;
           return;
-        }
       }
-    }
-
-    // 2. Default Sequence (fallback or first run)
-    debugln("APN Search: Starting Default Sequence...");
-
-    // Priority 1: The SIM's primary detected APN (from get_network)
-    // This covers BSNL (bsnlnet), Jio (jionet), and others.
-    if (try_activate_apn(apn_str)) {
-      save_apn_config(apn_str, ccid);
-      gprs_pdp_ready = true;
-      return;
-    }
-
-    // Fallbacks (mostly for Airtel logic)
-    // v5.55: Expanded list for modern Airtel IoT/M2M profiles
-    const char *airtel_apns[] = {
-        "airtelm2msolutions.com", // Found on newer M2M cards
-        "airteliot.com",          // Standard for Airtel IoT
-        "iot.com",                // Generic IoT
-        "airtelgprs.com",         // Legacy Airtel
-        "bsnlm2m"                 // BSNL M2M specific
-    };
-
-    for (int i = 0; i < 5; i++) {
-        if (try_activate_apn(airtel_apns[i])) {
-            strcpy(apn_str, airtel_apns[i]);
-            save_apn_config(airtel_apns[i], ccid);
-            gprs_pdp_ready = true;
-            return;
-        }
-    }
-
-    // 3. Last Resort: GPRS Stack Reset (CGATT Reset)
-    debugln("APN: Initial attempts failed. Performing Soft Reset (CGATT)...");
-    SerialSIT.println("AT+CGATT=0"); // Detach
-    waitForResponse("OK", 5000);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    SerialSIT.println("AT+CGATT=1"); // Re-attach
-    waitForResponse("OK", 5000);
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-
-    // Final Retry of the SIM's primary APN
-    if (try_activate_apn(apn_str)) {
-      save_apn_config(apn_str, ccid);
-      gprs_pdp_ready = true;
-      return;
-    }
-
-    debugln("APN: All attempts failed even after reset.");
-    gprs_mode = eGprsSignalForStoringOnly;
-    gprs_pdp_ready = false;
   }
+
+  // If stored APN failed or doesn't exist, start Smart APN cycle
+  debugln("APN: Starting Smart APN Search...");
+  const char *airtel_apns[] = {
+      "airteliot.com",          // Bihar / KSNDMC Primary
+      "airtelgprs.com",         // Bihar / KSNDMC (Legacy fallback)
+      "airtelm2msouth.com",     // South Region
+      "airtelm2miot.com",       // M2M specific
+      "bsnlm2m"                 // BSNL M2M specific
+  };
+
+  for (int i = 0; i < 5; i++) {
+      if (try_activate_apn(airtel_apns[i])) {
+          strcpy(apn_str, airtel_apns[i]);
+          save_apn_config(airtel_apns[i], ccid);
+          vTaskDelay(3000 / portTICK_PERIOD_MS); // v5.63: Carrier Breather
+          gprs_pdp_ready = true;
+          return;
+      }
+  }
+
+  // Last Resort Soft Reset
+  debugln("APN: Soft Resetting Stack (CGATT)...");
+  SerialSIT.println("AT+CGATT=0");
+  waitForResponse("OK", 5000);
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  SerialSIT.println("AT+CGATT=1");
+  waitForResponse("OK", 5000);
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+  if (try_activate_apn(apn_str)) {
+    save_apn_config(apn_str, ccid);
+    vTaskDelay(3000 / portTICK_PERIOD_MS); 
+    gprs_pdp_ready = true;
+    return;
+  }
+
+  debugln("APN: FAILED. Going to store only mode.");
+  gprs_mode = eGprsSignalForStoringOnly;
+  gprs_pdp_ready = false;
 }
 
 /*

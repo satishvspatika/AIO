@@ -162,47 +162,10 @@ bool try_activate_apn(const char *apn) {
   debug("Trying APN: ");
   debugln(apn);
 
-  // 1. Exhaustive Context Cleanup (v5.56 Healer)
-  // Query what's currently active and kill it all.
-  SerialSIT.println("AT+CGACT?");
-  String active_resp = waitForResponse("OK", 3000);
-  int start_pos = 0;
-  while ((start_pos = active_resp.indexOf("+CGACT: ", start_pos)) != -1) {
-    int comma = active_resp.indexOf(',', start_pos);
-    int space = active_resp.indexOf(' ', start_pos);
-    if (comma != -1 && space != -1) {
-      int cid = active_resp.substring(space + 1, comma).toInt();
-      int status = active_resp.substring(comma + 1, comma + 2).toInt();
-      if (status == 1) { // If active, kill it
-        debugf("[GPRS] Cleanup: Deactivating Ghost CID:%d\n", cid);
-        SerialSIT.printf("AT+CGACT=0,%d\r\n", cid);
-        waitForResponse("OK", 3000);
-      }
-    }
-    start_pos += 7;
-  }
-  vTaskDelay(2000 / portTICK_PERIOD_MS); // v7.11: Stabilization
-
-  // v7.13: Resilient CPIN Handshake (Rule 23)
-  // The SIM controller may be busy post-refresh. Wait and retry.
-  bool sim_ready = false;
-  for (int i = 0; i < 5; i++) {
-    SerialSIT.println("AT+CPIN?");
-    if (waitForResponse("READY", 3000).indexOf("READY") != -1) {
-      sim_ready = true;
-      break;
-    }
-    debugf("[GPRS] SIM not ready (Retry %d/5)...\n", i + 1);
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-    esp_task_wdt_reset();
-  }
-
-  if (!sim_ready) {
-    debugln("APN Activation FAILED: SIM not ready (CPIN) after retries.");
-    return false;
-  }
-
-  // 2. Set Context
+  // v5.63: Reverting to v3.0 simplicity. 
+  // Removed ghost deactivation and CPIN loops which create "dead time" 
+  // that Airtel towers often reject.
+  
   if (strcmp(apn, "jionet") == 0) {
     snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
              "AT+CGDCONT=1,\"IPV4V6\",\"%s\"", apn);
@@ -212,40 +175,16 @@ bool try_activate_apn(const char *apn) {
   }
   SerialSIT.println(gprs_xmit_buf);
   waitForResponse("OK", 3000);
-  vTaskDelay(500 / portTICK_PERIOD_MS);
+  
+  vTaskDelay(200 / portTICK_PERIOD_MS);
 
-  // 3. Attempt Activation
   SerialSIT.println("AT+CGACT=1,1");
   String response = waitForResponse("OK", 25000);
-  debugln("CGACT Resp: " + response); // v7.11: Log full response
+  debugln("CGACT Resp: " + response); 
 
-  if (response.indexOf("OK") != -1 && response.indexOf("ERROR") == -1) {
-    vTaskDelay(2000 / portTICK_PERIOD_MS); // Settling delay
-
-    // 4. STRICT VERIFICATION: Assigned IP must be valid (not 0.0.0.0)
-    SerialSIT.println("AT+CGPADDR=1");
-    String ip_resp = waitForResponse("OK", 3000);
-    debug("Assigned IP: ");
-    debugln(ip_resp);
-
-    // Look for a pattern like "+CGPADDR: 1,10.x.x.x" or similar.
-    // If it contains "0.0.0.0" or no digits at all, it's a failure.
-    if (ip_resp.indexOf("+CGPADDR: 1,") != -1 &&
-        ip_resp.indexOf("0.0.0.0") == -1 && ip_resp.indexOf(".") != -1) {
-      debugln("APN Activation Success (Valid IP)!");
-      // Set explicit DNS to prevent DNS-related hangs (Error 713/715)
-      SerialSIT.println("AT+CDNSCFG=\"8.8.8.8\",\"1.1.1.1\"");
-      waitForResponse("OK", 500);
-      return true;
-    } else {
-      debugln("APN Activation ERROR: No valid IP assigned (0.0.0.0).");
-      // Force cleanup
-      SerialSIT.println("AT+CGACT=0,1");
-      waitForResponse("OK", 1000);
-    }
+  if (response.indexOf("OK") != -1) {
+    return true;
   }
-
-  debugln("APN Activation Failed.");
   return false;
 }
 

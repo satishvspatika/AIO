@@ -1,23 +1,24 @@
 # ESP32 AIO Release Notes Summary
 
-## 🚀 Latest Version: v5.60 (March 18, 2026)
-**"The Mathematical Consistency Update"**
+## 🚀 Latest Version: v5.63 (March 18, 2026 - Final)
+**"The Airtel IoT & Power Stability Release"**
 
-This release completes the standardization of Station ID handling to match the `v5.56` industrial design, ensuring perfect compatibility between internal storage and legacy external servers.
+This release completes the GPRS/HTTP stabilization for Airtel IoT and BSNL. It integrates the v3.0 fast-push engine with v5.60's robust error recovery and adds advanced battery protection for backlogs.
 
 ### Key Highlights:
-- **Intelligent ID Normalization**: Strips leading `00` from 6-digit numeric IDs internally (`001931` -> `1931`).
-- **External 6-Char Compliance**: Automatically expands 4-digit numeric IDs to 6 characters for all FTP filenames and data records.
-- **Log Search Fallback**: LCD searches now automatically fallback to `00XXXX` if the normalized name is not found, ensuring support for historical logs.
-- **Alphanumeric Immunity**: Preserves unique IDs like `WS0094` without modification.
+- **Hybrid HTTP Engine**: Combined v3.0 speed with v5.6x self-healing (Zombie Nuke).
+- **UART Sync (Fast Flush)**: Eliminates buffer poisoning during backlog clearing.
+- **Power-Safe Backlog**: Maximum 15 records per wakeup and Fail-Fast on the first error.
+- **Global Trim**: Fully sanitized filenames for TWS/TRG/ADDON.
 
-[View Full v5.60 Release Notes](./RELEASE_NOTES_v5.60.md)
+[View Full v5.63 Release Notes](./RELEASE_NOTES_v5.63.md)
 
 ---
 
 ## 🕒 Previous Versions
 
-### [v5.59 - Airtel & I2C Stabilization](./85b6389) (March 17, 2026)
+### [v5.60 - Mathematical Consistency Update](./RELEASE_NOTES_v5.60.md) (March 18, 2026)
+- **ID Normalization**: Standardized Station ID handling across FTP and SD naming.
 - **Airtel Zombie Fix**: CIPSHUT reset for 706 TCP errors.
 - **I2C Isolation**: Improved stability under heavy electrical noise.
 

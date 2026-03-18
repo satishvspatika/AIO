@@ -114,7 +114,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.62"
+#define FIRMWARE_VERSION "5.63"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
@@ -322,7 +322,7 @@ enum {
   eGprsSignalOk,
   eGprsSignalForStoringOnly,
   eGprsSleepMode
-};                                                // gprs_mode
+};                                    // gprs_mode
 volatile bool gprs_pdp_ready = false; // Add flag for PDP context readiness
 enum { eCurrentData, eClosingData, eUnsentData }; // for http
 
@@ -694,6 +694,8 @@ void get_lat_long_date_time(char *number);
 void store_current_unsent_data();
 void get_gps_coordinates();
 void prepare_data_and_send();
+void power_cut_modem_shutdown();
+int send_at_cmd_data(char *payload, String response_arg, bool robust);
 
 // GPRS Helpers (gprs_helpers.ino)
 String get_ccid();

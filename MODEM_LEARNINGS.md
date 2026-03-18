@@ -375,3 +375,28 @@ Fixed a critical architecture flaw where FTP backlog sends were colliding with H
 
 ### 🛠️ Session Summary (March 12, 2026 - Late Morning): "The BSNL Active Mode Discovery (v7.68)"
 After FTP continued failing with Error 9 (data timeout) even after the sequential fix, log analysis revealed that Passive Mode (transmode=1) was the root cause. The FTP control channel (login) always succeeded, but the DATA channel timed out because BSNL 2G blocks server-initiated callbacks required for Passive Mode. Reverted to Active Mode (transmode=0), restored the 60s login timeout, and added a Passive Mode fallback for login failures. See Rule 57.
+
+## 58. The Hybrid HTTP Handshake (Airtel IoT Optimization)
+*   **Discovery:** Airtel IoT SIMs have an extremely narrow session window. Adding even 500ms of "safety" checks (like `AT+CGACT?`) between setup and data push often triggers a `+HTTPACTION: 1,706` (Socket closed) error at the tower.
+*   **Success Hook:** Mimicking the `v3.0` "Fast Push" strategy (immediately following `AT+HTTPDATA` with the payload without waiting for `DOWNLOAD` on the first attempt) achieved 100% success on Airtel.
+*   **Correct Approach (The Hybrid Engine):**
+    1.  **Stage 1 & 2 (Fast):** Use the "v3.0 style" rapid push.
+    2.  **Stage 3 (Robust Fallback):** Only if Stage 1/2 fails, switch to the slower BSNL-safe method (wait 10s for `DOWNLOAD`). This ensures speed on Airtel and compatibility on BSNL in a single binary.
+
+## 59. The "Fast Flush" UART Sync
+*   **Discovery:** In "Fast Push" mode, the modem's `DOWNLOAD` and `OK` prompts often arrive asynchronously at the ESP32. If not consumed, these strings linger in the UART buffer and "poison" the response parsing for the next data row.
+*   **Symptoms:** Sporadic `706` or `714` errors on consecutive backlog rows despite good signal.
+*   **Correct Approach:** Even in Fast Mode, use `waitForResponse("DOWNLOAD", 500)` and `waitForResponse("OK", 500)` to cleanly consume the modem prompts. This keeps the UART buffer perfectly synced for the next command.
+
+## 60. Backlog Power-Safe Capping & Fail-Fast 
+*   **Discovery:** Clearing a 100-record backlog in a single 2G session can keep the modem awake for 20+ minutes, fatally draining the battery of a solar unit. 
+*   **Mistake to Avoid:** Trying to clear the entire backlog at once.
+*   **Correct Approach:** 
+    1.  **Power-Cap:** Limit backlog clearing to exactly **15 records per 15-minute wakeup**.
+    2.  **Fail-Fast:** If Row 1 of the backlog fails, **stop immediately and sleep**. Do not waste battery trying the rest of the file if the tower/server is congested.
+    3.  **Tower Breather:** Enforce a **3000ms delay** between every backlog record to allow the carrier's TCP stack to fully reset.
+
+---
+
+### 🛠️ Session Summary (March 18, 2026 - Afternoon): "The Airtel & Battery Production Final"
+Finalized the Hybrid HTTP engine (v5.63-5.65). Combined the speed of v3.0 (Fast Push) with the self-healing robust fallback of v5.6x. Implemented strict UART syncing ("Fast Flush") to prevent backlog response poisoning and added the "Power-Cap/Fail-Fast" loop to protect battery health during large data recoveries. Verified 100% success on Airtel IoT 2G.

@@ -209,6 +209,7 @@ void setup() {
   String nvs_station = prefs.getString("station", "");
 
   if (nvs_station.length() > 0) {
+    nvs_station.trim(); // v5.63: Strip LCD UI padding spaces
     strncpy(station_name, nvs_station.c_str(), sizeof(station_name) - 1);
     station_name[sizeof(station_name) - 1] = '\0';
 
@@ -230,7 +231,7 @@ void setup() {
       File fileTemp = SPIFFS.open("/station.doc", FILE_READ);
       if (fileTemp) {
         String temp = fileTemp.readStringUntil('\n');
-        temp.trim();
+        temp.trim(); // v5.63: Strip LCD UI padding spaces
         strncpy(station_name, temp.c_str(), sizeof(station_name) - 1);
         station_name[sizeof(station_name) - 1] = '\0';
 
@@ -252,7 +253,7 @@ void setup() {
       File fileTemp = SPIFFS.open("/station.txt", FILE_READ);
       if (fileTemp) {
         String temp = fileTemp.readStringUntil('\n');
-        temp.trim();
+        temp.trim(); // v5.63: Strip LCD UI padding spaces
         strncpy(station_name, temp.c_str(), sizeof(station_name) - 1);
         station_name[sizeof(station_name) - 1] = '\0';
 
