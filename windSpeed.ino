@@ -73,7 +73,8 @@ void windSpeed(void *pvParameters) {
       // average pulses per second over the 5-second window
       // (Using 1 pulse per revolution logic, dividing by teeth count is incorrect)
       float avgPulsesPerSec = delta / (float)INST_DURATION_SEC;
-      cur_wind_speed = WS_CALIBRATION_FACTOR * avgPulsesPerSec;
+      // v5.60: 4 Pulses per Revolution 
+      cur_wind_speed = WS_CALIBRATION_FACTOR * (avgPulsesPerSec / 4.0);
 
       // Filter spikes
       if (cur_wind_speed > 100.0)

@@ -330,18 +330,23 @@ void parse_and_convert_clbs_response(const char *response, int year1,
     current_hour = last_recorded_hr;
     current_min = last_recorded_min;
 
-    File fileTemp2 = SPIFFS.open("/signature.txt", FILE_WRITE);
-    if (!fileTemp2) {
-      debugln("Failed to open signature.txt for writing");
-    } else { // EX3 FIX: do NOT fall-through and call .print()/.close() on
-             // invalid handle
+    // v5.59: Atomic Save for signature.txt
+    File fTmp = SPIFFS.open("/signature.tmp", FILE_WRITE);
+    if (!fTmp) {
+      debugln("Failed to open signature.tmp for writing");
+    } else {
       snprintf(signature, sizeof(signature), "%04d-%02d-%02d,%02d:%02d",
                last_recorded_yy, last_recorded_mm, last_recorded_dd,
                last_recorded_hr, last_recorded_min);
-      fileTemp2.print(signature);
-      fileTemp2.close();
+      fTmp.print(signature);
+      fTmp.close();
+      if (SPIFFS.exists("/signature.txt"))
+        SPIFFS.remove("/signature.txt");
+      SPIFFS.rename("/signature.tmp", "/signature.txt");
+      debugln("[RTC] Signature persisted ATOMICALLY.");
     }
     vTaskDelay(500 / portTICK_PERIOD_MS);
+
     if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
       debugf("[RTC] Time: %02d:%02d\n", current_hour, current_min);
       xSemaphoreGive(serialMutex);

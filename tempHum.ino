@@ -34,6 +34,12 @@ void tempHum(void *pvParameters) {
             temperature = t_raw;
             last_valid_temp = temperature;
           } else if (last_valid_temp > -40.1) {
+            float drift = abs(t_raw - last_valid_temp);
+            // v5.59: Only refresh the "Golden Anchor" if reading is stable (<2.0C change)
+            // This prevents the jitter logic from anchoring to a transient noise spike.
+            if (drift < 2.0) {
+              last_valid_temp = t_raw; 
+            }
             float jitter = last_valid_temp * 0.01;
             temperature =
                 last_valid_temp +

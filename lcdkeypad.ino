@@ -29,7 +29,6 @@ int cur_char_no, cur_pos_no, disp_fld_no, cursor_type;
 char inpCharSet[2][49] = {"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ",
                           "0123456789./-,: "};
 char key, input_buf[17];
-char show_now;
 
 // Returns true if the field should be shown for the current SYSTEM
 bool isFieldVisible(int fld_id) {
@@ -102,13 +101,165 @@ void unprotectI2CPins() {
   pinMode(22, INPUT_PULLUP);
 }
 
+// v5.60: Central drawing function - differential to eliminate flicker
+void draw_current_page() {
+  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+    if (cur_mode == eEditOff) {
+      lcd.noBlink();
+      char line0[17], line1[17];
+      memset(line0, ' ', 16); line0[16] = '\0';
+      memset(line1, ' ', 16); line1[16] = '\0';
+
+      // Special handling for legacy fields with dynamic logic
+      if (cur_fld_no == FLD_WIFI_ENABLE) {
+        strcpy(line0, wifi_active ? "DISABLE WIFI    " : "ENABLE WIFI     ");
+        strcpy(line1, wifi_active ? "ACTIVE          " : "PRESS SET       ");
+      } else if (cur_fld_no == FLD_LCD_OFF) {
+        strcpy(line0, "TURN OFF LCD    ");
+        strcpy(line1, "PRESS SET       ");
+      } else {
+        snprintf(line0, 17, "%-16s", ui_data[cur_fld_no].topRow);
+        snprintf(line1, 17, "%-16s", ui_data[cur_fld_no].bottomRow);
+
+        // Blink "PLEASE WAIT.." for manual status queue
+        bool is_pending = (pending_manual_status && cur_fld_no == FLD_SEND_STATUS) ||
+                          (pending_manual_gps && cur_fld_no == FLD_SEND_GPS);
+        if (is_pending && (millis() / 500) % 2 == 0) {
+          memset(line1, ' ', 16);
+          line1[16] = '\0';
+        }
+      }
+
+      // --- LCD Heartbeat (Restore Original Bonus) ---
+      static bool heartState = false;
+      static unsigned long lastHeartbeat = 0;
+      if (millis() - lastHeartbeat > 1000) {
+        lastHeartbeat = millis();
+        heartState = !heartState;
+        line0[15] = heartState ? '.' : ' '; 
+      }
+
+      // Differential Drawing: Only write if something changed
+      if (strcmp(line0, present_topRow) != 0) {
+        lcd.setCursor(0, 0);
+        lcd.print(line0);
+        strcpy(present_topRow, line0);
+      }
+      if (strcmp(line1, present_bottomRow) != 0) {
+        lcd.setCursor(0, 1);
+        lcd.print(line1);
+        strcpy(present_bottomRow, line1);
+      }
+
+    } else if (cur_mode == eEditOn) {
+      char line0[17], line1[17];
+      lcd.setCursor(0, 0);
+      snprintf(line0, sizeof(line0), "%-16s", ui_data[cur_fld_no].topRow);
+      lcd.print(line0);
+      lcd.setCursor(0, 1);
+      snprintf(line1, sizeof(line1), "%-16s", input_buf);
+      lcd.print(line1);
+      lcd.setCursor(cur_pos_no, 1);
+      lcd.blink();
+      // Invalidate cache for transition back to EditOff
+      present_topRow[0] = 0; present_bottomRow[0] = 0;
+    }
+    xSemaphoreGive(i2cMutex);
+  }
+}
+
+// v5.60: Background data refresh - exact original formatting
+void refresh_sensor_data() {
+  // Update static fields
+  strcpy(ui_data[FLD_STATION].topRow, "STATION ID");
+  snprintf(ui_data[FLD_STATION].bottomRow, 17, "%-16s", station_name);
+  snprintf(ui_data[FLD_VERSION].bottomRow, 17, "%-16s", UNIT_VER);
+  snprintf(ui_data[FLD_DATE].bottomRow, 17, "%02d-%02d-%04d", current_day, current_month, current_year);
+  snprintf(ui_data[FLD_TIME].bottomRow, 17, "%02d:%02d", current_hour, current_min);
+  if (strlen(last_logged) == 0) {
+    snprintf(ui_data[FLD_LAST_LOGGED].bottomRow, 17, "%-16s", "NA");
+  } else {
+    snprintf(ui_data[FLD_LAST_LOGGED].bottomRow, 17, "%-16s", last_logged);
+  }
+
+  // Battery & Solar
+  static unsigned long last_bat = 0;
+  if (millis() - last_bat > 5000) {
+    last_bat = millis();
+    li_bat = adc1_get_raw(ADC1_CHANNEL_5);
+    li_bat_val = li_bat * 0.0010915;
+    snprintf(ui_data[FLD_BATTERY].bottomRow, 17, "%04.1f", li_bat_val);
+    bat_val = li_bat_val;
+
+    if (!wifi_active) {
+       int solar_raw;
+       if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw) == ESP_OK) {
+         solar_val = (solar_raw / 4096.0) * 3.6 * 7.2;
+         snprintf(ui_data[FLD_SOLAR].bottomRow, 17, "%04.1f", solar_val);
+       }
+    }
+  }
+
+  // Live fields
+  if (cur_fld_no == FLD_TEMP) snprintf(ui_data[FLD_TEMP].bottomRow, 17, "%0.1f", temperature);
+  else if (cur_fld_no == FLD_HUMIDITY) snprintf(ui_data[FLD_HUMIDITY].bottomRow, 17, "%0.1f", humidity);
+  else if (cur_fld_no == FLD_INST_WS) snprintf(ui_data[FLD_INST_WS].bottomRow, 17, "%0.2f", cur_wind_speed);
+  else if (cur_fld_no == FLD_AVG_WS) snprintf(ui_data[FLD_AVG_WS].bottomRow, 17, "%0.2f", cur_avg_wind_speed);
+  else if (cur_fld_no == FLD_WIND_DIR) snprintf(ui_data[FLD_WIND_DIR].bottomRow, 17, "%03d", (int)windDir);
+  else if (cur_fld_no == FLD_PRESSURE) snprintf(ui_data[FLD_PRESSURE].bottomRow, 17, "%0.1f", pressure);
+  else if (cur_fld_no == FLD_RF_ML) {
+    float live_rf = (float)rf_count.val * RF_RESOLUTION;
+    snprintf(ui_data[FLD_RF_ML].bottomRow, 17, "%06.2f", live_rf);
+  }
+  else if (cur_fld_no == FLD_SIM_STATUS) {
+    int rssi = signal_strength;
+    bool sigValid = !(rssi == 0 || rssi == 99 || rssi == -114);
+    if (strlen(carrier) == 0 || strcmp(carrier, "NA") == 0 || !sigValid) {
+      strcpy(ui_data[FLD_SIM_STATUS].topRow, "SIGNAL          ");
+      strcpy(ui_data[FLD_SIM_STATUS].bottomRow, "FETCHING...     ");
+    } else {
+      snprintf(ui_data[FLD_SIM_STATUS].topRow, 17, "SIM:%s", carrier);
+      if (rssi > 0) strcpy(ui_data[FLD_SIM_STATUS].bottomRow, "SIGNAL: WEAK    ");
+      else snprintf(ui_data[FLD_SIM_STATUS].bottomRow, 17, "%d dBm         ", rssi);
+    }
+  }
+  else if (cur_fld_no == FLD_REGISTRATION) {
+    if (strcmp(reg_status, "NA") == 0) strcpy(ui_data[FLD_REGISTRATION].bottomRow, "FETCHING...     ");
+    else snprintf(ui_data[FLD_REGISTRATION].bottomRow, 17, "%-16s", reg_status);
+  }
+  else if (cur_fld_no == FLD_HTTP_FAILS && pcb_clear_state == 0) {
+    static unsigned long last_bl = 0;
+    static int bl_cur = 0;
+    if (millis() - last_bl > 2000) {
+      last_bl = millis();
+      bl_cur = get_total_backlogs();
+    }
+    snprintf(ui_data[FLD_HTTP_FAILS].bottomRow, 17, "P:%-2d C:%-4d B:%-4d", 
+             diag_http_present_fails, diag_http_cum_fails, bl_cur);
+  }
+  else if (cur_fld_no == FLD_RF_RES && rf_res_edit_state == 0) {
+    snprintf(ui_data[FLD_RF_RES].bottomRow, 17, "%.2f", RF_RESOLUTION);
+  }
+  else if (cur_fld_no == FLD_LOG) {
+    if (last_recorded_yy > 0) {
+      snprintf(ui_data[FLD_LOG].bottomRow, 17, "%04d%02d%02d %02d:%02d", 
+               last_recorded_yy, last_recorded_mm, last_recorded_dd, 
+               last_recorded_hr, last_recorded_min);
+    } else {
+      int p_min = (current_min / 15) * 15;
+      snprintf(ui_data[FLD_LOG].bottomRow, 17, "%04d%02d%02d %02d:%02d", 
+               current_year, current_month, current_day, current_hour, p_min);
+    }
+  }
+}
+
 void lcdkeypad(void *pvParameters) {
   esp_task_wdt_add(NULL);
   static int calib_mode = 0; // 0=Field, 1=Test
-  static int last_lcd_state =
-      0; // v5.57: Moved to top to avoid declaration order issues
+  static int last_lcd_state = 0; 
+  static char savedWakeupKey = NO_KEY;
+  static int delete_confirm_state = 0; // v5.60: For two-step factory reset
 
-  // Configure keypad for better responsiveness
   configure_keypad();
 
   lcdkeypad_start = 0;
@@ -117,15 +268,14 @@ void lcdkeypad(void *pvParameters) {
   disp_fld_no = -1;
   cur_fld_no = 0;
   input_buf[0] = 0;
-  input_buf[16] =
-      0; // ensure input_buf is null-terminated (valid indices are 0-16)
+  input_buf[16] = 0; 
   show_now = 1;
+
   if (wired == 0) {
-    digitalWrite(32, LOW); // Turn OFF power to LCD (5V) for battery units
+    digitalWrite(32, LOW); 
   } else {
-    // For wired units, only force LCD ON if it's NOT a background timer wakeup
     if (wakeup_reason_is != timer) {
-      digitalWrite(32, HIGH); // Keep ON for wired/manual units
+      digitalWrite(32, HIGH); 
       lcdkeypad_start = 1;
     } else {
       digitalWrite(32, LOW);
@@ -134,127 +284,56 @@ void lcdkeypad(void *pvParameters) {
   }
   vTaskDelay(100 / portTICK_PERIOD_MS);
 
-  debug("[UI] Data Size: ");
-  debugln(sizeof(ui_data));
-
-  // Configure Station ID input type - Default to AlphaNum for flexibility
-  ui_data[FLD_STATION].fieldType = eAlphaNum;
-
+  // Load Calibration string for UI display
 #if (SYSTEM == 0) || (SYSTEM == 2)
-
   if (SPIFFS.exists("/calib.txt")) {
-    String content;
-    File file8 = SPIFFS.open("/calib.txt", FILE_READ);
-    if (!file8) {
-      debugln("Failed to open calib.txt for reading");
-    }                                      // #TRUEFIX
-    content = file8.readStringUntil('\n'); // Read till EOL
-    debug("Calibration done on  ");
-    debugln(content);
-    // Parse YYYY-MM-DD format
-    if (content.length() >= 10) {
-      calib_year = content.substring(0, 4).toInt();
-      calib_month = content.substring(5, 7).toInt();
-      calib_day = content.substring(8, 10).toInt();
-      String stateStr = content.substring(11);
-      stateStr.trim();
-
-      if (stateStr.indexOf("PASS") != -1) {
-        calib_sts = 1; // PASS
-        debugln("LOADED: CALIB PASS");
-      } else if (stateStr.indexOf("FAIL") != -1) {
-        calib_sts = 0; // FAIL
-        debugln("LOADED: CALIB FAIL");
-      } else if (stateStr.indexOf("T:") != -1) {
-        calib_sts = 4; // TEST MODE
-        debugln("LOADED: CALIB TEST");
-      } else {
-        calib_sts = 3; // Unknown
-      }
+    File f8 = SPIFFS.open("/calib.txt", FILE_READ);
+    if (f8) {
+      String c = f8.readStringUntil('\n');
+      f8.close();
+      strncpy(ui_data[FLD_RF_CALIB].bottomRow, c.c_str(), 16);
+      ui_data[FLD_RF_CALIB].bottomRow[16] = '\0';
+      strcpy(calib_text, c.c_str());
     }
-    file8.close();
-    strncpy(ui_data[FLD_RF_CALIB].bottomRow, content.c_str(), 16);
-    ui_data[FLD_RF_CALIB].bottomRow[16] = '\0';
-    snprintf(calib_text, sizeof(calib_text), "%s", content.c_str());
-
-  } else {
-    calib_sts = 3;
-    calib_year = 0;
-    calib_month = 0;
-    calib_day = 0;
-    strcpy(ui_data[FLD_RF_CALIB].bottomRow, "Yes ?");
-    debugln();
-    debugln("NO CALIB FILE ...");
-    debugln();
   }
-
 #endif
 
   for (;;) {
-
     esp_task_wdt_reset();
 
-    // Keep LCD awake symmetrically as long as WiFi is active
     if (lcdkeypad_start == 1 && wifi_active) {
       timerWrite(lcd_timer, 0);
     }
 
-    // Fallback: If LCD timed out but device is awake (e.g. GPRS active),
-
-    // poll keypad manually to detect user wake-up attempt.
     if (lcdkeypad_start == 0) {
       char wakeupKey = keypad.getKey();
-      // Detect User Interaction: Any Keypad Key OR Button 27 (EXT0)
       if (wakeupKey != NO_KEY || digitalRead(27) == LOW) {
         wakeup_reason_is = ext0;
-        debugln("[UI] User interaction detected (Key/Pin27)!");
-        delay(200); // Debounce
+        savedWakeupKey = wakeupKey;
+        debugf("[UI] Wakeup detected. Key: %c\n", (wakeupKey != NO_KEY ? wakeupKey : 'P'));
+        delay(200); 
       }
     }
 
-    bool should_activate =
-        (wakeup_reason_is == ext0) ||
-        (wired == 1 && wakeup_reason_is == 0 && lcd_timer == NULL);
+    bool should_activate = (wakeup_reason_is == ext0) || (wired == 1 && wakeup_reason_is == 0 && lcd_timer == NULL);
 
-    // Auto-Sleep logic removed from here as it conflicts with GPRS/Scheduler
-    // System sleep is now exclusively managed by loop() and scheduler()
-
-    // Capture the transition for logging only
     if (last_lcd_state == 1 && lcdkeypad_start == 0) {
-      debugln("LCD Timeout detected. Protecting Pins.");
       protectI2CPins();
     }
     last_lcd_state = lcdkeypad_start;
 
     if (should_activate) {
-      // Debounce to prevent log spam
-      static unsigned long last_ext0 = 0;
-      if (wakeup_reason_is == ext0) {
-        if (millis() - last_ext0 < 500) {
-          wakeup_reason_is = timer;
-          continue;
-        }
-        last_ext0 = millis();
-      }
-
-      // If LCD is not started OR the timer hasn't been initialized yet
       if (lcdkeypad_start == 0 || lcd_timer == NULL) {
-        debugln("[UI] Activating LCD Power (GPIO 32)...");
-        unprotectI2CPins();                    // Restore I2C lines BEFORE 5V
-        digitalWrite(32, HIGH);                // Turn ON power to LCD (5V)
-        vTaskDelay(1000 / portTICK_PERIOD_MS); // Wait for power stabilization
-                                               // (Increased to 1s)
+        unprotectI2CPins();
+        digitalWrite(32, HIGH);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        cur_fld_no = 0; // v5.60: Ensure we always start at Station ID on wakeup
 
         if (lcd_timer == NULL) {
-          debugln("[UI] Initializing LCD Timer...");
-          lcd_timer = timerBegin(1000000); // 1MHz timer frequency
-          if (lcd_timer == NULL) {
-            debugln("[UI] ERROR: Timer creation failed!");
-          } else {
-            timerAttachInterrupt(lcd_timer, &lcdTimer);
-          }
+          lcd_timer = timerBegin(1000000);
+          if (lcd_timer) timerAttachInterrupt(lcd_timer, &lcdTimer);
         }
-        // Force Keypad Pin Configuration to override JTAG/Defaults
+        
         pinMode(4, INPUT_PULLUP);
         pinMode(12, INPUT_PULLUP);
         pinMode(13, OUTPUT);
@@ -262,658 +341,118 @@ void lcdkeypad(void *pvParameters) {
         pinMode(15, OUTPUT);
 
         if (lcd_timer) {
-          debugln("[UI] Starting LCD idle alarm (2 mins)");
-          timerAlarm(lcd_timer, 120000000, false, 0); // 2 mins (120 seconds)
-          timerWrite(lcd_timer, 0);                   // Reset timer count
-        }
-
-        lcdkeypad_start = 1;
-        vTaskDelay(200 / portTICK_PERIOD_MS);
-
-        debugln("[UI] Requesting I2C Mutex for LCD Init...");
-        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-            pdTRUE) {
-          debugln("[UI] I2C Mutex Acquired. Initializing LCD hardware...");
-
-          // v5.49: REDUNDANT Wire.begin() REMOVED to avoid disturbing other
-          // tasks. Pins already initialized by unprotectI2CPins().
-          // Wire.begin(I2C_SDA, I2C_SCL, 100000);
-
-          lcd.init();
-          lcd.display();   // Ensure display is active
-          lcd.backlight(); // Ensure backlight is on
-          lcd.clear();
-          lcd.noCursor();
-          lcd.noBlink();
-          debugln("[UI] LCD hardware initialization sequence complete.");
-
-          // Pre-populate Station ID immediately so first display is complete
-          cur_fld_no = 0;
-          strcpy(ui_data[FLD_STATION].topRow, "STATION ID");
-          strcpy(ui_data[FLD_STATION].bottomRow, station_name);
-
-          // Force refresh of cached comparison strings
-          present_topRow[0] = 0;
-          present_bottomRow[0] = 0;
-
-          show_now = 1; // Trigger immediate full-screen draw
-
-          xSemaphoreGive(i2cMutex);
-        } else {
-          debugln("[UI] LCD Mutex Take: FAILED! Cannot init LCD.");
-          // If mutex fails, we'll try again next iteration if interaction
-          // persists
-          lcdkeypad_start = 0;
-        }
-      } else {
-        debugln("EXT0 pressed while LCD already ON. Resetting timer.");
-        // If already started, just refresh/restart the timer to extend on-time
-        // Use timerWrite(timer, 0) for better compatibility with different core
-        // versions
-        timerWrite(lcd_timer, 0);
-        timerAlarm(lcd_timer, 120000000, false, 0); // Re-enable 2 min timeout
-      }
-      wakeup_reason_is = timer; // Consume the reason
-    }
-
-    if (lcdkeypad_start == 1) { // Only when ext0 is triggered
-      static unsigned long debug_loop_timer = 0;
-      if (millis() - debug_loop_timer > 5000) {
-        debug_loop_timer = millis();
-        // debug("[UI] Loop Running. Field: ");
-        // debug(cur_fld_no);
-        // debug(" Type: ");
-        // debugln(ui_data[cur_fld_no].fieldType);
-        if (ui_data[cur_fld_no].fieldType < 0 ||
-            ui_data[cur_fld_no].fieldType > 3) {
-          debugln("[UI] Invalid Type! Resetting.");
-          cur_fld_no = 0;
-          show_now = 1;
-        }
-      }
-
-      // Data Preparation & Calibration Logic
-      // Throttled to 5Hz (200ms) - balanced for display quality
-      static unsigned long ui_update_timer = 0;
-      if (millis() - ui_update_timer > 200) {
-        ui_update_timer = millis();
-
-        // RF
-        float temp_rf = (float)(rf_count.val) * RF_RESOLUTION;
-        snprintf(rf_str, sizeof(rf_str), "%06.2f", temp_rf);
-
-        // Prepare the data for sending through ESPNOW
-        if (cur_mode == eEditOff) {
-          // Generate actual strings from variables
-          snprintf(date_now, sizeof(date_now), "%02d-%02d-%04d", current_day,
-                   current_month, current_year);
-          snprintf(time_now, sizeof(time_now), "%02d:%02d", current_hour,
-                   current_min);
-
-          strcpy(ui_data[FLD_STATION].bottomRow, station_name);
-          strcpy(ui_data[FLD_DATE].bottomRow, date_now);
-          strcpy(ui_data[FLD_TIME].bottomRow, time_now);
-        }
-
-        // Ensure station_name display is padded/cleaned if needed
-        int len_stn = strlen(ui_data[FLD_STATION].bottomRow);
-        while (len_stn > 0 &&
-               ui_data[FLD_STATION].bottomRow[len_stn - 1] == ' ') {
-          ui_data[FLD_STATION].bottomRow[len_stn - 1] = 0;
-          len_stn--;
-        }
-
-        // LIVE RF UPDATE: Calculate current millimetres live from raw ULP
-        // pulses
-#if SYSTEM == 1
-        strcpy(ui_data[FLD_RF_ML].bottomRow, "NA");
-#else
-        float live_rf = (float)rf_count.val * RF_RESOLUTION;
-        snprintf(ui_data[FLD_RF_ML].bottomRow,
-                 sizeof(ui_data[FLD_RF_ML].bottomRow), "%06.2f", live_rf);
-#endif
-
-        strcpy(ui_data[FLD_VERSION].bottomRow, UNIT_VER);
-        strcpy(ui_data[FLD_REGISTRATION].bottomRow, reg_status);
-        strcpy(ui_data[FLD_LAST_LOGGED].bottomRow, last_logged);
-        strcpy(ui_data[FLD_BATTERY].bottomRow, battery);
-        strcpy(ui_data[FLD_SOLAR].bottomRow, solar_sense);
-
-        // --- Item 10/21: LOG (RFCL_DT TM / LAST LOGGED AT) ---
-        // Determine the most likely active file date (similar to webServer
-        // logic) Optimized: Check SPIFFS only every 2 seconds AND only if we
-        // are on the LOG page preventing UI lag on other screens.
-        static unsigned long spiffs_check_timer = 0;
-        static unsigned long log_page_entry_time = 0;
-        static int last_fld = -1;
-
-        // Track field changes to debounce heavy operations
-        if (cur_fld_no != last_fld) {
-          log_page_entry_time = millis();
-          last_fld = cur_fld_no;
-        }
-
-        bool isLogPage = (cur_fld_no == FLD_LOG);
-
-        // Checking SPIFFS is blocking. Only do it if:
-        // 1. We are on the LOG page
-        // 2. We have been on this page for > 500ms (prevent lag when scrolling
-        // past)
-        // 3. The refresh interval (2s) has passed
-        if (isLogPage && cur_mode == eEditOff &&
-            (millis() - log_page_entry_time > 500) &&
-            (millis() - spiffs_check_timer > 2000)) {
-          spiffs_check_timer = millis();
-
-          int lcdDay = current_day, lcdMonth = current_month,
-              lcdYear = current_year;
-          int lcdSN = (current_hour * 4 + current_min / 15 + 61) % 96;
-          if (lcdSN <= 60)
-            next_date(
-                &lcdDay, &lcdMonth,
-                &lcdYear); // Logic is inverted in original code? next_date is
-                           // called for <=60? Original code: if (lcdSN <= 60)
-                           // next_date(...). Preservation of logic is key.
-
-          char lcdActiveDate[10];
-          snprintf(lcdActiveDate, sizeof(lcdActiveDate), "%04d%02d%02d",
-                   lcdYear, lcdMonth, lcdDay);
-          char lcdCheckPath[32];
-          snprintf(lcdCheckPath, sizeof(lcdCheckPath), "/%s_%s.txt",
-                   station_name, lcdActiveDate);
-
-          // If active today's file doesn't exist, check yesterday's
-          if (!SPIFFS.exists(lcdCheckPath)) {
-            previous_date(&lcdDay, &lcdMonth, &lcdYear);
-            snprintf(lcdActiveDate, sizeof(lcdActiveDate), "%04d%02d%02d",
-                     lcdYear, lcdMonth, lcdDay);
-          }
-
-          char log_item_display[20];
-          // Default to current calendar date and normalized last record time
-          // for intuitive search
-          int show_hr = record_hr;
-          int show_min = record_min;
-          // Use last_recorded if available (it comes from file read at boot)
-          if (last_recorded_hr != 0 || last_recorded_min != 0 ||
-              last_recorded_dd != 0) {
-            show_hr = last_recorded_hr;
-            show_min = last_recorded_min;
-          }
-
-          snprintf(log_item_display, sizeof(log_item_display),
-                   "%04d%02d%02d %02d:%02d", current_year, current_month,
-                   current_day, show_hr, show_min);
-
-          strcpy(ui_data[FLD_LOG].bottomRow, log_item_display); // LOG Page
-        }
-
-        strcpy(ui_data[FLD_WIND_DIR].bottomRow, windDir_str);
-        strcpy(ui_data[FLD_INST_WS].bottomRow, windSpeedInst_str);
-        strcpy(ui_data[FLD_AVG_WS].bottomRow, prevWindSpeedAvg_str);
-        strcpy(ui_data[FLD_TEMP].bottomRow, temp_str);
-        strcpy(ui_data[FLD_HUMIDITY].bottomRow, hum_str);
-        strcpy(ui_data[FLD_PRESSURE].bottomRow, pres_str);
-
-        // Update WiFi status menu item based on actual state
-        strcpy(ui_data[FLD_WIFI_ENABLE].bottomRow,
-               wifi_active ? "ACTIVE" : "PRESS SET");
-
-        // RF Resolution Display
-        if (rf_res_edit_state == 0) {
-          snprintf(ui_data[FLD_RF_RES].bottomRow,
-                   sizeof(ui_data[FLD_RF_RES].bottomRow), "%.2f",
-                   RF_RESOLUTION);
-        }
-
-        // Calibration Running
-        if (calib_flag == 1) {
-          // Timeout check for Field Calib (3 mins = 180000 ms)
-          if (calib_mode == 0 && (millis() - calib_start_time > 180000)) {
-            calib_flag = 2; // Auto-stop
-          }
-
-#if (SYSTEM == 0) || (SYSTEM == 2)
-          calib_count_rf = calib_count.val;
-          calib_rf_float = (float)calib_count_rf * RF_RESOLUTION;
-          snprintf(calib_rf, sizeof(calib_rf), "%06.2f", calib_rf_float);
-          strcpy(ui_data[FLD_RF_CALIB].bottomRow, calib_rf);
-#endif
-          // Update Display with Tips/MM
-          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-              pdTRUE) {
-            if (calib_header_drawn == 0) {
-              lcd.setCursor(0, 0);
-              lcd.print("Count     RF(mm)");
-              calib_header_drawn = 1;
-            }
-            lcd.setCursor(0, 1);
-            char bot[17];
-            snprintf(bot, sizeof(bot), "%-5d     %-6.2f", (int)calib_count_rf,
-                     calib_rf_float);
-            lcd.print(bot);
-            xSemaphoreGive(i2cMutex);
-          }
-        }
-        // Calibration Process Result
-        else if (calib_flag == 2) {
-          calib_mode_flag.val = 0; // PHYSICAL SEPARATION: Stop calib counting
-          // Process based on mode
-          calib_year = current_year;
-          calib_month = current_month;
-          calib_day = current_day;
-
-          if (calib_mode == 0) {
-            // Field Calib: Criteria is EXACTLY 10 tips (2.5mm)
-            // User requested: "Not more not less"
-            calib_sts = (calib_count_rf == 10) ? 1 : 0;
-            snprintf(calib_text, sizeof(calib_text), "%04d-%02d-%02d %s",
-                     calib_year, calib_month, calib_day,
-                     (calib_sts ? "PASS" : "FAIL"));
-            debugf1("Field Calib Result: %s\n", calib_text);
-
-            // PERSISTENT: Update official calib file for SMS
-            File f_calib = SPIFFS.open("/calib.txt", FILE_WRITE);
-            if (f_calib) {
-              f_calib.print(calib_text);
-              f_calib.close();
-            }
-          } else {
-            // CALIB TEST (Just show count, no pass/fail storage)
-            snprintf(calib_text, sizeof(calib_text), "Total Tips: %d",
-                     (int)calib_count_rf);
-            debugf1("Calib Test: %s\n", calib_text);
-            // Do NOT save to /calib.txt
-          }
-
-#if (SYSTEM == 0) || (SYSTEM == 2)
-          // File writing moved into mode logic above
-#endif
-
-          // Display Result
-          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-              pdTRUE) {
-            lcd.clear();
-            lcd.setCursor(0, 0);
-            lcd.print(calib_mode == 0 ? "FIELD CALIB:" : "CALIB TEST:");
-            lcd.setCursor(0, 1);
-            lcd.print(calib_text);
-            xSemaphoreGive(i2cMutex);
-            vTaskDelay(3000 / portTICK_PERIOD_MS); // Wait for user to see
-
-            // Cleanup: Revert to standard timeout after showing result
-            // User said: "Once the test completes after 5 mins or manually
-            // SET... After this only the 2 min IDLE timer should start"
-            timerAlarm(lcd_timer, 120000000, false, 0); // 2 mins standard idle
-            timerWrite(lcd_timer, 0);
-            timerRestart(lcd_timer);
-
-            // Cleanup
-            strncpy(ui_data[FLD_RF_CALIB].bottomRow, calib_text, 16);
-            ui_data[FLD_RF_CALIB].bottomRow[16] = '\0';
-            calib_flag = 0;
-            show_now = 1;
-
-          } else {
-            // If mutex fails, DO NOT reset calib_flag.
-            // Let the loop retry display in the next iteration.
-            debugln("[UI] Calibration Result Display Delayed (Mutex failed to "
-                    "take)");
-          }
-        }
-
-        //                  else if(calib_flag == 0) {
-        //                           if(calib_sts != 3) { // This means a calib
-        //                           file is available
-        //                                if(cur_fld_no == 6) {
-        //                                        if(strcmp(calib_text,present_bottomRow))
-        //                                        {
-        //                                              strcpy(ui_data[6].bottomRow,calib_text);
-        //                                              lcd.setCursor(0,1);
-        //                                              lcd.print(ui_data[6].bottomRow);
-        //                                              strcpy(present_bottomRow,ui_data[6].bottomRow);
-        //                                        }
-        //                                 }
-        //                           }
-        //                  }
-
-        if (calib_flag == 0 && show_now) {
-          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-              pdTRUE) { // iter7
-            // REMOVED: lcd.clear(); // AG: This was causing the 200ms flicker
-            if (cur_mode == eEditOff) {
-              lcd.noBlink();
-              if (cur_fld_no == FLD_WIFI_ENABLE) {
-                lcd.setCursor(0, 0);
-                lcd.print(wifi_active ? "DISABLE WIFI    "
-                                      : "ENABLE WIFI     ");
-                lcd.setCursor(0, 1);
-                lcd.print(wifi_active ? "ACTIVE          "
-                                      : "PRESS SET       ");
-              } else if (cur_fld_no == FLD_LCD_OFF) {
-                lcd.setCursor(0, 0);
-                lcd.print("TURN OFF LCD    ");
-                lcd.setCursor(0, 1);
-                lcd.print("PRESS SET       ");
-              } else {
-                char line0[17], line1[17];
-                lcd.setCursor(0, 0);
-                snprintf(line0, sizeof(line0), "%-16s",
-                         ui_data[cur_fld_no].topRow);
-                lcd.print(line0);
-                lcd.setCursor(0, 1);
-                snprintf(line1, sizeof(line1), "%-16s",
-                         ui_data[cur_fld_no].bottomRow);
-                
-                // v5.50: Blink logic for "PLEASE WAIT.." manual queue
-                bool is_pending = (pending_manual_status && cur_fld_no == FLD_SEND_STATUS) || 
-                                 (pending_manual_gps && cur_fld_no == FLD_SEND_GPS);
-                
-                if (is_pending) {
-                    if ((millis() / 500) % 2 == 0) {
-                        memset(line1, ' ', 16);
-                        line1[16] = '\0';
-                    }
-                    show_now = 1; // Keep redraw active for blinking
-                }
-                lcd.print(line1);
-              }
-              disp_fld_no = cur_fld_no;
-            } else if (cur_mode == eEditOn) {
-              char line0[17], line1[17];
-              lcd.setCursor(0, 0);
-              snprintf(line0, sizeof(line0), "%-16s",
-                       ui_data[cur_fld_no].topRow);
-              lcd.print(line0);
-              lcd.setCursor(0, 1);
-              snprintf(line1, sizeof(line1), "%-16s", input_buf);
-              lcd.print(line1);
-              // Enable cursor blinking at current position
-              lcd.setCursor(cur_pos_no, 1);
-              lcd.blink();
-            }
-            show_now = 0;
-            xSemaphoreGive(i2cMutex);
-          }
-        }
-      } // End of ui_update_timer 200ms block
-
-      // --- UNIFIED DISPLAY UPDATE LOGIC ---
-      // Refresh display text from ui_data defaults (e.g. sensor readings)
-      // Throttling to 3.3Hz (300ms) - balanced for smoothness and
-      // responsiveness
-      static unsigned long display_timer = 0;
-      if (calib_flag == 0 && (millis() - display_timer > 300)) {
-        display_timer = millis();
-        // Only refresh background if NOT interacting (EditOff)
-        // Checks valid for ALL field types now (Improvement!)
-        if (cur_mode == eEditOff &&
-            xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-                pdTRUE) {
-
-          // Check if it's the WiFi field (Index 22)
-          bool isWifiField = (cur_fld_no == FLD_WIFI_ENABLE);
-
-          if (isWifiField) {
-            const char *wantedTop =
-                wifi_active ? "DISABLE WIFI    " : "ENABLE WIFI     ";
-            if (strcmp(wantedTop, present_topRow)) {
-              lcd.setCursor(0, 0);
-              lcd.print(wantedTop);
-              strcpy(present_topRow, wantedTop);
-            }
-          } else {
-            if (strcmp(ui_data[cur_fld_no].topRow, present_topRow)) {
-              lcd.setCursor(0, 0);
-              char tBuf[17];
-              snprintf(tBuf, sizeof(tBuf), "%-15s", ui_data[cur_fld_no].topRow);
-              lcd.print(tBuf);
-              strcpy(present_topRow, ui_data[cur_fld_no].topRow);
-            }
-          }
-
-          // --- LCD Heartbeat (Bonus) ---
-          static bool heartState = false;
-          static unsigned long lastHeartbeat = 0;
-          if (millis() - lastHeartbeat > 1000) {
-            lastHeartbeat = millis();
-            heartState = !heartState;
-            lcd.setCursor(15, 0);
-            lcd.print(heartState ? "." : " ");
-          }
-
-          if (cur_fld_no == FLD_SIM_STATUS) { // Signal Strength & SIM Info
-            int rssi = signal_strength;
-            bool sigValid = !(rssi == 0 || rssi == 99 || rssi == -114);
-            bool carValid =
-                !(strlen(carrier) == 0 || strcmp(carrier, "NA") == 0 ||
-                  strcmp(carrier, "0") == 0);
-
-            char topBuffer[17];
-            char sigStr[17];
-
-            if (!carValid || !sigValid) {
-              strcpy(topBuffer, "SIGNAL          ");
-              strcpy(sigStr, "FETCHING...     ");
-            } else {
-              snprintf(topBuffer, 17, "SIM:%s", carrier);
-              if (rssi > 0) {
-                strcpy(sigStr, "SIGNAL: WEAK    ");
-              } else {
-                snprintf(sigStr, 17, "%d dBm         ", rssi);
-              }
-            }
-
-            if (strcmp(topBuffer, present_topRow) != 0) {
-              lcd.setCursor(0, 0);
-              lcd.print(topBuffer);
-              for (int k = strlen(topBuffer); k < 16; k++)
-                lcd.print(" ");
-              strcpy(ui_data[cur_fld_no].topRow, topBuffer);
-              strcpy(present_topRow, topBuffer);
-            }
-
-            if (strcmp(sigStr, present_bottomRow) != 0) {
-              lcd.setCursor(0, 1);
-              lcd.print(sigStr);
-              strcpy(present_bottomRow, sigStr);
-              strcpy(ui_data[cur_fld_no].bottomRow, sigStr);
-            }
-          } else if (cur_fld_no == FLD_REGISTRATION) {
-            char disp_reg[17];
-            if (strcmp(reg_status, "NA") == 0) {
-              strcpy(disp_reg, "FETCHING...     ");
-            } else {
-              strncpy(disp_reg, reg_status, 16);
-              disp_reg[16] = 0;
-            }
-
-            if (strcmp(disp_reg, present_bottomRow) != 0) {
-              lcd.setCursor(0, 1);
-              lcd.print(disp_reg);
-              for (int k = strlen(disp_reg); k < 16; k++)
-                lcd.print(" ");
-              strcpy(present_bottomRow, disp_reg);
-              strcpy(ui_data[cur_fld_no].bottomRow, disp_reg);
-            }
-          } else if ((cur_fld_no == FLD_RF_CALIB) &&
-                     (calib_flag != 1)) { // RF Calib
-            if (strcmp(calib_text, present_bottomRow)) {
-              lcd.setCursor(0, 1);
-              lcd.print(calib_text);
-              strcpy(present_bottomRow, calib_text);
-            }
-          } else if (cur_fld_no == FLD_BATTERY) { // Battery
-            static unsigned long bat_timer = 0;
-            if (millis() - bat_timer > 2000) {
-              bat_timer = millis();
-              li_bat =
-                  adc1_get_raw(ADC1_CHANNEL_5); // Changed from analogRead(33)
-              li_bat_val = li_bat * 0.0010915;
-              snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
-              bat_val = li_bat_val;
-            }
-
-            if (strcmp(battery, present_bottomRow) != 0) {
-              lcd.setCursor(0, 1);
-              lcd.print(battery);
-              strcpy(present_bottomRow, battery);
-            }
-          } else if (cur_fld_no == FLD_SOLAR) { // Solar
-            static unsigned long solar_timer = 0;
-            if (millis() - solar_timer > 2000) {
-              solar_timer = millis();
-              if (!wifi_active) {
-                // Using ADC2 (shared with WiFi)
-                int solar_raw;
-                if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12,
-                                 &solar_raw) == ESP_OK) {
-                  solar = solar_raw;
-                  solar_val = (solar / 4096.0) * 3.6 * 7.2;
-                  snprintf(solar_sense, sizeof(solar_sense), "%04.1f",
-                           solar_val);
-                }
-              }
-            }
-
-            if (strcmp(solar_sense, present_bottomRow) != 0) {
-              lcd.setCursor(0, 1);
-              lcd.print(solar_sense);
-              strcpy(present_bottomRow, solar_sense);
-            }
-          }
-
-          else if (cur_fld_no == FLD_LCD_OFF || cur_fld_no == FLD_WIFI_ENABLE) {
-            if (cur_fld_no == FLD_WIFI_ENABLE && wifi_active) {
-              if (strcmp("ACTIVE", present_bottomRow) != 0) {
-                lcd.setCursor(0, 1);
-                lcd.print("ACTIVE          ");
-                strcpy(present_bottomRow, "ACTIVE");
-              }
-            } else {
-              if (strcmp("PRESS SET       ", present_bottomRow) != 0) {
-                lcd.setCursor(0, 1);
-                lcd.print("PRESS SET       ");
-                strcpy(present_bottomRow, "PRESS SET       ");
-              }
-            }
-          } else if (cur_fld_no == FLD_HTTP_FAILS) { // HTTP Fail Stats
-            char fail_stats[17];
-            // Compact format: P:X C:Y B:Z (e.g., P:1 C:999 B:9999)
-            // If B > 9999, it will show B:10K+ to save space
-            
-            // v5.56: Prevent LCD 1-sec stutter when scrolling onto this screen
-            static unsigned long fld_entry_time = 0;
-            static int last_seen_fld = -1;
-            if (cur_fld_no != last_seen_fld) {
-               fld_entry_time = millis();
-               last_seen_fld = cur_fld_no;
-            }
-            
-            // v5.56: Only scan SPIFFS if the user lingers on the screen for 0.5 sec
-            // This prevents menu stutter while scrolling but remains responsive.
-            int backlogs = diag_backlog_total;
-            if (millis() - fld_entry_time > 500) {
-              backlogs = get_total_backlogs();
-            }
-
-            if (backlogs > 9999) {
-              snprintf(fail_stats, sizeof(fail_stats), "P:%d C:%d B:%dK",
-                       diag_http_present_fails, diag_http_cum_fails, backlogs / 1000);
-            } else {
-              snprintf(fail_stats, sizeof(fail_stats), "P:%d C:%d B:%d",
-                       diag_http_present_fails, diag_http_cum_fails, backlogs);
-            }
-            
-            if (strcmp(fail_stats, present_bottomRow) != 0) {
-              lcd.setCursor(0, 1);
-              char bBuf[17];
-              snprintf(bBuf, sizeof(bBuf), "%-16s", fail_stats);
-              lcd.print(bBuf);
-              strcpy(present_bottomRow, fail_stats);
-              strcpy(ui_data[cur_fld_no].bottomRow, fail_stats);
-            }
-          }
-
-          else {
-            if (strcmp(ui_data[cur_fld_no].bottomRow, present_bottomRow)) {
-              lcd.setCursor(0, 1);
-              char bBuf[17];
-              snprintf(bBuf, sizeof(bBuf), "%-16s",
-                       ui_data[cur_fld_no].bottomRow);
-              lcd.print(bBuf);
-              strcpy(present_bottomRow, ui_data[cur_fld_no].bottomRow);
-            }
-          }
-
-          xSemaphoreGive(i2cMutex);
-        }
-      }
-
-      // --- UNIFIED KEYPAD HANDLING ---
-      if ((key = keypad.getKey()) != NULL) {
-        lcdkeypad_start = 1; // KEEP UI ACTIVE ON ANY KEY PRESS
-
-        // Track key activity for adaptive polling (power optimization)
-        extern unsigned long last_key_time;
-        last_key_time = millis();
-
-        // TIMEOUT LOGIC:
-        // Field Calib (calib_mode == 0): Do NOT refresh. Timer runs down from
-        // start (5 mins). Test Mode (calib_mode != 0): Refresh to Infinite (30
-        // mins). Normal Mode: Refresh to 2 mins.
-
-        if (calib_flag > 0) {
-          if (calib_mode == 0) {
-            // FIELD CALIB: DO NOT RESET TIMER!
-            // Just let the key be processed (CLEAR/SET logic below will handle
-            // exit)
-          } else {
-            // TEST MODE: Refresh to 30 mins
-            timerAlarm(lcd_timer, 1800000000, false,
-                       0); // 30 mins for calibration
-            timerWrite(lcd_timer, 0);
-          }
-        } else {
-          // NORMAL MODE: Refresh to 2 mins
-          timerAlarm(lcd_timer, 120000000, false, 0); // 2 mins standard
+          timerAlarm(lcd_timer, 180000000, false, 0); // v5.60: 180s default 
           timerWrite(lcd_timer, 0);
         }
 
-        // This block was moved from gprs.ino to here to avoid duplicate
-        // HTTPACTION and to ensure it's triggered by a key press in normal
-        // mode. It's placed after the timer reset to ensure the display stays
-        // on for the duration of the HTTP action.
-        // on for the duration of the HTTP action.
+        lcdkeypad_start = 1;
+        // cur_fld_no = 0 already handled in wakeup block
+        vTaskDelay(200 / portTICK_PERIOD_MS);
 
-        int i = (int)key - 48; // Converting from ASCII to INT
-        debugln();
-        debug("Key: ");
-        debug(key_name[i]);
-        debug(", i: ");
-        debug(i);
-        debug(", Fld: ");
-        debugln(cur_fld_no);
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+          lcd.init();
+          lcd.display();
+          lcd.backlight();
+          lcd.clear();
+          lcd.noCursor();
+          lcd.noBlink();
+          show_now = 1;
+          xSemaphoreGive(i2cMutex);
+        } else {
+          lcdkeypad_start = 0;
+        }
+      } else {
+        timerWrite(lcd_timer, 0);
+        timerAlarm(lcd_timer, 180000000, false, 0); // v5.60: 180s
+      }
+      wakeup_reason_is = timer;
+    }
 
-        // entry_in_progress vars
+    if (lcdkeypad_start == 1) {
+      // Background Data Preparation
+      if (calib_flag == 1) {
+        // Calibration Running logic
+        if (millis() - calib_start_time > 300000) { // 5 min timeout
+          calib_flag = 2; // Auto stop
+        }
+        float live_c_rf = (float)calib_count.val * RF_RESOLUTION;
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+          if (!calib_header_drawn) {
+            lcd.setCursor(0, 0);
+            lcd.print("Count     RF(mm)");
+            calib_header_drawn = 1;
+          }
+          lcd.setCursor(0, 1);
+          char b[17];
+          snprintf(b, 17, "%-5d     %-6.2f", (int)calib_count.val, live_c_rf);
+          lcd.print(b);
+          xSemaphoreGive(i2cMutex);
+        }
+      } else if (calib_flag == 2) {
+        // Calibration Result logic
+        calib_mode_flag.val = 0; 
+        calib_flag = 0;
+        int count = calib_count.val;
+        bool pass = (count == 10);
+        snprintf(calib_text, sizeof(calib_text), "%04d-%02d-%02d %s", 
+                 current_year, current_month, current_day, (pass ? "PASS" : "FAIL"));
+        
+        File f = SPIFFS.open("/calib.txt", FILE_WRITE);
+        if (f) { f.print(calib_text); f.close(); }
+
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          lcd.clear();
+          lcd.setCursor(0, 0);
+          lcd.print("FIELD CALIB:");
+          lcd.setCursor(0, 1);
+          lcd.print(calib_text);
+          xSemaphoreGive(i2cMutex);
+          
+          // Persistence: Store in UI data so it stays after navigation
+          strncpy(ui_data[FLD_RF_CALIB].bottomRow, calib_text, 16);
+          ui_data[FLD_RF_CALIB].bottomRow[16] = '\0';
+          
+          vTaskDelay(3000 / portTICK_PERIOD_MS);
+          show_now = 1;
+        }
+      } else {
+        // Periodic Refresh
+        static unsigned long refresh_timer = 0;
+        if (show_now || (millis() - refresh_timer > 500)) {
+          refresh_timer = millis();
+          refresh_sensor_data();
+          draw_current_page();
+          show_now = 0;
+        }
+      }
+
+      // --- KEYPAD PROCESSING ---
+      key = keypad.getKey();
+      if (key == NO_KEY && savedWakeupKey != NO_KEY) {
+        key = savedWakeupKey;
+        savedWakeupKey = NO_KEY;
+      }
+
+      if (key != NO_KEY) {
+        extern unsigned long last_key_time;
+        last_key_time = millis();
+        if (lcd_timer) {
+          timerWrite(lcd_timer, 0);
+          timerAlarm(lcd_timer, 180000000, false, 0);
+        }
+
+        int i = (int)key - 48;
+        if (i < 0 || i > 6) i = 0;
+
         int len = 0;
-        if (ui_data[cur_fld_no].fieldType == eNumeric ||
-            ui_data[cur_fld_no].fieldType == eAlphaNum) {
+        if (ui_data[cur_fld_no].fieldType == eNumeric || ui_data[cur_fld_no].fieldType == eAlphaNum) {
           len = strlen(inpCharSet[ui_data[cur_fld_no].fieldType]);
         }
 
         switch (i) {
-        // case 1: CLEAR / BACK
-        case 1:
+        case 1: // CLEAR
           if (cur_mode == eEditOn) {
-            // Special case for FLD_LOG to reset default time
-            if (cur_fld_no == FLD_LOG) {
-              char defaultTimeStr[17];
-              snprintf(defaultTimeStr, sizeof(defaultTimeStr),
-                       "%04d%02d%02d %02d:%02d", current_year, current_month,
-                       current_day, record_hr, record_min);
-              strcpy(ui_data[FLD_LOG].bottomRow, defaultTimeStr);
-            } else if (cur_fld_no == FLD_RF_RES) {
+            if (cur_fld_no == FLD_RF_RES) {
               rf_res_edit_state = 0;
               strcpy(ui_data[FLD_RF_RES].topRow, "RF RESOLUTION");
             } else if (cur_fld_no == FLD_DELETE_DATA) {
@@ -921,874 +460,360 @@ void lcdkeypad(void *pvParameters) {
             }
             cur_mode = eEditOff;
             show_now = 1;
-          } else {
-            // Cancel from Caliabration Selection (Mode Selection) or Active
-            // Calibration
-            if (calib_flag == 10 || calib_flag == 1) {
-              calib_flag = 0;
-              calib_mode_flag.val = 0; // Stop ULP counting if it was running
-              show_now = 1;
-              debugln("Calibration Canceled via CLEAR key.");
-
-              // Explicitly reset timer to 2 mins standard idle
-              timerAlarm(lcd_timer, 120000000, false, 0); // Reset to 2 mins
-              timerWrite(lcd_timer, 0);
-              timerRestart(lcd_timer);
-            }
+          } else if (pcb_clear_state == 1) {
+            pcb_clear_state = 0;
+            show_now = 1;
+          } else if (calib_flag == 1) {
+            calib_flag = 0;
+            calib_mode_flag.val = 0;
+            show_now = 1;
+          } else if (delete_confirm_state == 1) {
+            delete_confirm_state = 0;
+            strcpy(ui_data[FLD_DELETE_DATA].topRow, "DELETE DATA?");
+            show_now = 1;
+          } else if (rf_res_edit_state > 0) {
+            rf_res_edit_state = 0;
+            strcpy(ui_data[FLD_RF_RES].topRow, "RF RESOLUTION");
+            cur_mode = eEditOff;
+            show_now = 1;
           }
           break;
 
-        case 2:
+        case 2: // UP
           if (cur_mode == eEditOn) {
             cur_char_no = (cur_char_no + 1 + len) % len;
-            if (cur_pos_no < 16) {
-              input_buf[cur_pos_no] =
-                  inpCharSet[ui_data[cur_fld_no].fieldType][cur_char_no];
-            }
+            if (cur_pos_no < 16) input_buf[cur_pos_no] = inpCharSet[ui_data[cur_fld_no].fieldType][cur_char_no];
           } else {
-            // Loop until we find a visible field
             int start_fld = cur_fld_no;
             do {
               cur_fld_no = (cur_fld_no + 1) % FLD_COUNT;
             } while (!isFieldVisible(cur_fld_no) && cur_fld_no != start_fld);
-            show_now = 1;
 
-            if (cur_fld_no == FLD_LOG) {
-              char defStr[17];
-              snprintf(defStr, sizeof(defStr), "%04d%02d%02d %02d:%02d",
-                       current_year, current_month, current_day, record_hr,
-                       record_min);
-              strcpy(ui_data[FLD_LOG].bottomRow, defStr);
+            if (cur_fld_no == FLD_LOG && last_recorded_yy > 0) {
+               snprintf(ui_data[FLD_LOG].bottomRow, 17, "%04d%02d%02d %02d:%02d", 
+                        last_recorded_yy, last_recorded_mm, last_recorded_dd, 
+                        last_recorded_hr, last_recorded_min);
             }
           }
           show_now = 1;
           break;
 
-        // case 3: SET / ACTION
-        case 3:
+        case 3: // SET
           if (cur_fld_no == FLD_LCD_OFF) {
-            debugln("Turning off the display ...");
-            lcdkeypad_start = 0;
-            digitalWrite(32, LOW);
-
-            // Manual LCD shutdown: Turn off hardware and signal idle to system.
-            // System will sleep naturally via AIO9_5.0.ino's loop() when tasks
-            // are done.
-            debugln(
-                "Manual LCD OFF -> UI Idle. System remains active for tasks.");
-
-            // Link Wi-Fi shutdown to manual LCD shutdown (Power save)
-            if (wifi_active) {
-              WiFi.softAPdisconnect(true);
-              wifi_active = false;
-              webServerStarted = false;
-              debugln("LCD Manually OFF -> Wi-Fi Disabled");
-              strcpy(ui_data[FLD_WIFI_ENABLE].bottomRow, "ENABLE WIFI     ");
-            }
-
-            vTaskDelay(100 / portTICK_PERIOD_MS);
+            lcdkeypad_start = 0; digitalWrite(32, LOW);
           } else if (cur_fld_no == FLD_SEND_STATUS) {
-            if ((sync_mode == eSyncModeInitial) || (sync_mode == eSMSStop) ||
-                (sync_mode == eHttpStop) || (sync_mode == eExceptionHandled)) {
-              debugln("Button: Triggering eSMSStart");
-              send_status = 1;
-              sync_mode = eSMSStart; // Trigger GPRS SMS/Status task
-              strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "SENDING...");
-              show_now = 1;
+            if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
+              send_status = 1; sync_mode = eSMSStart;
+              strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "SENDING...     ");
             } else {
-              // v5.50: Queue for subsequent handling rather than rejecting
-              debugln("Button: SEND STATUS queued - automation in progress");
               pending_manual_status = true;
               strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "PLEASE WAIT..  ");
-              show_now = 1;
-              vTaskDelay(3000 / portTICK_PERIOD_MS);
-              // Result resets to "YES ?" after showing queue status
-              strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "YES ?           ");
-              show_now = 1;
             }
           } else if (cur_fld_no == FLD_SEND_GPS) {
-            if ((sync_mode == eSyncModeInitial) || (sync_mode == eSMSStop) ||
-                (sync_mode == eHttpStop) || (sync_mode == eExceptionHandled)) {
-              debugln("Button: Triggering eGPSStart");
-              sync_mode = eGPSStart; // Trigger GPRS GPS task
-              strcpy(ui_data[FLD_SEND_GPS].bottomRow, "SENDING...");
-              show_now = 1;
+            if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
+              sync_mode = eGPSStart;
+              strcpy(ui_data[FLD_SEND_GPS].bottomRow, "SENDING...     ");
             } else {
-              // v5.50: Queue for subsequent handling rather than rejecting
-              debugln("Button: SEND GPS queued - automation in progress");
               pending_manual_gps = true;
               strcpy(ui_data[FLD_SEND_GPS].bottomRow, "PLEASE WAIT..  ");
-              show_now = 1;
-              vTaskDelay(3000 / portTICK_PERIOD_MS);
-              // Result resets to "YES ?" after showing queue status
-              strcpy(ui_data[FLD_SEND_GPS].bottomRow, "YES ?           ");
-              show_now = 1;
+            }
+          } else if (cur_fld_no == FLD_HTTP_FAILS) {
+            if (pcb_clear_state == 0) {
+              pcb_clear_state = 1;
+              strcpy(ui_data[FLD_HTTP_FAILS].bottomRow, "CLEAR BACKLOG? ");
+            } else {
+              // WIPE BACKLOG
+              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                lcd.clear(); lcd.print("Wiping Backlog");
+                SPIFFS.remove("/unsent.txt");
+                SPIFFS.remove("/ftpunsent.txt");
+                SPIFFS.remove("/unsent_pointer.txt");
+                diag_http_present_fails = 0;
+                diag_http_cum_fails = 0;
+                pcb_clear_state = 0;
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                lcd.clear(); lcd.print("BACKLOG CLEARED");
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                xSemaphoreGive(i2cMutex);
+              }
             }
           } else if (cur_fld_no == FLD_RF_CALIB) {
             if (calib_flag == 0) {
-              // Mode is now strictly defined by the global flag
-              calib_mode = 0; // ALWAYS Field Calibration (User Request)
-
               calib_start_time = millis();
-              calib_count.val = 0; // PHYSICAL SEPARATION: Reset calib bucket
-              calib_mode_flag.val =
-                  1; // PHYSICAL SEPARATION: Start calib counting
-              calib_count_rf = 0;
-              calib_flag = 1; // Start
+              calib_count.val = 0; calib_mode_flag.val = 1; calib_flag = 1;
               calib_header_drawn = 0;
-
-              // Set initial timeout based on mode
-              // Field Calib: 5 mins allowed for test
-              // Field Calib: 5 mins allowed (User Correction)
-              timerAlarm(lcd_timer, 300000000, false, 0); // 5 mins
-              timerWrite(lcd_timer, 0);                   // Reset count
-              timerRestart(lcd_timer);
-
-              lcd.clear();
-              vTaskDelay(300 / portTICK_PERIOD_MS);
+              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                lcd.clear(); xSemaphoreGive(i2cMutex);
+              }
             } else if (calib_flag == 1) {
               calib_flag = 2; // Stop
-              vTaskDelay(300 / portTICK_PERIOD_MS);
+            }
+          } else if (cur_fld_no == FLD_RF_RES) {
+            if (rf_res_edit_state == 0) {
+              rf_res_edit_state = 1; // Password entry mode
+              strcpy(ui_data[FLD_RF_RES].topRow, "ENTER PASSWORD");
+              strcpy(input_buf, "    ");
+              cur_mode = eEditOn; cur_pos_no = 0; cur_char_no = 0;
+            } else if (rf_res_edit_state == 1) {
+              if (strcmp(input_buf, "2000") == 0) {
+                rf_res_edit_state = 2; // Value entry mode
+                strcpy(ui_data[FLD_RF_RES].topRow, "EDIT RF RES");
+                snprintf(input_buf, 17, "%.2f", RF_RESOLUTION);
+                cur_pos_no = 0; cur_char_no = 0;
+              } else {
+                rf_res_edit_state = 0;
+                strcpy(ui_data[FLD_RF_RES].topRow, "RF RESOLUTION");
+                cur_mode = eEditOff;
+              }
+            } else if (rf_res_edit_state == 2) {
+              RF_RESOLUTION = atof(input_buf);
+              File f = SPIFFS.open("/rf_res.txt", FILE_WRITE);
+              if (f) { f.print(RF_RESOLUTION); f.close(); }
+              // Requirement: Wipe all data and reboot after resolution change
+              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                 lcd.clear(); lcd.print("RES CHANGED!");
+                 vTaskDelay(1000/portTICK_PERIOD_MS);
+                 lcd.clear(); lcd.print("WIPING DATA...");
+                 SPIFFS.remove("/unsent.txt"); SPIFFS.remove("/ftpunsent.txt");
+                 File root = SPIFFS.open("/"); 
+                 File file = root.openNextFile();
+                 while(file) {
+                    String n = file.name();
+                    if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt")) {
+                      SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
+                    }
+                    file.close(); file = root.openNextFile();
+                 }
+                 root.close();
+                 lcd.clear(); lcd.print("DONE! REBOOTING");
+                 vTaskDelay(2000 / portTICK_PERIOD_MS);
+                 ESP.restart();
+              }
+            }
+          } else if (cur_fld_no == FLD_DELETE_DATA) {
+            if (delete_confirm_state == 0) {
+              delete_confirm_state = 1;
+              strcpy(ui_data[FLD_DELETE_DATA].topRow, "ARE YOU SURE?");
+              strcpy(ui_data[FLD_DELETE_DATA].bottomRow, "PRESS SET: YES");
+            } else {
+              // Perform deletion
+              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                 lcd.clear(); lcd.print("Deleting...");
+                 SPIFFS.remove("/unsent.txt"); SPIFFS.remove("/ftpunsent.txt");
+                 File root = SPIFFS.open("/"); 
+                 File file = root.openNextFile();
+                 while(file) {
+                    String n = file.name();
+                    if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc")) {
+                      SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
+                    }
+                    file.close(); file = root.openNextFile();
+                 }
+                 root.close();
+                 lcd.clear(); lcd.print("DONE! REBOOTING");
+                 vTaskDelay(2000 / portTICK_PERIOD_MS);
+                 ESP.restart();
+              }
             }
           } else if (cur_fld_no == FLD_SD_COPY) {
-            copyFilesFromSPIFFSToSD("/");
-          } else if (cur_fld_no == FLD_WIFI_ENABLE) {
-            if (wifi_active) {
-              WiFi.mode(WIFI_OFF);
-              wifi_active = false;
-              webServerStarted = false;
-            } else {
-              wifi_active = true;
-              last_wifi_activity_time = millis();
-#if ENABLE_WEBSERVER == 1
-              if (!webServerStarted) {
-                xTaskCreatePinnedToCore(webServer, "webServerTask", 8192, NULL,
-                                        3, &webServer_h, 0);
-                webServerStarted = true;
-              }
-#endif
+            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+              lcd.clear(); lcd.print("COPYING TO SD...");
+              copyFilesFromSPIFFSToSD("/"); 
+              lcd.clear(); lcd.print("SD COPY DONE");
+              vTaskDelay(2000 / portTICK_PERIOD_MS);
+              xSemaphoreGive(i2cMutex);
+              show_now = 1;
             }
-          } else {
-            if (cur_mode == eEditOff) {
-              // Only allow entering Edit Mode for specific configuration fields
-              if (cur_fld_no == FLD_STATION || cur_fld_no == FLD_DATE ||
-                  cur_fld_no == FLD_TIME || cur_fld_no == FLD_RF_RES ||
-                  cur_fld_no == FLD_DELETE_DATA || cur_fld_no == FLD_LOG ||
-                  cur_fld_no == FLD_ALTITUDE) {
-
-                if ((cur_fld_no == FLD_RF_RES && rf_res_edit_state == 0) ||
-                    (cur_fld_no == FLD_DELETE_DATA)) {
-                  if (cur_fld_no == FLD_RF_RES) {
-                    strcpy(ui_data[FLD_RF_RES].topRow, "ENTER PWD");
-                    rf_res_edit_state = 1;
-                    strcpy(input_buf, "0000");
-                  } else {
-                    strcpy(ui_data[FLD_DELETE_DATA].topRow, "CONFIRM?");
-                    strcpy(input_buf, "Yes ");
-                  }
-                } else {
-                  // Special handling for Station ID: Start with cleared field
-                  if (cur_fld_no == FLD_STATION) {
-                    strcpy(input_buf, "                "); // 16 spaces
-                  } else if (cur_fld_no == FLD_ALTITUDE) {
-                    // Auto-detect altitude from BME280, then ask to confirm
-                    if (bmeType != BME_UNKNOWN && pressure > 300.0) {
-                      // Hypsometric formula: h = 44330.76 * (1 -
-                      // (P/1013.25)^0.1903)
-                      float isa_sl = 1013.25f;
-                      float bme_alt =
-                          44330.769f * (1.0f - pow(pressure / isa_sl, 0.1903f));
-                      if (bme_alt < 0.0f)
-                        bme_alt = 0.0f;
-                      if (bme_alt > 5000.0f)
-                        bme_alt = 5000.0f;
-                      snprintf(input_buf, sizeof(input_buf), "%.0f", bme_alt);
-                      strcpy(ui_data[FLD_ALTITUDE].topRow, "AUTO DETECTED");
-                      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
-                          pdTRUE) {
-                        lcd.clear();
-                        lcd.setCursor(0, 0);
-                        lcd.print("AUTO DETECTED:");
-                        lcd.setCursor(0, 1);
-                        lcd.print((int)bme_alt);
-                        lcd.print("m  SET=Save");
-                        xSemaphoreGive(i2cMutex);
-                      }
-                    } else {
-                      // No BME or invalid - go to manual entry
-                      snprintf(input_buf, sizeof(input_buf), "%.0f",
-                               station_altitude_m);
-                      strcpy(ui_data[FLD_ALTITUDE].topRow, "MANUAL (0-5000)");
-                    }
-                  } else {
-                    strcpy(input_buf, ui_data[cur_fld_no].bottomRow);
-                  }
-                }
+          } else if (cur_fld_no == FLD_LOG) {
+             if (cur_mode == eEditOff) {
                 cur_mode = eEditOn;
-                cur_pos_no = 0;
-                cur_char_no = 0;
-
-                char c[2] = {input_buf[0], 0};
-                char *ptr =
-                    strstr(inpCharSet[ui_data[cur_fld_no].fieldType], c);
-                if (ptr)
-                  cur_char_no = ptr - inpCharSet[ui_data[cur_fld_no].fieldType];
-              } else {
-                debugln("Interaction ignored: Field is Read-Only.");
-              }
-            } else {
-              if (cur_fld_no == FLD_RF_RES) {
-                if (rf_res_edit_state == 1) {
-                  if (strcmp(input_buf, "2000") == 0) {
-                    rf_res_edit_state = 2;
-                    strcpy(ui_data[FLD_RF_RES].topRow, "SET RESOLUTION");
-                    snprintf(input_buf, sizeof(input_buf), "%0.2f",
-                             RF_RESOLUTION);
-                    cur_pos_no = 0;
-                    cur_char_no = 0;
-                    // Ensure we stay in Edit Mode to edit the value
-                    cur_mode = eEditOn;
-                    // Wait, logic below says cur_mode = eEditOff normally?
-                    // original logic said:
-                    // } else { ... cur_mode = eEditOff; }
-                    // If state=2, we want to EDIT.
-                    // So we should NOT set eEditOff here.
-                    // But we fall through to 'cur_mode = eEditOff' below? No.
-                    // The if/else blocks handle it.
-                    // In state 2, user enters value.
-                    // Pressing Set again triggers state 2 logic (save).
-                  } else {
-                    rf_res_edit_state = 0;
-                    strcpy(ui_data[FLD_RF_RES].topRow, "RF RESOLUTION");
-                    cur_mode = eEditOff;
-                  }
-                } else if (rf_res_edit_state == 2) {
-                  // Robust parsing: replace , with . just in case user uses it
-                  for (int x = 0; x < 16; x++) {
-                    if (input_buf[x] == ',')
-                      input_buf[x] = '.';
-                  }
-                  float new_res = atof(input_buf);
-                  debug("SET RESOLUTION: ");
-                  debugln(input_buf);
-
-                  if (fabs(new_res - 0.25) < 0.05 ||
-                      fabs(new_res - 0.50) < 0.05) {
-                    RF_RESOLUTION = (fabs(new_res - 0.25) < 0.05) ? 0.25 : 0.50;
-                    File resFile = SPIFFS.open("/rf_res.txt", FILE_WRITE);
-                    if (resFile) {
-                      resFile.print(RF_RESOLUTION);
-                      resFile.close();
-                    }
-                    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
-                        pdTRUE) {
-                      lcd.clear();
-                      lcd.setCursor(0, 0);
-                      lcd.print("SET TO ");
-                      lcd.print(RF_RESOLUTION, 2);
-                      lcd.setCursor(0, 1);
-                      lcd.print("RESTARTING...");
-                      xSemaphoreGive(i2cMutex);
-                    }
-                    debugln("Resolution updated. Restarting...");
-                    vTaskDelay(3000 / portTICK_PERIOD_MS);
-                    ESP.restart();
-                  } else {
-                    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
-                        pdTRUE) {
-                      lcd.clear();
-                      lcd.setCursor(0, 0);
-                      lcd.print("VAL: 0.25 / 0.50");
-                      xSemaphoreGive(i2cMutex);
-                    }
-                    vTaskDelay(2000 / portTICK_PERIOD_MS);
-                  }
-                  rf_res_edit_state = 0;
-                  strcpy(ui_data[FLD_RF_RES].topRow, "RF RESOLUTION");
-                  cur_mode = eEditOff;
+                strcpy(input_buf, ui_data[FLD_LOG].bottomRow);
+                cur_pos_no = 0; cur_char_no = 0;
+             } else {
+                if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                   lcd.clear(); lcd.setCursor(0, 0); lcd.print("SEARCHING...");
+                   xSemaphoreGive(i2cMutex);
                 }
-              } else {
+
+                char dt[17]; strcpy(dt, input_buf);
+                int yr = atoi(String(dt).substring(0,4).c_str());
+                int mo = atoi(String(dt).substring(4,6).c_str());
+                int dy = atoi(String(dt).substring(6,8).c_str());
+                int hr = atoi(String(dt).substring(9,11).c_str());
+                int mn = atoi(String(dt).substring(12,14).c_str());
+                int sNo = (hr * 4 + mn / 15 + 61) % 96;
+
+                if (sNo <= 60) {
+                   int daysInMonth[] = {0,31,28,31,30,31,30,31,31,30,31,30,31};
+                   if ((yr%4==0 && yr%100!=0) || (yr%400==0)) daysInMonth[2]=29;
+                   dy++; 
+                   if (dy > daysInMonth[mo]) { dy=1; mo++; if(mo>12){mo=1; yr++;} }
+                }
+
+                char fn[50]; snprintf(fn, 50, "/%s_%04d%02d%02d.txt", station_name, yr, mo, dy);
+                
+                if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+                   lcd.clear();
+                   
+                   // Fallback check for legacy/normalized prefix mismatch (v5.56 standard)
+                   if (!SPIFFS.exists(fn)) {
+                      char fallback[50];
+                      if (strlen(station_name) == 4 && isDigitStr(station_name)) {
+                         snprintf(fallback, sizeof(fallback), "/00%s_%04d%02d%02d.txt", station_name, yr, mo, dy);
+                      } else if (strlen(station_name) == 6 && strncmp(station_name, "00", 2) == 0) {
+                         snprintf(fallback, sizeof(fallback), "/%s_%04d%02d%02d.txt", station_name + 2, yr, mo, dy);
+                      } else {
+                         strcpy(fallback, "");
+                      }
+                      if (strlen(fallback) > 0 && SPIFFS.exists(fallback)) {
+                         strcpy(fn, fallback);
+                      }
+                   }
+
+                   if (SPIFFS.exists(fn)) {
+                      File f = SPIFFS.open(fn, FILE_READ);
+                      bool found = false;
+                      char line[128];
+                      while(f.available()) {
+                         String l = f.readStringUntil('\n');
+                         if (l.substring(0,2).toInt() == sNo) { strcpy(line, l.c_str()); found = true; break; }
+                      }
+                      f.close();
+
+                      if (found) {
+                         float tf=0, hf=0, af=0, rf=0; int wf=0;
+                         if (SYSTEM == 0) {
+                            float irf, crf; sscanf(line, "%*d,%*[^,],%*[^,],%f,%f", &irf, &crf);
+                            lcd.setCursor(0,0); lcd.print("CUM_RF:"); lcd.setCursor(0,1); lcd.print(crf,2);
+                         } else if (SYSTEM == 1) {
+                            sscanf(line, "%*d,%*[^,],%*[^,],%f,%f,%f,%d", &tf, &hf, &af, &wf);
+                            lcd.setCursor(0,0); char b1[17]; snprintf(b1,17,"T:%-4.1f H:%-4.1f",tf,hf); lcd.print(b1);
+                            lcd.setCursor(0,1); char b2[17]; snprintf(b2,17,"AWS:%-4.1f WD:%-d",af,wf); lcd.print(b2);
+                         } else if (SYSTEM == 2) {
+                            sscanf(line, "%*d,%*[^,],%*[^,],%f,%f,%f,%f,%d", &rf, &tf, &hf, &af, &wf);
+                            lcd.setCursor(0,0); char b1[17]; snprintf(b1,17,"R:%-3.1f T:%-4.1f",rf,tf); lcd.print(b1);
+                            lcd.setCursor(0,1); char b2[17]; snprintf(b2,17,"H:%-2.0f AWS:%-4.1f",hf,af); lcd.print(b2);
+                         }
+                         xSemaphoreGive(i2cMutex);
+                         vTaskDelay(5000 / portTICK_PERIOD_MS);
+                      } else { lcd.print("NOT IN FILE"); xSemaphoreGive(i2cMutex); vTaskDelay(2000/portTICK_PERIOD_MS); }
+                   } else { lcd.print("FILE NOT FOUND"); xSemaphoreGive(i2cMutex); vTaskDelay(2000/portTICK_PERIOD_MS); }
+                }
+                cur_mode = eEditOff;
+             }
+          } else {
+             // Generic Edit
+             if (cur_mode == eEditOff) {
+                if (ui_data[cur_fld_no].fieldType != eDisplayOnly && ui_data[cur_fld_no].fieldType != eLive) {
+                   cur_mode = eEditOn;
+                   strcpy(input_buf, ui_data[cur_fld_no].bottomRow);
+                   cur_pos_no = 0; cur_char_no = 0;
+                }
+             } else {
+                if (cur_fld_no == FLD_STATION) {
+                   String trimmed = String(input_buf);
+                   trimmed.trim();
+                   // Requirement (v5.56): if it's numeric "00XXXX", treat as "XXXX"
+                   if (trimmed.length() == 6 && isDigitStr(trimmed.c_str()) && trimmed.startsWith("00")) {
+                      trimmed = trimmed.substring(2);
+                   }
+                   strncpy(station_name, trimmed.c_str(), 15);
+                   station_name[15] = '\0';
+                   strcpy(ftp_station, station_name); // Sync for GPRS/FTP task
+
+                   // v5.60: Save to NVS, station.txt AND station.doc to prevent revert
+                   Preferences prefs; prefs.begin("sys-config", false); 
+                   prefs.putString("station", station_name); prefs.end();
+                   File f1 = SPIFFS.open("/station.txt", FILE_WRITE);
+                   if (f1) { f1.print(station_name); f1.close(); }
+                   File f2 = SPIFFS.open("/station.doc", FILE_WRITE);
+                   if (f2) { f2.print(station_name); f2.close(); }
+                   // Requirement: Acquire GPS whenever ID changes (eStartupGPS does GPS + Health)
+                   if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || 
+                       sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
+                      sync_mode = eStartupGPS;
+                      strcpy(ui_data[FLD_SEND_GPS].bottomRow, "ACQUIRING GPS..");
+                   } else {
+                      pending_manual_gps = true;
+                   }
+                } else if (cur_fld_no == FLD_DATE) {
+                   int dd, mm, yy;
+                   if (sscanf(input_buf, "%02d-%02d-%04d", &dd, &mm, &yy) == 3) {
+                      current_day = dd; current_month = mm; current_year = yy;
+                      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+                         rtc.adjust(DateTime(current_year, current_month, current_day, current_hour, current_min, 0));
+                         xSemaphoreGive(i2cMutex);
+                      }
+                   }
+                } else if (cur_fld_no == FLD_TIME) {
+                   int hh, mi;
+                   if (sscanf(input_buf, "%02d:%02d", &hh, &mi) == 2) {
+                      current_hour = hh; current_min = mi;
+                      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+                         rtc.adjust(DateTime(current_year, current_month, current_day, current_hour, current_min, 0));
+                         record_hr = current_hour;
+                         record_min = (current_min / 15) * 15;
+                         File fileTemp4 = SPIFFS.open("/signature.txt", FILE_WRITE);
+                         if (fileTemp4) {
+                            snprintf(signature, 17, "%04d-%02d-%02d,%02d:%02d", current_year, current_month, current_day, record_hr, record_min);
+                            fileTemp4.print(signature);
+                            fileTemp4.close();
+                         }
+                         rtcTimeChanged = true;
+                         xSemaphoreGive(i2cMutex);
+                      }
+                   }
+                }
                 strcpy(ui_data[cur_fld_no].bottomRow, input_buf);
                 cur_mode = eEditOff;
-
-                if (cur_fld_no == FLD_ALTITUDE) {
-                  // Step 2: User confirmed the auto-detected or manually
-                  // entered value
-                  float new_alt = atof(input_buf);
-                  if (new_alt >= 0.0 && new_alt <= 5000.0) {
-                    station_altitude_m = new_alt;
-                    File altF = SPIFFS.open("/station_alt.txt", FILE_WRITE);
-                    if (altF) {
-                      altF.print(station_altitude_m);
-                      altF.close();
-                    }
-                    snprintf(ui_data[FLD_ALTITUDE].bottomRow,
-                             sizeof(ui_data[FLD_ALTITUDE].bottomRow), "%.0f m",
-                             station_altitude_m);
-                    strcpy(ui_data[FLD_ALTITUDE].topRow, "Station Alt (m)");
-                    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
-                        pdTRUE) {
-                      lcd.clear();
-                      lcd.setCursor(0, 0);
-                      lcd.print("Alt SAVED:");
-                      lcd.print((int)station_altitude_m);
-                      lcd.print("m");
-                      lcd.setCursor(0, 1);
-                      lcd.print("RESTARTING...");
-                      xSemaphoreGive(i2cMutex);
-                    }
-                    vTaskDelay(3000 / portTICK_PERIOD_MS);
-                    ESP.restart();
-                  } else {
-                    strcpy(ui_data[FLD_ALTITUDE].topRow, "Station Alt (m)");
-                    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
-                        pdTRUE) {
-                      lcd.clear();
-                      lcd.setCursor(0, 0);
-                      lcd.print("0 to 5000m only");
-                      xSemaphoreGive(i2cMutex);
-                    }
-                    vTaskDelay(2000 / portTICK_PERIOD_MS);
-                  }
-                } else if (cur_fld_no == FLD_STATION) {
-                  // Store old station name before changing
-                  char old_station[16];
-                  strcpy(old_station, station_name);
-
-                  // Trim leading and trailing spaces from input_buf
-                  String trimmed = String(input_buf);
-                  trimmed.trim();
-
-                  // Requirement: if it's numeric "00XXXX", treat as "XXXX"
-                  if (trimmed.length() == 6 && isDigitStr(trimmed.c_str()) &&
-                      trimmed.startsWith("00")) {
-                    trimmed = trimmed.substring(2);
-                  }
-
-                  // Update to new station name
-                  strncpy(station_name, trimmed.c_str(),
-                          sizeof(station_name) - 1);
-                  station_name[sizeof(station_name) - 1] = '\0';
-                  strcpy(ftp_station, station_name);
-
-                  // Save to SPIFFS
-                  File file = SPIFFS.open("/station.doc", FILE_WRITE);
-                  if (file) {
-                    file.print(station_name);
-                    file.close();
-                  }
-
-                  // Save to NVS
-                  Preferences prefs;
-                  prefs.begin("sys-config", false);
-                  prefs.putString("station", station_name);
-                  prefs.end();
-
-                  // Cleanup old station files if station ID actually changed
-                  if (strcmp(old_station, station_name) != 0 &&
-                      strlen(old_station) > 0) {
-                    debugln(
-                        "[UI] Station ID changed. Cleaning up old files...");
-
-                    File root = SPIFFS.open("/");
-                    File file = root.openNextFile();
-                    int deleted_count = 0;
-
-                    while (file) {
-                      String fileName = file.name();
-
-                      // Delete files matching old station pattern
-                      // (OLDSTATION_YYYYMMDD.txt)
-                      if (fileName.startsWith("/" + String(old_station) +
-                                              "_")) {
-                        String fullPath = fileName.startsWith("/")
-                                              ? fileName
-                                              : "/" + fileName;
-                        debug("Deleting old station file: ");
-                        debugln(fullPath);
-                        SPIFFS.remove(fullPath);
-                        deleted_count++;
-                      }
-                      file.close(); // v5.49 Build 5: FIX LEAK
-                      file = root.openNextFile();
-                    }
-                    root.close();
-
-                    debugf1("[UI] Deleted %d old station files\n",
-                            deleted_count);
-
-                    // Show confirmation on LCD
-                    if (xSemaphoreTake(i2cMutex,
-                                       pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-                        pdTRUE) {
-                      lcd.clear();
-                      lcd.setCursor(0, 0);
-                      lcd.print("Station Changed");
-                      lcd.setCursor(0, 1);
-                      if (deleted_count > 0) {
-                        char msg[17];
-                        snprintf(msg, sizeof(msg), "Deleted %d files",
-                                 deleted_count);
-                        lcd.print(msg);
-                      } else {
-                        lcd.print("No old data");
-                      }
-                      xSemaphoreGive(i2cMutex);
-                    }
-                    vTaskDelay(2000 / portTICK_PERIOD_MS);
-
-                    // NEW: Cleanup for new station
-                    debugln("[UI] Station Changed: Deleting Calib & Unsent "
-                            "files...");
-                    SPIFFS.remove("/calib.txt");
-                    SPIFFS.remove("/unsent.txt");
-                    SPIFFS.remove("/ftpunsent.txt");
-                    SPIFFS.remove("/unsent_pointer.txt");
-
-                    // CRITICAL: Delete GPS cache to force fresh fix for new
-                    // location
-                    SPIFFS.remove("/gps_coords.txt");
-                    debugln("[UI] Station Changed: Deleted GPS cache (will get "
-                            "fresh fix)");
-                    lati = 0; // Clear in-memory coordinates
-                    longi = 0;
-
-                    // Reset internal calibration state fully
-                    calib_sts = 0;
-                    calib_day = 0;
-                    calib_month = 0;
-                    calib_year = 0;
-                    strcpy(ui_data[FLD_RF_CALIB].bottomRow, "NOT CALIBRATED");
-
-                    // NEW: Automatic Health Report with GPS after Station ID
-                    // Change
-                    debugln("[UI] Station Changed: Scheduling Automatic GPS & "
-                            "Health Report");
-                    reset_all_diagnostics(); // Ensure clean start for new ID
-                    sync_mode = eStartupGPS;
-                    cur_fld_no = FLD_SEND_GPS;
-                    strcpy(ui_data[FLD_SEND_GPS].bottomRow, "INITIALIZING...");
-
-                    // Auto-compute altitude from BME280 when station ID changes
-                    if (bmeType != BME_UNKNOWN && pressure > 300.0) {
-                      float isa_sl = 1013.25f;
-                      float bme_alt =
-                          44330.769f * (1.0f - pow(pressure / isa_sl, 0.1903f));
-                      if (bme_alt >= 0.0f && bme_alt <= 5000.0f) {
-                        station_altitude_m = bme_alt;
-                        File altF = SPIFFS.open("/station_alt.txt", FILE_WRITE);
-                        if (altF) {
-                          altF.print(station_altitude_m);
-                          altF.close();
-                        }
-                        snprintf(ui_data[FLD_ALTITUDE].bottomRow,
-                                 sizeof(ui_data[FLD_ALTITUDE].bottomRow),
-                                 "%.0f m", station_altitude_m);
-                        debugf1("[UI] Alt auto-updated from BME: %.0f m\n",
-                                bme_alt);
-                      }
-                    }
-                  }
-                } else if (cur_fld_no == FLD_DATE) {
-                  sscanf(ui_data[FLD_DATE].bottomRow, "%02d-%02d-%04d",
-                         &current_day, &current_month, &current_year);
-                  if (xSemaphoreTake(i2cMutex,
-                                     pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-                      pdTRUE) {
-                    rtc.adjust(DateTime(current_year, current_month,
-                                        current_day, current_hour, current_min,
-                                        0));
-                    record_hr = current_hour;
-                    record_min = current_min;
-                    // Rounding for signature (Slot START time)
-                    if (record_min < 15)
-                      record_min = 0;
-                    else if (record_min < 30)
-                      record_min = 15;
-                    else if (record_min < 45)
-                      record_min = 30;
-                    else
-                      record_min = 45;
-
-                    File fileTemp3 = SPIFFS.open("/signature.txt", FILE_WRITE);
-                    if (fileTemp3) {
-                      snprintf(signature, sizeof(signature),
-                               "%04d-%02d-%02d,%02d:%02d", current_year,
-                               current_month, current_day, record_hr,
-                               record_min);
-                      fileTemp3.print(signature);
-                      fileTemp3.close();
-                    }
-                    rtcTimeChanged = true;
-                    xSemaphoreGive(i2cMutex);
-                  }
-                } else if (cur_fld_no == FLD_TIME) {
-                  sscanf(ui_data[FLD_TIME].bottomRow, "%02d:%02d",
-                         &current_hour, &current_min);
-                  if (xSemaphoreTake(i2cMutex,
-                                     pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-                      pdTRUE) {
-                    rtc.adjust(DateTime(current_year, current_month,
-                                        current_day, current_hour, current_min,
-                                        0));
-                    record_hr = current_hour;
-                    record_min = current_min;
-                    // Rounding for signature
-                    if (record_min < 15)
-                      record_min = 0;
-                    else if (record_min < 30)
-                      record_min = 15;
-                    else if (record_min < 45)
-                      record_min = 30;
-                    else
-                      record_min = 45;
-
-                    File fileTemp4 = SPIFFS.open("/signature.txt", FILE_WRITE);
-                    if (fileTemp4) {
-                      snprintf(signature, sizeof(signature),
-                               "%04d-%02d-%02d,%02d:%02d", current_year,
-                               current_month, current_day, record_hr,
-                               record_min);
-                      fileTemp4.print(signature);
-                      fileTemp4.close();
-                    }
-                    rtcTimeChanged = true;
-                    xSemaphoreGive(i2cMutex);
-                  }
-                } else if (cur_fld_no == FLD_DELETE_DATA) {
-                  if (strstr(input_buf, "Yes") != NULL) {
-                    if (xSemaphoreTake(i2cMutex,
-                                       pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
-                        pdTRUE) {
-                      lcd.clear();
-                      lcd.print("Deleting Data");
-                      debugln("[UI] Deleting SPIFFS data files...");
-
-                      // 1. Explicitly remove global unsent buffers
-                      SPIFFS.remove("/unsent.txt");
-                      SPIFFS.remove("/ftpunsent.txt");
-                      SPIFFS.remove("/unsent_pointer.txt");
-
-                      // 2. Enumerate and remove ONLY data files, preserving
-                      // config
-                      File root = SPIFFS.open("/");
-                      File file = root.openNextFile();
-                      while (file) {
-                        String fileName = file.name();
-                        String fullPath = fileName.startsWith("/")
-                                              ? fileName
-                                              : "/" + fileName;
-
-                        // List of files to PRESERVE (Only Station ID for fresh
-                        // start)
-                        if (fullPath == "/station.doc" ||
-                            fullPath == "/station.txt" ||
-                            fullPath == "/rf_fw.txt") {
-                          debug("Preserving: ");
-                          debugln(fullPath);
-                        }
-                        // Delete everything else: Logs, Backlogs, AND Configs
-                        // (APN, Alt, Res, etc.)
-                        else {
-                          debug("Deleting: ");
-                          debugln(fullPath);
-                          SPIFFS.remove(fullPath);
-                        }
-                        file.close(); // v5.49 Build 5: FIX LEAK
-                        file = root.openNextFile();
-                      }
-                      root.close();
-                      reset_all_diagnostics(); // Reset all RTC RAM diagnostic
-                                               // counters
-                      lcd.clear();
-                      lcd.print("CLEAN! REBOOTING");
-                      debugln("[UI] Factory Reset Complete. Restarting...");
-                      vTaskDelay(2000 / portTICK_PERIOD_MS);
-                      ESP.restart();
-                      xSemaphoreGive(i2cMutex);
-                    }
-                  } else {
-                    strcpy(ui_data[FLD_DELETE_DATA].topRow, "DELETE DATA?");
-                    strcpy(ui_data[FLD_DELETE_DATA].bottomRow, "Yes ?");
-                  }
-                } else if (cur_fld_no == FLD_LOG) {
-                  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                    lcd.clear();
-                    lcd.setCursor(0, 0);
-                    lcd.print("SEARCHING...");
-                    xSemaphoreGive(i2cMutex);
-                  }
-
-                  // dateTimeStr is "YYYYMMDD HH:MM"
-                  char dateTimeStr[17];
-                  strcpy(dateTimeStr, ui_data[FLD_LOG].bottomRow);
-
-                  char year_s[5], month_s[3], day_s[3], hour_s[3], min_s[3];
-                  strncpy(year_s, dateTimeStr, 4);
-                  year_s[4] = 0;
-                  strncpy(month_s, dateTimeStr + 4, 2);
-                  month_s[2] = 0;
-                  strncpy(day_s, dateTimeStr + 6, 2);
-                  day_s[2] = 0;
-                  strncpy(hour_s, dateTimeStr + 9, 2);
-                  hour_s[2] = 0;
-                  strncpy(min_s, dateTimeStr + 12, 2);
-                  min_s[2] = 0;
-
-                  int hr = atoi(hour_s);
-                  int mn = atoi(min_s);
-                  int dy = atoi(day_s);
-                  int mo = atoi(month_s);
-                  int yr = atoi(year_s);
-
-                  int sample = (hr * 4 + mn / 15 + 61) % 96;
-
-                  // RF Day Logic: Samples 0-60 (8:45 AM to Midnight) belong
-                  // to the NEXT day's file
-                  if (sample <= 60) {
-                    int no_of_days[13] = {0,  31, 28, 31, 30, 31, 30,
-                                          31, 31, 30, 31, 30, 31};
-                    dy++;
-                    int days_in_mo = no_of_days[mo];
-                    if (mo == 2 && yr % 4 == 0)
-                      days_in_mo = 29;
-                    if (dy > days_in_mo) {
-                      dy = 1;
-                      mo++;
-                      if (mo > 12) {
-                        mo = 1;
-                        yr++;
-                      }
-                    }
-                  }
-
-                  char log_filename[50];
-                  snprintf(log_filename, sizeof(log_filename),
-                           "/%s_%04d%02d%02d.txt", station_name, yr, mo, dy);
-
-                  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                    lcd.clear();
-                    if (!SPIFFS.exists(log_filename)) {
-                      // Fallback check for legacy "00" prefix or normalized
-                      // station ID
-                      char fallback_filename[50];
-                      if (strncmp(station_name, "00", 2) == 0) {
-                        snprintf(fallback_filename, sizeof(fallback_filename),
-                                 "/%s_%04d%02d%02d.txt", station_name + 2, yr,
-                                 mo, dy);
-                      } else {
-                        snprintf(fallback_filename, sizeof(fallback_filename),
-                                 "/00%s_%04d%02d%02d.txt", station_name, yr, mo,
-                                 dy);
-                      }
-
-                      if (SPIFFS.exists(fallback_filename)) {
-                        strcpy(log_filename, fallback_filename);
-                      } else {
-                        lcd.print("NO LOG FILE");
-                        debug("Search Failed. Searched for: ");
-                        debug(log_filename);
-                        debug(" and fallback: ");
-                        debugln(fallback_filename);
-                        // DO NOT return; - this would kill the keypad task!
-                      }
-                    }
-
-                    // Only attempt to open if the file was found or exists
-                    if (SPIFFS.exists(log_filename)) {
-                      File f = SPIFFS.open(log_filename, FILE_READ);
-                      if (!f) {
-                        lcd.print("OPEN FAILED");
-                      } else {
-                        char line_buf[100];
-                        bool found = false;
-                        while (f.available()) {
-                          String l = f.readStringUntil('\n');
-                          int sNo = l.substring(0, 2).toInt();
-                          if (sNo == sample) {
-                            strcpy(line_buf, l.c_str());
-                            found = true;
-                            break;
-                          }
-                        }
-                        f.close();
-
-                        if (!found) {
-                          lcd.print("DATA NOT FOUND");
-                        } else {
-                          // SYSTEM 0:
-                          // 01,2026-02-18,11:30,000.00,000.00,-111,04.2
-                          // SYSTEM 1:
-                          // 11,2026-02-18,11:30,25.32,38.42,00.38,105,-055,04.2
-                          // SYSTEM 2:
-                          // 11,2026-02-18,11:30,001.00,25.32,38.42,00.10,105,-055,04.2
-
-                          float rf = 0, temp = 0, hum = 0, aws = 0;
-                          int wd = 0;
-                          char dbuf1[16], dbuf2[16];
-
-                          if (SYSTEM == 0) {
-                            float instRF, cumRF;
-                            sscanf(line_buf, "%*d,%*[^,],%*[^,],%f,%f", &instRF,
-                                   &cumRF);
-                            lcd.setCursor(0, 0);
-                            lcd.print("CUM_RF:");
-                            lcd.setCursor(0, 1);
-                            lcd.print(cumRF, 2);
-                          } else if (SYSTEM == 1) {
-                            sscanf(line_buf, "%*d,%*[^,],%*[^,],%f,%f,%f,%d",
-                                   &temp, &hum, &aws, &wd);
-                            lcd.setCursor(0, 0);
-                            snprintf(dbuf1, sizeof(dbuf1), "T:%-4.1f H:%-4.1f",
-                                     temp, hum);
-                            lcd.print(dbuf1);
-                            lcd.setCursor(0, 1);
-                            snprintf(dbuf2, sizeof(dbuf2), "AWS:%-4.1f WD:%-3d",
-                                     aws, wd);
-                            lcd.print(dbuf2);
-                          } else if (SYSTEM == 2) {
-                            sscanf(line_buf, "%*d,%*[^,],%*[^,],%f,%f,%f,%f,%d",
-                                   &rf, &temp, &hum, &aws, &wd);
-                            lcd.setCursor(0, 0);
-                            snprintf(dbuf1, sizeof(dbuf1),
-                                     "RF:%-3.1fT:%-4.1fH:%-2.0f", rf, temp,
-                                     hum);
-                            lcd.print(dbuf1);
-                            lcd.setCursor(0, 1);
-                            snprintf(dbuf2, sizeof(dbuf2), "AWS:%-4.1f WD:%-3d",
-                                     aws, wd);
-                            lcd.print(dbuf2);
-                          }
-                        }
-                      }
-                    }
-                    xSemaphoreGive(i2cMutex);
-                    vTaskDelay(5000 / portTICK_PERIOD_MS); // Allow user to read
-                  }
-                }
-              }
-            }
-          }
-          show_now = 1; // Trigger display update
-          break;
-
-        // case 4: LEFT
-        case 4:
-          if (cur_mode == eEditOn) {
-            if (cur_pos_no > 0)
-              cur_pos_no--;
-            char c1[2] = {input_buf[cur_pos_no], 0};
-            char *ptr = strstr(inpCharSet[ui_data[cur_fld_no].fieldType], c1);
-            if (ptr)
-              cur_char_no = ptr - inpCharSet[ui_data[cur_fld_no].fieldType];
+             }
           }
           show_now = 1;
           break;
 
-        // case 5: DOWN
-        case 5:
+        case 4: // LEFT
+          if (cur_mode == eEditOn && cur_pos_no > 0) cur_pos_no--;
+          show_now = 1;
+          break;
+
+        case 5: // DOWN
           if (cur_mode == eEditOn) {
             cur_char_no = (cur_char_no - 1 + len) % len;
-            if (cur_pos_no < 16) {
-              input_buf[cur_pos_no] =
-                  inpCharSet[ui_data[cur_fld_no].fieldType][cur_char_no];
-            }
+            if (cur_pos_no < 16) input_buf[cur_pos_no] = inpCharSet[ui_data[cur_fld_no].fieldType][cur_char_no];
           } else {
-            if (cur_fld_no == FLD_RF_CALIB && calib_flag == 10) {
-              // Toggle removed: User only wants Field Calibration
-              show_now = 1;
-            } else {
-              // Loop until we find a visible field
-              int start_fld = cur_fld_no;
-              do {
-                cur_fld_no = (cur_fld_no + FLD_COUNT - 1) % FLD_COUNT;
-              } while (!isFieldVisible(cur_fld_no) && cur_fld_no != start_fld);
-              if (cur_fld_no == FLD_LOG) {
-                int p_min = (current_min / 15) * 15;
-                int p_hr = current_hour;
-                int d_day = rf_cls_dd;
-                int d_month = rf_cls_mm;
-                int d_year = rf_cls_yy;
+            int start_fld = cur_fld_no;
+            do {
+              cur_fld_no = (cur_fld_no + FLD_COUNT - 1) % FLD_COUNT;
+            } while (!isFieldVisible(cur_fld_no) && cur_fld_no != start_fld);
 
-                if (d_day <= 0 || (d_day == current_day &&
-                                   (current_hour > 8 || (current_hour == 8 &&
-                                                         current_min >= 30)))) {
-                  if (d_day <= 0) {
-                    d_day = current_day;
-                    d_month = current_month;
-                    d_year = current_year;
-                  }
-                  if ((current_hour > 8) ||
-                      (current_hour == 8 && current_min >= 30)) {
-                    d_day++;
-                    int daysInMonth[] = {0,  31, 28, 31, 30, 31, 30,
-                                         31, 31, 30, 31, 30, 31};
-                    if ((d_year % 4 == 0 && d_year % 100 != 0) ||
-                        (d_year % 400 == 0))
-                      daysInMonth[2] = 29;
-                    if (d_day > daysInMonth[d_month]) {
-                      d_day = 1;
-                      d_month++;
-                      if (d_month > 12) {
-                        d_month = 1;
-                        d_year++;
-                      }
-                    }
-                  }
-                }
-                char defStr[17];
-                snprintf(defStr, sizeof(defStr), "%04d%02d%02d %02d:%02d",
-                         d_year, d_month, d_day, p_hr, p_min);
-                strcpy(ui_data[FLD_LOG].bottomRow, defStr);
-              }
+            if (cur_fld_no == FLD_LOG && last_recorded_yy > 0) {
+               snprintf(ui_data[FLD_LOG].bottomRow, 17, "%04d%02d%02d %02d:%02d", 
+                        last_recorded_yy, last_recorded_mm, last_recorded_dd, 
+                        last_recorded_hr, last_recorded_min);
+            } else if (cur_fld_no == FLD_LOG) {
+               int p_min = (current_min / 15) * 15;
+               snprintf(ui_data[FLD_LOG].bottomRow, 17, "%04d%02d%02d %02d:%02d", 
+                        current_year, current_month, current_day, current_hour, p_min);
             }
           }
           show_now = 1;
           break;
 
-        // case 6: RIGHT
-        case 6:
-          if (cur_mode == eEditOn) {
-            if (cur_pos_no < 15)
-              cur_pos_no++;
-            char c1[2] = {input_buf[cur_pos_no], 0};
-            char *ptr = strstr(inpCharSet[ui_data[cur_fld_no].fieldType], c1);
-            if (ptr)
-              cur_char_no = ptr - inpCharSet[ui_data[cur_fld_no].fieldType];
-          }
+        case 6: // RIGHT
+          if (cur_mode == eEditOn && cur_pos_no < 15) cur_pos_no++;
           show_now = 1;
           break;
-        }
-
-      } // End of if key != NULL
-    }   // End of checking lcdkeypad_start == 1
-
-    esp_task_wdt_reset();
-
-    // Adaptive polling: Fast when active, slower when idle (power
-    // optimization)
-    static bool recent_activity = false;
-
-    if (lcdkeypad_start) {
-      // Check if there was recent key activity (within last 2 seconds)
-      if (millis() - last_key_time < 2000) {
-        vTaskDelay(5 / portTICK_PERIOD_MS); // Fast polling when user is
-                                            // actively pressing keys
-        recent_activity = true;
-      } else {
-        vTaskDelay(
-            20 / portTICK_PERIOD_MS); // Slower polling when idle - saves power
-        if (recent_activity) {
-          recent_activity = false;
-          // debugln("[UI] Switching to power-save polling");
         }
       }
-    } else {
-      vTaskDelay(50 /
-                 portTICK_PERIOD_MS); // Faster polling (50ms) to ensure EXT0
-                                      // manual wakeups are cleanly caught
     }
-
-  } // End of forever loop
-
-} // End of lcdkeypad task
+    if (lcdkeypad_start && lcd_timer) {
+      // v5.60: Stay awake during active manual triggers or startup tasks
+      if (sync_mode == eSMSStart || sync_mode == eGPSStart || 
+          sync_mode == eStartupGPS || cur_fld_no == FLD_LOG && cur_mode == eEditOn) {
+        timerWrite(lcd_timer, 0);
+      }
+    }
+    esp_task_wdt_reset();
+    vTaskDelay((lcdkeypad_start ? 10 : 50) / portTICK_PERIOD_MS);
+  }
+}

@@ -106,7 +106,7 @@ void reset_all_diagnostics();
 void recoverI2CBus();
 
 /************************************************************************************************/
-#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+#define SYSTEM 1             // SYSTEM : TRG=0 TWS=1 TWS-RF=2
 char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 //                                0:  KSNDMC_TRG  BIHAR_TRG
 //                                1:  KSNDMC_TWS KSNDMC_TWS-AP
@@ -114,7 +114,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.59"
+#define FIRMWARE_VERSION "5.60"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
@@ -450,6 +450,7 @@ RTC_DATA_ATTR bool diag_rain_jump = false;
 RTC_DATA_ATTR float diag_last_rf_val = 0;
 RTC_DATA_ATTR bool diag_rain_calc_invalid = false;
 RTC_DATA_ATTR bool diag_rain_reset = false;
+RTC_DATA_ATTR bool diag_wd_fail = false; // v5.59: WD Disconnection tracker
 RTC_DATA_ATTR int diag_consecutive_http_fails = 0;
 RTC_DATA_ATTR int diag_daily_http_fails = 0; // Total failures today
 RTC_DATA_ATTR int diag_http_present_fails =
@@ -462,6 +463,7 @@ RTC_DATA_ATTR int diag_rejected_count =
     0; // Track consecutive "Rejected" (Time) errors
 RTC_DATA_ATTR bool diag_sensor_fault_sent_today =
     false; // v5.55: One-time fault trigger
+RTC_DATA_ATTR char diag_crash_task[16] = "NONE"; // v5.59: Survive restart
 
 // Accuracy Counters (v5.49): Use 32-bit accumulators to prevent 16-bit ULP
 // wraps and spikes
@@ -560,6 +562,8 @@ RTC_DATA_ATTR bool apn_saved_this_sim =
     false; // v5.55: Guard APN SPIFFS write per SIM lifecycle
 RTC_DATA_ATTR float last_valid_temp = 26.0;
 RTC_DATA_ATTR float last_valid_hum = 65.0;
+RTC_DATA_ATTR int last_valid_wd = 0;        // v5.59: WD Rescue Anchor
+RTC_DATA_ATTR float rtc_daily_cum_rf = 0.0; // v5.59: RF Golden Anchor
 
 // RF
 float rf_value, current_rf_value, calib_rf_float;
@@ -576,6 +580,7 @@ int windDir;
 float sea_level_pressure;
 char inst_hum[10], avg_wind_speed[10], inst_wd[10];
 char pres_str[20] = "NA";
+int pcb_clear_state = 0; // 0:Idle, 1:Confirming
 
 // RTC
 volatile bool rtcReady = false;
@@ -594,6 +599,7 @@ RTC_DATA_ATTR bool pending_manual_gps =
     false; // v5.50: Queue manual GPS if busy
 
 // LCD and Navigation
+extern volatile char show_now;
 volatile int wakeup_reason_is; // ACTIVE: used by all wakeup logic
 volatile int lcdkeypad_start = 0;
 extern int wired;
@@ -770,13 +776,13 @@ ui_data_t ui_data[FLD_COUNT] = {
     {15, "SEND LAT/LONG", "YES ?", eDisplayOnly},    // 15
     {23, "ENABLE WIFI", "PRESS SET", eDisplayOnly},  // 16
     {21, "LOG (DT TM)", "20260205 08:30", eNumeric}, // 17
-    {16, "Wind Direction", "NA", eLive},             // 18
-    {17, "INST WND SP(m/s)", "NA", eLive},           // 19
-    {18, "AVG WND SP(m/s)", "NA", eLive},            // 20
-    {19, "Temperature (C)", "NA", eLive},            // 21
-    {20, "Humidity (%)", "NA", eLive},               // 22
-    {24, "Pressure (hPa)", "NA", eLive},             // 23
-    {26, "Station Alt (m)", "900", eNumeric},        // 24 BME only
+    {16, "WIND DIRECTION", "NA", eLive},             // 18
+    {17, "INST WIND SPEED", "NA", eLive},            // 19
+    {18, "AVG WIND SPEED", "NA", eLive},             // 20
+    {19, "TEMPERATURE", "NA", eLive},                // 21
+    {20, "HUMIDITY", "NA", eLive},                   // 22
+    {24, "PRESSURE", "NA", eLive},                   // 23
+    {26, "STATION ALT", "900", eNumeric},            // 24 BME only
     {27, "HTTP FAIL STATS", "                ",
      eLive},                                   // 25 v7.70: HTTP fail counters
     {22, "TURN OFF LCD", "YES?", eDisplayOnly} // 26

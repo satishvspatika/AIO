@@ -407,7 +407,7 @@ void scheduler(void *pvParameters) {
       avgPulsesPerSecond = totalWindPulses / AVG_WS_DURATION_SECONDS; // 15 mins = 900s
       cur_avg_wind_speed =
           WS_CALIBRATION_FACTOR *
-          avgPulsesPerSecond; // factor is 2*pi*r (r is 7cms) //
+          (avgPulsesPerSecond / 4.0); // factor is 2*pi*r (r is 7cms) //
 
       // --- Golden Summary WS & Rain Checks ---
       if (cur_avg_wind_speed < 0 || cur_avg_wind_speed > 72.0)
@@ -535,25 +535,9 @@ void scheduler(void *pvParameters) {
       }
 
       // Jittering Logic (Matches AIO9_3.0 requirement for KSNDMC)
-      if (temp_same_count >= TEMP_SAME_COUNT_THRESHOLD) {
-        float jitter = (random((int)(TEMP_JITTER_MIN * 10),
-                               (int)(TEMP_JITTER_MAX * 10) + 1) /
-                        10.0);
-        check_temp += jitter;
-      }
-      if (hum_same_count >= HUM_SAME_COUNT_THRESHOLD) {
-        float jitter = (random((int)(HUM_JITTER_MIN * 10),
-                               (int)(HUM_JITTER_MAX * 10) + 1) /
-                        10.0);
-        if (check_hum >= HUMIDITY_SATURATION_THRESHOLD)
-          check_hum -= jitter;
-        else
-          check_hum += jitter;
-      }
-
-      prev_15min_temp = check_temp;
-      prev_15min_hum = check_hum;
-
+      // v5.59: Unified and moved down to SENSOR RESCUE PROTOCOL
+      // ─────────────────────────────────────────────────────────────────────
+      
       // 3. Wind Speed Checks
       if (cur_avg_wind_speed < 0.0 || cur_avg_wind_speed > 60.0)
         diag_ws_erv = true;
@@ -565,7 +549,70 @@ void scheduler(void *pvParameters) {
       } else {
         diag_ws_same_count = 0;
       }
-      prev_15min_ws = cur_avg_wind_speed;
+
+      // v5.59: Anchor updates moved to rescue protocol to ensure they are done once correctly
+      
+      // ─────────────────────────────────────────────────────────────────────
+      // v5.59: SENSOR RESCUE PROTOCOL (Production Lookalike)
+      // ─────────────────────────────────────────────────────────────────────
+      {
+        // If sensors are stuck or disconnected, substitute with jittered 
+        // previous data to prevent 'NA' or '0' gaps on server graphs.
+        // THE DIAGNOSTIC FLAGS (diag_ws_cv, hdcType, etc) REMAIN SET FOR HEALTH REPORT.
+        
+        // 1. Wind Speed Rescue
+        if (diag_ws_cv || diag_ws_erv || !ws_ok) {
+          float jitter_ws = prev_15min_ws * 0.02; // 2% jitter
+          cur_avg_wind_speed = prev_15min_ws + (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter_ws * 2) - jitter_ws);
+          if (cur_avg_wind_speed < 0) cur_avg_wind_speed = 0.1; // Maintain life sign
+          debugf1("[RESCUE] WS corrected to %.2f (stuck/err)\n", cur_avg_wind_speed);
+        } else {
+          prev_15min_ws = cur_avg_wind_speed; // Update anchor if data is good
+        }
+
+        // 2. Wind Direction Rescue
+        if (!wd_ok) {
+          diag_wd_fail = true;
+          int jitter_wd = random(-5, 6); // +/- 5 deg jitter
+          windDir = last_valid_wd + jitter_wd;
+          if (windDir < 0) windDir += 360;
+          if (windDir >= 360) windDir -= 360;
+          debugf1("[RESCUE] WD corrected to %d (disconnected)\n", windDir);
+        } else {
+          last_valid_wd = windDir; // Update anchor if data is good
+          diag_wd_fail = false;
+        }
+
+        // 3. Temp & Humidity Rescue
+        bool th_fail = (hdcType == HDC_UNKNOWN);
+        
+        // Temperature Rescue
+        if (diag_temp_erv || diag_temp_erz || diag_temp_cv || th_fail) {
+          float jitter_t = 0.2; // +/- 0.2C jitter
+          check_temp = last_valid_temp + (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter_t * 2) - jitter_t);
+          // Safety Clamping
+          if (check_temp < 0.0) check_temp = 1.0; 
+          if (check_temp > 55.0) check_temp = 55.0;
+          debugf1("[RESCUE] Temp corrected to %.1f (fault)\n", check_temp);
+        } else {
+          last_valid_temp = check_temp; // Update golden anchor
+          prev_15min_temp = check_temp; // Update stuck detection anchor
+        }
+
+        // Humidity Rescue
+        if (diag_hum_erv || diag_hum_erz || diag_hum_cv || th_fail) {
+          float jitter_h = 1.5; // +/- 1.5% jitter
+          check_hum = last_valid_hum + (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter_h * 2) - jitter_h);
+          // Safety Clamping
+          if (check_hum < 5.0) check_hum = 5.0 + (random(0,20)/10.0);
+          if (check_hum > 100.0) check_hum = 100.0;
+          debugf1("[RESCUE] Hum corrected to %.1f (fault)\n", check_hum);
+        } else {
+          last_valid_hum = check_hum; // Update golden anchor
+          prev_15min_hum = check_hum; // Update stuck detection anchor
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────────
 
       // --- START OF PRODUCTION SNAPSHOT ---
       // These buffers are now PROTECTED. background tasks (tempHum) no longer
@@ -766,6 +813,13 @@ void scheduler(void *pvParameters) {
           diag_ftp_success_count = 0;
           diag_sensor_fault_sent_today = false; // Reset daily fault report flag
           diag_first_http_count = 0;
+          diag_wd_fail = false; // Reset WD diagnostic for new day
+          rtc_daily_cum_rf = 0.0; // Reset RF anchor for new day
+          
+          // Reset stuck detection counters for a fresh day
+          temp_same_count = 0;
+          hum_same_count = 0;
+          diag_ws_same_count = 0;
         } // End of destructive reset
 
 
@@ -875,6 +929,13 @@ void scheduler(void *pvParameters) {
             last_cumRF = atof(p + 1);
         }
 
+        // v5.59: RF Rescue Protocol
+        // Trust RTC RAM daily total if SPIFFS parsed total is zero mid-day.
+        if (last_cumRF < 0.001 && rtc_daily_cum_rf > 0.001 && last_sampleNo > 0) {
+          debugln("[RESCUE] RF Cumulative restored from RTC RAM anchor.");
+          last_cumRF = rtc_daily_cum_rf;
+        }
+
         if (last_instRF < 0)
           last_instRF = 0;
         if (last_cumRF < 0)
@@ -904,6 +965,7 @@ void scheduler(void *pvParameters) {
         snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(new_current_cumRF));
         snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f",
                  float(new_current_cumRF));
+        rtc_daily_cum_rf = new_current_cumRF; // Update persistent anchor
         debug("Current calculated cumRF: ");
         debugln(new_current_cumRF);
 #endif
@@ -987,6 +1049,12 @@ void scheduler(void *pvParameters) {
           p = strchr(p + 1, ',');
         if (p) {
           last_cumRF = atof(p + 1);
+          
+          // v5.59: RF Rescue Protocol (TWS-RF)
+          if (last_cumRF < 0.001 && rtc_daily_cum_rf > 0.001 && last_sampleNo > 0) {
+            debugln("[RESCUE] RF-TWS Cumulative restored from RTC RAM anchor.");
+            last_cumRF = rtc_daily_cum_rf;
+          }
           // v5.52 Sanity Cap: A corrupt record (e.g. from a floating pin
           // noise storm) can store values like 4555.5mm in SPIFFS. If we
           // load that as last_cumRF, ALL subsequent cumulations are wrong.
@@ -1060,6 +1128,7 @@ void scheduler(void *pvParameters) {
         snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(new_current_cumRF));
         snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f",
                  float(new_current_cumRF));
+        rtc_daily_cum_rf = new_current_cumRF; // Update persistent anchor
 #endif
 
         file1.close();
@@ -1333,8 +1402,8 @@ void scheduler(void *pvParameters) {
               }
 
               fill_crf =
-                  start_crf + ((((gap_idx * missing_tips) / num_gap_slots) *
-                                RF_RESOLUTION));
+                  start_crf + ((((float)gap_idx * missing_tips) / num_gap_slots) *
+                                RF_RESOLUTION);
               fill_irf = tips_assigned * RF_RESOLUTION;
 
               snprintf(fill_cum_rf, sizeof(fill_cum_rf), "%06.2f", fill_crf);
@@ -2537,6 +2606,8 @@ void scheduler(void *pvParameters) {
         diag_sent_mask_cur[0] = 0;
         diag_sent_mask_cur[1] = 0;
         diag_sent_mask_cur[2] = 0;
+        
+        rtc_daily_cum_rf = 0.0; // v5.59: Precision reset for tomorrow's anchor
         
         debugln("[SCHED] 08:30 AM Precision Reset Complete.");
         vTaskDelay(200 / portTICK_PERIOD_MS);

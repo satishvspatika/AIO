@@ -26,14 +26,6 @@
 #include <driver/adc.h>
 #include <rom/rtc.h>
 
-extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask,
-                                              char *pcTaskName) {
-  debug("STACK OVERFLOW in task: ");
-  debugln(pcTaskName);
-  debugln();
-  debug("Restarting ....");
-  ESP.restart();
-}
 
 int wired = 1; // Integrated is 1 or Standalone LCD module is 0
 const int chipSelect = SS;
@@ -65,6 +57,7 @@ char ota_fail_reason[48] = "NONE";
 bool health_in_progress = false;
 TaskHandle_t lcdkeypad_h; // UI
 TaskHandle_t tempHum_h;
+volatile char show_now = 0;
 TaskHandle_t bmeTask_h;
 TaskHandle_t windSpeed_h;
 TaskHandle_t windDirection_h;
@@ -134,10 +127,26 @@ void setup() {
   // If healer_reboot_in_progress is set, skip wiping counters even on Reason 12.
   if ((rr == POWERON_RESET || rr == EXT_CPU_RESET || rr == 12) && !healer_reboot_in_progress) {
     debugf("[BOOT] Fresh Start (Reason %d). Initializing RTC variables.\n", (int)rr);
-    if (last_valid_temp < -20.0 || last_valid_temp > 60.0)
-      last_valid_temp = 26.0;
-    if (last_valid_hum < 0.0 || last_valid_hum > 100.0)
-      last_valid_hum = 65.0;
+    // v5.60: Time-of-day dependent sensor anchor initialization
+    int boot_hr = 10; // Default to mid-morning if RTC fails
+    if (diag_rtc_battery_ok) {
+      DateTime now = rtc.now();
+      boot_hr = now.hour();
+    }
+
+    if (boot_hr >= 0 && boot_hr < 6) { // Night
+      last_valid_temp = 18.0; last_valid_hum = 90.0;
+    } else if (boot_hr >= 6 && boot_hr < 12) { // Morning
+      last_valid_temp = 21.0; last_valid_hum = 78.0;
+    } else if (boot_hr >= 12 && boot_hr < 18) { // Afternoon
+      last_valid_temp = 24.5; last_valid_hum = 69.0;
+    } else { // Evening
+      last_valid_temp = 20.0; last_valid_hum = 86.0;
+    }
+    
+    if (last_valid_wd < 0 || last_valid_wd >= 360)
+      last_valid_wd = 0;
+    rtc_daily_cum_rf = 0.0;
 
     total_wind_pulses_32 = 0;
     last_sched_wind_pulses_32 = 0;
@@ -172,7 +181,18 @@ void setup() {
       wind_count.val = 0;
       calib_count.val = 0;
       total_wind_pulses_32 = 0;
+      total_wind_pulses_32 = 0;
       total_rf_pulses_32 = 0;
+      rtc_daily_cum_rf = 0.0;
+      last_valid_wd = 0;
+
+      // v5.60: Time-aware reset for DELETE DATA
+      int reset_hr = 10;
+      if (diag_rtc_battery_ok) { DateTime now = rtc.now(); reset_hr = now.hour(); }
+      if (reset_hr >= 0 && reset_hr < 6) { last_valid_temp = 18.0; last_valid_hum = 90.0; }
+      else if (reset_hr >= 6 && reset_hr < 12) { last_valid_temp = 21.0; last_valid_hum = 78.0; }
+      else if (reset_hr >= 12 && reset_hr < 18) { last_valid_temp = 24.5; last_valid_hum = 69.0; }
+      else { last_valid_temp = 20.0; last_valid_hum = 86.0; }
 
       debugln("[BOOT] DELETE DATA detected. All diagnostic and sensor counters cleared.");
     }
@@ -271,6 +291,17 @@ void setup() {
     prefs.putInt("fail_cnt", 0);
     prefs.putString("fail_res", "NONE");
     prefs.putString("last_ver", FIRMWARE_VERSION);
+
+    // v5.60: Time-aware reset for Version Change
+    int ver_hr = 10;
+    if (diag_rtc_battery_ok) { DateTime now = rtc.now(); ver_hr = now.hour(); }
+    if (ver_hr >= 0 && ver_hr < 6) { last_valid_temp = 18.0; last_valid_hum = 90.0; }
+    else if (ver_hr >= 6 && ver_hr < 12) { last_valid_temp = 21.0; last_valid_hum = 78.0; }
+    else if (ver_hr >= 12 && ver_hr < 18) { last_valid_temp = 24.5; last_valid_hum = 69.0; }
+    else { last_valid_temp = 20.0; last_valid_hum = 86.0; }
+
+    last_valid_wd = 0;
+    rtc_daily_cum_rf = 0.0;
   }
   prefs.end();
 
@@ -731,11 +762,14 @@ void setup() {
       }
       debug("Firmware ver stored in SPIFFS is ");
       debugln(UNIT_VER);
-      debugln("Deleting unsent data and resetting rf...");
-      debugln();
+      // v5.59-Sanctity: DO NOT delete unsent data files on version update.
+      // This ensures that backlog accumulated in the field is preserved across OTA.
+      /*
       SPIFFS.remove("/unsent.txt");
       SPIFFS.remove("/unsent_pointer.txt"); // 2024 iter6
       SPIFFS.remove("/ftpunsent.txt");
+      */
+      debugln("[OTA] Version change detected. Preserving backlog data.");
 
       // RF
 #if (SYSTEM == 0) || (SYSTEM == 2)
@@ -1389,3 +1423,13 @@ void ULP_COUNTING(uint32_t us) {
  * 00,2024-05-21,08:45,00.00,00.00,00.00,000,-111,00.0\r\n
  * (temp,hum,avg_ws,wd)
  */
+
+// v5.59: Stack Overflow Hook to persistent RTC RAM
+extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
+  if (pcTaskName) {
+    strncpy(diag_crash_task, pcTaskName, 15);
+    diag_crash_task[15] = '\0';
+  }
+  vTaskDelay(100 / portTICK_PERIOD_MS);
+  ESP.restart();
+}

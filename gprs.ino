@@ -210,6 +210,11 @@ void gprs(void *pvParameters) {
 #endif
           vTaskDelay(2000 / portTICK_PERIOD_MS);
           
+          // v5.60: Always acquire fresh GPS before sending manual status
+          strcpy(ui_data[target_fld].bottomRow, "FETCHING GPS...");
+          show_now = 1;
+          get_gps_coordinates();
+          
           prepare_and_send_status(universalNumber);
 
           if (msg_sent) {
@@ -252,6 +257,7 @@ void gprs(void *pvParameters) {
             get_a7672s();
           }
           strcpy(ui_data[target_fld].bottomRow, "GETTING GPS...");
+          show_now = 1;
           get_gps_coordinates();
 
           // If fresh fix failed, try loading from SPIFFS before showing FAILED
@@ -280,34 +286,28 @@ void gprs(void *pvParameters) {
           msg_sent = 1; // Mark as success for UI feedback
         }
 
+        // Unified result display for Manual Triggers
         if (msg_sent == 1) {
           if (target_fld == FLD_SEND_GPS) {
-            memset(ui_data[target_fld].bottomRow, 0,
-                   sizeof(ui_data[target_fld].bottomRow));
-            snprintf(ui_data[target_fld].bottomRow,
-                     sizeof(ui_data[target_fld].bottomRow), "%0.3f,%0.3f", lati,
-                     longi);
+            snprintf(ui_data[target_fld].bottomRow, 17, "%0.3f,%0.3f", lati, longi);
           } else {
-            memset(ui_data[target_fld].bottomRow, 0,
-                   sizeof(ui_data[target_fld].bottomRow));
             strcpy(ui_data[target_fld].bottomRow, "SENT SUCCESS    ");
           }
         } else {
-          memset(ui_data[target_fld].bottomRow, 0,
-                 sizeof(ui_data[target_fld].bottomRow));
           strcpy(ui_data[target_fld].bottomRow, "SEND FAILED     ");
         }
-        vTaskDelay(5000 /
-                   portTICK_PERIOD_MS); // Wait longer to let user read result
+        
+        show_now = 1; // Trigger UI refresh
+        vTaskDelay(5000 / portTICK_PERIOD_MS); // Wait for user to read
 
         // After showing result, revert to idle state
-        if (target_fld != FLD_SEND_GPS) {
-          memset(ui_data[target_fld].bottomRow, 0,
-                 sizeof(ui_data[target_fld].bottomRow));
+        if (target_fld == FLD_SEND_GPS || target_fld == FLD_SEND_STATUS) {
           strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
         }
-
+        
         msg_sent = 0; // Reset for next trigger
+        show_now = 1;
+
       } else {
         debugln("[GPRS] Cannot send SMS/GPS: SIM Error or No Network");
         memset(ui_data[target_fld].bottomRow, 0,
@@ -1786,19 +1786,26 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
   int ftp_year = rf_cls_yy % 100;
   char fileName[50];
 
+  char stnId[16];
+  if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
+    snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
+  } else {
+    strcpy(stnId, ftp_station);
+  }
+
 #if SYSTEM == 1
   snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd",
-           ftp_station, ftp_year, rf_cls_mm, rf_cls_dd, record_hr, record_min);
+           stnId, ftp_year, rf_cls_mm, rf_cls_dd, record_hr, record_min);
 #endif
 
 #if SYSTEM == 2
   if (strstr(UNIT, "SPATIKA_GEN"))
     snprintf(fileName, sizeof(fileName),
-             "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", ftp_station, ftp_year,
+             "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
              rf_cls_mm, rf_cls_dd, record_hr, record_min);
   else
     snprintf(fileName, sizeof(fileName),
-             "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", ftp_station, ftp_year,
+             "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
              rf_cls_mm, rf_cls_dd, record_hr, record_min);
 #endif
 
@@ -1970,20 +1977,26 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
 
       // Maintain original standard filename
       int ftp_year = rf_cls_yy % 100;
+      char stnId[16];
+      if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
+        snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
+      } else {
+        strcpy(stnId, ftp_station);
+      }
+
 #if SYSTEM == 1
       snprintf(fileName, sizeof(fileName),
-               "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd", ftp_station, ftp_year,
+               "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
                rf_cls_mm, rf_cls_dd, record_hr, record_min);
 #endif
 #if SYSTEM == 2
-      // v7.53: SPATIKA_GEN uses .swd, KSNDMC_ADDON uses .kwd
       if (strstr(UNIT, "SPATIKA_GEN"))
         snprintf(fileName, sizeof(fileName),
-                 "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", ftp_station, ftp_year,
+                 "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
                  rf_cls_mm, rf_cls_dd, record_hr, record_min);
       else
         snprintf(fileName, sizeof(fileName),
-                 "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", ftp_station, ftp_year,
+                 "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
                  rf_cls_mm, rf_cls_dd, record_hr, record_min);
 #endif
 
@@ -4675,10 +4688,15 @@ void fetchFromHttpAndUpdate(char *fileName) {
 
 void copyFromSPIFFSToFS(char *dateFile) {
   String response;
-  char SPIFFSFile[30], fileName[30];
-  snprintf(SPIFFSFile, sizeof(SPIFFSFile), "/%s_%s.txt", station_name,
-           dateFile);
-  snprintf(fileName, sizeof(fileName), "%s_%s.txt", station_name, dateFile);
+  char SPIFFSFile[50], fileName[50];
+  char stnId[16];
+  if (strlen(station_name) == 4 && isDigitStr(station_name)) {
+    snprintf(stnId, sizeof(stnId), "00%s", station_name);
+  } else {
+    strcpy(stnId, station_name);
+  }
+  snprintf(SPIFFSFile, sizeof(SPIFFSFile), "/%s_%s.txt", station_name, dateFile);
+  snprintf(fileName, sizeof(fileName), "%s_%s.txt", stnId, dateFile);
   debugln("SPIFFS Card FileName is ");
   debugln(SPIFFSFile);
   debugln("FileName is ");
@@ -4959,9 +4977,17 @@ bool send_health_report(bool useJitter) {
   if (diag_temp_erv || diag_temp_erz) H_FAULT("TEMP_UNREAL");
   if (diag_hum_erv || diag_hum_erz) H_FAULT("HUM_UNREAL");
   if (diag_ws_erv) H_FAULT("WS_UNREAL");
+  if (diag_ws_cv) H_FAULT("WS_STUCK");
+  if (diag_wd_fail) H_FAULT("WD_FAIL");
   if (diag_rain_jump) H_FAULT("RAIN_SPIKE");
   if (diag_rain_reset) H_FAULT("RAIN_RESET");
   if (diag_rain_calc_invalid) H_FAULT("RAIN_CALC");
+  
+  if (strcmp(diag_crash_task, "NONE") != 0) {
+    char crash_info[32];
+    snprintf(crash_info, sizeof(crash_info), "CRASH-%s", diag_crash_task);
+    H_FAULT(crash_info);
+  }
 
   if (h_status[0] == '\0')
     strcpy(h_status, "OK");
@@ -5279,6 +5305,9 @@ bool send_health_report(bool useJitter) {
   waitForResponse("OK", 1000);
 
   xSemaphoreGive(modemMutex); // v5.55: Release modem
+  if (success) {
+    strcpy(diag_crash_task, "NONE"); // v5.59: Clear after delivery
+  }
   return success;
 }
 
