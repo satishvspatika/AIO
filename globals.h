@@ -106,8 +106,8 @@ void reset_all_diagnostics();
 void recoverI2CBus();
 
 /************************************************************************************************/
-#define SYSTEM 0              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
-char UNIT[15] = "BIHAR_TRG"; // UNIT :
+#define SYSTEM 1              // SYSTEM : TRG=0 TWS=1 TWS-RF=2
+char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 //                                0:  KSNDMC_TRG  BIHAR_TRG
 //                                1:  KSNDMC_TWS KSNDMC_TWS-AP
 //                                2:  KSNDMC_ADDON SPATIKA_GEN
