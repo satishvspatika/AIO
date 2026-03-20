@@ -94,7 +94,7 @@ void graceful_modem_shutdown();
 void start_deep_sleep();
 void flushSerialSIT();
 bool verify_bearer_or_recover();
-int send_at_cmd_data(char *payload, String response_arg);
+
 void get_signal_strength();
 void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
                        bool *hasUnresolvedNDM);
@@ -114,7 +114,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.63"
+#define FIRMWARE_VERSION "5.64"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
@@ -122,7 +122,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 #define ENABLE_HEALTH_REPORT                                                   \
   1 // Master Switch: Set to 1 to enable automated health reporting
 #define TEST_HEALTH_DEFAULT                                                    \
-  0 // Default: 1 (Enabled - 15 min), 0 (Disabled - Daily)
+  1 // Default: 1 (Enabled - 15 min), 0 (Disabled - Daily)
 int test_health_every_slot = TEST_HEALTH_DEFAULT;
 #define TEST_HEALTH_EVERY_SLOT test_health_every_slot
 
@@ -138,12 +138,12 @@ float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 
 #define FILLGAP 1
 #define FORCE_2G_ONLY                                                          \
-  1 // v7.54: BSNL Fallback. Forces AT+CNMP=13 on boot to skip 60s of failed 4G
+  0 // v7.54: BSNL Fallback. Forces AT+CNMP=13 on boot to skip 60s of failed 4G
     // auto-negotiation
 #define FTP_CHUNK_SIZE 15 // v5.52 ENH-2: Standardized chunk size for backlog
 
 // Spatika Health Server (Contabo VPS — plain HTTP, no SSL needed)
-#define HEALTH_SERVER_IP "75.119.148.192"
+#define HEALTH_SERVER_IP "vmi2561978.contaboserver.net"
 #define HEALTH_SERVER_PATH "/health"
 #define HEALTH_SERVER_PORT "80"
 
@@ -649,7 +649,7 @@ void resync_time();
 char *parse_http_head(char *response, char *check);
 void next_date(int *Nd, int *Nm, int *Ny);
 void previous_date(int *Cd, int *Cm, int *Cy);
-int send_at_cmd_data(char *payload, String response_arg);
+
 void send_http_data();
 bool send_health_report(bool useJitter = true);
 void send_unsent_data();

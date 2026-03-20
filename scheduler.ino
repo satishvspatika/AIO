@@ -797,6 +797,12 @@ void scheduler(void *pvParameters) {
           diag_sent_mask_prev[1] = diag_sent_mask_cur[1];
           diag_sent_mask_prev[2] = diag_sent_mask_cur[2];
 
+          // v5.64: Reset current mask for the fresh day
+          diag_sent_mask_cur[0] = 0;
+          diag_sent_mask_cur[1] = 0;
+          diag_sent_mask_cur[2] = 0;
+          diag_net_data_count = 0;
+
           diag_http_success_count_prev = diag_http_success_count;
           diag_http_retry_count_prev = diag_http_retry_count;
           diag_ftp_success_count_prev = diag_ftp_success_count;

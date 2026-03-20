@@ -153,9 +153,9 @@ void setup() {
     total_rf_pulses_32 = 0;
     last_sched_rf_pulses_32 = 0;
 
-    // v5.50 Bug#10 Fix: Reset diagnostic counters on DELETE DATA (SW_CPU_RESET)
+    // v5.50 Bug#10 Fix: Reset diagnostic counters on Fresh Start (POR/EXT/SW)
     // so they don't carry stale values into fresh logs (explains netcount=42 issue)
-    if (rr == 12) {
+    if (rr == POWERON_RESET || rr == EXT_CPU_RESET || rr == 12) {
       strcpy(diag_cdm_status, "PENDING");
       diag_pd_count = 0;
       diag_ndm_count = 0;
@@ -170,8 +170,10 @@ void setup() {
       diag_http_present_fails = 0;
       diag_http_cum_fails = 0;
       diag_rejected_count = 0;
-      diag_sent_mask_cur[0] = 0; diag_sent_mask_cur[1] = 0; diag_sent_mask_cur[2] = 0;
-      diag_sent_mask_prev[0] = 0; diag_sent_mask_prev[1] = 0; diag_sent_mask_prev[2] = 0;
+      for (int i = 0; i < 3; i++) {
+        diag_sent_mask_cur[i] = 0;
+        diag_sent_mask_prev[i] = 0;
+      }
       last_processed_sample_idx = -1; // Force scheduler re-entry
       health_last_sent_day = -1;      // v5.52 LOOP-6 FIX: Reset health persistence
       health_last_sent_hour = -1;
@@ -180,7 +182,6 @@ void setup() {
       rf_count.val = 0;
       wind_count.val = 0;
       calib_count.val = 0;
-      total_wind_pulses_32 = 0;
       total_wind_pulses_32 = 0;
       total_rf_pulses_32 = 0;
       rtc_daily_cum_rf = 0.0;
@@ -1178,16 +1179,8 @@ void loop() {
       (httpInitiated == false) && (health_in_progress == false) &&
       (force_reboot == false) && (force_ota == false) &&
       (ota_writing_active == false)) {
-    // v5.55 SELF-HEALING: Preventative Maintenance Reboot
-    // Triggered at 2:00 PM (sampleNo 56 or hour 14) ensuring physical hardware 
-    // registers are refreshed when solar power is optimal.
-    if ((sampleNo == 56) && current_hour == 14 && current_min < 15) {
-       debugln("[HEAL] Scheduled Daily Maintenance Restart (2:00 PM)...");
-       healer_reboot_in_progress = true; // v5.55: Protect counters
-       power_cut_modem_shutdown(); // Prevents midnight hang (heavy draw before reset)
-       ESP.restart();
-    }
-
+    // Daily Maintenance Restart removed as requested (was causing Reason 12 wiping bug)
+    
     // v5.55 SAFETY VALVE: Total Communication Blackout Recovery
     // If the system has failed for 8 consecutive cycles (~2 hours), assume 
     // Modem/ESP peripheral state is corrupted and force a hard system reboot.

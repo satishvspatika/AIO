@@ -1,8 +1,20 @@
 # ESP32 AIO Release Notes Summary
 
-## 🚀 Latest Version: v5.63 (March 18, 2026 - Final)
-**"The Airtel IoT & Power Stability Release"**
+## 🚀 Latest Version: v5.65 (March 20, 2026 - Final)
+**"The Health Reliability & UART Protocol Release"**
 
+This release resolves "Health Report Failed" issues by implementing a multi-attempt retry loop and fixing trailing byte poisoning in the modem's HTTP stack.
+
+[View Full v5.65 Release Notes](./RELEASE_NOTES_v5.65.md)
+
+---
+
+## 🕒 Previous Versions
+
+### [v5.64 - The Data Integrity & Mask Synchronization Release](./RELEASE_NOTES_v5.64.md) (March 20, 2026)
+This release resolves dashboard counter inconsistencies by ensuring perfect bitmask synchronization during meteorological rollovers and system reconstructions.
+
+### [v5.63 - The Airtel IoT & Power Stability Release](./RELEASE_NOTES_v5.63.md) (March 18, 2026)
 This release completes the GPRS/HTTP stabilization for Airtel IoT and BSNL. It integrates the v3.0 fast-push engine with v5.60's robust error recovery and adds advanced battery protection for backlogs.
 
 ### Key Highlights:

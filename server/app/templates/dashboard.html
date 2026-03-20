@@ -64,13 +64,14 @@
                 {% endif %}
                 <th class="p-3 text-left whitespace-nowrap">Station</th>
                 <th class="p-3 text-left whitespace-nowrap">Group</th>
+                <th class="p-3 text-left whitespace-nowrap">Carrier</th>
                 <th class="p-3 text-left whitespace-nowrap">Status</th>
                 <th class="p-3 text-center whitespace-nowrap">Tdy Sent (Live)</th>
                 <th class="p-3 text-center whitespace-nowrap">Ydy Sent/Stored</th>
                 <th class="p-3 text-center whitespace-nowrap"
-                    title="Today: On-time HTTP pushes / HTTP+FTP Backlog Recovered">Tdy HTTP/Backlogs</th>
+                    title="Today: Direct on-time HTTP / Total backlog recovered (HTTP retry for TRG + FTP for TWS). Tallies with Tdy Sent on v5.64+.">Tdy HTTP / Backlog ⓘ</th>
                 <th class="p-3 text-center whitespace-nowrap"
-                    title="Yesterday: On-time HTTP pushes / HTTP+FTP Backlog Recovered">Ydy HTTP/Backlogs</th>
+                    title="Yesterday: Direct on-time HTTP / Total backlog recovered.">Ydy HTTP / Backlog ⓘ</th>
                 <th class="p-3 text-left whitespace-nowrap">Last Seen</th>
                 {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role')
                 == 'supervisor') %}
@@ -98,6 +99,22 @@
                 <td class="p-3 text-slate-400 text-[10px] leading-tight">
                     {{ r.fw_group.display_name if r.fw_group else (r.unit_type or '?')|truncate(15) }}
                 </td>
+                <td class="p-3 whitespace-nowrap">
+                    {% set car = (r.carrier or '')|upper %}
+                    {% if 'BSNL' in car %}
+                    <span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-900/60 text-blue-300 border border-blue-600/40">BSNL</span>
+                    {% elif 'AIRTEL' in car %}
+                    <span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-900/60 text-red-300 border border-red-600/40">Airtel</span>
+                    {% elif 'JIO' in car %}
+                    <span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-900/60 text-purple-300 border border-purple-600/40">Jio</span>
+                    {% elif 'VI' in car or 'VODAFONE' in car %}
+                    <span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-900/60 text-teal-300 border border-teal-600/40">Vi</span>
+                    {% elif car and car != 'NA' and car != 'SIM OK' %}
+                    <span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-700/60 text-slate-300 border border-slate-600/40">{{ r.carrier }}</span>
+                    {% else %}
+                    <span class="text-slate-600 text-[10px]">—</span>
+                    {% endif %}
+                </td>
                 <td class="p-3">
                     {% if r.eval.verdict == 'OK' %}
                     <span class="badge-ok" title="Score: {{ r.eval.score }}">✓ OK</span>
@@ -118,13 +135,13 @@
                 <td class="p-3 font-mono text-center text-slate-300 whitespace-nowrap">
                     {{ r.net_cnt_prev or 0 }} / {{ r.prev_stored or 0 }}
                 </td>
-                <td class="p-3 font-mono text-center text-blue-300" title="Today: Direct HTTP / HTTP+FTP Recovered">
+                <td class="p-3 font-mono text-center text-blue-300" title="Today: Direct on-time HTTP / Backlog recovered (HTTP retry + FTP). Should equal Tdy Sent after v5.64.">
                     {% set http = r.http_suc_cnt or 0 %}
                     {% set ret = r.http_ret_cnt or 0 %}
                     {% set ftp = r.ftp_suc_cnt or 0 %}
                     {{ http }} / {{ ftp + ret }}
                 </td>
-                <td class="p-3 font-mono text-center text-blue-300" title="Yesterday: Direct HTTP / HTTP+FTP Recovered">
+                <td class="p-3 font-mono text-center text-blue-300" title="Yesterday: Direct on-time HTTP / Backlog recovered (HTTP retry + FTP).">
                     {% set http_p = r.http_suc_cnt_prev or 0 %}
                     {% set ret_p = r.http_ret_cnt_prev or 0 %}
                     {% set ftp_p = r.ftp_suc_cnt_prev or 0 %}

@@ -740,6 +740,12 @@ void reconstructSentMasks() {
 
   debugln("[GoldenData] Starting Sent Mask Reconstruction from SPIFFS...");
 
+  // v5.64: Clear masks before rebuilding to prevent stale data overlap
+  for (int i = 0; i < 3; i++) {
+    diag_sent_mask_cur[i] = 0;
+    diag_sent_mask_prev[i] = 0;
+  }
+
   char cleanStn[16];
   strncpy(cleanStn, station_name, 15);
   cleanStn[15] = '\0';

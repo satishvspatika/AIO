@@ -85,6 +85,29 @@ def _auto_migrate(db: Session, data: dict, table: str = "health_reports"):
     return existing
 
 
+# Indian carrier ICCID prefix map (6-digit MCC+MNC encoded prefix).
+# Derived from ITU E.118 + TRAI operator codes.
+_ICCID_CARRIER = [
+    ("89917",  "BSNL"),     # BSNL (multiple circles)
+    ("89916",  "BSNL"),     # BSNL alternate
+    ("89914",  "Airtel"),   # Bharti Airtel
+    ("89913",  "Airtel"),   # Airtel alternate
+    ("89910",  "Jio"),      # Reliance Jio
+    ("89915",  "Vi"),       # Vodafone Idea
+    ("89912",  "Vi"),       # Idea Cellular (pre-merger)
+]
+
+def _carrier_from_iccid(iccid: str) -> str:
+    """Derive carrier name from ICCID prefix. Returns empty string if unknown."""
+    if not iccid:
+        return ""
+    iccid = iccid.strip()
+    for prefix, name in _ICCID_CARRIER:
+        if iccid.startswith(prefix):
+            return name
+    return ""
+
+
 @router.post("/health")
 async def health(request: Request, db: Session = Depends(get_db)):
     try:
@@ -145,6 +168,14 @@ async def health(request: Request, db: Session = Depends(get_db)):
         # Safe defaults for fields that firmware may not always send
         report_kwargs.setdefault("spiffs_total_kb", 4640)
         report_kwargs.setdefault("calib", "NA")
+
+        # ── Carrier deduction from ICCID (no firmware change needed) ─────────
+        if not report_kwargs.get("carrier"):
+            iccid_val = str(data.get("iccid", "") or "")
+            deduced = _carrier_from_iccid(iccid_val)
+            if deduced:
+                report_kwargs["carrier"] = deduced
+                print(f"[Health] Carrier deduced from ICCID {iccid_val[:10]}...: {deduced}")
 
         report = HealthReport(**report_kwargs)
         db.add(report)

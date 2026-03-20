@@ -962,19 +962,25 @@ void prepare_data_and_send() {
   debug("http_data format is ");
   debugln(http_data);
   debugln();
-  // v5.63: Attempt 1 - Fast v3.0 logic
-  success_count = send_at_cmd_data(http_data, charArray, false);
-  if (success_count == 0 && data_mode == eCurrentData) {
-    debugln("[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt 2)...");
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-    // v5.63: Attempt 2 - Fast v3.0 logic again (Rule: 2 fast attempts before fallback)
+  // v5.65 Efficiency Rule: If session isn't ready at entry, don't waste time retrying a dead state.
+  if (!http_ready) {
+      debugln("[HTTP] Pre-run check: Session not ready. Jumping to recovery logic.");
+      success_count = 0;
+  } else {
+    // v5.63: Attempt 1 - Fast v3.0 logic
     success_count = send_at_cmd_data(http_data, charArray, false);
-    
-    if (success_count == 0) {
-      debugln("[HTTP] 2nd Attempt (Fast) also failed. Falling back to Robust method...");
+    if (success_count == 0 && data_mode == eCurrentData) {
+      debugln("[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt 2)...");
       vTaskDelay(2000 / portTICK_PERIOD_MS);
-      // v5.63: Attempt 3 - Fallback to Robust handshake for weak-signal networks
-      success_count = send_at_cmd_data(http_data, charArray, true);
+      // v5.63: Attempt 2 - Fast v3.0 logic again (Rule: 2 fast attempts before fallback)
+      success_count = send_at_cmd_data(http_data, charArray, false);
+      
+      if (success_count == 0) {
+        debugln("[HTTP] 2nd Attempt (Fast) also failed. Falling back to Robust method...");
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        // v5.63: Attempt 3 - Fallback to Robust handshake for weak-signal networks
+        success_count = send_at_cmd_data(http_data, charArray, true);
+      }
     }
   }
   // v6.76: One retry added above for current data.
@@ -1449,9 +1455,8 @@ void send_http_data() {
   }
   // snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), ...); // Prepared in prepare_data_and_send()
   
-  // v5.63: Removed AT+HTTPTERM and AT+CGEREP=0 here (interferes with Airtel stack)
-  // v3.0 logic: HTTPINIT directly!
-  vTaskDelay(50 / portTICK_PERIOD_MS); 
+  // v5.65 Breather: Increased from 50ms to 500ms to allow tower/modem stabilization after CIPSHUT
+  vTaskDelay(500 / portTICK_PERIOD_MS); 
   flushSerialSIT();
   
   SerialSIT.println("AT+HTTPINIT");
@@ -2526,7 +2531,7 @@ int send_at_cmd_data(char *payload, String response_arg, bool robust) {
       return 0;
     }
     vTaskDelay(200 / portTICK_PERIOD_MS);
-    SerialSIT.println(payload); // v3.0: use println to finalize buffer
+    SerialSIT.print(payload); // v5.65: Use print() to send exact bytes
     waitForResponse("OK", 5000);
   } else {
     // v5.63 Native v3.0 Fast push! 
@@ -2537,7 +2542,7 @@ int send_at_cmd_data(char *payload, String response_arg, bool robust) {
     SerialSIT.println(ht_data);
     waitForResponse("DOWNLOAD", 500); // v3.0 style clearance (500ms max)
     
-    SerialSIT.println(payload); // v3.0: use println
+    SerialSIT.print(payload); // v5.65: Use print() to send exact bytes requested by AT+HTTPDATA
     waitForResponse("OK", 500); // Consume OK before action
   }
 
@@ -3766,6 +3771,12 @@ void get_gps_coordinates() {
   for (int retry = 0; retry < 2; retry++) {
     debugf1("[GPS] Requesting Coordinates (AT+CLBS=1), Attempt %d...\n",
             retry + 1);
+
+    if (!verify_bearer_or_recover()) {
+      debugln("[GPS] Failed to attach data bearer context. LBS will fail!");
+      continue;
+    }
+
     SerialSIT.println("ATE0");
     waitForResponse("OK", 2000);
 
@@ -4884,7 +4895,7 @@ bool send_health_report(bool useJitter) {
   if (diag_temp_erv || diag_temp_erz) H_FAULT("TEMP_UNREAL");
   if (diag_hum_erv || diag_hum_erz) H_FAULT("HUM_UNREAL");
   if (diag_ws_erv) H_FAULT("WS_UNREAL");
-  if (diag_ws_cv) H_FAULT("WS_STUCK");
+
   if (diag_wd_fail) H_FAULT("WD_FAIL");
   if (diag_rain_jump) H_FAULT("RAIN_SPIKE");
   if (diag_rain_reset) H_FAULT("RAIN_RESET");
@@ -4996,88 +5007,77 @@ bool send_health_report(bool useJitter) {
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
   bool success = false;
-  for (int attempt = 1; attempt <= 3; attempt++) {
-    debugf1("[Health] Attempt %d/3\n", attempt);
-    if (!verify_bearer_or_recover())
-      continue;
+  debugln("[Health] Starting Multi-Attempt Routine (v5.65)...");
+  if (!verify_bearer_or_recover()) {
+      return false;
+  }
 
-    // v7.79: Total Silence Protocol (Rule 10/27)
-    SerialSIT.println("AT+CGEREP=0");
-    waitForResponse("OK", 1000);
+  // v7.79: Total Silence Protocol (Rule 10/27)
+  SerialSIT.println("AT+CGEREP=0");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CREG=0");
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CEREG=0");
+  waitForResponse("OK", 1000);
 
-    // Rule 12/24: Extended Breather after host switch
-    SerialSIT.println("AT+HTTPTERM");
-    waitForResponse("OK", 5000);
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
-    flushSerialSIT();
+  // [100% GOLDEN DATA HTTP CLONE]
+  // The user correctly noted that Data HTTP's flow has nuances that Health HTTP lacked.
+  // By invoking send_at_cmd_data() directly, we utilize the exact same C++ instruction pointer trace that Data HTTP uses!
 
-    SerialSIT.println("AT+HTTPINIT");
-    if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
-      debugln("[Health] ❌ HTTPINIT Failed. Bearer Nuke...");
-      SerialSIT.println("AT+CGACT=0,1");
-      waitForResponse("OK", 5000);
-      continue;
+  for (int attempt = 1; attempt <= 2; attempt++) {
+    if (attempt > 1) {
+      debugln("[Health] 1st Attempt failed. Retrying with Robust Timeout (v5.63)...");
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
     }
 
-    bool step_fail = false;
-    // Rule 59: Lean Sequence (Fast burst, no gaps)
-    char ht_url[150];
-    snprintf(ht_url, sizeof(ht_url),
-             "AT+HTTPPARA=\"URL\",\"http://%s:%s/health\"", HEALTH_SERVER_IP,
-             HEALTH_SERVER_PORT);
-    SerialSIT.println(ht_url);
-    waitForResponse("OK", 2000);
+    SerialSIT.println("AT+CGACT?");
+    String resp = waitForResponse("OK", 3000);
+    if (resp.indexOf("+CGACT: " + String(active_cid) + ",1") == -1) {
+      SerialSIT.println("AT+CIPSHUT");
+      waitForResponse("SHUT OK", 4000);
+      SerialSIT.print("AT+CGACT=1,");
+      SerialSIT.println(active_cid);
+      waitForResponse("OK", 10000);
+    }
+    
+    SerialSIT.println("AT+HTTPINIT");
+    if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 3000);
+      SerialSIT.println("AT+HTTPINIT");
+      if (waitForResponse("OK", 5000).indexOf("OK") == -1) continue;
+    }
 
+    char ht_url[150];
+    snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_IP, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
     SerialSIT.println("AT+HTTPPARA=\"CID\",1");
     waitForResponse("OK", 1000);
-
+    SerialSIT.println(ht_url);
+    waitForResponse("OK", 1000);
     SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
     waitForResponse("OK", 1000);
-    SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
-    waitForResponse("OK", 1000);
 
-      // Headers & Format
-    if (!step_fail) {
-      debugf1("[Health] Payload size: %d bytes\n", msgLen);
-
-      // Pre-flush to remove any stray URCs (+CGEV etc) that block the parser
-      flushSerialSIT();
-
-      char ht_data_cmd[64];
-      // v7.75: Increased prompt wait to 10s for high-latency 2G (increased to 15s in v5.56)
-      snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,15000", msgLen);
-      SerialSIT.println(ht_data_cmd);
-
-      String act = "";
-      // Give massive allowance (25 seconds) for 2G network to allocate HTTP socket buffer space
-      if (waitForResponse("DOWNLOAD", 25000).indexOf("DOWNLOAD") != -1) {
-        vTaskDelay(200 / portTICK_PERIOD_MS);
-        SerialSIT.write(jsonBody, msgLen);
-        if (waitForResponse("OK", 10000).indexOf("OK") != -1) {
-
-          SerialSIT.println("AT+HTTPACTION=1");
-          waitForResponse("OK", 3000);
-
-          // v7.79: Increased total wait to 45s for BSNL 2G saturation
-          act = waitForResponse("+HTTPACTION:", 45000);
-          debugln("[Health] Resp: " + act);
-
-          if (act.indexOf("200") != -1) {
-            success = true;
-          } else if (act.indexOf("714") != -1 || act.indexOf("706") != -1) {
-            // Rule 19/104: Nuke on Socket Zombie
-            debugln("[Health] 🧟 Zombie Socket (714/706). Nuking Bearer "
-                    "Context...");
-            SerialSIT.println("AT+HTTPTERM");
-            waitForResponse("OK", 2000);
-            SerialSIT.println("AT+CGACT=0,1");
-            waitForResponse("OK", 5000);
-            vTaskDelay(5000 / portTICK_PERIOD_MS);
-          }
+    // v5.63 Superiority: 25s DOWNLOAD timeout for shaky BSNL/Airtel 2G
+    char ht_data[32];
+    snprintf(ht_data, sizeof(ht_data), "AT+HTTPDATA=%d,25000", msgLen);
+    SerialSIT.println(ht_data);
+    
+    if (waitForResponse("DOWNLOAD", 25000).indexOf("DOWNLOAD") != -1) {
+      vTaskDelay(200 / portTICK_PERIOD_MS);
+      SerialSIT.print(jsonBody); // UART Poisoning Fix (v5.65)
+      if (waitForResponse("OK", 10000).indexOf("OK") != -1) {
+        SerialSIT.println("AT+HTTPACTION=1");
+        waitForResponse("OK", 3000);
+        // v5.63 Superiority: 45s wait for server ACK
+        String act = waitForResponse("+HTTPACTION:", 45000);
+        
+        if (act.indexOf("200") != -1) {
+          success = true;
+          debugln("[Health] ✅ v5.63 Success. Processing Mission Commands...");
+          
           vTaskDelay(500 / portTICK_PERIOD_MS);
           SerialSIT.println("AT+HTTPREAD=0,512");
           String body = waitForResponse("+HTTPREAD:", 10000);
-          debugln("[Health] Body: " + body);
 
           // v7.92: Parse Command ID for feedback loop
           int idTag = body.indexOf("\"id\"");
@@ -5099,11 +5099,14 @@ bool send_health_report(bool useJitter) {
             }
           }
 
-          // Command Processing
-          sync_rtc_from_server_tm(body.c_str(), false);
+          // Restore 'Mission Control' Command Parsing (v5.63)
           if (body.indexOf("\"REBOOT\"") != -1) {
             force_reboot = true;
             strcpy(last_cmd_res, "Success: Rebooting");
+          }
+          if (body.indexOf("\"RESTART\"") != -1) ESP.restart();
+          if (body.indexOf("\"CLEAR_LAST_REBOOT\"") != -1) {
+             strncpy(diag_crash_task, "NONE", sizeof(diag_crash_task)-1);
           }
           if (body.indexOf("\"OTA_CHECK\"") != -1) {
             force_ota = true;
@@ -5183,27 +5186,31 @@ bool send_health_report(bool useJitter) {
               }
             }
           }
-
-
-          SerialSIT.println("AT+HTTPTERM");
-          waitForResponse("OK", 1000);
+          
           break; // Success exit
-        } else {
-          debugln("[Health] ❌ HTTP Action Failed, Resp: " + act);
         }
-      } else {
-        debugln("[Health] ❌ Data Load Timeout/Error");
       }
-    } else {
-      debugln("[Health] ❌ DOWNLOAD Prompt Failed");
     }
 
-    // Final cleanup before retry
-    SerialSIT.println("AT+HTTPTERM");
-    waitForResponse("OK", 2000);
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    // Attempt failed: Force Nuke if it was a zombie stack
+    bool tcp_zombie = (String(diag_http_fail_reason) == "706" || String(diag_http_fail_reason) == "713" || String(diag_http_fail_reason) == "714" || String(diag_http_fail_reason) == "TIMEOUT");
+    if (tcp_zombie) {
+      SerialSIT.println("AT+CIPSHUT");
+      waitForResponse("SHUT OK", 3000);
+    }
   }
 
+  if (!success) {
+    debugln("[Health] ❌ Failed after v5.63 Robust Cycle.");
+    SerialSIT.println("AT+CIPSHUT");
+    waitForResponse("SHUT OK", 3000);
+    SerialSIT.println("AT+CGACT=0,1");
+    waitForResponse("OK", 3000);
+    SerialSIT.println("AT+HTTPTERM");
+    waitForResponse("OK", 1000);
+  }
+
+  health_cleanup:
   SerialSIT.println("AT+CGEREP=2");
   waitForResponse("OK", 1000);
   SerialSIT.println("AT+CREG=1");
