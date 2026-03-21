@@ -54,8 +54,12 @@ void windSpeed(void *pvParameters) {
     uint16_t raw_delta = (current_count >= last_raw_wind_count)
                              ? (current_count - last_raw_wind_count)
                              : (65536 + current_count - last_raw_wind_count);
+    
+    // v5.65 Fix: Atomic protection for 32-bit counter shared with scheduler task
+    portENTER_CRITICAL(&windMux);
     total_wind_pulses_32 += raw_delta;
     last_raw_wind_count = current_count;
+    portEXIT_CRITICAL(&windMux);
 
     // Store current count in buffer for INSTANTANEOUS calculation
     pulseBuffer[bufferIndex] = current_count;

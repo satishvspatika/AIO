@@ -233,6 +233,8 @@ void scheduler(void *pvParameters) {
                                  // Boot" sleep logic
         timeSyncRequired == false &&
         (httpInitiated == false)) {
+      
+      schedulerBusy = true; // v5.65: Lock system awake during 15-min processing
       // Mark this sample as processed
       last_processed_sample_idx = current_sample_idx;
       skip_primary_http = false; // Reset on new slot processing start
@@ -310,6 +312,23 @@ void scheduler(void *pvParameters) {
       // for the NEXT interval (9:00 record).
       // -----------------------------------------------------------------------
 
+      // v5.65: Re-read battery & solar each slot. The task-init read (before
+      // the for loop) is only executed once at ESP32 restart, so bat_val in
+      // every record after the first boot would be stale. Re-reading here  
+      // ensures each 15-min HTTP payload carries the actual voltage right now.
+      li_bat = adc1_get_raw(ADC1_CHANNEL_5);
+      li_bat_val = li_bat * 0.0010915;
+      bat_val = li_bat_val;
+      snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
+      if (!wifi_active) {
+        int solar_raw_slot;
+        if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw_slot) == ESP_OK) {
+          solar = solar_raw_slot;
+          solar_val = (solar / 4096.0) * 3.6 * 7.2;
+          snprintf(solar_sense, sizeof(solar_sense), "%04.1f", solar_val);
+        }
+      }
+
 #if (SYSTEM == 0) || (SYSTEM == 2)
       // 32-bit RF Accumulation (Handles 16-bit ULP wrap without reset)
       curr_rf_raw = rf_count.val;
@@ -317,11 +336,16 @@ void scheduler(void *pvParameters) {
                          ? (curr_rf_raw - last_raw_rf_count)
                          : (65536 + curr_rf_raw - last_raw_rf_count);
 
-      // v5.52 refinement: If delta is huge (> 65000), it means the ULP
+      // v5.52 refinement: If delta is huge (>= 65000), it means the ULP
       // counter is now LOWER than before. This is usually a hardware
       // reset/fiddle, not a rollover. Instead of discarding the tips,
       // we assume it reset to 0, so the 'delta' is simply the new count.
-      if (rf_raw_delta >= 65000) {
+      // v5.65 fix: Threshold raised 65000→65535. 65535 is the only delta
+      // value that is mathematically unreachable via normal 16-bit rollover
+      // (max legitimate rollover = 65535→0 = delta 1). The range 65000..65534
+      // is also impossible for rain but is safely caught by the noise-surge
+      // cap (> 5000) immediately below, making 65000 here redundant.
+      if (rf_raw_delta >= 65535) {
         debugln("[Rain] ULP Hardware Reset detected. Resyncing count.");
         rf_raw_delta = curr_rf_raw;
       }
@@ -385,9 +409,12 @@ void scheduler(void *pvParameters) {
                 ? (current_ulp_wind - last_raw_wind_count)
                 : (65536 + current_ulp_wind - last_raw_wind_count);
         if (ulp_delta > 0) {
+          // v5.65: Use atomic critical section to prevent race with windSpeed task
+          portENTER_CRITICAL(&windMux);
           total_wind_pulses_32 += ulp_delta;
           last_raw_wind_count =
               current_ulp_wind; // Sync so windSpeed task doesn't double-count
+          portEXIT_CRITICAL(&windMux);
           debugf1("[SCHED] Seeded %d ULP wind pulses from direct ULP read.\n",
                   ulp_delta);
         }
@@ -420,6 +447,10 @@ void scheduler(void *pvParameters) {
           diag_ws_cv = true;
       } else {
         diag_ws_same_count = 0;
+        if (diag_ws_cv && !diag_ws_erv) {
+          diag_ws_cv = false; // v5.65: Clear stale CV flag — sensor has recovered
+          debugln("[DIAG] WS Constant-Value fault cleared — sensor is varying again.");
+        }
       }
       prev_ws = cur_avg_wind_speed;
 
@@ -548,6 +579,9 @@ void scheduler(void *pvParameters) {
           diag_ws_cv = true;
       } else {
         diag_ws_same_count = 0;
+        if (diag_ws_cv && !diag_ws_erv) {
+          diag_ws_cv = false; // v5.65: Clear stale CV flag — sensor is varying again
+        }
       }
 
       // v5.59: Anchor updates moved to rescue protocol to ensure they are done once correctly
@@ -808,14 +842,36 @@ void scheduler(void *pvParameters) {
           diag_http_time_total = 0;
           diag_ftp_time_total = 0;
           diag_daily_http_fails = 0;
+          diag_rejected_count = 0; // P1 fix v5.65: Reset per-day so Day N carryover
+          // (count=2) doesn't prematurely trigger CLBS resync on Day N+1's first rejection
+
+          // v5.64 Consolidated Reset: Zero out Today's counters AFTER archiving
+          diag_net_data_count = 0;
           diag_http_success_count = 0;
           diag_http_retry_count = 0;
           diag_ftp_success_count = 0;
+          diag_reg_time_total = 0;
+          diag_stored_apn_fails = 0;
+          
+          diag_sent_mask_cur[0] = 0;
+          diag_sent_mask_cur[1] = 0;
+          diag_sent_mask_cur[2] = 0;
+
+          new_current_cumRF = 0;
+          total_rf_pulses_32 = 0;
+          last_sched_rf_pulses_32 = 0;
+          last_raw_rf_count = rf_count.val;
+          rtc_daily_cum_rf = 0.0;
+
           diag_sensor_fault_sent_today = false; // Reset daily fault report flag
           diag_first_http_count = 0;
           diag_wd_fail = false; // Reset WD diagnostic for new day
-          rtc_daily_cum_rf = 0.0; // Reset RF anchor for new day
-          
+          // NOTE: rtc_daily_cum_rf, diag_http_success_count, diag_http_retry_count,
+          // diag_ftp_success_count are already reset above at the v5.64 Consolidated
+          // Reset block (lines ~816-830). Do NOT reset them again here — a second
+          // rtc_daily_cum_rf=0.0 here would race with the RF rescue logic that reads
+          // rtc_daily_cum_rf on the very same wakeup. (BUG-C1 fix v5.65)
+
           // Reset stuck detection counters for a fresh day
           temp_same_count = 0;
           hum_same_count = 0;
@@ -1131,7 +1187,9 @@ void scheduler(void *pvParameters) {
         rtc_daily_cum_rf = new_current_cumRF; // Update persistent anchor
 #endif
 
-        file1.close();
+        // NOTE: file1 was already closed after readBytes() above.
+        // Do NOT call file1.close() here again — double-close is harmless on SPIFFS
+        // but would corrupt the VFS handle table on LittleFS. (BUG-C2 fix v5.65)
 
         // Finding the last recorded hr and min from SPIFFs
         int temp_hr = START_HOUR;
@@ -2587,30 +2645,10 @@ void scheduler(void *pvParameters) {
         file5.close();
         strcpy(diag_cdm_status, "PENDING"); // Mark CDM as ready to send
 
-        // v5.55: Meteorological Day Precision Reset (end of 8:30 AM)
-        // Resetting counters here ensures 8:45 AM wakeup captures the 8:30-8:45 window fresh.
-        diag_reg_time_total = 0;
-        diag_net_data_count = 0;
-        diag_http_time_total = 0;
-        diag_http_success_count = 0;
-        diag_http_retry_count = 0;
-        diag_ftp_success_count = 0;
-        diag_daily_http_fails = 0;
-        diag_stored_apn_fails = 0; 
-
-        new_current_cumRF = 0; 
-        total_rf_pulses_32 = 0;
-        last_sched_rf_pulses_32 = 0;
-        last_raw_rf_count = rf_count.val; 
-        
-        diag_sent_mask_cur[0] = 0;
-        diag_sent_mask_cur[1] = 0;
-        diag_sent_mask_cur[2] = 0;
-        
-        rtc_daily_cum_rf = 0.0; // v5.59: Precision reset for tomorrow's anchor
-        
-        debugln("[SCHED] 08:30 AM Precision Reset Complete.");
+        // v5.64: Resets moved to 08:45 AM rollover to ensure successful archiving of yesterday's totals.
+        debugln("[SCHED] 08:30 AM Cycle Complete. Rollover pending at 08:45...");
         vTaskDelay(200 / portTICK_PERIOD_MS);
+
       }
 
 
@@ -2765,7 +2803,8 @@ void scheduler(void *pvParameters) {
 #endif
       }
       vTaskDelay(300 / portTICK_PERIOD_MS);
-    } else if (timeSyncRequired == false && httpInitiated == false &&
+      schedulerBusy = false; // v5.65: Release sleep lock
+    } else if (httpInitiated == false &&
                sync_mode == eSyncModeInitial) {
       // v7.08: IDLE TRAP PROTECTION
       // If we wake up (via timer) and find we ALREADY processed this slot,
@@ -2791,6 +2830,9 @@ void scheduler(void *pvParameters) {
 } // scheduler
 
 void next_date(int *Nd, int *Nm, int *Ny) {
+  // v5.65: Guard against uninitialized months from bad RTC reads
+  if (*Nm < 1) *Nm = 1; if (*Nm > 12) *Nm = 12;
+  
   int no_of_days[14] = {29, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
   int prev_mm;
 
@@ -2815,6 +2857,9 @@ void next_date(int *Nd, int *Nm, int *Ny) {
 }
 
 void previous_date(int *Cd, int *Cm, int *Cy) {
+  // v5.65: Guard against uninitialized months
+  if (*Cm < 1) *Cm = 1; if (*Cm > 12) *Cm = 12;
+  
   int no_of_days[14] = {29, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
   int prev_mm_day;
   int prev_dd_day;

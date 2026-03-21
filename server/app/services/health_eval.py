@@ -96,16 +96,17 @@ def evaluate(r, now: datetime.datetime = None) -> dict:
     prev_stored = r.prev_stored  or 0
 
     # ── PD: Partial Data (Previous Day records missing) ──
-    # Fires when ≥10 records are missing from server's YDY count
+    # net_cnt_prev = confirmed records (Live + Backlog)
+    # http_ret_cnt_prev = records recovered from yesterday AFTER the closing window
+    total_gap = SLOTS_PER_DAY - prev_sent
+    is_pd     = total_gap >= 10              # ≥10 missing = PD
 
-    # (met. day = prev 8:45 AM → today 8:30 AM), even after all backlog retries.
-    # net_cnt_prev = records confirmed on SERVER (from firmware sent mask bit count)
-    # prev_stored  = records stored in SPIFFS on device (physical file count)
-    total_gap = SLOTS_PER_DAY - prev_sent    # records missing from server
-    is_pd     = total_gap >= 10              # ≥10 missing = PD (changed from >10)
+    # v5.65 P4 Improvement: If net_cnt_prev is low, but we see significant 
+    # recovery (http_ret_cnt_prev), then the station is 'Catching Up'.
+    recov_p   = int(getattr(r, "http_ret_cnt_prev", 0) or 0)
+    is_catching_up = (is_pd and recov_p > 5)
 
     # GPRS-Er: Data was stored locally but never reached the server
-    # Fires when prev_stored > 0 (records exist on device) but prev_sent == 0
     is_gprs_er = (prev_sent == 0 and prev_stored > 0)
 
     # ── NDM: Night Data Missing ──
@@ -146,9 +147,14 @@ def evaluate(r, now: datetime.datetime = None) -> dict:
             historical_tags.append("GPRS-Er")
             demerits += 30
         else:
-            reasons.append(f"PD({prev_sent}/96)")
-            historical_tags.append("PD")
-            demerits += 15
+            if is_catching_up:
+                reasons.append(f"PD({prev_sent}/96) + RECOV({recov_p})")
+                historical_tags.append("PD (RECOVERING)")
+                demerits += 5 # Minimal demerit for recovering stations
+            else:
+                reasons.append(f"PD({prev_sent}/96)")
+                historical_tags.append("PD")
+                demerits += 15
         # CDM can co-exist with PD independently (already handled above in PD+CDM)
     else:
         # Data count OK (≥86 records on server)

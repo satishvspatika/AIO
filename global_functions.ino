@@ -51,10 +51,10 @@ void start_deep_sleep() {
   // v7.89: Reverted to +30s offset for maximum stability.
   if (next_boundary_min >= 60) {
     next_boundary_min = 0;
-    sleep_seconds = (60 - current_min) * 60 - current_sec + 30;
+    sleep_seconds = (60 - current_min) * 60 - current_sec + 15; // v5.65 fix: reduced offset to 15s
   } else {
     sleep_seconds =
-        (next_boundary_min * 60) - (current_min * 60 + current_sec) + 30;
+        (next_boundary_min * 60) - (current_min * 60 + current_sec) + 15; // v5.65 fix
   }
 
   // Safety bounds: 1 minute minimum, 20 minutes maximum
@@ -78,6 +78,15 @@ void start_deep_sleep() {
   debug(":");
   debug(sleep_seconds % 60);
   debugln(" (min:sec)");
+
+  // v5.65 P8 Fix: Phantom UI Wakeup Prevention
+  // During deep sleep, standard pinMode(INPUT_PULLUP) is deactivated.
+  // This causes the push button pin (GPIO 27) to float, making it highly susceptible
+  // to RF noise/wind static, which randomly triggers ext0 and turns on the LCD mid-cycle.
+  // By forcing the RTC pull-up, we lock it HIGH until genuinely pressed.
+  rtc_gpio_init(GPIO_NUM_27);
+  rtc_gpio_set_direction(GPIO_NUM_27, RTC_GPIO_MODE_INPUT_ONLY);
+  rtc_gpio_pullup_en(GPIO_NUM_27);
 
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW);
   // Use the calculated seconds directly
@@ -107,10 +116,10 @@ void validate_ulp_counters() {
     corrupted = true;
   }
 
-  // Wind count shouldn't exceed 65000 pulses per 15 min (unrealistic)
-  // 65000 pulses / 4 teeth / 900 sec * 0.4398 = ~7.9 m/s continuous — cap at 2x
-  if (wind_count.val > 130000) {
-    debugf1("[ULP] Wind count corrupted (%u), resetting\n", wind_count.val);
+  // Wind count shouldn't exceed unrealistic pulses per 15 min (e.g. Hurricane speeds)
+  // v5.65 fix: Correct corruption detection for 16-bit ULP wrap
+  if (wind_count.val > 65000) { 
+    debugf1("[ULP] Wind count corrupted or extreme (%u), resetting\n", wind_count.val);
     wind_count.val = 0;
     corrupted = true;
   }
@@ -229,25 +238,31 @@ void removeFilesFromSPIFFS(const char *dirname) {
 void delete_multiple_files(const char *station) {
   File root = SPIFFS.open("/");
   if (!root) {
-    debugln("Failed to open directory");
+    debugln("Failed to open directory for deletion scan");
     return;
   }
-  if (!root.isDirectory()) {
-    debugln("Not a directory");
-    return;
-  }
+  
+  // v5.65 P1 Fix: Collect matching filenames into a buffer first. 
+  // SPIFFS (and LittleFS) iterators can become invalid or skip entries 
+  // if you remove files during an openNextFile() traversal.
+  String toDelete[24]; 
+  int found = 0;
 
   File file = root.openNextFile();
-  while (file) {
+  while (file && found < 24) {
     esp_task_wdt_reset();
-    String fileName = file.name();
-    if (fileName.indexOf(station) != -1) {
-      debug("Deleting: ");
-      debugln(fileName);
-      SPIFFS.remove(fileName);
+    String fName = file.name();
+    if (fName.indexOf(station) != -1) {
+      toDelete[found++] = fName;
     }
-    file.close(); // v5.49 Build 5: FIX LEAK
+    file.close();
     file = root.openNextFile();
+  }
+  root.close();
+
+  for (int i = 0; i < found; i++) {
+    debugf1("[SPIFFS] Deleting matching file: %s\n", toDelete[i].c_str());
+    SPIFFS.remove(toDelete[i]);
   }
 }
 
@@ -331,8 +346,8 @@ void loadGPS() {
     if (file) {
       String line = file.readString();
       file.close();
-      if (sscanf(line.c_str(), "%f,%f,%d,%d,%d", &lati, &longi, &gps_fix_dd,
-                 &gps_fix_mm, &gps_fix_yy) >= 2) {
+      if (sscanf(line.c_str(), "%lf,%lf,%d,%d,%d", &lati, &longi, &gps_fix_dd,
+                 &gps_fix_mm, &gps_fix_yy) == 5) {
         debugf5("[GPS] Loaded from SPIFFS: %.6f,%.6f (Fix: %02d/%02d/%d)\n",
                 lati, longi, gps_fix_dd, gps_fix_mm, gps_fix_yy);
       }
@@ -521,8 +536,21 @@ void scanFileToMask(const char *fName, uint32_t *mask) {
       token = strtok(buf, ",");
       if (token) sNum = atoi(token);
       
-      // Hop to field 8 (Signal Strength)
-      for (int i = 0; i < 8 && token != NULL; i++) {
+      // ISSUE-H4 fix v5.65: Signal strength field position differs per SYSTEM type.
+      // SYSTEM 0 (RF):     sampleNo,date,time,instRF,cumRF,signal,bat     → field 5
+      // SYSTEM 1 (TWS):    sampleNo,date,time,temp,hum,ws,wd,signal,bat   → field 7
+      // SYSTEM 2 (TWS-RF): sampleNo,date,time,cumRF,temp,hum,ws,wd,signal,bat → field 8
+      // Previously hardcoded field 8 for all systems, causing SYSTEM 0 and 1
+      // to read bat_val (e.g. 4) instead of signal (-111), silently marking
+      // gap-filled records as "sent" and inflating the dashboard count.
+#if SYSTEM == 0
+      const int sig_field = 5;
+#elif SYSTEM == 1
+      const int sig_field = 7;
+#else
+      const int sig_field = 8;
+#endif
+      for (int i = 0; i < sig_field && token != NULL; i++) {
         token = strtok(NULL, ",");
       }
       
@@ -593,9 +621,14 @@ float restoreRainfall(const char *fName) {
   f.close();
 
   if (lastLine.length() > 0) {
-    // CSV format: sampleNo,DATE,TIME,CUM_RF,...
-    // Field index 3 (0-based) is the rainfall field for SYSTEM 0 and 2.
-    // For SYSTEM 1 (TWS - no rainfall), this returns 0 safely.
+    // P0-A fix v5.65: Field layout differs per SYSTEM type.
+    // SYSTEM 0 (RF):     sampleNo,date,time,inst_rf,CUM_RF,signal,bat
+    //   → cum_rf is at field index 4 (between 4th and 5th comma)
+    // SYSTEM 2 (TWS-RF): sampleNo,date,time,CUM_RF,temp,hum,ws,wd,signal,bat
+    //   → cum_rf is at field index 3 (between 3rd and 4th comma)
+    // SYSTEM 1 (TWS): no rainfall — returns 0.0 safely via empty substring.
+    // Previously ALL systems used field 3. On SYSTEM 0, field 3 = inst_rf,
+    // so after a power cut the anchor was restored as e.g. 0.25mm not 12.75mm.
     int firstComma = lastLine.indexOf(',');
     if (firstComma == -1)
       return 0.0;
@@ -605,9 +638,19 @@ float restoreRainfall(const char *fName) {
     int thirdComma = lastLine.indexOf(',', secondComma + 1);
     if (thirdComma == -1)
       return 0.0;
+
+#if SYSTEM == 0
+    // For TRG: skip one more comma to land on cum_rf (field 4)
     int fourthComma = lastLine.indexOf(',', thirdComma + 1);
-    // fourthComma may be -1 (last field), substring still works
+    if (fourthComma == -1)
+      return 0.0;
+    int fifthComma = lastLine.indexOf(',', fourthComma + 1);
+    String rfStr = lastLine.substring(fourthComma + 1, fifthComma);
+#else
+    // For SYSTEM 2 and SYSTEM 1: cum_rf (or placeholder) is at field 3
+    int fourthComma = lastLine.indexOf(',', thirdComma + 1);
     String rfStr = lastLine.substring(thirdComma + 1, fourthComma);
+#endif
     rfStr.trim();
     return rfStr.toFloat();
   }
@@ -649,7 +692,18 @@ void subtractUnsentFromMask(const char *uFile) {
        strstr(uFile, "ftpunsent") != NULL);
 
   while (f.available()) {
+    esp_task_wdt_reset(); // v7.80: Handle massive backlog files without timeout
+    long pos = f.position(); // Save position of the FIRST byte of the line
     String line = f.readStringUntil('\n');
+
+    // v5.65 P4 Fix: For TRG (SYSTEM 0), skip records that are already
+    // marked as 'Processed' by the pointer to avoid inflating 'Missing' count.
+#if SYSTEM == 0
+    if (strstr(uFile, "unsent.txt") && !strstr(uFile, "ftpunsent.txt")) {
+        if (pos < unsent_pointer_count) continue;
+    }
+#endif
+
     line.trim();
     if (line.length() < 10)
       continue;
@@ -842,33 +896,35 @@ void markFileAsDelivered(const char *fileName) {
         d_day = current_day; // Default if unparseable
 
     if (isFtpFile) {
-      // FTP format: stnId;YYYY-MM-DD,HH:MM;...
-      // Extract sampleNo by back-calculating from the time field
+      // v5.65 P5 Fix: Robust FTP Parser (Handles both Date,Time and Date;Time)
+      // Format: stnId;YYYY-MM-DD;HH:MM;... OR stnId;YYYY-MM-DD,HH:MM;...
       int semi1 = line.indexOf(';');
-      if (semi1 == -1)
+      if (semi1 == -1) continue;
+      
+      // Date starts at semi1 + 1
+      String sDate = line.substring(semi1 + 1, semi1 + 11); // "YYYY-MM-DD"
+      if (sDate.length() == 10 && sDate.indexOf('-') != -1) {
+        d_year = sDate.substring(0, 4).toInt();
+        d_month = sDate.substring(5, 7).toInt();
+        d_day = sDate.substring(8, 10).toInt();
+      } else {
         continue;
-      int semi2 = line.indexOf(';', semi1 + 1);
-      if (semi2 == -1)
-        continue;
-      String dateTime = line.substring(semi1 + 1, semi2); // "YYYY-MM-DD,HH:MM"
-      if (dateTime.length() >= 10) {
-        d_year = dateTime.substring(0, 4).toInt();
-        d_month = dateTime.substring(5, 7).toInt();
-        d_day = dateTime.substring(8, 10).toInt();
       }
-      int commaIdx = dateTime.indexOf(',');
-      if (commaIdx == -1)
-        continue;
-      String timeStr = dateTime.substring(commaIdx + 1); // "HH:MM"
-      int colonIdx = timeStr.indexOf(':');
-      if (colonIdx == -1)
-        continue;
-      int h = timeStr.substring(0, colonIdx).toInt();
-      int m = timeStr.substring(colonIdx + 1).toInt();
-      // Convert time to meteorological day sample index (same formula as
-      // firmware)
-      int raw = h * 4 + m / 15;
-      sNum = (raw + 61) % 96;
+
+      // Find Time: It follows the date after 1 char (separator)
+      char sep = line.charAt(semi1 + 11);
+      if (sep == ',' || sep == ';') {
+          String timeStr = line.substring(semi1 + 12, semi1 + 17); // "HH:MM"
+          int colonIdx = timeStr.indexOf(':');
+          if (colonIdx != -1) {
+              int h = timeStr.substring(0, colonIdx).toInt();
+              int m = timeStr.substring(colonIdx + 1).toInt();
+              int raw = h * 4 + m / 15;
+              sNum = (raw + 61) % 96;
+          }
+      }
+      
+      if (sNum == -1) continue; // Final safety
     } else {
       // CSV format: sampleNo,YYYY-MM-DD,HH:MM,...
       int commaIdx = line.indexOf(',');
@@ -908,14 +964,18 @@ void markFileAsDelivered(const char *fileName) {
       if (isToday) {
         if (!(diag_sent_mask_cur[sNum / 32] & (1UL << (sNum % 32)))) {
           diag_sent_mask_cur[sNum / 32] |= (1UL << (sNum % 32));
-          if (diag_ftp_success_count < 96)
-            diag_ftp_success_count++;
+          if (diag_ftp_success_count < 96) diag_ftp_success_count++;
+          if (diag_http_success_count < 96) diag_http_success_count++; 
+          if (diag_http_retry_count < 96) diag_http_retry_count++; // v5.65 P5: Increment Backlog col
+          if (diag_net_data_count < 96) diag_net_data_count++;   // v5.65 P5: Update Live count
         }
       } else {
         if (!(diag_sent_mask_prev[sNum / 32] & (1UL << (sNum % 32)))) {
           diag_sent_mask_prev[sNum / 32] |= (1UL << (sNum % 32));
-          if (diag_ftp_success_count_prev < 96)
-            diag_ftp_success_count_prev++;
+          if (diag_ftp_success_count_prev < 96) diag_ftp_success_count_prev++;
+          if (diag_http_success_count_prev < 96) diag_http_success_count_prev++;
+          if (diag_http_retry_count_prev < 96) diag_http_retry_count_prev++; // v5.65 P5
+          if (diag_net_data_count_prev < 96) diag_net_data_count_prev++;    // v5.65 P5
         }
       }
     }

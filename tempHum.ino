@@ -29,8 +29,9 @@ void tempHum(void *pvParameters) {
         // v5.49: Atomic update of both variables under a single mutex lock
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
             pdTRUE) {
-          // Temperature Logic: Winter-hardened range (-40 to +85)
-          if ((t_raw >= -40.0) && (t_raw <= 85.0)) {
+          // Temperature Logic: Winter-hardened range (-39 to +85)
+          // v5.65 fix: Exactly -40.0C is often a result of raw=0 (bus failure).
+          if ((t_raw > -39.99) && (t_raw <= 85.0)) {
             temperature = t_raw;
             last_valid_temp = temperature;
           } else if (last_valid_temp > -40.1) {
@@ -287,8 +288,11 @@ bool readHDC(float &tempC, float &humidity) {
         return false;
       }
 
-      tempC = (rawTemp / 65536.0) * 165.0 - 40.0; // HDC2022
-      humidity = (rawHum / 65536.0) * 100.0;      // HDC2022
+      tempC = (rawTemp / 65536.0) * 165.0 - 40.0;
+      humidity = (rawHum / 65536.0) * 100.0;
+      
+      // v5.65 fix: If raw values are exactly 0, it signals a digital/bus failure
+      if (rawTemp == 0 || rawHum == 0) return false;
 
       if (humidity > 100.0)
         humidity = 100.0; // <--- Add this line here

@@ -52,6 +52,19 @@ def _infer_sql_type(key: str, val) -> str:
     return "TEXT"
 
 
+def get_carrier_from_iccid(iccid: str) -> str:
+    """Deciphers Indian carrier from ICCID prefix as a fallback."""
+    if not iccid or len(iccid) < 6:
+        return "Unknown"
+    # Common Indian Issuer Identifiers (IIN)
+    if iccid.startswith(("899116", "899110")): return "Airtel"
+    if iccid.startswith("899100"): return "BSNL"
+    if iccid.startswith("899184"): return "Jio"
+    if iccid.startswith("899111"): return "Vi"
+    return "Unknown"
+
+
+
 def _get_db_columns(db: Session, table: str) -> set:
     """Returns the set of column names currently in the table."""
     inspector = sa_inspect(db.bind)
@@ -116,7 +129,6 @@ async def health(request: Request, db: Session = Depends(get_db)):
 
         # ── Step 2: Build a HealthReport from all matching fields ─────────────
         # v7.94: Store in UTC (Standard). Display filters will add +5:30 offset.
-        now_ist = datetime.datetime.now(ist_tz)
         now_utc = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
         report_kwargs = {"stn_id": stn_id, "reported_at": now_utc}
@@ -142,6 +154,14 @@ async def health(request: Request, db: Session = Depends(get_db)):
         # Override stn_id to always be uppercased
         report_kwargs["stn_id"] = stn_id
 
+        # ── Step 2.1: Carrier Verification / Decoding ─────────────────────────
+        carrier = str(data.get("carrier", "")).strip().upper()
+        iccid = str(data.get("iccid", "")).strip()
+        if carrier in ("", "NA", "SIM OK", "UNKNOWN") or "SEARCH" in carrier:
+            carrier = get_carrier_from_iccid(iccid)
+        report_kwargs["carrier"] = carrier
+
+
         # Safe defaults for fields that firmware may not always send
         report_kwargs.setdefault("spiffs_total_kb", 4640)
         report_kwargs.setdefault("calib", "NA")
@@ -158,7 +178,7 @@ async def health(request: Request, db: Session = Depends(get_db)):
                 cmd_entry = db.query(CommandQueue).filter_by(id=cmd_id_int).first()
                 if cmd_entry:
                     cmd_entry.result = str(last_cmd_res)[:64]
-                    cmd_entry.completed_at = now_ist
+                    cmd_entry.completed_at = now_utc
                     print(f"[CMD FEEDBACK] {stn_id} ID:{cmd_id_int} -> {cmd_entry.result}")
 
         # ── Step 3: Handle OTA Auto-Lock ──────────────────────────────────────
@@ -179,7 +199,7 @@ async def health(request: Request, db: Session = Depends(get_db)):
             cmd       = pending.cmd
             cmd_param = pending.cmd_param
             cmd_id    = pending.id
-            pending.executed_at = now_ist
+            pending.executed_at = now_utc
             print(f"[CMD] {stn_id} → {cmd} (ID:{cmd_id})")
         else:
             cmd_id = 0
@@ -216,7 +236,7 @@ async def health(request: Request, db: Session = Depends(get_db)):
                     cmd       = timed_out.cmd
                     cmd_param = timed_out.cmd_param or ""
                     cmd_id    = timed_out.id
-                    timed_out.executed_at = now_ist  # Re-mark as sent now
+                    timed_out.executed_at = now_utc  # Re-mark as sent now
 
             # CLEAR_FTP_QUEUE: if backlog > 50 records, server triggers a clear
             if not cmd:

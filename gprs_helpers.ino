@@ -69,10 +69,31 @@ bool load_apn_config(String current_ccid, char *target_apn, size_t max_len) {
   String stored_apn_str = String(apn_buf);
   stored_apn_str.trim();
 
-  // Validate
+  // Validate CCID match
   if (stored_ccid_str.length() > 5 &&
       current_ccid.indexOf(stored_ccid_str) != -1 &&
       stored_apn_str.length() > 0) {
+
+    // v5.65 CRITICAL FIX: Cross-check stored APN against current carrier.
+    // A stale cache (e.g. from a test with Airtel SIM) can store airteliot.com
+    // for a BSNL SIM's ICCID. If the carrier (set by get_network() via CSPN/COPS)
+    // disagrees with the stored APN, REJECT the cache and force fresh discovery.
+    bool apn_carrier_mismatch = false;
+    if (strstr(carrier, "BSNL") && strstr(stored_apn_str.c_str(), "airtel")) {
+      apn_carrier_mismatch = true;
+    } else if (strstr(carrier, "Jio") && !strstr(stored_apn_str.c_str(), "jio")) {
+      apn_carrier_mismatch = true;
+    } else if ((strstr(carrier, "Airtel")) && strstr(stored_apn_str.c_str(), "bsnl")) {
+      apn_carrier_mismatch = true;
+    }
+
+    if (apn_carrier_mismatch) {
+      debugln("Smart APN: ⚠ MISMATCH — Stored APN conflicts with detected carrier. Ignoring cache.");
+      // Delete the stale file so it gets re-saved with the correct APN this cycle
+      SPIFFS.remove("/apn_config.txt");
+      return false;
+    }
+
     strncpy(target_apn, stored_apn_str.c_str(), max_len);
     target_apn[max_len - 1] = '\0';
     debugln("Smart APN: Match Found!");
@@ -224,7 +245,11 @@ bool verify_bearer_or_recover() {
         String rdp_cmd = "AT+CGCONTRDP=" + String(check_cid);
         SerialSIT.println(rdp_cmd);
         String rdp_resp = waitForResponse("OK", 3000);
-        if (rdp_resp.indexOf('"' + String(apn_str) + '"') == -1) {
+        // P1 fix v5.65: '"' + String(apn_str) is char+String = wrong!
+        // char '"' (ASCII 34) + String → appends integer 34, not a quote character.
+        // Must use string literals for correct concatenation.
+        String apn_check = "\"" + String(apn_str) + "\"";
+        if (rdp_resp.indexOf(apn_check) == -1) {
           debugln("Bearer Check: FAILED (APN Mismatch/Ghost Session). Force "
                   "re-activating...");
           String deact_cmd = "AT+CGACT=0," + String(check_cid);

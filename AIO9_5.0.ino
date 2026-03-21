@@ -57,6 +57,19 @@ char ota_fail_reason[48] = "NONE";
 bool health_in_progress = false;
 TaskHandle_t lcdkeypad_h; // UI
 TaskHandle_t tempHum_h;
+// Definitions of global objects (v5.65 Extern Pass)
+HardwareSerial SerialSIT(2);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+SemaphoreHandle_t i2cMutex = NULL;
+SemaphoreHandle_t serialMutex = NULL;
+SemaphoreHandle_t modemMutex = NULL;
+SemaphoreHandle_t fsMutex = NULL;
+RTC_DS1307 rtc;
+portMUX_TYPE timerMux0 = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE timerMux1 = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE timerMux2 = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE windMux = portMUX_INITIALIZER_UNLOCKED;
+
 volatile char show_now = 0;
 TaskHandle_t bmeTask_h;
 TaskHandle_t windSpeed_h;
@@ -181,7 +194,7 @@ void setup() {
       wind_count.val = 0;
       calib_count.val = 0;
       total_wind_pulses_32 = 0;
-      total_wind_pulses_32 = 0;
+      last_raw_wind_count = 0;  // P3 fix v5.65: Was a duplicate total_wind_pulses_32=0 — missing reset
       total_rf_pulses_32 = 0;
       rtc_daily_cum_rf = 0.0;
       last_valid_wd = 0;
@@ -638,7 +651,13 @@ void setup() {
     debugln(STATION_TYPE);
     http_no = 10; // 10 (SPATIKA SERVER)
   } else {
-    debugln("********** NO SYSTEM FOUND **********");
+    debugln("!!! FATAL: ********** NO UNIT/SYSTEM MATCH FOUND **********");
+    debugln("!!! Check UNIT and SYSTEM defines in globals.h!");
+    // v5.65: Set invalid sentinel so prepare_data_and_send() can guard against it.
+    // Previously http_no stayed at 0 (default int value), silently routing ALL
+    // data to the first httpSet entry (KSNDMC endpoint) for any mis-typed UNIT string.
+    http_no = -1;
+    strncpy(UNIT_VER, "UNCONFIGURED", sizeof(UNIT_VER) - 1);
   }
 
   debugln();
@@ -1176,17 +1195,10 @@ void loop() {
        (sync_mode == eExceptionHandled)) &&
       (lcdkeypad_start == 0) && (wifi_active == false) &&
       (httpInitiated == false) && (health_in_progress == false) &&
+      (schedulerBusy == false) &&
       (force_reboot == false) && (force_ota == false) &&
       (ota_writing_active == false)) {
-    // v5.55 SELF-HEALING: Preventative Maintenance Reboot
-    // Triggered at 2:00 PM (sampleNo 56 or hour 14) ensuring physical hardware 
-    // registers are refreshed when solar power is optimal.
-    if ((sampleNo == 56) && current_hour == 14 && current_min < 15) {
-       debugln("[HEAL] Scheduled Daily Maintenance Restart (2:00 PM)...");
-       healer_reboot_in_progress = true; // v5.55: Protect counters
-       power_cut_modem_shutdown(); // Prevents midnight hang (heavy draw before reset)
-       ESP.restart();
-    }
+
 
     // v5.55 SAFETY VALVE: Total Communication Blackout Recovery
     // If the system has failed for 8 consecutive cycles (~2 hours), assume 

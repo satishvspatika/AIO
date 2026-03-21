@@ -64,6 +64,7 @@
                 {% endif %}
                 <th class="p-3 text-left whitespace-nowrap">Station</th>
                 <th class="p-3 text-left whitespace-nowrap">Group</th>
+                <th class="p-3 text-left whitespace-nowrap">Carrier</th>
                 <th class="p-3 text-left whitespace-nowrap">Status</th>
                 <th class="p-3 text-center whitespace-nowrap">Tdy Sent (Live)</th>
                 <th class="p-3 text-center whitespace-nowrap">Ydy Sent/Stored</th>
@@ -97,6 +98,9 @@
 
                 <td class="p-3 text-slate-400 text-[10px] leading-tight">
                     {{ r.fw_group.display_name if r.fw_group else (r.unit_type or '?')|truncate(15) }}
+                </td>
+                <td class="p-3 text-slate-300 font-bold text-[10px]">
+                    {{ r.carrier or '?' }}
                 </td>
                 <td class="p-3">
                     {% if r.eval.verdict == 'OK' %}

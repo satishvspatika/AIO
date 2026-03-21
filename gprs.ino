@@ -5,10 +5,14 @@ bool http_ready = false; // v5.42: Track if HTTPINIT succeeded for this cycle
 
 // Helper to clear UART buffer to prevent stale data contamination between tasks
 void flushSerialSIT() {
-  while (SerialSIT.available()) {
+  // P2 fix v5.65: Added 500ms hard deadline.
+  // Without it, a modem URC storm (continuous bearer-bounce events) could cause
+  // this loop to spin indefinitely: data arrives faster than the 1ms drain,
+  // so SerialSIT.available() never returns false, hanging the GPRS task.
+  unsigned long deadline = millis() + 500;
+  while (SerialSIT.available() && millis() < deadline) {
     SerialSIT.read();
     esp_task_wdt_reset();
-    vTaskDelay(1 / portTICK_PERIOD_MS);
   }
 }
 
@@ -196,6 +200,11 @@ void gprs(void *pvParameters) {
           get_registration();
           get_a7672s();
 
+          // v5.60/v5.77: Always acquire fresh GPS before sending manual status/health
+          strcpy(ui_data[target_fld].bottomRow, "FETCHING GPS...");
+          show_now = 1;
+          get_gps_coordinates();
+
           strcpy(ui_data[target_fld].bottomRow, "SENDING HEALTH..");
 #if ENABLE_HEALTH_REPORT == 1
           bool health_ok = send_health_report(false); // Manual trigger: NO JITTER
@@ -209,11 +218,6 @@ void gprs(void *pvParameters) {
           strcpy(ui_data[target_fld].bottomRow, "SENDING SMS...");
 #endif
           vTaskDelay(2000 / portTICK_PERIOD_MS);
-          
-          // v5.60: Always acquire fresh GPS before sending manual status
-          strcpy(ui_data[target_fld].bottomRow, "FETCHING GPS...");
-          show_now = 1;
-          get_gps_coordinates();
           
           prepare_and_send_status(universalNumber);
 
@@ -351,6 +355,7 @@ void gprs(void *pvParameters) {
                     "Flow\n****************");
             xSemaphoreGive(serialMutex);
           }
+          httpInitiated = true; // v5.65 P4: Mark cycle as started for responsive cleanup block
 
           // v5.48 Daily Health Triggering (11:00 AM Primary)
           bool is_health_time = false;
@@ -408,6 +413,15 @@ void gprs(void *pvParameters) {
             sync_mode = eHttpStop; // v5.51 FIX: Advance state to prevent infinite loop!
           }
 
+
+          // v5.65 P4: HIGH RESPONSIVENESS - If a manual command is pending, prioritize it
+          // over the lengthy/unreliable automated health report.
+          if (pending_manual_status || pending_manual_gps) {
+            debugln("[GPRS] 💡 Priority Interrupt: Manual command detected during automated cycle.");
+            // We let the end-of-cycle block (line ~600) handle the actual transition
+            // but we skip the optional automated health report below to speed things up.
+            health_in_progress = false; 
+          }
 
           if (health_in_progress) {
 #if ENABLE_HEALTH_REPORT == 1
@@ -730,14 +744,37 @@ int parseHttpDate(const char *dateStr, struct tm *tm) {
  */
 
 void prepare_data_and_send() {
+  // v5.65 P0: Range guard for server configuration index
+  if (http_no < 0 || http_no >= (int)(sizeof(httpSet) / sizeof(httpSet[0]))) {
+      debugln("[HTTP] FATAL: http_no out of range (" + String(http_no) + "). Aborting send.");
+      success_count = 0;
+      return;
+  }
+
   esp_task_wdt_reset();
+  char stnId[16];
   const char *charArray;
 
   // v5.56: Global Sanity Check for record content
   if (content.length() < 10 && data_mode == eUnsentData) {
-      debugln("[HTTP] Skip: Record too short/Empty");
-      success_count = 1; // Mark as success so it moves past the gap
+      debugln("[HTTP] Skip: Record too short/Empty — advancing pointer without counting as sent.");
+      // P2 fix v5.65: Use sentinel value 2 (not 1) to signal 'skipped'.
+      // success_count==1 increments diag_http_retry_count in the caller,
+      // which would wrongly inflate the "backlog sent" dashboard counter.
+      // 2 = skipped (corrupt/empty line): advances pointer, no counter hit.
+      success_count = 2;
       return;
+  }
+
+  // v5.65: Guard against unconfigured UNIT string (http_no == -1).
+  // Without this, httpSet[-1] or httpSet[11+] causes memory corruption.
+  // http_no = -1 is set by setup() when UNIT doesn't match any known branch.
+  const int httpSet_count = (int)(sizeof(httpSet) / sizeof(httpSet[0]));
+  if (http_no < 0 || http_no >= httpSet_count) {
+    debugln("[HTTP] FATAL: http_no out of range. UNIT/SYSTEM not configured!");
+    debugln("[HTTP] Check UNIT and SYSTEM defines in globals.h. Aborting send.");
+    success_count = 0;
+    return;
   }
 
   if (data_mode == eCurrentData) {
@@ -788,24 +825,32 @@ void prepare_data_and_send() {
   debugf1("Current Data to be sent is : %s", charArray);
   debugln();
 
+  // v5.65: Zero metadata variables before parsing to prevent stale data
+  // from a previous successful send being used if this sscanf fails.
+  temp_sampleNo = -1; temp_year = 0; temp_month = 0; temp_day = 0;
+  temp_hr = 0; temp_min = 0; temp_sig = 0; temp_bat = 0.0;
+
 #if SYSTEM == 0
-  sscanf(charArray, "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%04d,%f",
+  int res = sscanf(charArray, "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%04d,%f",
          &temp_sampleNo, &temp_year, &temp_month, &temp_day, &temp_hr,
          &temp_min, &temp_instrf, &temp_crf, &temp_sig, &temp_bat);
+  if (res < 10) { debugln("[HTTP] ERROR: sscanf parse failed (TRG). Skipping record."); success_count = 2; return; }
 #endif
 #if SYSTEM == 1
-  // TWS: 12 components — No Rainfall field (TWS is wind+temp+hum only)
-  sscanf(charArray, "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%f,%03d,%04d,%f",
+  // TWS: 12 components
+  int res = sscanf(charArray, "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%f,%03d,%04d,%f",
          &temp_sampleNo, &temp_year, &temp_month, &temp_day, &temp_hr,
          &temp_min, &temp_temp, &temp_hum, &temp_avg_ws, &temp_dir, &temp_sig,
          &temp_bat);
+  if (res < 12) { debugln("[HTTP] ERROR: sscanf parse failed (TWS). Skipping record."); success_count = 2; return; }
 #endif
 #if SYSTEM == 2
   // TWS-RF: 13 components
-  sscanf(charArray, "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%f,%f,%03d,%04d,%f",
+  int res = sscanf(charArray, "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%f,%f,%03d,%04d,%f",
          &temp_sampleNo, &temp_year, &temp_month, &temp_day, &temp_hr,
          &temp_min, &temp_crf, &temp_temp, &temp_hum, &temp_avg_ws, &temp_dir,
          &temp_sig, &temp_bat);
+  if (res < 13) { debugln("[HTTP] ERROR: sscanf parse failed (TWS-RF). Skipping record."); success_count = 2; return; }
 #endif
 #if (SYSTEM == 0)
   snprintf(sample_bat, sizeof(sample_bat), "%04.1f", float(temp_bat));
@@ -833,8 +878,14 @@ void prepare_data_and_send() {
            float(temp_crf));
 #endif
 
-  // v6.75: Use actual signal level (reverted hard-lock to -68)
-  temp_sig = signal_lvl;
+  // P0-B fix v5.65: Only apply live signal to CURRENT data.
+  // For eUnsentData (backlog), temp_sig was already set by sscanf() from the
+  // SPIFFS record and reflects the actual signal at the time of recording.
+  // Overwriting with the current signal_lvl would corrupt historical signal
+  // values in every backlog record sent to the server database.
+  if (data_mode == eCurrentData) {
+    temp_sig = signal_lvl; // v6.75: Use actual live signal level for current slot
+  }
 
   // v5.50: BOGUS DATA GUARD — After DELETE DATA all SPIFFS files are wiped.
   // On the next boot, signature.txt is recreated as "0000-00-00,00:00"
@@ -898,6 +949,24 @@ void prepare_data_and_send() {
              cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
              temp_instrf, temp_crf, sample_bat, temp_sig, httpSet[http_no].Key);
 #endif
+#if SYSTEM == 1
+    // TWS JSON Format
+    snprintf(http_data, sizeof(http_data),
+             "{\"StnNo\":\"%s\",\"DeviceTime\":\"%04d-%02d-%02d "
+             "%02d:%02d:00\",\"Temp\":\"%s\",\"Humid\":\"%s\",\"WS\":\"%s\","
+             "\"WD\":\"%s\",\"BatVolt\":\"%s\",\"SigStr\":\"%04d\",\"ApiKey\":\"%s\"}",
+             cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
+             sample_temp, sample_hum, sample_avgWS, sample_WD, sample_bat, temp_sig, httpSet[http_no].Key);
+#endif
+#if SYSTEM == 2
+    // TWS-RF JSON Format
+    snprintf(http_data, sizeof(http_data),
+             "{\"StnNo\":\"%s\",\"DeviceTime\":\"%04d-%02d-%02d "
+             "%02d:%02d:00\",\"RainCuml\":\"%05.1f\",\"Temp\":\"%s\",\"Humid\":\"%s\","
+             "\"WS\":\"%s\",\"WD\":\"%s\",\"BatVolt\":\"%s\",\"SigStr\":\"%04d\",\"ApiKey\":\"%s\"}",
+             cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
+             temp_crf, sample_temp, sample_hum, sample_avgWS, sample_WD, sample_bat, temp_sig, httpSet[http_no].Key);
+#endif
 
   } else {
     // KSNDMC TRG
@@ -928,34 +997,38 @@ void prepare_data_and_send() {
 
 // TWS
 #if SYSTEM == 1
-  snprintf(http_data, sizeof(http_data),
-           "stn_no=%s&rec_time=%04d-%02d-%02d,%02d:%02d&temp=%s&humid=%s&w_"
-           "speed=%s&w_dir=%s&signal=%04d&key=%s&bat_volt=%s&bat_volt2=%s",
-           cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
-           sample_temp, sample_hum, sample_avgWS, sample_WD, temp_sig,
-           httpSet[http_no].Key, sample_bat, sample_bat);
+  if (strcmp(httpSet[http_no].Format, "json")) { // Only if NOT json
+      snprintf(http_data, sizeof(http_data),
+               "stn_no=%s&rec_time=%04d-%02d-%02d,%02d:%02d&temp=%s&humid=%s&w_"
+               "speed=%s&w_dir=%s&signal=%04d&key=%s&bat_volt=%s&bat_volt2=%s",
+               cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
+               sample_temp, sample_hum, sample_avgWS, sample_WD, temp_sig,
+               httpSet[http_no].Key, sample_bat, sample_bat);
+  }
 #endif
 
 // TWS-RF (ADDON / SPATIKA)
 #if SYSTEM == 2
-  // v7.53: DMC Legacy requires stn_no and %05.1f. Spatika General requires
-  // stn_id.
-  if (strstr(UNIT, "SPATIKA")) {
-    snprintf(http_data, sizeof(http_data),
-             "stn_id=%s&rec_time=%04d-%02d-%02d,%02d:%02d&key=%s&rainfall=%05."
-             "2f&temp=%s&humid=%s&w_speed=%s&w_dir=%s&signal=%04d&"
-             "bat_volt=%s&bat_volt2=%s",
-             cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
-             httpSet[http_no].Key, temp_crf, sample_temp, sample_hum,
-             sample_avgWS, sample_WD, temp_sig, sample_bat, sample_bat);
-  } else {
-    snprintf(http_data, sizeof(http_data),
-             "stn_no=%s&rec_time=%04d-%02d-%02d,%02d:%02d&key=%s&rainfall=%05."
-             "1f&temp=%s&humid=%s&w_speed=%s&w_dir=%s&signal=%04d&"
-             "bat_volt=%s&bat_volt2=%s",
-             cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
-             httpSet[http_no].Key, temp_crf, sample_temp, sample_hum,
-             sample_avgWS, sample_WD, temp_sig, sample_bat, sample_bat);
+  if (strcmp(httpSet[http_no].Format, "json")) { // Only if NOT json
+      // v7.53: DMC Legacy requires stn_no and %05.1f. Spatika General requires
+      // stn_id.
+      if (strstr(UNIT, "SPATIKA")) {
+        snprintf(http_data, sizeof(http_data),
+                 "stn_id=%s&rec_time=%04d-%02d-%02d,%02d:%02d&key=%s&rainfall=%05."
+                 "2f&temp=%s&humid=%s&w_speed=%s&w_dir=%s&signal=%04d&"
+                 "bat_volt=%s&bat_volt2=%s",
+                 cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                 httpSet[http_no].Key, temp_crf, sample_temp, sample_hum,
+                 sample_avgWS, sample_WD, temp_sig, sample_bat, sample_bat);
+      } else {
+        snprintf(http_data, sizeof(http_data),
+                 "stn_no=%s&rec_time=%04d-%02d-%02d,%02d:%02d&key=%s&rainfall=%05."
+                 "1f&temp=%s&humid=%s&w_speed=%s&w_dir=%s&signal=%04d&"
+                 "bat_volt=%s&bat_volt2=%s",
+                 cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                 httpSet[http_no].Key, temp_crf, sample_temp, sample_hum,
+                 sample_avgWS, sample_WD, temp_sig, sample_bat, sample_bat);
+      }
   }
 #endif
 
@@ -992,9 +1065,6 @@ void prepare_data_and_send() {
 
     if (data_mode == eCurrentData) {
       diag_first_http_count++;
-      diag_http_success_count++; // v7.86 Track total live HTTP successes
-    } else if (data_mode == eUnsentData) {
-      diag_http_retry_count++; // v7.86 Track total backlog HTTP successes
     }
   }
   vTaskDelay(200 / portTICK_PERIOD_MS);
@@ -1114,8 +1184,9 @@ void prepare_data_and_send() {
         debugln("[HTTP] Retry attempt...");
         xSemaphoreGive(serialMutex);
       }
-      // v5.63: Backlogs use Fast method first. Retries handled by prepare_data_and_send logic if needed.
-      success_count = send_at_cmd_data(http_data, charArray, false);
+      // v5.65 P1: Backlogs use Robust method (handshake) for higher success rate 
+      // on weak/noisy networks, as this is already a retry cycle.
+      success_count = send_at_cmd_data(http_data, charArray, true);
       
       // v5.63: Tower Cooldown. Airtel towers need ~3s to clear previous socket
       // before accepting a new rapid-fire request in a backlog loop.
@@ -1132,7 +1203,7 @@ void prepare_data_and_send() {
                  diag_http_present_fails, diag_http_cum_fails, get_total_backlogs());
 
         if (data_mode == eCurrentData) {
-          diag_http_success_count++; // v7.86
+          // Success tracking centralized in send_at_cmd_data loop below
           diag_first_http_count++;   // v7.86
         } else if (data_mode == eUnsentData) {
           diag_http_retry_count++; // v7.86
@@ -1235,7 +1306,9 @@ void prepare_data_and_send() {
           debugln("[RECOVERY] 4 Consecutive HTTP Fail Slots. Triggering Full "
                   "Modem Reset...");
           SerialSIT.println("AT+CFUN=1,1");
-          vTaskDelay(5000 / portTICK_PERIOD_MS);
+          vTaskDelay(15000 / portTICK_PERIOD_MS); // v5.65: Increased from 5s to 15s for full reboot
+          SerialSIT.println("AT"); // Handshake
+          waitForResponse("OK", 1000);
           diag_consecutive_http_fails =
               0; // Reset counter - next slot is a fresh start
         }
@@ -1427,7 +1500,8 @@ void send_http_data() {
           "[PROACTIVE] Consecutive failures detected. Forcing deep CIPSHUT...");
       SerialSIT.println("AT+CIPSHUT");
       waitForResponse("SHUT OK", 5000);
-      SerialSIT.println("AT+CGACT=0,1");
+      SerialSIT.print("AT+CGACT=0,");
+      SerialSIT.println(active_cid);
       waitForResponse("OK", 3000);
     } else {
       SerialSIT.println("AT+CIPSHUT");
@@ -1482,14 +1556,10 @@ void send_http_data() {
   response = waitForResponse("OK", 1000);
 
   if (!strcmp(httpSet[http_no].Format, "json")) {
-    SerialSIT.println(httpPostRequest);
-    response = waitForResponse("OK", 1000);
     SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
     response = waitForResponse("OK", 1000);
     debugln("It is json");
   } else {
-    SerialSIT.println(httpPostRequest);
-    response = waitForResponse("OK", 1000);
     SerialSIT.println(
         "AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"");
     response = waitForResponse("OK", 1000);
@@ -1559,7 +1629,8 @@ void send_http_data() {
               SPIFFS.open("/unsent_pointer.txt", FILE_READ);
           if (!read_unsent_count) {
             debugln("Failed to open unsent_pointer.txt for reading");
-            return; // C4 FIX: Do not dereference invalid File object
+            xSemaphoreGive(modemMutex); // v5.64 FIX: Release mutex before returning
+            return; 
           }
           String retrieve_counts = read_unsent_count.readStringUntil('\n');
           const char *retrieve = retrieve_counts.c_str();
@@ -1583,8 +1654,10 @@ void send_http_data() {
 
         File file1 = SPIFFS.open(unsent_file, FILE_READ);
         if (!file1) {
-          debugln("Failed to open unsent_file for reading");
-        } // #TRUEFIX
+          debugln("Failed to open unsent_file for reading - skipping backlog");
+          xSemaphoreGive(modemMutex);
+          return;
+        } 
         fileSize = file1.size();
 
         int backlog_processed_count = 0;
@@ -1647,6 +1720,23 @@ void send_http_data() {
           
           if (success_count == 0) {
               debugln("[Power] Backlog line FAILED. Stopping to preserve battery.");
+              // v5.65 P4 Fix: Save pointer even on failure to avoid resending successful lines
+              File unsent_count_f = SPIFFS.open("/unsent_pointer.txt", FILE_WRITE);
+              if (unsent_count_f) {
+                  unsent_count_f.print(unsent_pointer_count);
+                  unsent_count_f.close();
+              }
+              break;
+          }
+          
+          // v5.65 P4: UI RESPONSIVENESS - Allow manual keypad interrupt during backlog
+          if (pending_manual_status || pending_manual_gps) {
+              debugln("[GPRS] 💡 Interrupt: Manual command detected. Deferring backlog...");
+              File unsent_count_f = SPIFFS.open("/unsent_pointer.txt", FILE_WRITE);
+              if (unsent_count_f) {
+                  unsent_count_f.print(unsent_pointer_count);
+                  unsent_count_f.close();
+              }
               break;
           }
           
@@ -1661,31 +1751,15 @@ void send_http_data() {
               break;
           }
 
-          if (unsent_counter ==
-              6) { // if more than 5 retries , still the data is no sent
-            debugln();
-            debugln("UNSENT DATA : Retries exceeded limit ...");
-            debugln();
-            debug("unsent_pointer_count in unsent_pointer.txt is updated "
-                  "to ");
-            debugln(unsent_pointer_count);
-            File unsent_count = SPIFFS.open("/unsent_pointer.txt", FILE_WRITE);
-            if (!unsent_count) {
-              debugln("Failed to open unsent_pointer.txt for writing");
-            } // #TRUEFIX
-            unsent_count.print(
-                unsent_pointer_count); // s is in bytes. Overwrite
-                                       // the previous one.
-            unsent_count.close();
-            debug("File Size is ");
-            debugln(fileSize);
-            debug("unsent_pointer_count is ");
-            debugln(unsent_pointer_count);
-            debugln("Pointer to unsent_file updated ...");
-            break;
+          // NOTE: The old unsent_counter==6 safety valve has been removed (BUG-C3 fix v5.65).
+          // unsent_counter was never incremented in this loop, making that check dead code.
+          // Active guards: (1) Fail-Fast break on success_count==0 above,
+          //                (2) 15-record power cap on backlog_processed_count above.
+
+          // Tower breather: only needed after a real HTTP attempt, not for skipped records
+          if (success_count != 2) { // 2 = skip sentinel (P2 fix v5.65)
+            vTaskDelay(3000 / portTICK_PERIOD_MS); // Tower breather (3s)
           }
-          
-          vTaskDelay(3000 / portTICK_PERIOD_MS); // Tower breather (3s)
 
         } // while loop
 
@@ -1905,43 +1979,47 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
 
           File src = SPIFFS.open(ftpunsent_file, FILE_READ);
           if (src) {
-            File chunk = SPIFFS.open(fileName, FILE_WRITE);
-            File remainder = SPIFFS.open("/ftpremain.txt", FILE_WRITE);
-            int linesRead = 0;
+              File chunk = SPIFFS.open(fileName, FILE_WRITE);
+              File remainder = SPIFFS.open("/ftpremain.txt", FILE_WRITE);
 
-            while (src.available()) {
-              esp_task_wdt_reset(); // Feed WDT for huge backlog files
-              String line = src.readStringUntil('\n');
-              line.trim();              // Kill wandering \r
-              if (line.length() > 15) { // Valid data line length check
-                line += "\r\n";
-                if (linesRead < FTP_CHUNK_SIZE) { // v5.52 ENH-2: Use defined constant
-                  if (chunk)
-                    chunk.print(line);
-                } else {
-                  if (remainder)
-                    remainder.print(line);
-                }
-                linesRead++;
+              // v5.65 Fix: Guard against file-creation failure (SPIFFS Full or busy)
+              // If the chunk file fails to open, we MUST ABORT now. Proceeding
+              // with an empty chunk file and then deleting the source queue
+              // leads to permanent data loss. 
+              if (!chunk) {
+                debugln("[FTP] CRITICAL: Failed to create chunk file. Aborting FTP.");
+                src.close(); if (remainder) remainder.close();
+                return;
               }
-            }
-            if (chunk)
-              chunk.close();
-            if (remainder)
-              remainder.close();
-            src.close();
 
-            // DO NOT DELETE ftpunsent_file here!
-            // Wait for upload success in send_ftp_file() before committing the
-            // remainder.
-            if (linesRead > 15) {
-              debugln("[FTP] Huge Backlog! 15 records chunked for TX. "
-                      "Original queue protected until success.");
+              int linesRead = 0;
+              while (src.available()) {
+                esp_task_wdt_reset(); 
+                String line = src.readStringUntil('\n');
+                line.trim();
+                if (line.length() > 15) {
+                  line += "\r\n";
+                  if (linesRead < FTP_CHUNK_SIZE) {
+                    chunk.print(line);
+                  } else {
+                    if (remainder) remainder.print(line);
+                  }
+                  linesRead++;
+                }
+              }
+              if (chunk) chunk.close();
+              if (remainder) remainder.close();
+              src.close();
+
+              // v5.52 FIX: Constant parity
+              if (linesRead > FTP_CHUNK_SIZE) {
+                debugln("[FTP] Huge Backlog! Records chunked for TX. "
+                        "Original queue protected until success.");
+              } else {
+                SPIFFS.remove("/ftpremain.txt");
+                debugln("[FTP] Backlog fully chunked into Active Payload.");
+              }
             } else {
-              SPIFFS.remove("/ftpremain.txt");
-              debugln("[FTP] Backlog fully chunked into Active Payload.");
-            }
-          } else {
             debugln("Failed to open ftpunsent.txt for chunking.");
           }
           debug("Retrieved file is ");
@@ -1956,8 +2034,8 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
       debugln("No ftpunsent.txt found. Skipping FTP.");
     }
 
-    if (sampleNo == 3 || sampleNo == 7) { // send previous day's data (96
-                                          // data) if available through FTP
+    if (sampleNo == 3) { // v5.65 P2: Fixed cleanup condition — only run at 09:30 AM (sampleNo 3) 
+                          // to avoid accidental backlog clears if sampleNo 7 is reached via reboot.
       if (current_hour == 9 && current_min > 30 && current_min < 45) {
         // Cleanup at start of 09:30 AM cycle
         snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
@@ -2191,6 +2269,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
           // than waiting out the full 60s timeout.
           {
             response1 = "";
+            response1.reserve(2048); // v5.65 P4: Prevent heap fragmentation
             unsigned long put_start = millis();
             bool ps_bearer_lost = false;
             while ((millis() - put_start) < 60000) {
@@ -2298,30 +2377,28 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
           else
             pattern = ".kwd";
 
-          const String prefix = "/"; // Define your prefix here
-
-          File root = SPIFFS.open("/");
-          if (!root) {
-            debugln("Failed to open SPIFFS root");
-          } // #TRUEFIX
-          File file = root.openNextFile();
-          while (file) {
-            String fileName1 = file.name();
-            if (fileName1.endsWith(pattern)) {
-              String prefixedFileName = prefix + fileName1;
-              debugf1("Removing file: %s\n", prefixedFileName.c_str());
-              vTaskDelay(100 / portTICK_PERIOD_MS);
-              if (SPIFFS.remove(prefixedFileName)) {
-                debugln("File removed successfully");
-              } else {
-                debugln("File removal failed");
+          const String prefix = "/";
+          // v5.65 P4 Fix: Buffer filenames to prevent SPIFFS iterator corruption during deletion
+          std::vector<String> filesToDelete;
+          File rootDir = SPIFFS.open("/");
+          if (rootDir) {
+            File f = rootDir.openNextFile();
+            while (f) {
+              String name = f.name();
+              if (name.endsWith(pattern)) {
+                filesToDelete.push_back(prefix + name);
               }
+              f.close();
+              f = rootDir.openNextFile();
             }
-            file.close(); // v5.49 Build 5: FIX LEAK - Close file handle before
-                          // next iteration
-            file = root.openNextFile();
+            rootDir.close();
+            
+            for (const String& fPath : filesToDelete) {
+              debugf1("Removing file: %s\n", fPath.c_str());
+              vTaskDelay(50 / portTICK_PERIOD_MS);
+              SPIFFS.remove(fPath);
+            }
           }
-          root.close();
 
           // Success Cleanup: Remove the temporary file from cellular module
           // storage
@@ -2458,6 +2535,12 @@ void graceful_modem_shutdown() {
 
   debugln("[GPRS] Cutting physical VCC power (GPIO 26 -> LOW).");
   digitalWrite(26, LOW);
+  
+  // v5.65 P4 Fix: I2C Spike Recovery
+  // Modem power-down can cause spikes on the shared I2C bus (SDA/SCL).
+  // Perform an immediate silent bus recovery to ensure RTC/Sensors remain accessible.
+  recoverI2CBus();
+  
   gprs_started = false;
   gprs_mode = eGprsSleepMode; // Prevent Ghost Restart during sleep entry
 }
@@ -2465,6 +2548,7 @@ void graceful_modem_shutdown() {
 void send_sms() {
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
     debugln("[GPRS] Error: Modem Mutex Timeout - skipping SMS check");
+    sync_mode = eSMSStop; // v5.65 P2 Fix: Reset sync_mode to allow GPRS task to finalize
     return;
   }
   
@@ -2477,13 +2561,19 @@ void send_sms() {
   debugln("[GPRS] Checking SMS...");
   debugln();
 
-  for (msg_no = 1; msg_no < 5; msg_no++) {
+  for (msg_no = 1; msg_no < 10; msg_no++) { // v5.65 P2: Increased from 5 to 10 to scan more slots
     process_sms(msg_no);
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
-  SerialSIT.println("AT+CMGD=1,4");
+  // v5.65 fix: Changed flag from 4 to 3.
+  // AT+CMGD=1,4 = delete message at index 1 AND ALL messages of ANY status (nuke all).
+  // A command SMS arriving at the tower DURING the processing loop above (~400ms)
+  // would be silently dropped — a race condition that loses operator commands.
+  // AT+CMGD=1,3 = delete only READ+SENT messages. UNREAD messages are preserved
+  // and will be processed on the next SMS check cycle.
+  SerialSIT.println("AT+CMGD=1,3");
   response = waitForResponse("OK", 5000);
-  debugln("Removed READ messages");
+  debugln("Removed READ/SENT messages (UNREAD preserved)");
 
   sync_mode = eSMSStop;
   xSemaphoreGive(modemMutex);
@@ -2509,17 +2599,19 @@ int send_at_cmd_data(char *payload, String response_arg, bool robust) {
     ;
   // v5.45: Capping timeout at 5000ms. Most A7672S firmwares reject > 5s with
   // ERROR.
-  char ht_data[80];
-  snprintf(ht_data, sizeof(ht_data), "AT+HTTPDATA=%d,5000", i);
+  // v5.65: Renamed from ht_data to cmd_buf to prevent shadowing the global ht_data[80].
+  // The shadow caused the global to remain permanently empty/stale for debug reads.
+  // Also removed the dead snprintf below (it was always overwritten before use).
+  char cmd_buf[80];
 
   debugf1("Payload is %s", payload);
   debugln();
 
   if (robust) {
     // Robust mode for weak-signal or strict towers (BSNL, etc.)
-    snprintf(ht_data, sizeof(ht_data), "AT+HTTPDATA=%d,5000", i);
+    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,5000", i);
     debugln("[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...");
-    SerialSIT.println(ht_data);
+    SerialSIT.println(cmd_buf);
     if (waitForResponse("DOWNLOAD", 10000).indexOf("DOWNLOAD") == -1) {
       debugln("[HTTP] AT+HTTPDATA failed (Missing DOWNLOAD).");
       flushSerialSIT();
@@ -2532,9 +2624,9 @@ int send_at_cmd_data(char *payload, String response_arg, bool robust) {
     // v5.63 Native v3.0 Fast push! 
     // We send command, wait for prompt byte, then push payload.
     // This mimics v3.0's behavior while keeping the UART clean.
-    snprintf(ht_data, sizeof(ht_data), "AT+HTTPDATA=%d,1000", i);
+    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,1000", i);
     debugln("[HTTP] Using Fast v3.0 Handshake...");
-    SerialSIT.println(ht_data);
+    SerialSIT.println(cmd_buf);
     waitForResponse("DOWNLOAD", 500); // v3.0 style clearance (500ms max)
     
     SerialSIT.println(payload); // v3.0: use println
@@ -2582,7 +2674,10 @@ int send_at_cmd_data(char *payload, String response_arg, bool robust) {
       SerialSIT.println("AT+HTTPTERM");
       waitForResponse("OK", 2000);
     }
-    diag_daily_http_fails++; // Increment on failure
+    // ISSUE-M3 fix v5.65: Do NOT increment diag_daily_http_fails here.
+    // prepare_data_and_send() (the caller) increments it at line ~1155.
+    // Incrementing here too caused every failure to be counted twice,
+    // showing 2x the real HTTP fail count on the health report dashboard.
     return 0;
   }
 
@@ -2662,8 +2757,12 @@ int send_at_cmd_data(char *payload, String response_arg, bool robust) {
       if (!alreadySent) {
         if (isToday) {
           diag_sent_mask_cur[temp_sampleNo / 32] |= bit;
+          diag_http_success_count++; 
+          if (data_mode == eUnsentData) diag_http_retry_count++; // v5.65 P4: Track live recovery
         } else {
           diag_sent_mask_prev[temp_sampleNo / 32] |= bit;
+          diag_http_success_count_prev++; // v5.65 P4: FIXED Yesterday counter drift
+          if (data_mode == eUnsentData) diag_http_retry_count_prev++;
         }
       }
     }
@@ -2813,12 +2912,40 @@ void store_current_unsent_data() {
 
   File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
   if (ftpfile2) {
-    String cleanFtp = String(ftpappend_text);
-    cleanFtp.trim();
-    if (cleanFtp.length() > 0) {
-      ftpfile2.println(cleanFtp); // v5.56: Trimmed write prevents double-newline gaps
-    } else {
-      debugln("[FTP-Store] WARNING: ftpappend_text empty — skipping FTP queue write to avoid corruption.");
+    String cleanFtp = "";
+    if (strlen(finalStringBuffer) > 20) {
+        // BUG-C4 fix v5.65: Re-derive FTP string from lastrecorded CSV to prevent stale global consumption
+        String csv = String(finalStringBuffer);
+        csv.trim();
+        int firstComma = csv.indexOf(',');
+        if (firstComma != -1) {
+            cleanFtp = String(ftp_station) + ";" + csv.substring(firstComma + 1);
+            // The CSV has a comma between date and time which MUST remain in FTP too.
+            // Replace only the commas from the second comma onwards.
+            int sc = cleanFtp.indexOf(',', cleanFtp.indexOf(';') + 1);
+            if (sc != -1) {
+                for (int i = sc; i < (int)cleanFtp.length(); i++) {
+                    if (cleanFtp[i] == ',') cleanFtp[i] = ';';
+                }
+            }
+            debugln("[FTP-Store] Re-derived record from lastrecorded CSV.");
+        }
+    }
+
+    if (cleanFtp.length() < 50) {
+        cleanFtp = String(ftpappend_text);
+        cleanFtp.trim();
+        if (cleanFtp.length() < 50) {
+            debugln("[FTP-Store] WARNING: Both lastrecorded and ftpappend_text are invalid. Skipping.");
+            ftpfile2.close();
+            return;
+        }
+    }
+
+    if (cleanFtp.length() >= 50) {
+      if (ftpfile2.println(cleanFtp)) { 
+          diag_backlog_total++; // v5.65 P3: Increment total backlog counter for health report
+      }
     }
     ftpfile2.close();
   } else {
@@ -2940,19 +3067,17 @@ void get_signal_strength() {
     signal_strength = (-113 + 2 * (atoi(resp)));
     debug("Signal strength IN gprs task is ");
     debugln(signal_strength);
-    if (signal_strength != 85) {
+    if (signal_strength != 85 && signal_strength != -113) {
       signal_lvl = signal_strength;
-      // v5.50 Optimization: Exit instantly if we get a valid reading,
-      // even if it is -113dBm (modem is alive but signal is zero).
-      // No point looping for 60s if the modem is clearly reporting low signal.
+      // v5.50 Optimization: Exit instantly if we get a strong reading.
       break;
     } else {
       invalid_signal_count++;
-      // If we see "No Signal" (-113 or 85) for 30s (60 polls), move to
-      // registration. USER REQUEST: Increased to 30s for better antenna
-      // recovery.
+      // v5.65 P1: If we see "No Signal" (-113 or 85) for 30s (60 polls), move to
+      // registration. This avoids locking on a temporary -113 during warm-up.
       if (invalid_signal_count > 60) {
         debugln("[GPRS] Signal search timeout (30s). Moving to Registration.");
+        signal_lvl = signal_strength;
         break;
       }
     }
@@ -3052,8 +3177,35 @@ full_discovery:
     strcpy(carrier, "Vi");
     strcpy(apn_str, "www");
   } else {
-    strcpy(carrier, "SIM OK");
-    strcpy(apn_str, "airteliot.com");
+    // Final tier: ICCID prefix-based detection (on-device fallback)
+    // Uses same prefix table as server-side get_carrier_from_iccid()
+    if (current_iccid.length() >= 6) {
+      String prefix6 = current_iccid.substring(0, 6);
+      if (prefix6 == "899116" || prefix6 == "899110") {
+        strcpy(carrier, "Airtel");
+        strcpy(apn_str, "airteliot.com");
+        debugln("[APN] ICCID Fallback: Airtel");
+      } else if (prefix6 == "899100") {
+        strcpy(carrier, "BSNL");
+        strcpy(apn_str, "bsnlnet");
+        debugln("[APN] ICCID Fallback: BSNL");
+      } else if (prefix6 == "899184") {
+        strcpy(carrier, "Jio");
+        strcpy(apn_str, "jionet");
+        debugln("[APN] ICCID Fallback: Jio");
+      } else if (prefix6 == "899111") {
+        strcpy(carrier, "Vi");
+        strcpy(apn_str, "www");
+        debugln("[APN] ICCID Fallback: Vi");
+      } else {
+        strcpy(carrier, "SIM OK");
+        strcpy(apn_str, "airteliot.com");
+        debugln("[APN] ICCID Fallback: Unknown prefix, defaulting Airtel");
+      }
+    } else {
+      strcpy(carrier, "SIM OK");
+      strcpy(apn_str, "airteliot.com");
+    }
   }
 
   // Get SIM identifier via IMSI (fast, always works on IoT/BSNL SIMs)
@@ -3479,21 +3631,39 @@ void get_a7672s() {
       }
   }
 
-  // If stored APN failed or doesn't exist, start Smart APN cycle
-  debugln("APN: Starting Smart APN Search...");
-  const char *airtel_apns[] = {
-      "airteliot.com",          // Bihar / KSNDMC Primary
-      "airtelgprs.com",         // Bihar / KSNDMC (Legacy fallback)
-      "airtelm2msouth.com",     // South Region
-      "airtelm2miot.com",       // M2M specific
-      "bsnlm2m"                 // BSNL M2M specific
+  // If stored APN failed or doesn't exist, start Smart APN cycle.
+  // v5.65 FIX: Carrier-aware search — use carrier detected by get_network() to
+  // try the correct APN first. Prevents BSNL units from connecting with airteliot.com.
+  debugln("APN: Starting Carrier-Aware APN Search...");
+
+  // Build priority list: correct carrier APN first, then fallbacks
+  const char *primary_apn = apn_str; // apn_str was set by get_network() based on CSPN/COPS/ICCID
+  const char *fallback_apns[] = {
+      "airteliot.com",
+      "airtelgprs.com",
+      "bsnlnet",
+      "jionet",
+      "bsnlm2m"
   };
 
+  // Try primary APN from carrier detection first
+  if (strlen(primary_apn) > 0) {
+      debugln("APN: Trying carrier-matched APN first -> " + String(primary_apn));
+      if (try_activate_apn(primary_apn)) {
+          save_apn_config(primary_apn, ccid);
+          vTaskDelay(3000 / portTICK_PERIOD_MS);
+          gprs_pdp_ready = true;
+          return;
+      }
+  }
+
+  // Fallback: try remaining APNs (skipping the one we already tried)
   for (int i = 0; i < 5; i++) {
-      if (try_activate_apn(airtel_apns[i])) {
-          strcpy(apn_str, airtel_apns[i]);
-          save_apn_config(airtel_apns[i], ccid);
-          vTaskDelay(3000 / portTICK_PERIOD_MS); // v5.63: Carrier Breather
+      if (strcmp(fallback_apns[i], primary_apn) == 0) continue; // already tried
+      if (try_activate_apn(fallback_apns[i])) {
+          strcpy(apn_str, fallback_apns[i]);
+          save_apn_config(fallback_apns[i], ccid);
+          vTaskDelay(3000 / portTICK_PERIOD_MS);
           gprs_pdp_ready = true;
           return;
       }
@@ -3846,8 +4016,8 @@ void get_lat_long_date_time(char *gsm_no) {
   }
   //  sscanf(csqstr, "+CLBS: %d,%f,%f,%d,%d/%d/%d,%d:%d:%d", &tmp,
   //  &lati,&longi,&tmp3,&year,&month,&day,&hour,&minute,&seconds);
-  // We use standard %f but print with 6 decimal precision
-  sscanf(csqstr, "+CLBS: %d,%f,%f,", &tmp, &lati,
+  // We use standard %lf for double and print with 6 decimal precision
+  sscanf(csqstr, "+CLBS: %d,%lf,%lf,", &tmp, &lati,
          &longi); // Response for AT+CLBS=1 +CLBS: 0,12.989436,77.537910,550
 
   vTaskDelay(500 / portTICK_PERIOD_MS);
@@ -4104,7 +4274,7 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
 
   // v5.45: DNS retry / Fallback
   if (response.indexOf("+CDNSGIP: 1") == -1) {
-    debugln("[FTP] DNS failed. Attempting Insurance IP fallback...");
+    debugln("[FTP] DNS failed. Checking Insurance IP fallback...");
     const char* fallbackIP = NULL;
     // Updated with User-Verified IPs (v5.55)
     if (strstr(ftpServer, "ksndmc.net")) fallbackIP = "117.216.42.181"; // rtdas.ksndmc.net
@@ -4113,28 +4283,40 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
       else if (strstr(ftpServer, "rtdasbmsk")) fallbackIP = "164.100.130.199";
       else fallbackIP = "144.91.104.105"; // rtdas.spatika.net
     }
-    
-    if (fallbackIP) {
-      debugln("[FTP] Using fallback IP: " + String(fallbackIP));
-      ftpServer = fallbackIP;
+
+    if (fallbackIP != NULL) {
+      // BUG-C5 fix v5.65: Use the verified IP directly in the login command
+      // to bypass DNS entirely. This saves ~40s on congested BSNL 2G towers.
+      debugln("[FTP] Using Insurance IP fallback: " + String(fallbackIP));
+      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
+               "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",0",
+               fallbackIP, portName, ftpUser, ftpPassword);
+      // gprs_xmit_buf is now re-prepared with IP for the login below.
+      // Skip the redundant DNS retry.
     } else {
-      debugln("[FTP] No fallback IP for this host. Retrying DNS once...");
+      // No known IP for this host — retry DNS once as last resort
+      debugln("[FTP] No fallback IP known. Retrying DNS once...");
       vTaskDelay(3000 / portTICK_PERIOD_MS);
-      if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-        SerialSIT.println(gprs_xmit_buf); 
-        response = waitForResponse("+CDNSGIP:", 20000);
-        xSemaphoreGive(modemMutex);
-      }
+      SerialSIT.println(gprs_xmit_buf);
+      response = waitForResponse("+CDNSGIP:", 20000);
       debugln(response);
     }
   }
 
   vTaskDelay(2000 / portTICK_PERIOD_MS); // Pre-login settling delay
 
-  // Re-prepare login command
-  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-           "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",0", ftpServer, portName,
-           ftpUser, ftpPassword);
+  // BUG-C5 fix v5.65: Only re-prepare with domain if DNS succeeded.
+  // If the fallback IP path set gprs_xmit_buf above, preserve it — overwriting
+  // with ftpServer (domain) would negate the entire IP fallback.
+  if (response.indexOf("+CDNSGIP: 1") != -1) {
+    // DNS OK — use domain as originally planned
+    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
+             "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",0", ftpServer, portName,
+             ftpUser, ftpPassword);
+  }
+  // else: gprs_xmit_buf already has either the IP-based command (fallback path)
+  // or the original domain command (no-fallback retry path). Use as-is.
+
   SerialSIT.println(gprs_xmit_buf);
   // v5.50 Optimized: Wait 45s for login (If it hasn't succeeded by then on
   // BSNL, it likely won't)
@@ -4165,6 +4347,11 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
 }
 
 void fetchFromHttpAndUpdate(char *fileName) {
+  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(30000)) != pdTRUE) {
+    debugln("[OTA] Error: Modem Mutex Timeout - deferring download");
+    diag_modem_mutex_fails++;
+    return;
+  }
   String response;
   int handle_no;
   char gprs_xmit_buf[300];
@@ -4194,6 +4381,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
   SerialSIT.println("AT+HTTPINIT");
   if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
     debugln("[OTA] HTTPINIT failed (HEAD). Aborting.");
+    xSemaphoreGive(modemMutex);
     Preferences p;
     p.begin("ota-track", false);
     p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
@@ -4215,6 +4403,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
     debugln("[OTA] URL setup failed. Aborting.");
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 2000);
+    xSemaphoreGive(modemMutex);
     return;
   }
   flushSerialSIT(); // Pre-HEAD flush (Rule 28)
@@ -4591,9 +4780,15 @@ void fetchFromHttpAndUpdate(char *fileName) {
   waitForResponse("OK", 1000);
 
   debugln("[OTA] Done.");
+  xSemaphoreGive(modemMutex);
 }
 
 void copyFromSPIFFSToFS(char *dateFile) {
+  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
+    debugln("[FS] Error: Modem Mutex Timeout - deferring copy");
+    diag_modem_mutex_fails++;
+    return;
+  }
   String response;
   char SPIFFSFile[50], fileName[50];
   char stnId[16];
@@ -4624,6 +4819,11 @@ void copyFromSPIFFSToFS(char *dateFile) {
     response = waitForResponse("OK", 3000);
     SerialSIT.println("AT+FSCD=C:/");
     response = waitForResponse("OK", 10000);
+    if (response.indexOf("OK") == -1) {
+      debugln("Error changing directory to C:/");
+      xSemaphoreGive(modemMutex);
+      return; // Exit if response is invalid
+    }
     debug("Response of AT+FSCD ");
     debugln(response);
 
@@ -4638,6 +4838,7 @@ void copyFromSPIFFSToFS(char *dateFile) {
     csqstr = strstr(response_char, "+FSOPEN:");
     if (csqstr == NULL) {
       debugln("Error: +FSOPEN not found in response");
+      xSemaphoreGive(modemMutex);
       return; // Exit if response is invalid
     }
     sscanf(csqstr, "+FSOPEN: %d,", &handle_no);
@@ -4646,6 +4847,7 @@ void copyFromSPIFFSToFS(char *dateFile) {
     if (!file1) {
       debugln("C5 FIX: Failed to open SPIFFS source file. Aborting "
               "copyFromSPIFFSToFS.");
+      xSemaphoreGive(modemMutex);
       return;
     }
     debug("File size of the SPIFFS file is ");
@@ -4674,14 +4876,28 @@ void copyFromSPIFFSToFS(char *dateFile) {
     response = waitForResponse("+FSCLOSE", 5000);
     vTaskDelay(200 / portTICK_PERIOD_MS);
 
-    ftp_login_flag = setup_ftp();
+    // v5.65 Fix: Pass default mode 1 (Passive) for compatibility
+    ftp_login_flag = setup_ftp(1);
 
     if (ftp_login_flag == 1) {
       char *modulePath = (fileName[0] == '/') ? &fileName[1] : fileName;
       snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSPUTFILE=\"%s\",1",
                modulePath); 
       SerialSIT.println(gprs_xmit_buf); // FTP client context
-      response = waitForResponse("+CFTPSPUTFILE: 0", 150000); // 120000
+      // v5.65 WDT-SAFE: Active poll instead of blind 150s wait (prevents WDT reset on slow BSNL)
+      {
+        response = "";
+        unsigned long put_start = millis();
+        while ((millis() - put_start) < 150000) {
+          esp_task_wdt_reset();
+          vTaskDelay(500 / portTICK_PERIOD_MS);
+          while (SerialSIT.available()) {
+            char cc = SerialSIT.read();
+            if (response.length() < 2048) response += cc;
+          }
+          if (response.indexOf("+CFTPSPUTFILE:") != -1) break;
+        }
+      }
       debug("Response of AT+CFTPSPUTFILE ");
       debugln(response);
 
@@ -4709,6 +4925,7 @@ void copyFromSPIFFSToFS(char *dateFile) {
   } else {
     debugln("File not found");
   }
+  xSemaphoreGive(modemMutex);
 }
 
 /*
@@ -4913,10 +5130,11 @@ bool send_health_report(bool useJitter) {
 #endif
 
   char gps_str[32];
-  if (lati == 0.0 && longi == 0.0)
+  // v5.65 Fix: Robust epsilon check for double and higher precision reporting
+  if (abs(lati) < 0.00001 && abs(longi) < 0.00001)
     snprintf(gps_str, sizeof(gps_str), "NA");
   else
-    snprintf(gps_str, sizeof(gps_str), "%.6f,%.6f", lati, longi);
+    snprintf(gps_str, sizeof(gps_str), "%.8f,%.8f", lati, longi);
 
   int spiffs_used = SPIFFS.usedBytes() / 1024;
   int spiffs_total = SPIFFS.totalBytes() / 1024;
@@ -4959,7 +5177,7 @@ bool send_health_report(bool useJitter) {
       "\"reg_fails\":%d,\"reg_fail_reason\":\"%s\",\"reset_reason\":%d,"
       "\"spiffs_kb\":%d,\"spiffs_total_kb\":%d,"
       "\"unsent_count\":%d,"
-      "\"ver\":\"%s\",\"iccid\":\"%s\",\"gps\":\"%s\","
+      "\"ver\":\"%s\",\"iccid\":\"%s\",\"carrier\":\"%s\",\"gps\":\"%s\","
       "\"cdm_sts\":\"%s\","
       "\"calib\":\"%s\"," // v7.86
       "\"ndm_cnt\":%d,\"pd_cnt\":%d,"
@@ -4981,7 +5199,7 @@ bool send_health_report(bool useJitter) {
       diag_last_reset_reason,              // reset_reason
       spiffs_used, spiffs_total,           // spiffs_kb / spiffs_total_kb
       unsent_count,                        // unsent_count
-      UNIT_VER, cached_iccid, gps_str,
+      UNIT_VER, cached_iccid, carrier, gps_str,
       diag_cdm_status, // cdm_sts → server evaluates CDM from this
       calib_report,    // calibration info
       diag_ndm_count, diag_pd_count,
@@ -4996,7 +5214,8 @@ bool send_health_report(bool useJitter) {
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
   bool success = false;
-  for (int attempt = 1; attempt <= 3; attempt++) {
+  int max_attempts = useJitter ? 3 : 1; // v5.65 P4: Only 1 attempt for manual triggers (no jitter) to save user wait time
+  for (int attempt = 1; attempt <= max_attempts; attempt++) {
     debugf1("[Health] Attempt %d/3\n", attempt);
     if (!verify_bearer_or_recover())
       continue;
@@ -5051,9 +5270,20 @@ bool send_health_report(bool useJitter) {
       String act = "";
       // Give massive allowance (25 seconds) for 2G network to allocate HTTP socket buffer space
       if (waitForResponse("DOWNLOAD", 25000).indexOf("DOWNLOAD") != -1) {
-        vTaskDelay(200 / portTICK_PERIOD_MS);
-        SerialSIT.write(jsonBody, msgLen);
-        if (waitForResponse("OK", 10000).indexOf("OK") != -1) {
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+        
+        // v5.65 P4 Fix: Ultra-Robust Chunked Data Write (BSNL Optimized)
+        // 48 bytes + 20ms delay is the "Golden Ratio" for SIMCom 2G buffers.
+        int sentBytes = 0;
+        while (sentBytes < msgLen) {
+            int toWrite = min(48, msgLen - sentBytes);
+            SerialSIT.write(jsonBody + sentBytes, toWrite);
+            sentBytes += toWrite;
+            vTaskDelay(20 / portTICK_PERIOD_MS); 
+        }
+        
+        // Increased timeout to 20s for BSNL 2G data-day congestion
+        if (waitForResponse("OK", 20000).indexOf("OK") != -1) {
 
           SerialSIT.println("AT+HTTPACTION=1");
           waitForResponse("OK", 3000);

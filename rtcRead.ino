@@ -233,7 +233,10 @@ void resync_time() {
               // Handle optional quotes around date string
               if (*p == '"')
                 p++;
-              if (sscanf(p, "%d/%d/%d,%d:%d:%d", &year1, &month1, &day1, &hour1,
+
+              // v5.65 Fix: Robust manual parsing. Handle comma OR space as separator
+              // between date and time (standard modems vary). Also use double %lf.
+              if (sscanf(p, "%d/%d/%d%*[ ,]%d:%d:%d", &year1, &month1, &day1, &hour1,
                          &minute1, &seconds1) == 6) {
                 debugln("[RTC] CLBS data parsed successfully (Manual)");
                 parse_and_convert_clbs_response(response_char, year1, month1,

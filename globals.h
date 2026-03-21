@@ -20,6 +20,8 @@
 #include <SPIFFS.h>
 #include <Update.h>
 #include <WiFi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
 #if ENABLE_WEBSERVER == 1
 #include <WebServer.h>
 #endif
@@ -28,6 +30,7 @@
 #include <esp_task_wdt.h>
 #include <esp_wifi.h>
 #include <hulp_arduino.h>
+#include <vector>
 #else
 // Linter fallback for non-Arduino environment (e.g. host-side analysis)
 #include <stdint.h>
@@ -57,6 +60,8 @@ extern BME_Type bmeType;
 extern bool httpInitiated;
 extern bool health_in_progress;
 extern bool timeSyncRequired;
+extern volatile bool
+    schedulerBusy; // v5.65: Prevents sleep during 15-min slot processing
 extern volatile bool
     primary_data_delivered; // v5.51: Track session success for backlog gating
 extern volatile bool skip_primary_http; // v7.88: Skip live upload on duplicates
@@ -114,7 +119,7 @@ char UNIT[15] = "KSNDMC_TWS"; // UNIT :
 // Optional KSNDMC_ORG BIHAR_TEST
 
 // FIRMWARE VERSION - Change here to update all version strings
-#define FIRMWARE_VERSION "5.63"
+#define FIRMWARE_VERSION "5.65"
 
 #define DEBUG 1 // Set to 1 for serial debug, 0 for production (Saves space)
 
@@ -226,24 +231,18 @@ float station_altitude_m = 0.0; // Runtime configurable (meters)
 #define FILL_SIG_MIN 115
 #define FILL_SIG_MAX 120
 
-HardwareSerial SerialSIT(2);
+extern HardwareSerial SerialSIT;
+extern LiquidCrystal_I2C lcd;
+extern SemaphoreHandle_t i2cMutex;
+extern SemaphoreHandle_t serialMutex;
+extern SemaphoreHandle_t modemMutex;
+extern SemaphoreHandle_t fsMutex;
+extern RTC_DS1307 rtc;
 
-LiquidCrystal_I2C
-    lcd(0x27, 16,
-        2); // set the LCD address to 0x27 for a 16 chars and 2 line display
-SemaphoreHandle_t i2cMutex;
-SemaphoreHandle_t serialMutex;
-SemaphoreHandle_t modemMutex; // v5.55: Synchronize modem access
-SemaphoreHandle_t fsMutex;    // v6.78: Mutex to prevent corruption between OTA
-                              // write and Scheduler write
-// SemaphoreHandle_t dataMutex;
-
-RTC_DS1307 rtc; //  RTC
-
-// Timer
-portMUX_TYPE timerMux0 = portMUX_INITIALIZER_UNLOCKED;
-portMUX_TYPE timerMux1 = portMUX_INITIALIZER_UNLOCKED;
-portMUX_TYPE timerMux2 = portMUX_INITIALIZER_UNLOCKED;
+extern portMUX_TYPE timerMux0;
+extern portMUX_TYPE timerMux1;
+extern portMUX_TYPE timerMux2;
+extern portMUX_TYPE windMux;
 
 // Keypad timing
 unsigned long last_key_time = 0;
@@ -364,6 +363,8 @@ float bat_val = 0.0;
 char battery[10], solar_sense[10];
 int solar_conn = 0;
 
+volatile bool schedulerBusy =
+    false; // v5.65: Prevents sleep during 15-min slot processing
 char cur_file[32], unsent_file[32], new_file[32],
     temp_file[50]; // Dddmmyyyy.txt
 char station_name[16];
@@ -389,8 +390,9 @@ int send_daily = 0;
 float solar_val, solar;
 float li_bat, li_bat_val;
 
-RTC_DATA_ATTR float lati, longi;
-RTC_DATA_ATTR float gps_latitude, gps_longitude;
+RTC_DATA_ATTR double lati,
+    longi; // v5.65: Changed to double for coordinate precision
+RTC_DATA_ATTR double gps_latitude, gps_longitude;
 RTC_DATA_ATTR int gps_fix_dd = 0, gps_fix_mm = 0,
                   gps_fix_yy = 0; // GPS age tracking
 
@@ -469,7 +471,8 @@ RTC_DATA_ATTR char diag_crash_task[16] = "NONE"; // v5.59: Survive restart
 // Accuracy Counters (v5.49): Use 32-bit accumulators to prevent 16-bit ULP
 // wraps and spikes
 RTC_DATA_ATTR uint32_t total_wind_pulses_32 = 0;
-RTC_DATA_ATTR uint32_t last_sched_wind_pulses_32 = 0;
+RTC_DATA_ATTR uint32_t last_sched_wind_pulses_32 =
+    0; // P3 fix v5.65: Was a duplicate total_wind_pulses_32=0 — missing reset
 RTC_DATA_ATTR uint16_t last_raw_wind_count = 0; // Raw 16-bit ULP snapshot
 RTC_DATA_ATTR uint32_t total_rf_pulses_32 = 0;
 RTC_DATA_ATTR uint32_t last_sched_rf_pulses_32 = 0;
