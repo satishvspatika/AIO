@@ -1040,7 +1040,8 @@ void prepare_data_and_send() {
   debugln();
   // v5.63: Attempt 1 - Fast v3.0 logic
   success_count = send_at_cmd_data(http_data, charArray, false);
-  if (success_count == 0 && data_mode == eCurrentData) {
+  // v5.68! Allow Robust Fallback recovery for BACKLOG data too!
+  if (success_count == 0) {
     debugln("[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt 2)...");
     vTaskDelay(2000 / portTICK_PERIOD_MS);
     // v5.63: Attempt 2 - Fast v3.0 logic again (Rule: 2 fast attempts before fallback)
