@@ -70,18 +70,31 @@ from fastapi.responses import Response, StreamingResponse
 
 os.makedirs("/app/builds", exist_ok=True)
 
-@app.get("/builds/{filename}")
+@app.api_route("/builds/{filename}", methods=["GET", "HEAD"])
 async def serve_firmware(filename: str, request: Request):
     """Range-aware firmware file server for ESP32 OTA downloads."""
     # Security: only serve .bin files, no path traversal
     if not filename.endswith(".bin") or "/" in filename or ".." in filename:
+        from fastapi import Response
         return Response(status_code=403)
 
     filepath = os.path.join("/app/builds", filename)
     if not os.path.exists(filepath):
+        from fastapi import Response
         return Response(status_code=404)
 
     file_size = os.path.getsize(filepath)
+    if request.method == "HEAD":
+        from fastapi import Response
+        return Response(
+            status_code=200,
+            headers={
+                "Content-Length": str(file_size),
+                "Accept-Ranges": "bytes",
+                "Content-Type": "application/octet-stream",
+            }
+        )
+
     range_header = request.headers.get("Range")
 
     if range_header:
@@ -97,16 +110,18 @@ async def serve_firmware(filename: str, request: Request):
         end = min(end, file_size - 1)
         chunk_size = end - start + 1
 
-        def iter_file():
+        async def iter_file():
             with open(filepath, "rb") as f:
                 f.seek(start)
                 remaining = chunk_size
                 while remaining > 0:
-                    data = f.read(min(8192, remaining))
+                    import asyncio
+                    data = f.read(min(2048, remaining)) # Pull small 2KB chunks
                     if not data:
                         break
                     remaining -= len(data)
                     yield data
+                    await asyncio.sleep(0.5) # Force 500ms delay per 2KB = 4KB/s throttle!
 
         return StreamingResponse(
             iter_file(),
@@ -120,13 +135,15 @@ async def serve_firmware(filename: str, request: Request):
         )
     else:
         # Full file request (e.g. for size check via HEAD/GET)
-        def iter_full():
+        async def iter_full():
             with open(filepath, "rb") as f:
                 while True:
-                    data = f.read(8192)
+                    import asyncio
+                    data = f.read(2048)
                     if not data:
                         break
                     yield data
+                    await asyncio.sleep(0.5)
 
         return StreamingResponse(
             iter_full(),

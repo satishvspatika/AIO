@@ -5,9 +5,9 @@
 HOST="75.119.148.192"
 
 echo "🚀 Syncing FILES directly to Live Folder..."
-# -r follows recursive, server/* copies the CONTENT of the folder
-# We target /opt/spatika-health/ directly which is the docker volume root
-scp -r server/* root@$HOST:/opt/spatika-health/
+scp -r server/app server/deploy.sh server/requirements.txt \
+    server/seed_db.py server/migrate.py \
+    root@$HOST:/opt/spatika-health/
 
 echo "▶ Restarting Spatika Service..."
 ssh root@$HOST "cd /opt/spatika-health && docker compose restart"

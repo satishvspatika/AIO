@@ -1149,6 +1149,7 @@ void prepare_data_and_send() {
         debugln("[RECOVERY] Bearer failed to recover. Skipping retry.");
         xSemaphoreGive(serialMutex);
       }
+      goto fail_handling;
     } else {
       // ──────────────────────────────────────────────────────────────────
       // FIX FOR AIRTEL 706 TCP ZOMBIE ERROR
@@ -1224,6 +1225,7 @@ void prepare_data_and_send() {
     }
     } // End of verify_bearer_or_recover else block
 
+fail_handling:
     if (success_count == 0) { // Complete failure
       diag_consecutive_http_fails++;
       diag_daily_http_fails++;
@@ -1670,34 +1672,6 @@ void send_http_data() {
         while (unsent_pointer_count < fileSize) {
           vTaskDelay(100 / portTICK_PERIOD_MS); // iter10
 
-          // FAST PIPELINING RESET: Pre-emptively tear down and rebuild the HTTP
-          // session. The remote server replies with "Connection: close"
-          // which breaks the A7672S state machine if we pipeline directly.
-          // This 1.5s overhead PREVENTS the massive ~30-second error timeouts
-          // of the '706' fault.
-          SerialSIT.println("AT+HTTPTERM");
-          waitForResponse("OK", 500); // reduced timeout slightly
-          vTaskDelay(500 / portTICK_PERIOD_MS); // Add deliberate breather before init
-
-          SerialSIT.println("AT+HTTPINIT");
-          waitForResponse("OK", 1500);
-
-          SerialSIT.println("AT+HTTPPARA=\"CID\",1"); // v5.58: Hard-lock
-          waitForResponse("OK", 500);
-
-          SerialSIT.println(httpPostRequest);
-          waitForResponse("OK", 500);
-
-          if (!strcmp(httpSet[http_no].Format, "json")) {
-            SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-          } else {
-            SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"");
-          }
-          waitForResponse("OK", 500);
-
-          SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
-          waitForResponse("OK", 500);
-
           static int uCount = 0;
           uCount++;
           debugln();
@@ -2112,6 +2086,10 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
         debugln("Daily FTP: Temp file not found. Skipping.");
       }
     }
+  } else {
+    // v5.68 BUGFIX: If should_push is False, or signal is bad, we MUST release the mutex! 
+    // Otherwise, send_health_report() hangs forever waiting for this locked Mutex!
+    xSemaphoreGive(fsMutex);
   }
 
   // v5.66: Removed block-held fsMutex from here; moved to early-release logic inside the if(should_push) block
@@ -4475,7 +4453,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
   // v5.45: Wait 1s for BSNL network to respond
   vTaskDelay(1000 / portTICK_PERIOD_MS);
   SerialSIT.println("AT+HTTPHEAD");
-  String hdr_body = waitForResponse("OK", 10000);
+  String hdr_body = waitForResponse("\r\n\r\n", 10000);
   debugf1("[OTA] Headers: %s\n", hdr_body.c_str());
 
   // Parse Content-Length: from header body (case-insensitive search)
@@ -4546,6 +4524,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
     debugln("[OTA] malloc failed!");
     Update.abort();
     ota_writing_active = false;
+    ota_silent_mode = false;  // Fixed: restore silent mode correctly
     return;
   }
 

@@ -1,8 +1,6 @@
 #ifndef GATEWAY_GLOBALS_H
 #define GATEWAY_GLOBALS_H
 
-#define ENABLE_WEBSERVER 0 // Set to 0 to remove WebServer overhead
-
 #ifdef ARDUINO
 #include "driver/rtc_io.h"
 #include "esp32/ulp.h"

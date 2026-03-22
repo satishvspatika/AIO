@@ -8,9 +8,17 @@ router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["ist"] = ist_filter
 
+import os
+
 USERS = {
-    "satishv": {"password": "friend", "role": "supervisor"},
-    "spatika": {"password": "sit#2001", "role": "normal"}
+    os.getenv("ADMIN_USER", "admin"): {
+        "password": os.getenv("ADMIN_PASS", ""), 
+        "role": "supervisor"
+    },
+    os.getenv("GUEST_USER", "guest"): {
+        "password": os.getenv("GUEST_PASS", ""), 
+        "role": "normal"
+    }
 }
 
 SESSIONS = {}

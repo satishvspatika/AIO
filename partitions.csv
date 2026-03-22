@@ -1,18 +1,17 @@
 # AIO9 Partition Table for 8MB Flash ESP32 (Production Hardware)
 # Flash size: 8MB (0x800000)
-# App slot: 0x160000 = 1,441,792 bytes = ~1.4MB
-# Current firmware: ~1.302MB → ~10% headroom before alarm
+# App slot: 0x1B0000 = 1,769,472 bytes = ~1728 KB
 #
 # Memory Map:
 #   0x09000 : NVS         (20KB)
 #   0x0e000 : OTA Data    (8KB)
-#   0x10000 : App0/OTA_0  (1.4MB) <-- Active firmware
-#   0x170000: App1/OTA_1  (1.4MB) <-- OTA staging
-#   0x2D0000: SPIFFS       (~5.2MB) <-- Data storage
+#   0x10000 : App0/OTA_0  (1728KB) <-- Active firmware
+#   0x1C0000: App1/OTA_1  (1728KB) <-- OTA staging
+#   0x370000: SPIFFS      (4672KB) <-- Data storage (yields ~4640KB usable)
 #
 # Name,   Type, SubType, Offset,   Size,     Flags
 nvs,      data, nvs,     0x9000,   0x5000,
 otadata,  data, ota,     0xe000,   0x2000,
-app0,     app,  ota_0,   0x10000,  0x160000,
-app1,     app,  ota_1,   0x170000, 0x160000,
-spiffs,   data, spiffs,  0x2D0000, 0x530000,
+app0,     app,  ota_0,   0x10000,  0x1B0000,
+app1,     app,  ota_1,   0x1C0000, 0x1B0000,
+spiffs,   data, spiffs,  0x370000, 0x490000,

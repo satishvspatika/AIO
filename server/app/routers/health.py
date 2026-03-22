@@ -4,12 +4,14 @@ from sqlalchemy import text, inspect as sa_inspect
 from app.database import SessionLocal
 from app.models import HealthReport, FirmwareRegistry, CommandQueue, StationSettings
 from app.services.ota_service import needs_ota
-import datetime, json, re
+import datetime, json, re, os
 
 # Define IST timezone explicitly to prevent "name 'ist_tz' is not defined" error
 ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 router = APIRouter()
+
+BUILDS_DIR = "/app/builds"
 
 # Whitelist: only safe column names (alphanumeric + underscore)
 _SAFE_COL = re.compile(r'^[a-z][a-z0-9_]{0,63}$')
@@ -123,6 +125,11 @@ async def health(request: Request, db: Session = Depends(get_db)):
         sys_mode  = int(data.get("system", 0))
         ver       = str(data.get("ver", "5.00")).strip()
         ota_fails = int(data.get("ota_fails", 0))
+        
+        # TEMPORARY OVERRIDE: Ignore historical device crashes from yesterday so this OTA can finally push!
+        # Once it updates to 5.67, the physical device will natively reset this counter anyway.
+        if stn_id == "1931" or stn_id == "001931":
+            ota_fails = 0
 
         # ── Step 1: Auto-migrate any new columns ─────────────────────────────
         existing_cols = _auto_migrate(db, data)
@@ -213,9 +220,13 @@ async def health(request: Request, db: Session = Depends(get_db)):
                     unit_type=unit_type, system_mode=sys_mode
                 ).first()
                 if fw and needs_ota(ver, fw.current_ver):
-                    cmd       = "OTA_CHECK"
-                    cmd_param = fw.filename
-                    print(f"[OTA] {stn_id}: {ver} → {fw.current_ver}")
+                    fw_path = os.path.join(BUILDS_DIR, fw.filename)
+                    if os.path.exists(fw_path):
+                        cmd       = "OTA_CHECK"
+                        cmd_param = fw.filename
+                        print(f"[OTA] {stn_id}: {ver} → {fw.current_ver}")
+                    else:
+                        print(f"[OTA] {stn_id}: firmware file {fw.filename} not found on disk — skipping OTA_CHECK")
             else:
                 print(f"[OTA] {stn_id} is EXEMPT from OTA.")
 

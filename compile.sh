@@ -48,7 +48,7 @@ arduino-cli compile \
     --fqbn "$FQBN" \
     --build-property "build.partitions=custom" \
     --build-property "build.custom_partitions=$(pwd)/$PARTITION_FILE" \
-    --build-property "upload.maximum_size=1441792" \
+    --build-property "upload.maximum_size=1769472" \
     --build-path "$BUILD_PATH" \
     --export-binaries \
     .

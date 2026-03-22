@@ -545,10 +545,13 @@ void scheduler(void *pvParameters) {
 
       if (abs(check_temp - prev_15min_temp) < 0.01) {
         temp_same_count++;
-        if (temp_same_count >= 40)
+        if (temp_same_count >= 20)
           diag_temp_cv = true;
       } else {
         temp_same_count = 0;
+        if (diag_temp_cv && !diag_temp_erv) {
+          diag_temp_cv = false; // sensor has recovered
+        }
       }
 
       // 2. Humidity Checks
@@ -559,10 +562,13 @@ void scheduler(void *pvParameters) {
 
       if (abs(check_hum - prev_15min_hum) < 0.01) {
         hum_same_count++;
-        if (hum_same_count >= 40)
+        if (hum_same_count >= 20)
           diag_hum_cv = true;
       } else {
         hum_same_count = 0;
+        if (diag_hum_cv && !diag_hum_erv) {
+          diag_hum_cv = false; // sensor has recovered
+        }
       }
 
       // Jittering Logic (Matches AIO9_3.0 requirement for KSNDMC)
