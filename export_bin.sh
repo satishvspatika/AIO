@@ -31,8 +31,8 @@ fi
 
 IFS='|' read -r SHORT_CODE CAT_ID TARGET_FILENAME <<< "$CONFIG_VALUE"
 
-# Get base firmware version from globals.h
-BASE_VERSION=$(grep '#define FIRMWARE_VERSION' globals.h | sed 's/.*"\(.*\)".*/\1/')
+# Get base firmware version from user_config.h
+BASE_VERSION=$(grep '#define FIRMWARE_VERSION' user_config.h | sed 's/.*"\(.*\)".*/\1/')
 FULL_VERSION="${SHORT_CODE}-${BASE_VERSION}"
 
 echo "🚀 Organizing build for: $CONFIG_NAME"

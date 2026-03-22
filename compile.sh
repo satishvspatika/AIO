@@ -30,16 +30,17 @@ esac
 
 echo "--- Using partition file: $PARTITION_FILE ---"
 
-# Get firmware version from globals.h
-FW_VER=$(grep '#define FIRMWARE_VERSION' globals.h | sed 's/.*"\(.*\)".*/\1/')
+# Get firmware version from user_config.h
+FW_VER=$(grep '#define FIRMWARE_VERSION' user_config.h | sed 's/.*"\(.*\)".*/\1/')
 BUILD_PATH="/tmp/aio_build_${FLASH_SIZE}"
 
 # 4MB builds: temporarily disable WebServer to fit within 1.25MB slot
 PATCHED=0
 if [ "$FLASH_SIZE" = "4mb" ]; then
     echo "--- 4MB build: patching ENABLE_WEBSERVER=0 ---"
-    cp globals.h /tmp/globals_backup.h
-    sed -i '' 's/#define ENABLE_WEBSERVER 1/#define ENABLE_WEBSERVER 0/' globals.h
+    cp user_config.h /tmp/user_config_backup.h
+    sed 's/#define ENABLE_WEBSERVER 1/#define ENABLE_WEBSERVER 0/' user_config.h > /tmp/user_config_patched.h
+    mv /tmp/user_config_patched.h user_config.h
     PATCHED=1
 fi
 
@@ -54,10 +55,10 @@ arduino-cli compile \
 
 BUILD_RESULT=$?
 
-# Restore globals.h if patched
+# Restore user_config.h if patched
 if [ $PATCHED -eq 1 ]; then
-    cp /tmp/globals_backup.h globals.h
-    echo "--- globals.h restored ---"
+    cp /tmp/user_config_backup.h user_config.h
+    echo "--- user_config.h restored ---"
 fi
 
 if [ $BUILD_RESULT -eq 0 ]; then

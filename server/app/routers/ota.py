@@ -59,15 +59,18 @@ async def ota_upload(
     fw = db.query(FirmwareRegistry).filter_by(category_id=cat_id).first()
     if fw:
         fw.current_ver = ver
+        # Always set the canonical filename, even without an upload
+        fw_filename = f"FW_S{cat_id}_{fw.unit_type}.bin"
+
         if file and file.filename:
             os.makedirs(BUILDS_DIR, exist_ok=True)
-            fw_filename = f"FW_S{cat_id}_{fw.unit_type}.bin"
             dest = os.path.join(BUILDS_DIR, fw_filename)
             tmp  = dest + ".tmp"
             with open(tmp, "wb") as b:
                 b.write(await file.read())
             shutil.move(tmp, dest)  # Atomic rename — safe even if upload fails mid-way
-            fw.filename = fw_filename
+        
+        fw.filename = fw_filename
         db.commit()
     return RedirectResponse(url="/ota", status_code=303)
 

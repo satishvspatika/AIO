@@ -252,12 +252,13 @@ bool readHDC(float &tempC, float &humidity) {
       xSemaphoreGive(i2cMutex);
       return false; // Physical NACK means sensor is gone
     }
-    xSemaphoreGive(i2cMutex);
-  }
+    
+    // [Task 3.2 Fix]: HOLD the i2cMutex across the measurement interval! 
+    // Do NOT release it. If we allow other tasks (like RTC) to blast high-speed I2C 
+    // traffic on the SCL/SDA lines while the HDC1080 is performing its delicate 
+    // analog-to-digital conversion, the EMI can silently corrupt the sensor's internal ADC.
+    vTaskDelay(20 / portTICK_PERIOD_MS); // Wait for measurement
 
-  vTaskDelay(20 / portTICK_PERIOD_MS); // Wait for measurement
-
-  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
     // v5.49: HDC20x0/HDC2022 Register Pointer Reset
     if (hdcType == HDC_2022) {
       Wire.beginTransmission(HDC_ADDR);

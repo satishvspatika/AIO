@@ -322,6 +322,24 @@ void lcdkeypad(void *pvParameters) {
 
     if (lcdkeypad_start == 0) {
       char wakeupKey = keypad.getKey();
+      
+      // v5.68 Hardware Ghosting Fix: If the physical power switch for the LCD/Keypad is OFF,
+      // the data pins will float and keypad.getKey() hallucinate random keys (like '6').
+      // We ping the LCD expander (0x27) to verify the bus is electrically alive.
+      if (wakeupKey != NO_KEY) {
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+          unprotectI2CPins(); // Awaken the SDA/SCL pins
+          Wire.beginTransmission(0x27);
+          if (Wire.endTransmission() != 0) {
+            // No ACK from the LCD. The physical power switch must be OFF.
+            wakeupKey = NO_KEY; // Ignore ghost key
+            // debugln("[UI] Ignored ghost keypress. LCD switch is currently OFF."); // Optional, avoid spam
+          }
+          protectI2CPins(); // Put pins back to safe-sleep mode
+          xSemaphoreGive(i2cMutex);
+        }
+      }
+
       if (wakeupKey != NO_KEY || digitalRead(27) == LOW) {
         wakeup_reason_is = ext0;
         savedWakeupKey = wakeupKey;
@@ -520,7 +538,34 @@ void lcdkeypad(void *pvParameters) {
           break;
 
         case 3: // SET
-          if (cur_fld_no == FLD_LCD_OFF) {
+          if (cur_fld_no == FLD_WIFI_ENABLE) {
+#if ENABLE_WEBSERVER == 1
+            if (!wifi_active) {
+              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                lcd.clear(); lcd.print("WIFI STARTING...");
+                xSemaphoreGive(i2cMutex);
+              }
+              // Spawn the dedicated WebServer task gracefully
+              xTaskCreatePinnedToCore(webServer, "webServerTask", 8192, NULL, 1, &webServer_h, 1);
+            } else {
+              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                lcd.clear(); lcd.print("WIFI STOPPING...");
+                xSemaphoreGive(i2cMutex);
+              }
+              // Signal graceful Watchdog teardown; webServerTask murders itself safely
+              wifi_active = false; 
+            }
+            vTaskDelay(2000 / portTICK_PERIOD_MS);
+            show_now = 1;
+#else
+            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+              lcd.clear(); lcd.print("WIFI DISABLED");
+              xSemaphoreGive(i2cMutex);
+            }
+            vTaskDelay(1500 / portTICK_PERIOD_MS);
+            show_now = 1;
+#endif
+          } else if (cur_fld_no == FLD_LCD_OFF) {
             lcdkeypad_start = 0; digitalWrite(32, LOW);
           } else if (cur_fld_no == FLD_SEND_STATUS) {
             if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || sync_mode == eHttpStop || sync_mode == eExceptionHandled) {

@@ -25,7 +25,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GLOBALS_H="$SCRIPT_DIR/globals.h"
+GLOBALS_H="$SCRIPT_DIR/user_config.h"
 GPRS_INO="$SCRIPT_DIR/gprs.ino"
 GOLDEN_SCRIPT="$SCRIPT_DIR/test_complete_transmission.sh"
 TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
@@ -39,7 +39,7 @@ echo "============================================================"
 
 # ── Step 1: Parse firmware config from globals.h ──────────────────────────────
 SYSTEM_VAL=$(grep -m1 "^#define SYSTEM " "$GLOBALS_H" | awk '{print $3}')
-UNIT_VAL=$(grep -m1 "^char UNIT\[" "$GLOBALS_H" | sed 's/.*"\(.*\)".*/\1/')
+UNIT_VAL=$(grep -m1 "^#define UNIT_CFG" "$GLOBALS_H" | sed 's/.*"\(.*\)".*/\1/')
 FW_VER=$(grep -m1 "#define FIRMWARE_VERSION" "$GLOBALS_H" | sed 's/.*"\(.*\)".*/\1/')
 
 echo ""

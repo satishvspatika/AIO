@@ -13,9 +13,9 @@ if [ -z "$STN" ]; then
 fi
 
 # 1. Get current version and config from firmware
-FW_VER=$(grep '#define FIRMWARE_VERSION' globals.h | sed 's/.*"\(.*\)".*/\1/')
-SYSTEM_TYPE=$(grep '#define SYSTEM' globals.h | awk '{print $3}')
-UNIT_TYPE=$(grep 'char UNIT' globals.h | sed 's/.*"\(.*\)".*/\1/')
+FW_VER=$(grep '#define FIRMWARE_VERSION' user_config.h | sed 's/.*"\(.*\)".*/\1/')
+SYSTEM_TYPE=$(grep '#define SYSTEM' user_config.h | awk '{print $3}')
+UNIT_TYPE=$(grep 'UNIT_CFG' user_config.h | sed 's/.*"\(.*\)".*/\1/')
 
 # 2. Compile
 echo "🔨 Compiling v$FW_VER for $STN ($UNIT_TYPE / System $SYSTEM_TYPE)..."

@@ -359,13 +359,16 @@ void gprs(void *pvParameters) {
 
           // v5.48 Daily Health Triggering (11:00 AM Primary)
           bool is_health_time = false;
-          if (TEST_HEALTH_EVERY_SLOT == 1) {
-            is_health_time = true;
-          } else {
+#if ENABLE_HEALTH_REPORT == 1
+          if (test_health_every_slot == 1) {
+            is_health_time = true; // Every 15 mins
+          } else if (test_health_every_slot == 0) {
             if (current_hour == 11 && health_last_sent_day != current_day) {
-              is_health_time = true;
+              is_health_time = true; // Daily 11 AM
             }
           }
+          // If test_health_every_slot == 2, it remains false (Disabled)
+#endif
 
           // v5.76 Post-OTA Confirmation Health Report Check
           bool is_ota_confirm = false;
@@ -1585,13 +1588,16 @@ void send_http_data() {
     last_recorded_yy = current_year;
 
     // Storing last logged data for signature check
-    File fileTemp2 = SPIFFS.open("/signature.txt", FILE_WRITE);
-    if (fileTemp2) {
-      snprintf(signature, sizeof(signature), "%04d-%02d-%02d,%02d:%02d",
-               last_recorded_yy, last_recorded_mm, last_recorded_dd,
-               last_recorded_hr, last_recorded_min);
-      fileTemp2.print(signature);
-      fileTemp2.close();
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+      File fileTemp2 = SPIFFS.open("/signature.txt", FILE_WRITE);
+      if (fileTemp2) {
+        snprintf(signature, sizeof(signature), "%04d-%02d-%02d,%02d:%02d",
+                 last_recorded_yy, last_recorded_mm, last_recorded_dd,
+                 last_recorded_hr, last_recorded_min);
+        fileTemp2.print(signature);
+        fileTemp2.close();
+      }
+      xSemaphoreGive(fsMutex);
     }
 
     // Update Internal LCD Markers
@@ -1665,13 +1671,13 @@ void send_http_data() {
           vTaskDelay(100 / portTICK_PERIOD_MS); // iter10
 
           // FAST PIPELINING RESET: Pre-emptively tear down and rebuild the HTTP
-          // session. The remote server usually replies with "Connection: close"
+          // session. The remote server replies with "Connection: close"
           // which breaks the A7672S state machine if we pipeline directly.
           // This 1.5s overhead PREVENTS the massive ~30-second error timeouts
           // of the '706' fault.
           SerialSIT.println("AT+HTTPTERM");
-          waitForResponse("OK", 1000);
-          vTaskDelay(100 / portTICK_PERIOD_MS);
+          waitForResponse("OK", 500); // reduced timeout slightly
+          vTaskDelay(500 / portTICK_PERIOD_MS); // Add deliberate breather before init
 
           SerialSIT.println("AT+HTTPINIT");
           waitForResponse("OK", 1500);
@@ -1685,8 +1691,7 @@ void send_http_data() {
           if (!strcmp(httpSet[http_no].Format, "json")) {
             SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
           } else {
-            SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/"
-                              "x-www-form-urlencoded\"");
+            SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"");
           }
           waitForResponse("OK", 500);
 
@@ -1853,8 +1858,14 @@ void send_daily_file(
   }
 }
 
-void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
+void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[SPIFFS] Mutex Timeout: Skipping send_unsent_data");
+    return;
+  }
+  const char
                           // *charArray;
+      *ptr;
   debugln("Entering FTP mode and checking if data period is correct for "
           "sending and if there is any file to be sent");
   int ftp_year = rf_cls_yy % 100;
@@ -1989,6 +2000,7 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
               if (!chunk) {
                 debugln("[FTP] CRITICAL: Failed to create chunk file. Aborting FTP.");
                 src.close(); if (remainder) remainder.close();
+                xSemaphoreGive(fsMutex);
                 return;
               }
 
@@ -2025,13 +2037,18 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
           debug("Retrieved file is ");
           debugln(fileName);
           esp_task_wdt_reset();
-          send_ftp_file(fileName, false);
+          // v5.66: Release FS mutex before long FTP upload to allow scheduler to record
+          xSemaphoreGive(fsMutex); 
+          send_ftp_file(fileName, false, false); // Pass alreadyLocked=false
+          // Note: send_ftp_file will take its own lock for cleanup
         } else {
           debugln("[FTP] Skip: Registration lost. Retrying next hour.");
+          xSemaphoreGive(fsMutex); // Ensure release on skip
         }
       } // end else (signal OK)
     } else {
       debugln("No ftpunsent.txt found. Skipping FTP.");
+      xSemaphoreGive(fsMutex); // Ensure release on missing file
     }
 
     if (sampleNo == 3) { // v5.65 P2: Fixed cleanup condition — only run at 09:30 AM (sampleNo 3) 
@@ -2090,15 +2107,23 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON\n  const char
         debug("Retrieved file is ");
         debugln(fileName);
         esp_task_wdt_reset();
-        send_ftp_file(fileName, true);
+        send_ftp_file(fileName, true, true); // v5.66: alreadyLocked=true
       } else {
         debugln("Daily FTP: Temp file not found. Skipping.");
       }
     }
   }
+
+  // v5.66: Removed block-held fsMutex from here; moved to early-release logic inside the if(should_push) block
 } // end send_unsent_data
 
-void send_ftp_file(char *fileName, bool isDailyFTP) {
+void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
+  if (!alreadyLocked) {
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+      debugln("[SPIFFS] Mutex Timeout: Skipping send_ftp_file");
+      return;
+    }
+  }
   String response;
   const char *response_char;
   const char *charArray; // Added as per instruction
@@ -2124,6 +2149,8 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
     debugln("[FTP] Error: Modem Mutex Timeout - deferring upload");
     diag_modem_mutex_fails++;
+    if (!alreadyLocked)
+      xSemaphoreGive(fsMutex); // RELEASE FS MUTEX
     return;
   }
 
@@ -2345,7 +2372,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
                    sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
                    diag_http_present_fails, diag_http_cum_fails, get_total_backlogs());
 
-          markFileAsDelivered(fileName); // v5.48 Track recovered records
+          markFileAsDelivered(fileName, true); // v5.48 Track recovered records
 
           if (isDailyFTP) { // If Daily FTP is successful,
                             // remove the dailyftp file.
@@ -2393,12 +2420,16 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
             }
             rootDir.close();
             
+          // v5.66: Retake fsMutex for cleanup (Targeted operation)
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
             for (const String& fPath : filesToDelete) {
               debugf1("Removing file: %s\n", fPath.c_str());
               vTaskDelay(50 / portTICK_PERIOD_MS);
               SPIFFS.remove(fPath);
             }
+            xSemaphoreGive(fsMutex);
           }
+        }
 
           // Success Cleanup: Remove the temporary file from cellular module
           // storage
@@ -2480,6 +2511,8 @@ void send_ftp_file(char *fileName, bool isDailyFTP) {
     debugln("NO FTP UNSENT FILES TO UPLOAD ");
   }
   xSemaphoreGive(modemMutex); // v5.55: Release modem after FTP session
+  if (!alreadyLocked)
+    xSemaphoreGive(fsMutex);
 }
 
 // Function to copy a file from a source path to a destination path
@@ -2513,6 +2546,12 @@ void copyFile(const char *sourcePath, const char *destPath) {
 }
 
 void graceful_modem_shutdown() {
+  if (!gprs_started && gprs_mode == eGprsInitial) {
+    debugln("[GPRS] Modem never started. Cutting power directly.");
+    digitalWrite(26, LOW);
+    return;
+  }
+
   String response;
   // session_unstable = true only on ACTUAL failures (reg fails > 0).
   // eHttpStop / eSMSStop mean the session COMPLETED successfully.
@@ -2624,13 +2663,15 @@ int send_at_cmd_data(char *payload, String response_arg, bool robust) {
     // v5.63 Native v3.0 Fast push! 
     // We send command, wait for prompt byte, then push payload.
     // This mimics v3.0's behavior while keeping the UART clean.
-    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,1000", i);
+    // v5.67 (Claude's logic fix): Opened up latency window. If DOWNLOAD drops late,
+    // we need enough of the 3000ms window remaining to clock the payload JSON.
+    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,3000", i);
     debugln("[HTTP] Using Fast v3.0 Handshake...");
     SerialSIT.println(cmd_buf);
-    waitForResponse("DOWNLOAD", 500); // v3.0 style clearance (500ms max)
+    waitForResponse("DOWNLOAD", 1500); 
     
-    SerialSIT.println(payload); // v3.0: use println
-    waitForResponse("OK", 500); // Consume OK before action
+    SerialSIT.println(payload); 
+    waitForResponse("OK", 1500); 
   }
 
   // Fire Action
@@ -2811,6 +2852,10 @@ int send_at_cmd_data(char *payload, String response_arg, bool robust) {
 }
 
 void store_current_unsent_data() {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[SPIFFS] Mutex Timeout: Skipping store_current_unsent_data");
+    return;
+  }
   char finalStringBuffer[160] = {0};
   char last_rec_file[50];
   snprintf(last_rec_file, sizeof(last_rec_file), "/lastrecorded_%s.txt",
@@ -2919,13 +2964,24 @@ void store_current_unsent_data() {
         csv.trim();
         int firstComma = csv.indexOf(',');
         if (firstComma != -1) {
-            cleanFtp = String(ftp_station) + ";" + csv.substring(firstComma + 1);
+            String derived_stn = String(ftp_station);
+            bool isAllDigits = true;
+            for (int i = 0; i < derived_stn.length(); i++) {
+                if (!isdigit(derived_stn[i])) { isAllDigits = false; break; }
+            }
+            if (derived_stn.length() == 4 && isAllDigits) {
+                derived_stn = "00" + derived_stn;
+            }
+            cleanFtp = derived_stn + ";" + csv.substring(firstComma + 1);
             // The CSV has a comma between date and time which MUST remain in FTP too.
             // Replace only the commas from the second comma onwards.
-            int sc = cleanFtp.indexOf(',', cleanFtp.indexOf(';') + 1);
-            if (sc != -1) {
-                for (int i = sc; i < (int)cleanFtp.length(); i++) {
-                    if (cleanFtp[i] == ',') cleanFtp[i] = ';';
+            int firstCommaAfterSemi = cleanFtp.indexOf(',', cleanFtp.indexOf(';') + 1);
+            if (firstCommaAfterSemi != -1) {
+                int secondCommaAfterSemi = cleanFtp.indexOf(',', firstCommaAfterSemi + 1);
+                if (secondCommaAfterSemi != -1) {
+                    for (int i = secondCommaAfterSemi; i < (int)cleanFtp.length(); i++) {
+                        if (cleanFtp[i] == ',') cleanFtp[i] = ';';
+                    }
                 }
             }
             debugln("[FTP-Store] Re-derived record from lastrecorded CSV.");
@@ -3018,6 +3074,7 @@ void store_current_unsent_data() {
 
   sync_mode = eHttpStop;
   vTaskDelay(300 / portTICK_PERIOD_MS);
+  xSemaphoreGive(fsMutex); // v5.66: Fix missing mutex release
 }
 
 /*
@@ -4397,7 +4454,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
   }
   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
            "AT+HTTPPARA=\"URL\",\"http://%s:%s/builds/%s\"", HEALTH_SERVER_IP,
-           HEALTH_SERVER_PORT, fileName);
+           OTA_SERVER_PORT, fileName);
   SerialSIT.println(gprs_xmit_buf);
   if (waitForResponse("OK", 2000).indexOf("OK") == -1) {
     debugln("[OTA] URL setup failed. Aborting.");
@@ -4557,7 +4614,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
       waitForResponse("OK", 2000);
       snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
                "AT+HTTPPARA=\"URL\",\"http://%s:%s/builds/%s\"",
-               HEALTH_SERVER_IP, HEALTH_SERVER_PORT, fileName);
+               HEALTH_SERVER_IP, OTA_SERVER_PORT, fileName);
       SerialSIT.println(gprs_xmit_buf);
       waitForResponse("OK", 2000);
 
@@ -4687,6 +4744,8 @@ void fetchFromHttpAndUpdate(char *fileName) {
 
     // Write to Flash
     int bytes_to_write = min(got, total_no_of_bytes - actual_downloaded);
+    // TIER 2 LIVE RACES: WDT timeout guard for 2G
+    esp_task_wdt_reset();
     if (Update.write(buf, bytes_to_write) == (size_t)bytes_to_write) {
       actual_downloaded += bytes_to_write;
       chunk_retries = 0;
@@ -4784,9 +4843,14 @@ void fetchFromHttpAndUpdate(char *fileName) {
 }
 
 void copyFromSPIFFSToFS(char *dateFile) {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[FS] Error: SPIFFS Mutex Timeout - deferring copy");
+    return;
+  }
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
     debugln("[FS] Error: Modem Mutex Timeout - deferring copy");
     diag_modem_mutex_fails++;
+    xSemaphoreGive(fsMutex); // RELEASE FS MUTEX
     return;
   }
   String response;
@@ -4822,6 +4886,7 @@ void copyFromSPIFFSToFS(char *dateFile) {
     if (response.indexOf("OK") == -1) {
       debugln("Error changing directory to C:/");
       xSemaphoreGive(modemMutex);
+      xSemaphoreGive(fsMutex);
       return; // Exit if response is invalid
     }
     debug("Response of AT+FSCD ");
@@ -4839,6 +4904,7 @@ void copyFromSPIFFSToFS(char *dateFile) {
     if (csqstr == NULL) {
       debugln("Error: +FSOPEN not found in response");
       xSemaphoreGive(modemMutex);
+      xSemaphoreGive(fsMutex);
       return; // Exit if response is invalid
     }
     sscanf(csqstr, "+FSOPEN: %d,", &handle_no);
@@ -4848,6 +4914,7 @@ void copyFromSPIFFSToFS(char *dateFile) {
       debugln("C5 FIX: Failed to open SPIFFS source file. Aborting "
               "copyFromSPIFFSToFS.");
       xSemaphoreGive(modemMutex);
+      xSemaphoreGive(fsMutex);
       return;
     }
     debug("File size of the SPIFFS file is ");
@@ -4925,6 +4992,7 @@ void copyFromSPIFFSToFS(char *dateFile) {
   } else {
     debugln("File not found");
   }
+  xSemaphoreGive(fsMutex); // v5.66 BUGFIX: Was missing on the success path!
   xSemaphoreGive(modemMutex);
 }
 
@@ -5011,6 +5079,8 @@ void convert_gmt_to_ist(struct tm *gmt_time) {
 
   // Normalize the time in case minutes overflow (i.e., more than 60
   // minutes)
+  // TIER 2 LIVE RACES: DST Time-Shift Corruption guard
+  gmt_time->tm_isdst = 0; // India does not observe DST; force 0 to prevent uninitialized memory offset
   mktime(gmt_time);
 }
 
@@ -5025,14 +5095,31 @@ void send_at_cmd(char *cmd, char *check, char *spl) {
  * Parameters: stn, type, gbat, ebat, sig
  */
 bool send_health_report(bool useJitter) {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[SPIFFS] Mutex Timeout: Skipping send_health_report");
+    return false;
+  }
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
      debugln("[Health] Error: Modem Mutex Timeout - deferring report");
      diag_modem_mutex_fails++;
+     xSemaphoreGive(fsMutex); // RELEASE FS MUTEX
      return false;
   }
 
+  // Skip health report entirely if on Airtel M2M and health server is foreign IP
+  // Airtel M2M firewall blocks non-whitelisted foreign IPs — repeated attempts waste ~3 minutes
+  if (strstr(carrier, "Airtel") && strstr(apn_str, "airteliot")) {
+      debugln("[Health] Skipping: Airtel M2M SIM + foreign health server. Request IP whitelist from Airtel.");
+      xSemaphoreGive(modemMutex);
+      xSemaphoreGive(fsMutex);
+      return false;
+  }
+
   // v5.45: Carrier Congestion Breather after FTP (Special for BSNL)
-  vTaskDelay(5000 / portTICK_PERIOD_MS);
+  if (strstr(carrier, "BSNL") || strstr(carrier, "bsnl"))
+      vTaskDelay(5000 / portTICK_PERIOD_MS);
+  else
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
 
   // v5.45: Purity Guard - Silence all network noise during transmission
   SerialSIT.println("AT+CGEREP=0");
@@ -5044,7 +5131,7 @@ bool send_health_report(bool useJitter) {
 
   if (diag_pd_count == 0 && current_year > 2024) {
     debugln("[Health] Counters zero, reconstructing...");
-    reconstructSentMasks();
+    reconstructSentMasks(true);
   }
 
   // --- PREPARE PAYLOAD (ZERO GAP) ---
@@ -5182,7 +5269,8 @@ bool send_health_report(bool useJitter) {
       "\"calib\":\"%s\"," // v7.86
       "\"ndm_cnt\":%d,\"pd_cnt\":%d,"
       "\"http_present_fails\":%d,\"http_cum_fails\":%d,"
-      "\"http_backlog_cnt\":%d,\"mutex_fail\":%d"
+      "\"http_backlog_cnt\":%d,\"mutex_fail\":%d,"
+      "\"ota_fails\":%d,\"ota_fail_reason\":\"%s\""
       "%s}", // v7.92: Custom Feedback Block
       cleanStn, UNIT, SYSTEM, h_status, sensor_info,
       (diag_rtc_battery_ok ? 1 : 0), li_bat_val, solar_val, signal_lvl,
@@ -5206,7 +5294,28 @@ bool send_health_report(bool useJitter) {
       diag_http_present_fails, diag_http_cum_fails,
       get_total_backlogs(),
       diag_modem_mutex_fails,
+      ota_fail_count, ota_fail_reason,
       feedback); // v7.92
+
+  // TIER 3 LIVE RACES: JSON Truncation Guard
+  if (msgLen >= (int)sizeof(jsonBody)) {
+      Serial.printf("[Health] WARNING: JSON truncated (%d > %d). Clamping.\n",
+                    msgLen, (int)sizeof(jsonBody));
+      msgLen = sizeof(jsonBody) - 1; // Use actual written bytes
+      jsonBody[msgLen] = '\0';
+      // Attempt to close the JSON properly if truncated mid-field:
+      // Find last complete field boundary and add closing brace
+      char *last_comma = strrchr(jsonBody, ',');
+      if (last_comma && (jsonBody + msgLen - last_comma) < 5) {
+          *last_comma = '}'; // Replace trailing comma with closing brace
+          *(last_comma + 1) = '\0';
+          msgLen = last_comma - jsonBody + 1;
+      }
+  }
+
+  xSemaphoreGive(fsMutex); // v5.66: RELEASE FS MUTEX EARLY - Payload is built!
+                           // This prevents the scheduler from being blocked for
+                           // 2 mins during network delays.
 
   if (useJitter)
     vTaskDelay((esp_random() % 5000) / portTICK_PERIOD_MS); // v5.57 Fix F3: HW RNG — seed-independent across deep sleep reboots
@@ -5227,7 +5336,7 @@ bool send_health_report(bool useJitter) {
     // Rule 12/24: Extended Breather after host switch
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 5000);
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
     flushSerialSIT();
 
     SerialSIT.println("AT+HTTPINIT");
@@ -5303,6 +5412,7 @@ bool send_health_report(bool useJitter) {
             SerialSIT.println("AT+CGACT=0,1");
             waitForResponse("OK", 5000);
             vTaskDelay(5000 / portTICK_PERIOD_MS);
+            continue; // Skip HTTPREAD on dead session, go to next attempt
           }
           vTaskDelay(500 / portTICK_PERIOD_MS);
           SerialSIT.println("AT+HTTPREAD=0,512");

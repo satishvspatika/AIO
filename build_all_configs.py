@@ -15,9 +15,9 @@ from datetime import datetime
 
 # Configuration
 SKETCH_DIR = Path(__file__).parent
-GLOBALS_H = SKETCH_DIR / "globals.h"
+GLOBALS_H = SKETCH_DIR / "user_config.h"
 OUTPUT_BASE = SKETCH_DIR / "builds"
-BACKUP_GLOBALS = "/tmp/globals.h.backup"
+BACKUP_GLOBALS = "/tmp/user_config.h.backup"
 
 # Build configurations: (SYSTEM, UNIT, output_name)
 CONFIGS = [
@@ -88,7 +88,7 @@ def update_globals(system, unit, disable_webserver=False):
     content = re.sub(r'#define SYSTEM \d+', f'#define SYSTEM {system}', content)
     
     # Update UNIT
-    content = re.sub(r'char UNIT\[15\] = "[^"]*"', f'char UNIT[15] = "{unit}"', content)
+    content = re.sub(r'#define UNIT_CFG "[^"]*"', f'#define UNIT_CFG "{unit}"', content)
 
     # Force DEBUG 0 for official builds
     content = re.sub(r'#define DEBUG \d+', '#define DEBUG 0', content)

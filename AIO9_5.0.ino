@@ -54,9 +54,107 @@ RTC_DATA_ATTR int last_cmd_id = 0;
 RTC_DATA_ATTR char last_cmd_res[64] = "N/A";
 int ota_fail_count = 0;
 char ota_fail_reason[48] = "NONE";
-bool health_in_progress = false;
+volatile bool health_in_progress = false;
 TaskHandle_t lcdkeypad_h; // UI
 TaskHandle_t tempHum_h;
+
+// v5.66: Core System State (Moved from globals.h)
+volatile int sync_mode = eSyncModeInitial;
+volatile int gprs_mode = eGprsInitial;
+volatile int data_mode = eCurrentData;
+int sampleNo = 0;
+int rf_cls_dd = 0, rf_cls_mm = 0, rf_cls_yy = 0;
+int rf_cls_ram_dd = 0, rf_cls_ram_mm = 0, rf_cls_ram_yy = 0;
+int time_to_sleep = 0;
+
+// v5.66: Global String Buffers (Moved from globals.h)
+char cur_file[32] = "";
+char unsent_file[32] = "";
+char new_file[32] = "";
+char temp_file[50] = "";
+char station_name[16] = "";
+char chip_id[13] = "";
+char calib_state[5] = "";
+char calib_text[40] = "";
+char calib_content[16] = "";
+char ftpunsent_file[50] = "";
+char ftpdaily_file[50] = "";
+String content = ""; // Global String shared across files
+
+// v5.66: GPRS Counters (Moved from globals.h)
+int http_no = 0, msg_sent = 0;
+int rssiIndex = 0, rssiEndIndex = 0, retries = 0, registration = 0;
+int unsent_count = 0, success_count = 0;
+int s = 0, fileSize = 0;
+int delay_val = 10000; // Default delay before starting GPRS(Moved from globals.h)
+
+// v5.66: System & Power Variables (Moved from globals.h)
+char UNIT_VER[20] = ""; 
+char STATION_TYPE[10] = "";
+char NETWORK[10] = "";
+char universalNumber[20] = "";
+char battery[10] = "0.0";
+char solar_sense[10] = "0.0";
+float solar_val = 0.0, solar = 0.0;
+float li_bat = 0.0, li_bat_val = 0.0;
+char httpPostRequest[256] = "";
+char httpContent[12] = "";
+char append_text[160] = "";
+char store_text[160] = "";
+char ftpappend_text[160] = "";
+char ftp_station[16] = "";
+SensorData latestSensorData; // Global sensor data anchor
+
+// v5.66: Remaining Hoisted Definitions (System State Restoration)
+char *startptr = NULL;
+int send_status = 0;
+bool valid_dt = false, valid_time = false;
+int ftp_login_flag = 0;
+size_t len = 0;
+char last_logged[16] = "";
+char http_data[350] = ""; 
+char sample_cum_rf[10], sample_inst_rf[10], sample_temp[10], sample_hum[10],
+    sample_avgWS[10], sample_WD[10], sample_bat[10], ftpsample_avgWS[10],
+    ftpsample_cum_rf[10];
+char ht_data[80] = ""; 
+char apn_str[20] = "";
+
+char reg_status[16] = "";
+char *reg_status_ptr = NULL;
+char reg_val[3] = "";
+char rssi_resp[10] = "";
+uint8_t rssi_val = 0;
+char date_now[11] = "";
+char time_now[6] = "";
+int ULP_WAKEUP_TC = 2000;
+float rf_value = 0, current_rf_value = 0, calib_rf_float = 0;
+int rf_res_edit_state = 0;
+char cum_rf[10], inst_rf[10], inst_temp[10], avg_cum_rf[10];
+char ftpcum_rf[10];
+float avg_cumRF = 0, new_current_cumRF = 0, new_current_instRF = 0;
+float temperature = 0, humidity = 0, windSpCount = 0, cur_wind_speed = 0, pressure = 0;
+float cur_avg_wind_speed = 0;
+int windDir = 0;
+float sea_level_pressure = 0;
+char inst_hum[10], avg_wind_speed[10], inst_wd[10];
+int pcb_clear_state = 0;
+char signature[20] = "";
+int temp_count_rf = 0, calib_count_rf = 0, calib_flag = 0;
+char rf_str[10], calib_rf[10], temp_str[16], hum_str[16], windSpeedInst_str[16],
+    prevWindSpeedAvg_str[7], windDir_str[16];
+
+// v5.66: Final ODR Hoist Block
+char UNIT[15] = UNIT_CFG; 
+float station_altitude_m = 0.0;
+int record_length = 0;
+volatile bool gprs_pdp_ready = false;
+float temp_crf, temp_instrf, temp_bat, temp_temp, temp_hum, temp_avg_ws;
+int temp_dir = 0;
+int temp_sampleNo = 0, temp_day = 0, temp_month = 0, temp_year = 0, temp_hr = 0, temp_min = 0, temp_sig = 0;
+int unsent_pointer_count = 0;
+char present_topRow[17] = "";
+char present_bottomRow[17] = "";
+
 // Definitions of global objects (v5.65 Extern Pass)
 HardwareSerial SerialSIT(2);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
@@ -91,6 +189,244 @@ void IRAM_ATTR ext0_isr() {
 // fresh_boot_check_done are now in globals.h (RTC_DATA_ATTR) for
 // persistence.
 RTC_DATA_ATTR uint8_t ulp_code_reserve[512] = {0}; // Moved from globals.h (Bug#3 Fix)
+
+// --- Global Variable Definitions (v5.65 ODR Fix) ---
+bool webServerStarted = false;
+volatile bool wifi_active = false;
+unsigned long last_wifi_activity_time = 0;
+volatile bool timeSyncRequired = true;
+volatile bool httpInitiated = false;
+volatile bool schedulerBusy = false;
+// --- End Global Definitions ---
+
+// --- RTC Persistent Definitions (v5.65 ODR Fix) ---
+RTC_DATA_ATTR double lati, longi;
+RTC_DATA_ATTR double gps_latitude, gps_longitude;
+RTC_DATA_ATTR int gps_fix_dd = 0, gps_fix_mm = 0, gps_fix_yy = 0;
+RTC_DATA_ATTR char carrier[20] = "";
+RTC_DATA_ATTR char sim_number[20] = "NA";
+RTC_DATA_ATTR char cached_iccid[25] = "";
+RTC_DATA_ATTR bool isLTE = false;
+RTC_DATA_ATTR float prev_15min_temp = INITIAL_PREV_TEMP;
+RTC_DATA_ATTR float prev_15min_hum = INITIAL_PREV_HUM;
+RTC_DATA_ATTR float prev_15min_ws = 0.0;
+RTC_DATA_ATTR int temp_same_count = 0;
+RTC_DATA_ATTR int hum_same_count = 0;
+RTC_DATA_ATTR int diag_reg_time_total = 0;
+RTC_DATA_ATTR int diag_backlog_total = 0;
+RTC_DATA_ATTR int diag_reg_count = 0;
+RTC_DATA_ATTR int diag_reg_worst = 0;
+RTC_DATA_ATTR int diag_gprs_fails = 0;
+RTC_DATA_ATTR int diag_modem_mutex_fails = 0;
+RTC_DATA_ATTR int diag_last_reset_reason = 0;
+RTC_DATA_ATTR bool diag_rtc_battery_ok = true;
+RTC_DATA_ATTR int diag_consecutive_reg_fails = 0;
+RTC_DATA_ATTR int diag_stored_apn_fails = 0;
+RTC_DATA_ATTR int diag_consecutive_sim_fails = 0;
+
+RTC_DATA_ATTR int diag_ws_same_count = 0;
+RTC_DATA_ATTR bool diag_temp_cv = false;
+RTC_DATA_ATTR bool diag_hum_cv = false;
+RTC_DATA_ATTR bool diag_ws_cv = false;
+RTC_DATA_ATTR bool diag_temp_erv = false;
+RTC_DATA_ATTR bool diag_hum_erv = false;
+RTC_DATA_ATTR bool diag_ws_erv = false;
+RTC_DATA_ATTR bool diag_temp_erz = false;
+RTC_DATA_ATTR bool diag_hum_erz = false;
+RTC_DATA_ATTR bool diag_rain_jump = false;
+RTC_DATA_ATTR float diag_last_rf_val = 0;
+RTC_DATA_ATTR bool diag_rain_calc_invalid = false;
+RTC_DATA_ATTR bool diag_rain_reset = false;
+RTC_DATA_ATTR bool diag_wd_fail = false;
+RTC_DATA_ATTR int diag_consecutive_http_fails = 0;
+RTC_DATA_ATTR int diag_daily_http_fails = 0;
+RTC_DATA_ATTR int diag_http_present_fails = 0;
+RTC_DATA_ATTR int diag_http_cum_fails = 0;
+RTC_DATA_ATTR int diag_cum_fail_reset_month = -1;
+RTC_DATA_ATTR int diag_rejected_count = 0;
+RTC_DATA_ATTR bool diag_sensor_fault_sent_today = false;
+RTC_DATA_ATTR char diag_crash_task[16] = "NONE";
+
+RTC_DATA_ATTR uint32_t total_wind_pulses_32 = 0;
+RTC_DATA_ATTR uint32_t last_sched_wind_pulses_32 = 0;
+RTC_DATA_ATTR uint16_t last_raw_wind_count = 0;
+RTC_DATA_ATTR uint32_t total_rf_pulses_32 = 0;
+RTC_DATA_ATTR uint32_t last_sched_rf_pulses_32 = 0;
+RTC_DATA_ATTR uint16_t last_raw_rf_count = 0;
+
+RTC_DATA_ATTR int diag_ndm_count = 0;
+RTC_DATA_ATTR int diag_ndm_count_prev = 0;
+RTC_DATA_ATTR char diag_cdm_status[20] = "PENDING";
+RTC_DATA_ATTR int diag_pd_count = 0;
+RTC_DATA_ATTR int diag_pd_count_prev = 0;
+RTC_DATA_ATTR int diag_first_http_count = 0;
+RTC_DATA_ATTR int diag_first_http_count_prev = 0;
+RTC_DATA_ATTR int diag_net_data_count = 0;
+RTC_DATA_ATTR int diag_net_data_count_prev = 0;
+RTC_DATA_ATTR int diag_last_rollover_day = -1;
+
+RTC_DATA_ATTR uint32_t diag_http_time_total = 0;
+RTC_DATA_ATTR uint32_t diag_ftp_time_total = 0;
+RTC_DATA_ATTR uint32_t diag_sent_mask_cur[3] = {0, 0, 0};
+RTC_DATA_ATTR uint32_t diag_sent_mask_prev[3] = {0, 0, 0};
+RTC_DATA_ATTR int diag_http_success_count = 0;
+RTC_DATA_ATTR int diag_http_success_count_prev = 0;
+RTC_DATA_ATTR int diag_http_retry_count = 0;
+RTC_DATA_ATTR int diag_http_retry_count_prev = 0;
+RTC_DATA_ATTR int diag_ftp_success_count = 0;
+RTC_DATA_ATTR int diag_ftp_success_count_prev = 0;
+RTC_DATA_ATTR char diag_reg_fail_type[16] = "NONE";
+RTC_DATA_ATTR char diag_http_fail_reason[16] = "NONE";
+
+RTC_DATA_ATTR char cached_server_ip[32] = "";
+RTC_DATA_ATTR char cached_server_domain[64] = "";
+RTC_DATA_ATTR bool dns_fallback_active = false;
+RTC_DATA_ATTR int preferred_ftp_mode = -1;
+RTC_DATA_ATTR bool healer_reboot_in_progress = false;
+
+RTC_DATA_ATTR int health_last_sent_hour = -1;
+RTC_DATA_ATTR int health_last_sent_day = -1;
+RTC_DATA_ATTR bool diag_fw_just_updated = false;
+RTC_DATA_ATTR bool rtc_daily_sync_done = false;
+
+RTC_DATA_ATTR int current_year, current_month, current_day, current_hour,
+    current_min, current_sec, previous_min, record_hr, record_min,
+    previous_rfclose_year, previous_rfclose_month, previous_rfclose_day,
+    calib_year, calib_month, calib_day, calib_sts;
+RTC_DATA_ATTR int firmwareUpdated;
+RTC_DATA_ATTR int last_processed_sample_idx = -1;
+RTC_DATA_ATTR bool fresh_boot_check_done = false;
+RTC_DATA_ATTR bool apn_saved_this_sim = false;
+RTC_DATA_ATTR float last_valid_temp = 26.0;
+RTC_DATA_ATTR float last_valid_hum = 65.0;
+RTC_DATA_ATTR int last_valid_wd = 0;
+RTC_DATA_ATTR float rtc_daily_cum_rf = 0.0;
+
+RTC_DATA_ATTR int last_recorded_dd = 0;
+RTC_DATA_ATTR int last_recorded_mm = 0;
+RTC_DATA_ATTR int last_recorded_yy = 0;
+RTC_DATA_ATTR int last_recorded_hr = 0;
+RTC_DATA_ATTR int last_recorded_min = 0;
+
+RTC_DATA_ATTR bool signature_valid = false;
+RTC_DATA_ATTR bool pending_manual_status = false;
+RTC_DATA_ATTR bool pending_manual_gps = false;
+// --- End RTC Definitions ---
+
+// --- UI & Server Configurations (v5.65 ODR Fix) ---
+ui_data_t ui_data[FLD_COUNT] = {
+    {1, "STATION", "SIT099", eAlphaNum},             // 0
+    {2, "DATE(dd-mm-yyyy)", "08-03-2023", eNumeric}, // 1
+    {3, "TIME 24hr:mm", "00:00", eNumeric},          // 2
+    {5, "VERSION", FIRMWARE_VERSION, eDisplayOnly},  // 3
+    {4, "RF (mm)", "000.0", eLive},                  // 4
+    {8, "SIM STATUS", "0", eLive},                   // 5
+    {9, "REGISTRATION", "NA", eLive},                // 6
+    {10, "LAST LOGGED AT", "0", eNumeric},           // 7
+    {6, "SEND STATUS", "YES ?", eDisplayOnly},       // 8
+    {7, "RF CALIBRATION", "Yes?", eLive},            // 9
+    {25, "RF RESOLUTION", "0.50", eNumeric},         // 10
+    {11, "DELETE DATA?", "YES?", eNumeric},          // 11
+    {12, "COPY TO SDCARD?", "YES?", eDisplayOnly},   // 12
+    {13, "BATTERY VOLTAGE", "0", eLive},             // 13
+    {14, "SOLAR VOLTAGE", "0", eLive},               // 14
+    {15, "SEND LAT/LONG", "YES ?", eDisplayOnly},    // 15
+    {23, "ENABLE WIFI", "PRESS SET", eDisplayOnly},  // 16
+    {21, "LOG (DT TM)", "20260205 08:30", eNumeric}, // 17
+    {16, "WIND DIRECTION", "NA", eLive},             // 18
+    {17, "INST WIND SPEED", "NA", eLive},            // 19
+    {18, "AVG WIND SPEED", "NA", eLive},             // 20
+    {19, "TEMPERATURE", "NA", eLive},                // 21
+    {20, "HUMIDITY", "NA", eLive},                   // 22
+    {24, "PRESSURE", "NA", eLive},                   // 23
+    {26, "STATION ALT", "900", eNumeric},            // 24 BME only
+    {27, "HTTP FAIL STATS", "                ",
+     eLive},                                   // 25 v7.70: HTTP fail counters
+    {22, "TURN OFF LCD", "YES?", eDisplayOnly} // 26
+};
+
+#if SYSTEM == 0
+struct http_params httpSet[7] = {
+    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80",
+     "sit1040", "x-www-form-urlencoded"}, // KSNDMC Original link
+    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80",
+     "pse2420", "x-www-form-urlencoded"}, // KSNDMC Server with link to accept
+                                          // backlog from HTTP
+    {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085",
+     "bmsk1234", "json"}, // BIHAR Govt Server
+    {"rtdasbih.spatika.net", "185.250.105.225",
+     "/trg_gprs/upload_bih_trg_data_new", "80", "bmsk12345",
+     "json"}, // Bihar Spatika Server
+    {"104.211.5.142", "104.211.5.142", "/esprain", "3002", "sit", "json"},
+    {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", "sit",
+     "x-www-form-urlencoded"},
+    {"rtdas1.spatika.net", "89.32.144.163", "/hmrtdas/trg_gen", "80",
+     "sitgen100", "x-www-form-urlencoded"}, // spatika general version
+};
+#endif
+
+#if (SYSTEM == 1) || (SYSTEM == 2)
+struct http_params httpSet[11] = {
+    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80",
+     "sit1040", "x-www-form-urlencoded"}, // KSNDMC Original link KSNDMC_OLD
+    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80",
+     "pse2420", "x-www-form-urlencoded"}, // KSNDMC Server with link to accept
+                                          // backlog from HTTP : KSNDMC_TRG
+    {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085",
+     "bmsk1234", "json"}, // BIHAR Govt Server : BIHAR_TRG
+    {"rtdasbih.spatika.net", "185.250.105.225",
+     "/trg_gprs/upload_bih_trg_data_new", "80", "bmsk12345",
+     "json"}, // Bihar Spatika Server
+    {"104.211.5.142", "104.211.5.142", "/esprain", "3002", "sit", "json"},
+    {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", "sit",
+     "x-www-form-urlencoded"},
+    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_tws_data_v2", "80",
+     "climate4p2013",
+     "x-www-form-urlencoded"}, // KSNDMC Server for TWS : KSNDMC_TWS
+    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_twsrf_data_v2",
+     "80", "rfclimate5p13",
+     "x-www-form-urlencoded"}, // KSNDMC Server for TWS-RF : KSNDMC_ADDON
+    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_tws_data_v2",
+     "80", "climate4p2013", "x-www-form-urlencoded"}, // Spatika Server for TWS
+    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_twsrf_data_v2",
+     "80", "rfclimate5p13",
+     "x-www-form-urlencoded"}, // Spatika Server for TWS-RF
+    {"rtdas.spatika.net", "89.32.144.163", "/tws_gprs/twsrf_gen", "80",
+     "wsgen2014", "x-www-form-urlencoded"}, // Spatika Server for TWS-RF
+};
+#endif
+// --- End Configuration Tables ---
+
+// --- Volatile Handlers (v5.65 ODR Fix) ---
+volatile bool rtcReady = false;
+volatile bool rtcTimeChanged = false;
+volatile int wakeup_reason_is;
+volatile int lcdkeypad_start = 0;
+// --- End Volatile Definitions ---
+
+// --- System Configuration & Counters (v5.65 ODR Fix) ---
+int test_health_every_slot = TEST_HEALTH_DEFAULT;
+float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
+unsigned long last_key_time = 0;
+int cur_file_found = 0;
+int data_writing_initiated = 0;
+int time_to_deepsleep = 13;
+float bat_val = 0.0;
+int solar_conn = 0;
+int calib_header_drawn = 0;
+int unsent_counter = 0;
+int http_code = -1;
+int signal_strength = SIGNAL_STRENGTH_NO_DATA;
+int signal_lvl = SIGNAL_STRENGTH_NO_DATA;
+int sd_card_ok = 0;
+int send_daily = 0;
+int cur_mode = 0;
+int cur_fld_no = 0;
+volatile bool gprs_started = false;
+int badReads = 0;
+int prev_wind_count = 0;
+char pres_str[20] = "NA";
+// --- End System Definitions ---
 
 void setup() {
   // v5.57 Fix: Unconditionally clear healer flag at the very start of setup.
@@ -355,6 +691,16 @@ void setup() {
         fileTemp.close();
       }
     }
+  }
+
+  // TIER 3: NVS Station Name Garbage Protection
+  bool name_valid = (strlen(station_name) >= 2 && strlen(station_name) <= 14);
+  for (int i = 0; name_valid && i < strlen(station_name); i++) {
+      if (!isalnum(station_name[i]) && station_name[i] != '_') name_valid = false;
+  }
+  if (!name_valid && strlen(station_name) > 0) {
+      debugln("[BOOT] CRITICAL: Invalid station name loaded from NVS/File. Halting corruption.");
+      strcpy(station_name, ""); // Force reset below
   }
 
   if (strlen(station_name) > 0) {
@@ -976,12 +1322,24 @@ void setup() {
   // Should be called only after getting the correct RF count from SPIFF. If
   // no RF is present, make rf_count.val = 0 and call this ()
 
-  // REVERTED to AIO9_3.0 logic: Always load/restart ULP on setup to ensure
-  // counting is active.
+  // REVERTED to AIO9_3.0 logic: Always load/restart ULP on setup to ensure counting is active.
+  // v5.66 CRITICAL FIX: We MUST preserve the ULP's counted values before re-loading the code,
+  // otherwise the injection permanently zeroes out any physical tips that fell during Deep Sleep
+  // or right before an EXT_CPU_RESET crash!
+  uint16_t preserved_rf = (rr == POWERON_RESET) ? 0 : rf_count.val;
+#if (SYSTEM == 1) || (SYSTEM == 2)
+  uint32_t preserved_wind = (rr == POWERON_RESET) ? 0 : wind_count.val;
+#endif
+
   debug("ULP Wakeup Period set to 1ms (High Resolution for Wind)");
   ULP_COUNTING(ULP_WAKEUP_TC);
   debugln("ULP Program loaded and started.");
 
+  // Safely restore the physical counts back into the fresh ULP memory block
+  rf_count.val = preserved_rf;
+#if (SYSTEM == 1) || (SYSTEM == 2)
+  wind_count.val = preserved_wind;
+#endif
   // RF Resolution Change Cleanup
   if (rf_res_changed) {
     debugln("Resolution changed. Cleaning up data files...");
@@ -1069,9 +1427,12 @@ void progressCallBack(size_t currSize, size_t totalSize) {
 }
 
 void initialize_hw() {
-  // v7.79: Mandatory Stability Breather. Give pins & radio time to settle
-  // before attaching peripherals or loading ULP counts.
-  vTaskDelay(5000 / portTICK_PERIOD_MS);
+  RESET_REASON rr = rtc_get_reset_reason(0);
+  if (rr == DEEPSLEEP_RESET) {
+      vTaskDelay(500 / portTICK_PERIOD_MS); // Warm wakeup: 500ms sufficient
+  } else {
+      vTaskDelay(5000 / portTICK_PERIOD_MS); // Cold boot: full 5s for safety
+  }
 
   // Setup Legacy ADC (To prevent driver_ng conflicts in Core 3.x)
   adc1_config_width(ADC_WIDTH_BIT_12);
@@ -1131,8 +1492,14 @@ void initialize_hw() {
   gpio_hold_dis(GPIO_NUM_26);
   gpio_hold_dis(GPIO_NUM_32);
 
-  if (!SPIFFS.begin(true)) {
-    debugln("[BOOT] SPIFFS: FAILED");
+  if (!SPIFFS.begin(false)) { // false = don't auto-format
+    debugln("[BOOT] SPIFFS mount failed. Attempting recovery with format...");
+    if (!SPIFFS.begin(true)) {
+      debugln("[BOOT] SPIFFS FAILED even after format.");
+      diag_rtc_battery_ok = false; // Reuse as "system health bad" proxy for diagnostics
+    } else {
+      debugln("[BOOT] SPIFFS reformatted. All local data lost.");
+    }
   } else {
     debugln("[BOOT] SPIFFS: OK");
   }
@@ -1209,6 +1576,14 @@ void loop() {
        healer_reboot_in_progress = true; // v5.55: Protect counters
        vTaskDelay(2000 / portTICK_PERIOD_MS);
        ESP.restart();
+    }
+
+    // TIER 2 LIVE RACES: Mid-Slot Deep Sleep Race guard
+    // Double-check the scheduler hasn't just woken up in the last microsecond
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+    if (schedulerBusy) {
+        debugln("[PWR] Race Prevented: Scheduler woke up just as sleep began. Aborting sleep.");
+        return; // Re-enter the loop
     }
 
     debugln("[PWR] All tasks done. Entering Deep Sleep...");
@@ -1393,10 +1768,10 @@ void ULP_COUNTING(uint32_t us) {
   rtc_gpio_init(GPIO_NUM_35);
   rtc_gpio_set_direction(GPIO_NUM_35, RTC_GPIO_MODE_INPUT_ONLY);
 
-  rtc_gpio_pullup_en(GPIO_NUM_34); // rf (Note: GPIO34 has NO internal pullup
-                                   // on ESP32. External required!)
-  rtc_gpio_pullup_en(GPIO_NUM_35); // wind count (Note: GPIO35 has NO internal
-                                   // pullup on ESP32. External required!)
+  // [Task 2.1 Fix]: GPIO 34 & 35 are input-only and physically lack internal pull-up 
+  // resistors on ESP32 silicon. rtc_gpio_pullup_en() natively does nothing for them.
+  // Hardware PCB *MUST* have external 10k resistors installed, otherwise these lines
+  // will float violently and cause false ULP pulse accumulation!
 
   size_t size = sizeof(ulp_rf) / sizeof(ulp_insn_t);
   ulp_process_macros_and_load(0, ulp_rf, &size);

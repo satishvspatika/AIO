@@ -33,3 +33,10 @@ builds/*.map
 builds/*.txt
 !builds/v6.00/
 !builds/Golden/
+
+# Ignore logs and zips
+*.zip
+logs
+builds/
+spiffs_*.txt
+*_types.txt

@@ -48,7 +48,8 @@ void rtcRead(void *pvParameters) {
       while (read_retries < 3) {
         Wire.beginTransmission(RTC_ADDRESS);
         Wire.write(0x00);
-        if (Wire.endTransmission() == 0) {
+        byte err = Wire.endTransmission();
+        if (err == 0) {
           int bytes = Wire.requestFrom(RTC_ADDRESS, 7);
           if (bytes == 7) {
             for (int i = 0; i < 7; i++) {
@@ -61,16 +62,20 @@ void rtcRead(void *pvParameters) {
         }
 
         read_retries++;
-        debugf1("****RTC read incomplete (Try %d/3)\n", read_retries);
+        debugf2("****RTC read error %d (Try %d/3)\n", err, read_retries);
+        
+        // v5.66: Only trigger recovery if err is 4 (Bus Busy/Hung) or 1 (Buffer Overflow)
+        // If err is 2/3 (NACK), the device is just not responding (likely powered off).
+        if (err == 4 || err == 1) {
+            if (read_retries == 3) recoverI2CBus(true);
+        }
+        
         vTaskDelay(100 / portTICK_PERIOD_MS);
-        // v5.50 Bug#9 Fix: Only attempt I2C recovery after ALL 3 retries fail.
-        // Triggering recovery on the 1st retry could disrupt LCD/HDC mid-transaction.
-        if (read_retries == 3)
-          recoverI2CBus();
       }
 
       xSemaphoreGive(i2cMutex);
     } else {
+        // v5.66: Reduced debug noise if mutex is busy (expected during UI/Sensor reads)
     }
 
     if (!rtc_ok) {
@@ -78,7 +83,7 @@ void rtcRead(void *pvParameters) {
       if (fail_count == 30) {
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
             pdTRUE) {
-          recoverI2CBus(); // Use unified recovery logic
+          recoverI2CBus(true); // Use unified recovery logic
           xSemaphoreGive(i2cMutex);
         }
       }

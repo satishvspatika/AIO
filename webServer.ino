@@ -1,5 +1,6 @@
 #include "globals.h"
 #include <ESPmDNS.h>
+#include <WebServer.h>
 
 #if ENABLE_WEBSERVER == 1
 const char *ssid = "Spatika Web Server";
@@ -20,9 +21,15 @@ void handleDisconnect();
 void webServer(void *pvParameters) {
   esp_task_wdt_add(NULL);
 
-  // Configure ESP32 as an Access Point
+  // Configure ESP32 as an Access Point dynamically with Station ID
   debugln("Configuring access point...");
-  WiFi.softAP(ssid, password);
+  setCpuFrequencyMhz(160); // WiFi needs minimum 160MHz
+  
+  char ap_name[32];
+  snprintf(ap_name, sizeof(ap_name), "SpatikaWeb");
+  
+  // Use a completely unique password to instantly break any OS caching bugs
+  WiFi.softAP(ap_name, "Spatika123");
   IPAddress IP = WiFi.softAPIP();
   debug("AP IP address: ");
   debugln(IP);
@@ -97,6 +104,7 @@ void webServer(void *pvParameters) {
         debugln("WiFi Disabled externally. Stopping WebServer task...");
       }
       WiFi.softAPdisconnect(true);
+      setCpuFrequencyMhz(80); // Back to power-save mode
       wifi_active = false;
       webServerStarted = false; // Allow re-creation if logic permits (though
                                 // this kills the task)
@@ -723,91 +731,91 @@ void handleFileList() {
     html += "<p>" + s_nf + "</p>";
 
   if (year == "") {
+    // --- MODE: YEAR LIST (ROOT) ---
+    html += "<h3>" + s_sy + "</h3>";
+    bool years[100] = {0}; // 2000-2099 map
 
-  // --- MODE: YEAR LIST (ROOT) ---
-  html += "<h3>" + s_sy + "</h3>";
-  bool years[100] = {0}; // 2000-2099 map
-
-  while (file) {
-    String fileName = file.name();
-    if (fileName.endsWith(".txt") && fileName.indexOf(station_name) != -1) {
-      // Extract YYYY: Station_YYYYMMDD.txt. Find last '_'.
-      int idx = fileName.lastIndexOf('_');
-      if (idx != -1 && fileName.length() > idx + 4) {
-        String yStr = fileName.substring(idx + 1, idx + 5);
-        int yVal = yStr.toInt();
-        if (yVal >= 2000 && yVal < 2100)
-          years[yVal - 2000] = true;
-      }
-    }
-    file.close(); // v5.49 Build 5: FIX LEAK
-    file = root.openNextFile();
-  }
-
-  for (int i = 0; i < 100; i++) {
-    if (years[i]) {
-      int yVal = 2000 + i;
-      html += "<a href='/files?year=" + String(yVal) +
-              "' class='folder-item'>" + String(yVal) + "</a>";
-      count++;
-    }
-  }
-  if (count == 0 && year == "")
-    html += "<p>" + s_nf + "</p>";
-  
-  if (year != "" && month == "") {
-
-
-  // --- MODE: MONTH LIST (YEAR SELECTED) ---
-  html += "<h3>" + year + " > " + s_sm + "</h3>";
-  bool months[13] = {0}; // 1-12
-
-  while (file) {
-    String fileName = file.name();
-    if (fileName.endsWith(".txt") && fileName.indexOf(station_name) != -1) {
-      int idx = fileName.lastIndexOf('_'); // ..._YYYYMMDD.txt
-      if (idx != -1 && fileName.length() > idx + 6) {
-        String fYear = fileName.substring(idx + 1, idx + 5);
-        if (fYear == year) {
-          String mStr = fileName.substring(idx + 5, idx + 7);
-          int mVal = mStr.toInt();
-          if (mVal >= 1 && mVal <= 12)
-            months[mVal] = true;
+    while (file) {
+      String fileName = file.name();
+      if (fileName.endsWith(".txt") && fileName.indexOf(station_name) != -1) {
+        // Extract YYYY: Station_YYYYMMDD.txt
+        int idx = fileName.lastIndexOf('_');
+        if (idx != -1 && fileName.length() > idx + 4) {
+          String yStr = fileName.substring(idx + 1, idx + 5);
+          int yVal = yStr.toInt();
+          if (yVal >= 2000 && yVal < 2100)
+            years[yVal - 2000] = true;
         }
       }
+      file.close();
+      file = root.openNextFile();
     }
-    file.close(); // v5.49 Build 5: FIX LEAK
-    file = root.openNextFile();
-  }
 
-  const char *monthNames[] = {
-      "",     "January", "February",  "March",   "April",    "May",     "June",
-      "July", "August",  "September", "October", "November", "December"};
-  for (int i = 1; i <= 12; i++) {
-    if (months[i]) {
-      String mPad = (i < 10) ? "0" + String(i) : String(i);
-      html += "<a href='/files?year=" + year + "&month=" + mPad +
-              "' class='folder-item'>" + String(monthNames[i]) + " (" + mPad +
-              ")</a>";
-      count++;
+    for (int i = 0; i < 100; i++) {
+      if (years[i]) {
+        int yVal = 2000 + i;
+        html += "<a href='/files?year=" + String(yVal) +
+                "' class='folder-item'>" + String(yVal) + "</a>";
+        count++;
+      }
     }
+    if (count == 0) html += "<p>" + s_nf + "</p>";
+  } else if (year != "" && month == "") {
+    // --- MODE: MONTH LIST (YEAR SELECTED) ---
+    html += "<h3>" + year + " > " + s_sm + "</h3>";
+    bool months[13] = {0}; // 1-12
+
+    while (file) {
+      String fileName = file.name();
+      if (fileName.endsWith(".txt") && fileName.indexOf(station_name) != -1) {
+        int idx = fileName.lastIndexOf('_');
+        if (idx != -1 && fileName.length() > idx + 6) {
+          String fYear = fileName.substring(idx + 1, idx + 5);
+          if (fYear == year) {
+            String mStr = fileName.substring(idx + 5, idx + 7);
+            int mVal = mStr.toInt();
+            if (mVal >= 1 && mVal <= 12)
+              months[mVal] = true;
+          }
+        }
+      }
+      file.close();
+      file = root.openNextFile();
+    }
+
+    const char *monthNames[] = {
+        "", "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"};
+    for (int i = 1; i <= 12; i++) {
+      if (months[i]) {
+        String mPad = (i < 10) ? "0" + String(i) : String(i);
+        html += "<a href='/files?year=" + year + "&month=" + mPad +
+                "' class='folder-item'>" + String(monthNames[i]) + " (" + mPad +
+                ")</a>";
+        count++;
+      }
+    }
+    if (count == 0) html += "<p>No logs found for " + year + ".</p>";
+  } else if (year != "" && month != "") {
+    // --- MODE: FILE LIST (YEAR + MONTH SELECTED) ---
+    html += "<h3>" + year + " > " + month + "</h3>";
+    String filter = "_" + year + month; 
+
+    while (file) {
+      String fileName = file.name();
+      if (fileName.endsWith(".txt") && fileName.indexOf(filter) != -1) {
+        html += "<a href='/viewfile?file=" + fileName + "' class='folder-item'>" + fileName + "</a>";
+        count++;
+      }
+      file.close();
+      file = root.openNextFile();
+    }
+    
+    if (count == 0) html += "<p>No logs found for " + year + "-" + month + ".</p>";
   }
-      html += "<p>No logs found for " + year + ".</p>";
-
-  if (year != "" && month != "") {
-
-
-  // --- MODE: FILE LIST (YEAR + MONTH SELECTED) ---
-  html += "<h3>" + year + " > " + month + "</h3>";
-  String filter = "_" + year + month; // Match ..._YYYYMM...
-
-  html += "</div>";
-  count++;
-}
-    file.close(); // v5.49 Build 5: FIX LEAK
-    file = root.openNextFile();
-    if (count == 0)
-      html += "<p>No logs found for " + year + "-" + month + ".</p>";
+  
+  // Cleanup any active root traversers
+  if (file) file.close();
 
 
 html += "<br>";
@@ -1213,9 +1221,7 @@ void handleDisconnect() {
 
   // Update LCD directly so it jumps back to Station ID
   strcpy(ui_data[FLD_WIFI_ENABLE].bottomRow, "ENABLE WIFI     ");
-  extern int cur_fld_no;
-  extern char show_now;
-  extern volatile int lcdkeypad_start;
+
   cur_fld_no = 0; // FLD_STATION
   show_now = 1;
   lcdkeypad_start = 1; // Wake up UI loop if it was snoozing

@@ -1,6 +1,5 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
-from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import engine
 from app.models import Base
@@ -64,11 +63,80 @@ app.include_router(ota.router)
 app.include_router(commands.router)
 app.include_router(summary.router)
 
-# Serve the firmware builds directory statically
-# This makes binaries available at http://server-ip/builds/FW_S6_SPATIKA_GEN.bin
+# Serve the firmware builds directory via a Range-aware endpoint instead of StaticFiles
 import os
+import mimetypes
+from fastapi.responses import Response, StreamingResponse
+
 os.makedirs("/app/builds", exist_ok=True)
-app.mount("/builds", StaticFiles(directory="/app/builds"), name="builds")
+
+@app.get("/builds/{filename}")
+async def serve_firmware(filename: str, request: Request):
+    """Range-aware firmware file server for ESP32 OTA downloads."""
+    # Security: only serve .bin files, no path traversal
+    if not filename.endswith(".bin") or "/" in filename or ".." in filename:
+        return Response(status_code=403)
+
+    filepath = os.path.join("/app/builds", filename)
+    if not os.path.exists(filepath):
+        return Response(status_code=404)
+
+    file_size = os.path.getsize(filepath)
+    range_header = request.headers.get("Range")
+
+    if range_header:
+        # Parse "bytes=start-end"
+        try:
+            range_val = range_header.replace("bytes=", "")
+            start_str, end_str = range_val.split("-")
+            start = int(start_str)
+            end = int(end_str) if end_str else file_size - 1
+        except Exception:
+            return Response(status_code=400)
+
+        end = min(end, file_size - 1)
+        chunk_size = end - start + 1
+
+        def iter_file():
+            with open(filepath, "rb") as f:
+                f.seek(start)
+                remaining = chunk_size
+                while remaining > 0:
+                    data = f.read(min(8192, remaining))
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
+
+        return StreamingResponse(
+            iter_file(),
+            status_code=206,
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Content-Length": str(chunk_size),
+                "Accept-Ranges": "bytes",
+                "Content-Type": "application/octet-stream",
+            }
+        )
+    else:
+        # Full file request (e.g. for size check via HEAD/GET)
+        def iter_full():
+            with open(filepath, "rb") as f:
+                while True:
+                    data = f.read(8192)
+                    if not data:
+                        break
+                    yield data
+
+        return StreamingResponse(
+            iter_full(),
+            status_code=200,
+            headers={
+                "Content-Length": str(file_size),
+                "Accept-Ranges": "bytes",
+                "Content-Type": "application/octet-stream",
+            }
+        )
 
 
 @app.get("/")

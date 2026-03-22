@@ -4,6 +4,7 @@ void scheduler(void *pvParameters) {
   esp_task_wdt_add(NULL);
   // String temp, temp1; // Safer: removed usage
   // Replaced with local arrays where needed.
+  bool curFileExists = false;
 
   //    li_bat,li_bat_val;
   // Battery Sense
@@ -213,7 +214,7 @@ void scheduler(void *pvParameters) {
     slot_hr = slot_total_mins / 60;
     slot_min = slot_total_mins % 60;
 
-    // skip_primary_http reset moved to new slot detection block
+    // skip_primary_http reset moved to new slot processing start
 
     current_sample_idx =
         slot_hr * SAMPLES_PER_HOUR + slot_min / MINUTES_PER_SAMPLE;
@@ -235,8 +236,7 @@ void scheduler(void *pvParameters) {
         (httpInitiated == false)) {
       
       schedulerBusy = true; // v5.65: Lock system awake during 15-min processing
-      // Mark this sample as processed
-      last_processed_sample_idx = current_sample_idx;
+      // last_processed_sample_idx = current_sample_idx; // v5.66: Moved to END of successful processing to allow retries on failure
       skip_primary_http = false; // Reset on new slot processing start
 
       // PREVENT SLEEP: Flag active operation so loop() doesn't sleep if LCD
@@ -704,10 +704,13 @@ void scheduler(void *pvParameters) {
       debugln("----------------------------");
 
       { // Save state
-        File fileTemp5 = SPIFFS.open("/prevWindSpeed.txt", FILE_WRITE);
-        if (fileTemp5) {
-          fileTemp5.print(cur_avg_wind_speed);
-          fileTemp5.close();
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          File fileTemp5 = SPIFFS.open("/prevWindSpeed.txt", FILE_WRITE);
+          if (fileTemp5) {
+            fileTemp5.print(cur_avg_wind_speed);
+            fileTemp5.close();
+          }
+          xSemaphoreGive(fsMutex);
         }
       }
 #endif
@@ -897,10 +900,13 @@ void scheduler(void *pvParameters) {
       //                        debugln();debug("SPIFFS file is ");
       //                        debugln(cur_file);
 
-      /*
-       * Check if cur_file (rf_close_date) file exists
-       */
-      if (SPIFFS.exists(cur_file)) {
+      curFileExists = false;
+      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        curFileExists = SPIFFS.exists(cur_file);
+        xSemaphoreGive(fsMutex);
+      }
+
+      if (curFileExists) {
 
         debugln();
         debugln("-------- SPIFFS FILE EXISTS w/ OR WIHOUT ANY GAPS  --------");
@@ -913,22 +919,32 @@ void scheduler(void *pvParameters) {
         //                                ");debugln(cur_file);
 
         //                                String content;
-        //                                String content;
-        file1 = SPIFFS.open(cur_file, FILE_READ);
-        if (!file1) {
-          debugln("Failed to open SPIFFS file for reading");
-          vTaskDelay(1000 / portTICK_PERIOD_MS); // Wait on error
-          continue; // Skip this iteration if file cannot be opened
+
+
+        bool file_read_ok = false;
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) { // v5.66: Increased from 2s to 10s
+          file1 = SPIFFS.open(cur_file, FILE_READ);
+          if (file1) {
+            s = file1.size();
+            s = (s > record_length) ? s - record_length : 0;
+            file1.seek(s);
+            int bytes_read = file1.readBytes(content_buf, sizeof(content_buf) - 1);
+            content_buf[bytes_read] = '\0'; // Null terminate
+            file1.close();
+            file_read_ok = true;
+          } else {
+             debugf1("[SCHED] Error: File exists but cannot be opened for reading: %s\n", cur_file);
+          }
+          xSemaphoreGive(fsMutex);
         }
-        s = file1.size();
-        s = (s > record_length) ? s - record_length : 0;
-        file1.seek(s);
 
-        // Safe Read with buffer
-        int len = file1.readBytes(content_buf, sizeof(content_buf) - 1);
-        content_buf[len] = 0; // Null terminate
-        file1.close();
-
+        if (!file_read_ok) {
+          debugf("[SCHED] Error: Failed to open %s for reading. MutexStatus=TAKEN\n", cur_file);
+          vTaskDelay(5000 / portTICK_PERIOD_MS); // v5.66: Wait longer if contention
+          schedulerBusy = false; 
+          continue; 
+        }
+        
         len = strlen(content_buf); // Update len properly
 
         if (len == 0) {
@@ -936,7 +952,10 @@ void scheduler(void *pvParameters) {
                   "file and treating as fresh start.");
           // v5.50: Do NOT loop forever. Delete the empty file so that the
           // file-not-found path below creates a clean first record this cycle.
-          SPIFFS.remove(cur_file);
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            SPIFFS.remove(cur_file);
+            xSemaphoreGive(fsMutex);
+          }
           is_fresh_boot =
               true; // v5.51: Force clean start (bypass morning gaps)
           vTaskDelay(500 / portTICK_PERIOD_MS);
@@ -1210,6 +1229,31 @@ void scheduler(void *pvParameters) {
         debug(":");
         debugln(temp_min);
 
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+          debugln("[SCHED] Error: SPIFFS Mutex Timeout. Deferring record.");
+          goto TRIGGER_HTTP;
+        }
+
+        // TIER 1 DATA SANCTITY: Brownout Protection
+        if (li_bat_val < 3.4f && li_bat_val > 0.5f) {
+           debugln("[PWR] CRITICAL: Battery too low for flash write. Aborting to prevent brownout/corruption.");
+           signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
+           data_writing_initiated = 0;
+           schedulerBusy = false;
+           sync_mode = eHttpStop;
+           xSemaphoreGive(fsMutex);
+           goto TRIGGER_HTTP;
+        }
+
+        // TIER 1 DATA SANCTITY: Filesystem Space Protection
+        if ((SPIFFS.totalBytes() - SPIFFS.usedBytes()) < 512) {
+           debugln("[SCHED] CRITICAL: SPIFFS nearly full. Pruning old files before write.");
+           signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
+           data_writing_initiated = 0;
+           xSemaphoreGive(fsMutex);
+           goto TRIGGER_HTTP;
+        }
+
         // Filling the SPIFF file and SD card file with missing data. Only
         // updating unsent file if FILLGAP is 1
 
@@ -1384,7 +1428,7 @@ void scheduler(void *pvParameters) {
                 }
 
                 target_number =
-                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) * (max_val - min_val) + min_val;
               } else {
                 target_number = 0.0;
               }
@@ -1409,7 +1453,7 @@ void scheduler(void *pvParameters) {
                 }
 
                 target_number =
-                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) * (max_val - min_val) + min_val;
                 if (target_number > 100.0)
                   target_number = 100.0;
                 if (target_number < 10.0)
@@ -1430,7 +1474,7 @@ void scheduler(void *pvParameters) {
                 min_val = fill_AvgWS - 0.2;
                 max_val = fill_AvgWS + 0.2;
                 fill_AvgWS =
-                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) * (max_val - min_val) + min_val;
 
                 // Keep wind speed between 0.1 and 1.93 during gap fill
                 if (fill_AvgWS < 0.1)
@@ -1676,7 +1720,11 @@ void scheduler(void *pvParameters) {
         debugln("********** CREATING NEW FILE .. DEVICE STARTED AFTER A FEW "
                 "DAYS  ***********");
         debugln();
-        File file1 = SPIFFS.open(cur_file, FILE_APPEND);
+        File file1;
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+          file1 = SPIFFS.open(cur_file, FILE_APPEND);
+          xSemaphoreGive(fsMutex);
+        }
         if (!file1) {
           debugln("Failed to open new SPIFFS file");
         } // #TRUEFIX
@@ -1753,17 +1801,18 @@ void scheduler(void *pvParameters) {
           //                                          strlen(append_text);
           //                                          append_text[len] = '\0';
 
-          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-            file1.print(append_text);
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+            if (file1) {
+              file1.print(append_text);
+              file1.close();
+            }
             xSemaphoreGive(fsMutex);
           } else {
-            // v5.57 Fix: Do NOT write without the mutex — that defeats its purpose.
-            // This path is only hit during a simultaneous OTA write (rare edge case).
-            // Skip this write; the gap-fill on the next cycle will recover it.
-            debugln("[SCHED] ⚠️ FS Mutex Timeout on 8:45 write. Skipping to prevent SPIFFS collision.");
+            debugln("[SCHED] Error: FS Mutex Timeout on 8:45 write.");
           }
           if (sd_card_ok && sd1) {
             sd1.print(append_text);
+            sd1.close();
           }
 
           if (diag_pd_count < 96)
@@ -2318,7 +2367,7 @@ void scheduler(void *pvParameters) {
                 }
 
                 target_number =
-                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) * (max_val - min_val) + min_val;
                 snprintf(fill_inst_temp, sizeof(fill_inst_temp), "%05.1f",
                          target_number);
 
@@ -2340,7 +2389,7 @@ void scheduler(void *pvParameters) {
                 }
 
                 target_number =
-                    ((float)rand() / RAND_MAX) * (max_val - min_val) + min_val;
+                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) * (max_val - min_val) + min_val;
                 if (target_number > 100.0)
                   target_number = 100.0;
                 if (target_number < 10.0)
@@ -2501,7 +2550,9 @@ void scheduler(void *pvParameters) {
 
         } // matches the brace for 'else' at line 1527
       }   // matches the brace for 'else' at line 1390
-
+      
+      xSemaphoreGive(fsMutex); // Release after recording/gapfill
+      
       //          len = strlen(append_text);
       //          append_text[len] = '\0';
 #if SYSTEM == 0
@@ -2517,12 +2568,15 @@ void scheduler(void *pvParameters) {
       snprintf(temp_file, sizeof(temp_file), "/lastrecorded_%s.txt",
                station_name);
       { // Scope for filelastrecord
-        File filelastrecord = SPIFFS.open(temp_file, FILE_WRITE);
-        if (!filelastrecord) {
-          debugln("Failed to open lastrecorded file for writing");
-        } else { // FIX #2 Safe write
-          filelastrecord.println(store_text); // v7.65: Force newline for clean extraction
-          filelastrecord.close();
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+          File filelastrecord = SPIFFS.open(temp_file, FILE_WRITE);
+          if (!filelastrecord) {
+            debugln("Failed to open lastrecorded file for writing");
+          } else { // FIX #2 Safe write
+            filelastrecord.println(store_text); // v7.65: Force newline for clean extraction
+            filelastrecord.close();
+          }
+          xSemaphoreGive(fsMutex);
         }
       }
       debugln();
@@ -2544,12 +2598,15 @@ void scheduler(void *pvParameters) {
       snprintf(temp_file, sizeof(temp_file), "/lastrecorded_%s.txt",
                station_name);
       { // Scope for filelastrecord
-        File filelastrecord = SPIFFS.open(temp_file, FILE_WRITE);
-        if (!filelastrecord) {
-          debugln("Failed to open lastrecorded file for writing (FTP)");
-        } else { // FIX #2 Safe write
-          filelastrecord.println(store_text); // v7.65: Force newline for clean extraction
-          filelastrecord.close();
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+          File filelastrecord = SPIFFS.open(temp_file, FILE_WRITE);
+          if (!filelastrecord) {
+            debugln("Failed to open lastrecorded file for writing (FTP)");
+          } else { // FIX #2 Safe write
+            filelastrecord.println(store_text); // v7.65: Force newline
+            filelastrecord.close();
+          }
+          xSemaphoreGive(fsMutex);
         }
       }
       { // Scope for ftp_file
@@ -2557,20 +2614,26 @@ void scheduler(void *pvParameters) {
                  rf_cls_yy, rf_cls_mm, rf_cls_dd);
 
         if (sampleNo != 0) {
-          File ftp_file = SPIFFS.open(temp_file, FILE_APPEND);
-          if (ftp_file) {
-            ftp_file.print(ftpappend_text); // v7.70: Use FTP format (semicolons)
-            ftp_file.close();
-          } else {
-            debugln("Failed to open daily ftp file for appending");
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            File ftp_file = SPIFFS.open(temp_file, FILE_APPEND);
+            if (ftp_file) {
+              ftp_file.print(ftpappend_text); // v7.70: Use FTP format (semicolons)
+              ftp_file.close();
+            } else {
+              debugln("Failed to open daily ftp file for appending");
+            }
+            xSemaphoreGive(fsMutex);
           }
         } else {
-          File ftp_file = SPIFFS.open(temp_file, FILE_WRITE);
-          if (ftp_file) {
-            ftp_file.print(ftpappend_text); // v7.70: Use FTP format (semicolons)
-            ftp_file.close();
-          } else {
-            debugln("Failed to open daily ftp file for writing");
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            File ftp_file = SPIFFS.open(temp_file, FILE_WRITE);
+            if (ftp_file) {
+              ftp_file.print(ftpappend_text); // v7.70: Use FTP format (semicolons)
+              ftp_file.close();
+            } else {
+              debugln("Failed to open daily ftp file for writing");
+            }
+            xSemaphoreGive(fsMutex);
           }
         }
       }
@@ -2613,42 +2676,40 @@ void scheduler(void *pvParameters) {
       if (sampleNo == MAX_SAMPLE_NO) {
         snprintf(temp_file, sizeof(temp_file), "/closingdata_%s.txt",
                  station_name);
-        File file5 = SPIFFS.open(temp_file, FILE_APPEND);
-        if (!file5) {
-          debugln("Failed to open closing data file for appending");
-        } // #TRUEFIX
-
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+          File file5 = SPIFFS.open(temp_file, FILE_APPEND);
+          if (!file5) {
+            debugln("Failed to open closing data file for appending");
+          } else {
 #if SYSTEM == 0
-        snprintf(append_text, sizeof(append_text),
-                 "%s,%02d,%04d-%02d-%02d,%02d:%02d,%s,%04d,%04.1f\r\n",
-                 station_name, sampleNo, temp_year, temp_month, temp_day,
-                 record_hr, record_min, cum_rf, signal_strength, bat_val);
+            snprintf(append_text, sizeof(append_text),
+                     "%s,%02d,%04d-%02d-%02d,%02d:%02d,%s,%04d,%04.1f\r\n",
+                     station_name, sampleNo, temp_year, temp_month, temp_day,
+                     record_hr, record_min, cum_rf, signal_strength, bat_val);
+
+#elif SYSTEM == 1
+            snprintf(append_text, sizeof(append_text),
+                     "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
+                     sampleNo, temp_year, temp_month, temp_day, record_hr,
+                     record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                     signal_strength, bat_val);
+
+#elif SYSTEM == 2
+            snprintf(append_text, sizeof(append_text),
+                     "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
+                     sampleNo, temp_year, temp_month, temp_day, record_hr,
+                     record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed,
+                     inst_wd, signal_lvl, bat_val);
 #endif
-
-#if SYSTEM == 1
-        snprintf(append_text, sizeof(append_text),
-                 "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
-                 sampleNo, temp_year, temp_month, temp_day, record_hr,
-                 record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-                 signal_strength, bat_val);
-#endif
-
-#if SYSTEM == 2
-        snprintf(append_text, sizeof(append_text),
-                 "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
-                 sampleNo, temp_year, temp_month, temp_day, record_hr,
-                 record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed,
-                 inst_wd, signal_lvl, bat_val);
-#endif
-
-        file5.print(append_text);
-        file5.close();
-        strcpy(diag_cdm_status, "PENDING"); // Mark CDM as ready to send
-
+            file5.print(append_text);
+            file5.close();
+            strcpy(diag_cdm_status, "PENDING"); // Mark CDM as ready to send
+          }
+          xSemaphoreGive(fsMutex);
+        }
         // v5.64: Resets moved to 08:45 AM rollover to ensure successful archiving of yesterday's totals.
         debugln("[SCHED] 08:30 AM Cycle Complete. Rollover pending at 08:45...");
         vTaskDelay(200 / portTICK_PERIOD_MS);
-
       }
 
 
@@ -2664,23 +2725,26 @@ void scheduler(void *pvParameters) {
       debug("[FILE] SPIFFS: ");
       debug(cur_file);
       {
-        File file3 = SPIFFS.open(cur_file, FILE_READ);
-        if (file3) {
-          int fsize = file3.size();
-          debug(" | Size: ");
-          debugln(fsize);
-          if (fsize > 0) {
-            int seekPos =
-                (fsize > (record_length * 5)) ? fsize - (record_length * 5) : 0;
-            file3.seek(seekPos);
-            String tail = file3.readString();
-            debugln("   ... [Tail Content] ...");
-            debug(tail); // Combined print via macro (Rule 43)
-            debugln("-----------------------");
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+          File file3 = SPIFFS.open(cur_file, FILE_READ);
+          if (file3) {
+            int fsize = file3.size();
+            debug(" | Size: ");
+            debugln(fsize);
+            if (fsize > 0) {
+              int seekPos =
+                  (fsize > (record_length * 5)) ? fsize - (record_length * 5) : 0;
+              file3.seek(seekPos);
+              String tail = file3.readString();
+              debugln("   ... [Tail Content] ...");
+              debug(tail); // Combined print via macro (Rule 43)
+              debugln("-----------------------");
+            }
+            file3.close();
+          } else {
+            debugln(" | Failed to open");
           }
-          file3.close();
-        } else {
-          debugln(" | Failed to open");
+          xSemaphoreGive(fsMutex);
         }
       }
       debugln();
@@ -2717,33 +2781,39 @@ void scheduler(void *pvParameters) {
 // UNSENT DATA
 #if SYSTEM == 0
       snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-      if (SPIFFS.exists(unsent_file)) {
-        File file4 = SPIFFS.open(unsent_file, FILE_READ);
-        if (file4) {
-          debugln("\n--- UNSENT DATA START ---");
-          while (file4.available()) {
-            String line = file4.readStringUntil('\n');
-            debugln(line); // Correct display per line
+      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+        if (SPIFFS.exists(unsent_file)) {
+          File file4 = SPIFFS.open(unsent_file, FILE_READ);
+          if (file4) {
+            debugln("\n--- UNSENT DATA START ---");
+            while (file4.available()) {
+              String line = file4.readStringUntil('\n');
+              debugln(line); // Correct display per line
+            }
+            file4.close();
+            debugln("--- UNSENT DATA END ---\n");
           }
-          file4.close();
-          debugln("--- UNSENT DATA END ---\n");
         }
+        xSemaphoreGive(fsMutex);
       }
 #endif
 
 #if (SYSTEM == 1 || SYSTEM == 2)
       snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-      if (SPIFFS.exists(ftpunsent_file)) {
-        File file4 = SPIFFS.open(ftpunsent_file, FILE_READ);
-        if (file4) {
-          debugln("\n--- UNSENT DATA START ---");
-          while (file4.available()) {
-            String line = file4.readStringUntil('\n');
-            debugln(line); // Correct display per line
+      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+        if (SPIFFS.exists(ftpunsent_file)) {
+          File file4 = SPIFFS.open(ftpunsent_file, FILE_READ);
+          if (file4) {
+            debugln("\n--- UNSENT DATA START ---");
+            while (file4.available()) {
+              String line = file4.readStringUntil('\n');
+              debugln(line); // Correct display per line
+            }
+            file4.close();
+            debugln("--- UNSENT DATA END ---\n");
           }
-          file4.close();
-          debugln("--- UNSENT DATA END ---\n");
         }
+        xSemaphoreGive(fsMutex);
       }
 #endif
 #endif
@@ -2795,7 +2865,7 @@ void scheduler(void *pvParameters) {
 
         // v5.41 Test Mode: Send Health Report every slot
 #if ENABLE_HEALTH_REPORT == 1
-        if (TEST_HEALTH_EVERY_SLOT == 1) {
+        if (test_health_every_slot == 1) {
           debugln("[SCHEDULER] Test Mode: Queuing Health Report (every slot)");
           // The health report will be called in the GPRS task after data
           // upload
@@ -2803,6 +2873,7 @@ void scheduler(void *pvParameters) {
 #endif
       }
       vTaskDelay(300 / portTICK_PERIOD_MS);
+      last_processed_sample_idx = current_sample_idx; // v5.66: Mark as processed ONLY after successful completion
       schedulerBusy = false; // v5.65: Release sleep lock
     } else if (httpInitiated == false &&
                sync_mode == eSyncModeInitial) {

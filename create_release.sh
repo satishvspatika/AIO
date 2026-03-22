@@ -42,12 +42,12 @@ print_warning() {
 }
 
 # 1. Extract version from globals.h
-print_header "Step 1: Reading Version from globals.h"
+print_header "Step 1: Reading Version from user_config.h"
 
-VERSION=$(grep '#define FIRMWARE_VERSION' globals.h | sed 's/.*"\(.*\)".*/\1/' | sed 's/^v//')
+VERSION=$(grep '#define FIRMWARE_VERSION' user_config.h | sed 's/.*"\(.*\)".*/\1/' | sed 's/^v//')
 
 if [ -z "$VERSION" ]; then
-    print_error "Could not extract version from globals.h"
+    print_error "Could not extract version from user_config.h"
     exit 1
 fi
 

@@ -42,19 +42,28 @@ void start_deep_sleep() {
   gpio_hold_en(GPIO_NUM_32);
   gpio_deep_sleep_hold_en();
 
+  // TIER 3: SLEEP TIMER EARLY-WAKE DRIFT
+  // Eliminate up to 90 seconds of RTOS polling staleness by reading the hardware directly.
+  int live_sec = current_sec; // fallback
+  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+      DateTime now = rtc.now();
+      current_min = now.minute(); // Update globals for accurate calc
+      live_sec = now.second();
+      xSemaphoreGive(i2cMutex);
+  }
+
   // Calculate time to sleep to target the NEXT exact 15-minute boundary
-  // We calculate in SECONDS for precision using current_sec
+  // We calculate in SECONDS for precision using the live hardware read
   int next_boundary_min = ((current_min / 15) + 1) * 15;
   int sleep_seconds;
 
   // Handle hour rollover (e.g., 59 minutes -> next hour at 0 minutes)
   // v7.89: Reverted to +30s offset for maximum stability.
   if (next_boundary_min >= 60) {
-    next_boundary_min = 0;
-    sleep_seconds = (60 - current_min) * 60 - current_sec + 15; // v5.65 fix: reduced offset to 15s
+    sleep_seconds = (60 - current_min) * 60 - live_sec + 15; // v5.65 fix: reduced offset to 15s
   } else {
     sleep_seconds =
-        (next_boundary_min * 60) - (current_min * 60 + current_sec) + 15; // v5.65 fix
+        (next_boundary_min * 60) - (current_min * 60 + live_sec) + 15; // v5.65 fix
   }
 
   // Safety bounds: 1 minute minimum, 20 minutes maximum
@@ -107,22 +116,11 @@ void start_deep_sleep() {
 void validate_ulp_counters() {
   bool corrupted = false;
 
-  // RF count shouldn't exceed 10000 (2500mm at 0.25mm resolution = unrealistic)
-  // Note: ulp_var_t.val is unsigned - check for wrap-around (very large values)
-  // which is how corruption manifests (val wraps from 0 to ~65535)
-  if (rf_count.val > 10000) {
-    debugf1("[ULP] RF count corrupted (%u), resetting\n", rf_count.val);
-    rf_count.val = 0;
-    corrupted = true;
-  }
-
-  // Wind count shouldn't exceed unrealistic pulses per 15 min (e.g. Hurricane speeds)
-  // v5.65 fix: Correct corruption detection for 16-bit ULP wrap
-  if (wind_count.val > 65000) { 
-    debugf1("[ULP] Wind count corrupted or extreme (%u), resetting\n", wind_count.val);
-    wind_count.val = 0;
-    corrupted = true;
-  }
+  // [Task 2.3 Fix]: Removed arbitrary forced-limits (e.g. > 65000) on wind_count and rf_count.
+  // ULP counters are increment-only 16-bit values. They naturally overflow from 65535 to 0.
+  // The scheduler calculates delta via `(65536 + current - prev)`, perfectly handling one wrap.
+  // Forcing them to 0 mid-count artificially destroys the delta, causing massive data drops.
+  // We only check calib_count since it's a diagnostic tool, not critical data.
 
   // Calib count shouldn't exceed 1000
   if (calib_count.val > 1000) {
@@ -245,11 +243,11 @@ void delete_multiple_files(const char *station) {
   // v5.65 P1 Fix: Collect matching filenames into a buffer first. 
   // SPIFFS (and LittleFS) iterators can become invalid or skip entries 
   // if you remove files during an openNextFile() traversal.
-  String toDelete[24]; 
+  String toDelete[48]; 
   int found = 0;
 
   File file = root.openNextFile();
-  while (file && found < 24) {
+  while (file && found < 48) {
     esp_task_wdt_reset();
     String fName = file.name();
     if (fName.indexOf(station) != -1) {
@@ -279,7 +277,13 @@ void get_chip_id() {
  * If a slave device is hanging (holding SDA low), we pulse SCL until it
  * releases
  */
-void recoverI2CBus() {
+void recoverI2CBus(bool alreadyLocked) {
+  if (!alreadyLocked) {
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+      debugln("[I2C] Recovery skipped: Mutex held by another task");
+      return;
+    }
+  }
   debugln("[I2C] 🚨 Bus hang detected! Attempting recovery...");
 
   // End any existing Wire session
@@ -317,12 +321,20 @@ void recoverI2CBus() {
   // Re-initialize Wire
   Wire.begin(I2C_SDA, I2C_SCL, 100000);
   Wire.setTimeOut(I2C_TIMEOUT_MS);
+  
+  if (!alreadyLocked) {
+    xSemaphoreGive(i2cMutex);
+  }
 }
 
 /**
  * Persists current coordinates and timestamp (v5.49) to SPIFFS
  */
 void saveGPS() {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[SPIFFS] Mutex Timeout: Skipping saveGPS");
+    return;
+  }
   File file = SPIFFS.open("/gps_fix.tmp", FILE_WRITE);
   if (file) {
     file.printf("%.6f,%.6f,%d,%d,%d", lati, longi, current_day, current_month,
@@ -335,12 +347,17 @@ void saveGPS() {
     gps_fix_yy = current_year;
     debugln("[GPS] Location persisted ATOMICALLY to SPIFFS");
   }
+  xSemaphoreGive(fsMutex);
 }
 
 /**
  * Loads last known coordinates and timestamp (v5.49) from SPIFFS
  */
 void loadGPS() {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[SPIFFS] Mutex Timeout: Skipping loadGPS");
+    return;
+  }
   if (SPIFFS.exists("/gps_fix.txt")) {
     File file = SPIFFS.open("/gps_fix.txt", FILE_READ);
     if (file) {
@@ -355,6 +372,7 @@ void loadGPS() {
   } else {
     debugln("[GPS] No persisted location found.");
   }
+  xSemaphoreGive(fsMutex);
 }
 
 bool isDigitStr(const char *s) {
@@ -402,7 +420,8 @@ void checkRainfallIntegrity() {
     int sample_no = -1;
     float inst = 0, cum = 0;
 
-    char *token = strtok(p, ",");
+    char *saveptr = NULL;
+    char *token = strtok_r(p, ",", &saveptr);
     while (token != NULL) {
       if (field == 0)
         sample_no = atoi(token);
@@ -414,7 +433,7 @@ void checkRainfallIntegrity() {
       } else if (field == 4 && SYSTEM == 0) {
         cum = atof(token); // SYSTEM 0: Field 4 is Cum_RF
       }
-      token = strtok(NULL, ",");
+      token = strtok_r(NULL, ",", &saveptr);
       field++;
     }
 
@@ -533,7 +552,8 @@ void scanFileToMask(const char *fName, uint32_t *mask) {
       buf[sizeof(buf)-1] = '\0';
       
       char *token;
-      token = strtok(buf, ",");
+      char *saveptr_scan = NULL;
+      token = strtok_r(buf, ",", &saveptr_scan);
       if (token) sNum = atoi(token);
       
       // ISSUE-H4 fix v5.65: Signal strength field position differs per SYSTEM type.
@@ -551,7 +571,7 @@ void scanFileToMask(const char *fName, uint32_t *mask) {
       const int sig_field = 8;
 #endif
       for (int i = 0; i < sig_field && token != NULL; i++) {
-        token = strtok(NULL, ",");
+        token = strtok_r(NULL, ",", &saveptr_scan);
       }
       
       if (token) sigVal = atoi(token);
@@ -693,6 +713,7 @@ void subtractUnsentFromMask(const char *uFile) {
 
   while (f.available()) {
     esp_task_wdt_reset(); // v7.80: Handle massive backlog files without timeout
+    vTaskDelay(1 / portTICK_PERIOD_MS); // v5.67: Yield to UI task to prevent freezing
     long pos = f.position(); // Save position of the FIRST byte of the line
     String line = f.readStringUntil('\n');
 
@@ -784,13 +805,25 @@ void subtractUnsentFromMask(const char *uFile) {
   f.close();
 }
 
-void reconstructSentMasks() {
-  if (backfill_done)
+void reconstructSentMasks(bool alreadyLocked) {
+  if (!alreadyLocked) {
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+      debugln("[SPIFFS] Mutex Timeout: Skipping reconstructSentMasks");
+      return;
+    }
+  }
+  if (backfill_done) {
+    if (!alreadyLocked)
+      xSemaphoreGive(fsMutex);
     return;
+  }
 
   // v7.80: Allow recovery on Deep Sleep if counters are zero (RTC Wiped)
-  if (rtc_get_reset_reason(0) == DEEPSLEEP_RESET && diag_pd_count > 0)
+  if (rtc_get_reset_reason(0) == DEEPSLEEP_RESET && diag_pd_count > 0) {
+    if (!alreadyLocked)
+      xSemaphoreGive(fsMutex);
     return;
+  }
 
   debugln("[GoldenData] Starting Sent Mask Reconstruction from SPIFFS...");
 
@@ -868,17 +901,29 @@ void reconstructSentMasks() {
 
   backfill_done = true;
   debugln("[GoldenData] Reconstruction Complete (Sent-Accurate).");
+  if (!alreadyLocked)
+    xSemaphoreGive(fsMutex);
 }
 
 // v5.48 reconciles delivered data after successful FTP upload
 // v7.53: Fixed to handle both CSV records (sampleNo,DATE...) and FTP records
 // (stnId;DATE,TIME;...) with correct sampleNo back-calculation.
-void markFileAsDelivered(const char *fileName) {
-  if (!SPIFFS.exists(fileName))
+void markFileAsDelivered(const char *fileName, bool alreadyLocked) {
+  if (!alreadyLocked) {
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+      debugln("[SPIFFS] Mutex Timeout: Skipping markFileAsDelivered");
+      return;
+    }
+  }
+  if (!SPIFFS.exists(fileName)) {
+    if (!alreadyLocked) xSemaphoreGive(fsMutex);
     return;
+  }
   File f = SPIFFS.open(fileName, FILE_READ);
-  if (!f)
+  if (!f) {
+    if (!alreadyLocked) xSemaphoreGive(fsMutex);
     return;
+  }
   // Detect format from extension: .kwd/.swd = FTP (semicolon), else CSV
   bool isFtpFile =
       (strstr(fileName, ".kwd") != NULL || strstr(fileName, ".swd") != NULL ||
@@ -886,6 +931,7 @@ void markFileAsDelivered(const char *fileName) {
 
   while (f.available()) {
     esp_task_wdt_reset(); // v7.67: Prevent WDT on huge backlog files
+    vTaskDelay(1 / portTICK_PERIOD_MS); // v5.67: Yield to UI task to prevent freezing
     String line = f.readStringUntil('\n');
     line.trim();
     if (line.length() < 10)
@@ -982,6 +1028,7 @@ void markFileAsDelivered(const char *fileName) {
   }
   f.close();
   debugf1("[GoldenData] Marked records from %s as DELIVERED.\n", fileName);
+  if (!alreadyLocked) xSemaphoreGive(fsMutex);
 }
 void reset_all_diagnostics() {
   debugln("[SYS] Resetting all diagnostic counters...");
@@ -1081,24 +1128,30 @@ int get_total_backlogs() {
     return diag_backlog_total;
   }
 
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+    return diag_backlog_total; // Return cached value on contention
+  }
+
   int total = 0;
   const char *files[] = {"/unsent.txt", "/ftpunsent.txt"};
   for (int i = 0; i < 2; i++) {
     if (SPIFFS.exists(files[i])) {
       File f = SPIFFS.open(files[i], FILE_READ);
       if (f) {
+        // v5.67 UI FREEZE FIX: Switch from slow String allocation to raw buffer read
+        char tbuf[128];
         while (f.available()) {
-          String line = f.readStringUntil('\n');
-          line.trim();
-          if (line.length() > 10) {
+          int len = f.readBytesUntil('\n', tbuf, sizeof(tbuf) - 1);
+          if (len > 10) {
             total++;
           }
-          if (total % 50 == 0) esp_task_wdt_reset(); // Keep watchdog happy
+          if (total % 100 == 0) esp_task_wdt_reset(); // Keep watchdog happy
         }
         f.close();
       }
     }
   }
+  xSemaphoreGive(fsMutex);
   diag_backlog_total = total;
   last_backlog_check = millis();
   return total;
