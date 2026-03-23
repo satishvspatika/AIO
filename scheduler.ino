@@ -223,7 +223,7 @@ void scheduler(void *pvParameters) {
 
     // Calculate how many minutes we are into the current 15-minute interval
     minutes_into_interval = current_min % 15;
-    is_valid_window = (minutes_into_interval <= 5);
+    is_valid_window = (minutes_into_interval <= 10);
 
     // Check for Fresh Boot entry override
     is_fresh_boot_entry = (wakeup_reason_is == 0); // PowerOn
@@ -241,7 +241,8 @@ void scheduler(void *pvParameters) {
 
       // PREVENT SLEEP: Flag active operation so loop() doesn't sleep if LCD
       // turns off
-      if (sync_mode != eSMSStart && sync_mode != eGPSStart) {
+      if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
+          sync_mode != eStartupGPS && sync_mode != eHealthStart) {
         sync_mode = eHttpTrigger; // v5.48: Mark as Busy (System stays awake for
                                   // reporting)
       }
@@ -320,7 +321,7 @@ void scheduler(void *pvParameters) {
       li_bat_val = li_bat * 0.0010915;
       bat_val = li_bat_val;
       snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
-      if (!wifi_active) {
+      if (!wifi_active && !gprs_started) {
         int solar_raw_slot;
         if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw_slot) == ESP_OK) {
           solar = solar_raw_slot;
@@ -737,10 +738,10 @@ void scheduler(void *pvParameters) {
       // first record after boat. Subsequent 15-min intervals should be logged
       // even if the reset reason '12' persists in memory.
       if (is_fresh_boot && !fresh_boot_check_done) {
-        debugln("Fresh boot detected. Skipping first record for sensor "
-                "stabilization.");
-        data_writing_initiated = 0;
-        skip_primary_http = true;
+        debugln("Fresh boot detected. Skipping primary upload for sensor "
+                "stabilization (queueing to Backlog).");
+        data_writing_initiated = 1;  // v5.68: MUST be 1 so it writes to unsent.txt
+        skip_primary_http = true;    // ...but blocks real-time upload
         dns_fallback_active = false;
         preferred_ftp_mode = -1;
         fresh_boot_check_done = true; // DO NOT SKIP NEXT TIME
@@ -1237,6 +1238,8 @@ void scheduler(void *pvParameters) {
 
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
           debugln("[SCHED] Error: SPIFFS Mutex Timeout. Deferring record.");
+          data_writing_initiated = 0; // v5.66: Prevent garbage data upload
+          sync_mode = eHttpStop;      // v5.66: Abort HTTP queueing
           goto TRIGGER_HTTP;
         }
 
@@ -1256,6 +1259,8 @@ void scheduler(void *pvParameters) {
            debugln("[SCHED] CRITICAL: SPIFFS nearly full. Pruning old files before write.");
            signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
            data_writing_initiated = 0;
+           schedulerBusy = false; // v5.66: Release sleep lock
+           sync_mode = eHttpStop; // v5.66: Abort HTTP queueing
            xSemaphoreGive(fsMutex);
            goto TRIGGER_HTTP;
         }
@@ -1702,6 +1707,29 @@ void scheduler(void *pvParameters) {
         file2.close();
         if (sd_card_ok && sd2)
           sd2.close();
+
+        // 🚨 CRITICAL FIX: The mid-day sequence assumes gprs.ino handles unsent.txt
+        // for the *current* record (sampleNo). But if skip_primary_http is true 
+        // (like on fresh boot), gprs.ino completely bypasses it. We MUST queue it here!
+        // Note: fsMutex is actively held from line 1239, safely protecting these file writes.
+        if (data_writing_initiated == 1 && skip_primary_http) {
+#if SYSTEM == 0
+            debugln("Primary skipped mid-day. Queuing CURRENT record to unsent.txt...");
+            File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
+            if (mid_unsent) {
+                mid_unsent.print(append_text);
+                mid_unsent.close();
+            }
+#endif
+#if (SYSTEM == 1 || SYSTEM == 2)
+            debugln("Primary skipped mid-day. Queuing CURRENT record to ftpunsent.txt...");
+            File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+            if (mid_ftp) {
+                mid_ftp.print(ftpappend_text);
+                mid_ftp.close();
+            }
+#endif
+        }
 
         // 2024 iter4 : Only triggered at the 15th min after writing it to SD
         // card/ SPIFFs so we can reset it.
@@ -2831,8 +2859,9 @@ void scheduler(void *pvParameters) {
       // HTTP/Sleep
       {
         int manual_wait_timeout = 0;
-        while ((sync_mode == eSMSStart || sync_mode == eGPSStart) &&
-               manual_wait_timeout < 60) {
+        while ((sync_mode == eSMSStart || sync_mode == eGPSStart || 
+                sync_mode == eHealthStart || sync_mode == eStartupGPS) &&
+               manual_wait_timeout < 150) {
           if (manual_wait_timeout % 10 == 0) {
             debugln("Waiting for Manual Task (SMS/GPS) to finish...");
           }
@@ -2847,7 +2876,7 @@ void scheduler(void *pvParameters) {
                 "data then Sleep.");
         // Protect manual triggers (SMS/GPS/Startup) from being overwritten
         if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
-            sync_mode != eStartupGPS) {
+            sync_mode != eStartupGPS && sync_mode != eHealthStart) {
           if (is_valid_window || timeSyncRequired) {
             sync_mode = eHttpBegin; // Force connection check on boot/duplicate
           } else {

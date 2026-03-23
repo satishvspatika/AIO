@@ -123,7 +123,8 @@ void draw_current_page() {
 
         // Blink "PLEASE WAIT.." for manual status queue
         bool is_pending = (pending_manual_status && cur_fld_no == FLD_SEND_STATUS) ||
-                          (pending_manual_gps && cur_fld_no == FLD_SEND_GPS);
+                          (pending_manual_gps && cur_fld_no == FLD_SEND_GPS) ||
+                          (pending_manual_health && cur_fld_no == FLD_SEND_HEALTH);
         if (is_pending && (millis() / 500) % 2 == 0) {
           memset(line1, ' ', 16);
           line1[16] = '\0';
@@ -583,6 +584,14 @@ void lcdkeypad(void *pvParameters) {
               pending_manual_gps = true;
               strcpy(ui_data[FLD_SEND_GPS].bottomRow, "PLEASE WAIT..  ");
             }
+          } else if (cur_fld_no == FLD_SEND_HEALTH) {
+            pending_manual_health = true;
+            if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
+              sync_mode = eHealthStart; // Uses the GPS + HEALTH sequence explicitly
+              strcpy(ui_data[FLD_SEND_HEALTH].bottomRow, "SENDING...     ");
+            } else {
+              strcpy(ui_data[FLD_SEND_HEALTH].bottomRow, "PLEASE WAIT..  ");
+            }
           } else if (cur_fld_no == FLD_HTTP_FAILS) {
             if (pcb_clear_state == 0) {
               pcb_clear_state = 1;
@@ -875,7 +884,7 @@ void lcdkeypad(void *pvParameters) {
     if (lcdkeypad_start && lcd_timer) {
       // v5.60: Stay awake during active manual triggers or startup tasks
       if (sync_mode == eSMSStart || sync_mode == eGPSStart || 
-          sync_mode == eStartupGPS || cur_fld_no == FLD_LOG && cur_mode == eEditOn) {
+          sync_mode == eHealthStart || sync_mode == eStartupGPS || cur_fld_no == FLD_LOG && cur_mode == eEditOn) {
         timerWrite(lcd_timer, 0);
       }
     }

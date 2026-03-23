@@ -278,7 +278,8 @@ enum {
   eSMSStart,
   eSMSStop,
   eGPSStart,
-  eStartupGPS
+  eStartupGPS,
+  eHealthStart
 }; // sync_mode
 enum {
   eGprsInitial,
@@ -537,6 +538,7 @@ extern volatile bool rtcTimeChanged;
 extern RTC_DATA_ATTR bool signature_valid;
 extern RTC_DATA_ATTR bool pending_manual_status;
 extern RTC_DATA_ATTR bool pending_manual_gps;
+extern RTC_DATA_ATTR bool pending_manual_health;
 
 // LCD and Navigation
 extern volatile char show_now;
@@ -668,13 +670,14 @@ enum UI_FIELD_ID {
   FLD_REGISTRATION,
   FLD_LAST_LOGGED,
   FLD_SEND_STATUS,
+  FLD_SEND_GPS,
+  FLD_SEND_HEALTH,
   FLD_RF_CALIB,
   FLD_RF_RES,
   FLD_DELETE_DATA,
   FLD_SD_COPY,
   FLD_BATTERY,
   FLD_SOLAR,
-  FLD_SEND_GPS,
   FLD_WIFI_ENABLE,
   FLD_LOG,
   FLD_WIND_DIR,

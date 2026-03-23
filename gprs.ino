@@ -105,14 +105,20 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
   // Calculate drift in seconds vs current RTC
   int rtc_total_sec = current_hour * 3600 + current_min * 60 + current_sec;
   int srv_total_sec = s_hh * 3600 + s_mi * 60 + s_ss;
-  int drift = abs(srv_total_sec - rtc_total_sec);
+  int raw_drift = abs(srv_total_sec - rtc_total_sec);
+  
+  // v5.66: 🚨 CRITICAL FIX - Handle Midnight Rollover!
+  // If Server=23:59:50 and RTC=00:00:10, drift is technically 20s, not 86380s.
+  int drift = (raw_drift > 43200) ? (86400 - raw_drift) : raw_drift;
 
   // Threshold: force path=45s, daily path=90s
   int threshold = force ? 45 : 90;
   debugf("[RTC-Sync] Drift = %ds (threshold %ds, force=%d)\n", drift, threshold,
          (int)force);
 
-  if (drift < threshold) {
+  if (drift < threshold && raw_drift < 43200) { 
+    // Extra safety: only skip if it's literally just a few seconds off.
+    // If we wrapped days, we probably want to sync anyway just to lock dates.
     debugln("[RTC-Sync] Drift within tolerance. No correction needed.");
     if (!force)
       rtc_daily_sync_done = true; // Mark as done even if no correction
@@ -126,12 +132,18 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
          current_hour, current_min, current_sec, s_hh, s_mi, s_ss, drift);
 
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
-    // Use current date fields but server's IST time
+    // Write perfectly translated server IST time and date to physical RTC
     rtc.adjust(DateTime(s_yy + 2000, s_mm, s_dd, s_hh, s_mi, s_ss));
     xSemaphoreGive(i2cMutex);
   }
 
-  // Update globals immediately so sleep calc uses correct time
+  // v5.66: 🚨 CRITICAL FIX - Update ALL globals immediately!
+  // If the physical RTC battery died and it woke up in 1970, we MUST legally
+  // update the current_day/year variables or else the rest of this waking cycle 
+  // will create data filed under 1970 despite the physical RTC being fixed!
+  current_day = s_dd;
+  current_month = s_mm;
+  current_year = s_yy + 2000;
   current_hour = s_hh;
   current_min = s_mi;
   current_sec = s_ss;
@@ -167,9 +179,10 @@ void gprs(void *pvParameters) {
 
     // --- MANUAL TRIGGERS (Keypad) ---
     if (sync_mode == eSMSStart || sync_mode == eGPSStart ||
-        sync_mode == eStartupGPS) {
-      target_fld =
-          (sync_mode == eSMSStart) ? FLD_SEND_STATUS : FLD_SEND_GPS;
+        sync_mode == eStartupGPS || sync_mode == eHealthStart) {
+      target_fld = (sync_mode == eSMSStart) ? FLD_SEND_STATUS :
+                   (sync_mode == eGPSStart) ? FLD_SEND_GPS :
+                   (sync_mode == eHealthStart) ? FLD_SEND_HEALTH : FLD_SEND_GPS;
 
       if (gprs_mode == eGprsInitial) {
         debugln("[GPRS] Manual Trigger: Initiating Power On...");
@@ -193,48 +206,24 @@ void gprs(void *pvParameters) {
         if (sync_mode == eSMSStart) {
           debugln("[GPRS] Keypad Triggered SMS Status");
 
-          // Re-verify network & APN for manual triggers (Ensures connection is
-          // live)
+          // Re-verify network & APN for manual triggers (Ensures connection is live)
           get_signal_strength();
           get_network();
           get_registration();
           get_a7672s();
 
-          // v5.60/v5.77: Always acquire fresh GPS before sending manual status/health
-          strcpy(ui_data[target_fld].bottomRow, "FETCHING GPS...");
-          show_now = 1;
-          get_gps_coordinates();
-
-          strcpy(ui_data[target_fld].bottomRow, "SENDING HEALTH..");
-#if ENABLE_HEALTH_REPORT == 1
-          bool health_ok = send_health_report(false); // Manual trigger: NO JITTER
-          if (health_ok) {
-            strcpy(ui_data[target_fld].bottomRow, "HLTH: OK, SMS...");
-          } else {
-            strcpy(ui_data[target_fld].bottomRow, "HLTH FAIL, SMS..");
-          }
-#else
-          debugln("[Health] Manual send skipped (disabled).");
-          strcpy(ui_data[target_fld].bottomRow, "SENDING SMS...");
-#endif
+          // v5.68 User Request: SEPARATE 'GET GPS' and 'HEALTH' from 'SEND STATUS'
+          // We no longer block the LCD interface for 3 minutes trying to send HTTP health 
+          // or waiting for physical GPS satellite locks just to send an SMS text!
+          strcpy(ui_data[target_fld].bottomRow, "SENDING SMS...  ");
           vTaskDelay(2000 / portTICK_PERIOD_MS);
           
           prepare_and_send_status(universalNumber);
 
           if (msg_sent) {
-#if ENABLE_HEALTH_REPORT == 1
-            if (health_ok) strcpy(ui_data[target_fld].bottomRow, "H:OK S:OK");
-            else strcpy(ui_data[target_fld].bottomRow, "H:FAIL S:OK");
-#else
-            strcpy(ui_data[target_fld].bottomRow, "SMS SUCCESS");
-#endif
+            strcpy(ui_data[target_fld].bottomRow, "SMS SUCCESS     ");
           } else {
-#if ENABLE_HEALTH_REPORT == 1
-            if (health_ok) strcpy(ui_data[target_fld].bottomRow, "H:OK S:FAIL");
-            else strcpy(ui_data[target_fld].bottomRow, "H:FAIL S:FAIL");
-#else
-            strcpy(ui_data[target_fld].bottomRow, "SMS FAILED");
-#endif
+            strcpy(ui_data[target_fld].bottomRow, "SMS FAILED      ");
           }
 
           if (sync_mode == eSMSStart)
@@ -251,7 +240,7 @@ void gprs(void *pvParameters) {
           get_lat_long_date_time(universalNumber);
           if (sync_mode == eGPSStart)
             sync_mode = eSMSStop;
-        } else if (sync_mode == eStartupGPS) {
+        } else if (sync_mode == eStartupGPS || sync_mode == eHealthStart) {
           debugln(
               "[GPRS] Startup/Station Change Triggered GPS & Health Report");
           if (signal_strength == 0) {
@@ -260,7 +249,7 @@ void gprs(void *pvParameters) {
             get_registration();
             get_a7672s();
           }
-          strcpy(ui_data[target_fld].bottomRow, "GETTING GPS...");
+          strcpy(ui_data[target_fld].bottomRow, "GETTING GPS...  ");
           show_now = 1;
           get_gps_coordinates();
 
@@ -274,31 +263,41 @@ void gprs(void *pvParameters) {
                      sizeof(ui_data[target_fld].bottomRow), "%.3f,%.3f", lati,
                      longi);
           } else {
-            strcpy(ui_data[target_fld].bottomRow, "GPS FAILED");
+            strcpy(ui_data[target_fld].bottomRow, "GPS FAILED      ");
           }
           vTaskDelay(2000 /
                      portTICK_PERIOD_MS); // Allow user to see coordinates
 
-          // Keep coordinates visible during send (don't overwrite)
 #if ENABLE_HEALTH_REPORT == 1
-          send_health_report(false);
+          if (target_fld == FLD_SEND_HEALTH) {
+             strcpy(ui_data[target_fld].bottomRow, "SENDING HEALTH..");
+             show_now = 1;
+          }
+          bool health_ok = send_health_report(false); // Manual: No Jitter
+          if (target_fld == FLD_SEND_HEALTH) {
+             if (health_ok) strcpy(ui_data[target_fld].bottomRow, "HEALTH SUCCESS! ");
+             else strcpy(ui_data[target_fld].bottomRow, "HEALTH FAILED   ");
+             show_now = 1;
+             vTaskDelay(2000 / portTICK_PERIOD_MS);
+          }
 #else
           debugln("[Health] Startup send skipped (disabled).");
 #endif
-
           sync_mode = eSMSStop;
-          msg_sent = 1; // Mark as success for UI feedback
+          msg_sent = 1; // Mark block as handled so it doesn't print "SEND FAILED"
         }
 
         // Unified result display for Manual Triggers
         if (msg_sent == 1) {
           if (target_fld == FLD_SEND_GPS) {
             snprintf(ui_data[target_fld].bottomRow, 17, "%0.3f,%0.3f", lati, longi);
-          } else {
+          } else if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
             strcpy(ui_data[target_fld].bottomRow, "SENT SUCCESS    ");
           }
         } else {
-          strcpy(ui_data[target_fld].bottomRow, "SEND FAILED     ");
+          if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
+            strcpy(ui_data[target_fld].bottomRow, "SEND FAILED     ");
+          }
         }
         
         show_now = 1; // Trigger UI refresh
@@ -322,7 +321,7 @@ void gprs(void *pvParameters) {
                sizeof(ui_data[target_fld].bottomRow));
         strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
         if (sync_mode == eSMSStart || sync_mode == eGPSStart ||
-            sync_mode == eStartupGPS)
+            sync_mode == eStartupGPS || sync_mode == eHealthStart)
           sync_mode = eSMSStop;
       }
     }
@@ -365,10 +364,20 @@ void gprs(void *pvParameters) {
           } else if (test_health_every_slot == 0) {
             if (current_hour == 11 && health_last_sent_day != current_day) {
               is_health_time = true; // Daily 11 AM
+            } else if (current_hour == 12 && current_min < 20 && health_last_sent_day != current_day) {
+              is_health_time = true; // v5.66: Graceful fallback for 11AM BSNL network congestion
             }
           }
           // If test_health_every_slot == 2, it remains false (Disabled)
 #endif
+
+          // v5.66: CDM True-Failure Fallback Check
+          // If the Morning closing data (08:30) and Health windows (11:00-12:20) both pass
+          // without success, the closing window is permanently missed for this day.
+          if (strcmp(diag_cdm_status, "PENDING") == 0 && current_hour >= 13 && health_last_sent_day != current_day) {
+            strcpy(diag_cdm_status, "FAIL");
+            debugln("[Health] CDM window entirely missed today. Flagging FAIL.");
+          }
 
           // v5.76 Post-OTA Confirmation Health Report Check
           bool is_ota_confirm = false;
@@ -419,7 +428,7 @@ void gprs(void *pvParameters) {
 
           // v5.65 P4: HIGH RESPONSIVENESS - If a manual command is pending, prioritize it
           // over the lengthy/unreliable automated health report.
-          if (pending_manual_status || pending_manual_gps) {
+          if (pending_manual_status || pending_manual_gps || pending_manual_health) {
             debugln("[GPRS] 💡 Priority Interrupt: Manual command detected during automated cycle.");
             // We let the end-of-cycle block (line ~600) handle the actual transition
             // but we skip the optional automated health report below to speed things up.
@@ -455,9 +464,7 @@ void gprs(void *pvParameters) {
             } else {
               debugln("[Health] \u274c Report failed - will retry next slot if "
                       "window open.");
-              if (strcmp(diag_cdm_status, "PENDING") == 0) {
-                strcpy(diag_cdm_status, "FAIL"); // CDM Missed
-              }
+              // v5.66: Removed premature diag_cdm_status="FAIL" assignment to allow fallback slot retries
             }
 
             if (!force_ota) {
@@ -473,10 +480,13 @@ void gprs(void *pvParameters) {
 #endif
             debugln("[GPRS] Automations finished. Checking for Piggybacked Commands...");
           }
-
         } else if (gprs_mode == eGprsSignalForStoringOnly) {
-          debugln("[GPRS] Signal too weak for HTTP. Storing data to backlog.");
-          store_current_unsent_data();
+          if (skip_primary_http) {
+            debugln("[GPRS] Signal too weak, but data already queued cleanly by scheduler skip.");
+          } else {
+            debugln("[GPRS] Signal too weak for HTTP/FTP. Storing data to backlog.");
+            store_current_unsent_data();
+          }
         }
       }
     }
@@ -503,7 +513,11 @@ void gprs(void *pvParameters) {
       debugf1("[CMD] Remote FTP_DAILY triggered for date: %s\n",
               ftp_daily_date);
 #if (SYSTEM == 1 || SYSTEM == 2)
-      send_ftp_file(ftp_daily_date, true);
+      if (strlen(ftp_daily_date) >= 8) { // Validate date string to prevent root directory iteration
+        send_ftp_file(ftp_daily_date, true);
+      } else {
+        debugln("[CMD] Error: Invalid FTP date format. Skipping FTP_DAILY.");
+      }
 #endif
       force_ftp_daily = false;
     }
@@ -623,6 +637,11 @@ void gprs(void *pvParameters) {
         pending_manual_gps = false;
         target_fld = FLD_SEND_GPS;
         sync_mode = eGPSStart;
+      } else if (pending_manual_health) {
+        debugln("[GPRS] 💡 Found queued manual Health request. Handling now...");
+        pending_manual_health = false;
+        target_fld = FLD_SEND_HEALTH;
+        sync_mode = eHealthStart;
       } else {
         debugln("[GPRS] No queued commands. Allowing sleep.");
         sync_mode = eHttpStop;
@@ -1038,20 +1057,26 @@ void prepare_data_and_send() {
   debug("http_data format is ");
   debugln(http_data);
   debugln();
-  // v5.63: Attempt 1 - Fast v3.0 logic
-  success_count = send_at_cmd_data(http_data, charArray, false);
-  // v5.68! Allow Robust Fallback recovery for BACKLOG data too!
-  if (success_count == 0) {
-    debugln("[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt 2)...");
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-    // v5.63: Attempt 2 - Fast v3.0 logic again (Rule: 2 fast attempts before fallback)
+  // v5.63: Selective Mode Logic (Airtel/Jio Backlog Optimization)
+  bool isAirtelOrJio = (strstr(carrier, "Airtel") != nullptr || strstr(carrier, "Jio") != nullptr);
+  
+  if (isAirtelOrJio && data_mode == eUnsentData) {
+    // M2M SIM backlog: Skip Fast, jump straight to Robust.
+    // Fast always times out on M2M SIMs after a session rebuild/zombie state.
+    debugln("[HTTP] Airtel/Jio backlog: using Robust direct.");
+    success_count = send_at_cmd_data(http_data, charArray, true);
+  } else {
+    // Current data (all carriers) or Backlog for BSNL: Fast -> Fast -> Robust
     success_count = send_at_cmd_data(http_data, charArray, false);
-    
     if (success_count == 0) {
-      debugln("[HTTP] 2nd Attempt (Fast) also failed. Falling back to Robust method...");
+      debugln("[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt 2)...");
       vTaskDelay(2000 / portTICK_PERIOD_MS);
-      // v5.63: Attempt 3 - Fallback to Robust handshake for weak-signal networks
-      success_count = send_at_cmd_data(http_data, charArray, true);
+      success_count = send_at_cmd_data(http_data, charArray, false);
+      if (success_count == 0) {
+        debugln("[HTTP] 2nd Attempt (Fast) also failed. Falling back to Robust method...");
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        success_count = send_at_cmd_data(http_data, charArray, true);
+      }
     }
   }
   // v6.76: One retry added above for current data.
@@ -1630,6 +1655,14 @@ void send_http_data() {
         debugln();
         debugln("*********  Sending UNSENT data to main server... ***********");
         debugln();
+        
+        // 🚨 CRITICAL FIX: If skip_primary_http was true, send_http_data() was skipped 
+        // and httpPostRequest is empty. Rebuild it locally so backlog has a target!
+        const char *domain = httpSet[http_no].serverName;
+        snprintf(httpPostRequest, sizeof(httpPostRequest),
+                 "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", domain,
+                 httpSet[http_no].Port, httpSet[http_no].Link);
+        
         unsent_pointer_count = 0; // resetting to 1st record of unsent data ..
         unsent_counter = 0;
 
@@ -1668,6 +1701,38 @@ void send_http_data() {
           return;
         } 
         fileSize = file1.size();
+
+        if (strstr(carrier, "Airtel") != nullptr || strstr(carrier, "Jio") != nullptr) {
+          debugln("[Backlog] Airtel/Jio: proactive bearer refresh before backlog.");
+          SerialSIT.println("AT+HTTPTERM");
+          waitForResponse("OK", 2000);
+          SerialSIT.println("AT+CIPSHUT");
+          waitForResponse("SHUT OK", 3000);
+          SerialSIT.println("AT+CGACT=0,1");
+          waitForResponse("OK", 2000);
+          vTaskDelay(3000 / portTICK_PERIOD_MS);  // carrier breather
+          verify_bearer_or_recover();             // rebuilds APN + IP
+          SerialSIT.println("AT+CGEREP=0");
+          waitForResponse("OK", 1000);
+          flushSerialSIT();
+          SerialSIT.println("AT+HTTPINIT");
+          waitForResponse("OK", 5000);
+          http_ready = true;
+          // Set all HTTPPARA fields — required before AT+HTTPACTION can fire
+          SerialSIT.println("AT+HTTPPARA=\"CID\",1");
+          waitForResponse("OK", 1000);
+          SerialSIT.println(httpPostRequest);   // URL already built by send_http_data()/send_unsent_data()
+          waitForResponse("OK", 1000);
+          if (!strcmp(httpSet[http_no].Format, "json")) {
+              SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+          } else {
+              SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"");
+          }
+          waitForResponse("OK", 1000);
+          SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
+          waitForResponse("OK", 1000);
+          debugln("[Backlog] Session rebuilt and configured. Starting backlog sends.");
+        }
 
         int backlog_processed_count = 0;
         while (unsent_pointer_count < fileSize) {
@@ -1710,7 +1775,7 @@ void send_http_data() {
           }
           
           // v5.65 P4: UI RESPONSIVENESS - Allow manual keypad interrupt during backlog
-          if (pending_manual_status || pending_manual_gps) {
+          if (pending_manual_status || pending_manual_gps || pending_manual_health) {
               debugln("[GPRS] 💡 Interrupt: Manual command detected. Deferring backlog...");
               File unsent_count_f = SPIFFS.open("/unsent_pointer.txt", FILE_WRITE);
               if (unsent_count_f) {
@@ -2799,8 +2864,12 @@ int send_at_cmd_data(char *payload, String response_arg, bool robust) {
     strcpy(diag_http_fail_reason, "NONE");
 
     // v7.70: Ensure clean session close after success to prevent crosstalk
-    SerialSIT.println("AT+HTTPTERM");
-    waitForResponse("OK", 1000);
+    // v5.66: CRITICAL BACKLOG FIX - Do NOT destroy the HTTP session mid-backlog!
+    // Keeping it open allows records 2-15 to flow instantly without rebuild penalties.
+    if (data_mode != eUnsentData) {
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 1000);
+    }
 
     return 1;
   } else {
@@ -4489,6 +4558,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
     p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
     p.putString("fail_res", "Bad size");
     p.end();
+    xSemaphoreGive(modemMutex); // v5.66: Fix missing mutex release
     return;
   }
 
@@ -4507,6 +4577,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
     p.putString("fail_res", "Begin fail: " + String(Update.errorString()));
     p.end();
     ota_silent_mode = false; // Release silence on early-exit failure
+    xSemaphoreGive(modemMutex); // v5.66: Fix missing mutex release
     return;
   }
   // BUG-9 Fix: Duplicate URC silence commands removed — already silenced
@@ -4526,6 +4597,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
     Update.abort();
     ota_writing_active = false;
     ota_silent_mode = false;  // Fixed: restore silent mode correctly
+    xSemaphoreGive(modemMutex); // v5.66: Fix missing mutex release
     return;
   }
 
@@ -4823,14 +4895,14 @@ void fetchFromHttpAndUpdate(char *fileName) {
 }
 
 void copyFromSPIFFSToFS(char *dateFile) {
-  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
-    debugln("[FS] Error: SPIFFS Mutex Timeout - deferring copy");
-    return;
-  }
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
     debugln("[FS] Error: Modem Mutex Timeout - deferring copy");
     diag_modem_mutex_fails++;
-    xSemaphoreGive(fsMutex); // RELEASE FS MUTEX
+    return;
+  }
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[FS] Error: SPIFFS Mutex Timeout - deferring copy");
+    xSemaphoreGive(modemMutex); // RELEASE MODEM MUTEX
     return;
   }
   String response;
@@ -5075,15 +5147,15 @@ void send_at_cmd(char *cmd, char *check, char *spl) {
  * Parameters: stn, type, gbat, ebat, sig
  */
 bool send_health_report(bool useJitter) {
-  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
-    debugln("[SPIFFS] Mutex Timeout: Skipping send_health_report");
-    return false;
-  }
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
      debugln("[Health] Error: Modem Mutex Timeout - deferring report");
      diag_modem_mutex_fails++;
-     xSemaphoreGive(fsMutex); // RELEASE FS MUTEX
      return false;
+  }
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[SPIFFS] Mutex Timeout: Skipping send_health_report");
+    xSemaphoreGive(modemMutex); // RELEASE MODEM MUTEX
+    return false;
   }
 
   // Skip health report entirely if on Airtel M2M and health server is foreign IP
@@ -5303,9 +5375,9 @@ bool send_health_report(bool useJitter) {
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
   bool success = false;
-  int max_attempts = useJitter ? 3 : 1; // v5.65 P4: Only 1 attempt for manual triggers (no jitter) to save user wait time
+  int max_attempts = useJitter ? 3 : 2; // Allow 2 attempts for manual triggers to endure Bearer Nuke TCP recoveries
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
-    debugf1("[Health] Attempt %d/3\n", attempt);
+    debugf2("[Health] Attempt %d/%d\n", attempt, max_attempts);
     if (!verify_bearer_or_recover())
       continue;
 
@@ -5316,7 +5388,14 @@ bool send_health_report(bool useJitter) {
     // Rule 12/24: Extended Breather after host switch
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 5000);
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    
+    // v5.66: BSNL 2G TCP teardown channel release requires >5s after a primary burst
+    if (strstr(carrier, "BSNL") || strstr(carrier, "bsnl")) {
+      vTaskDelay(8000 / portTICK_PERIOD_MS);
+    } else {
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
+    }
+    
     flushSerialSIT();
 
     SerialSIT.println("AT+HTTPINIT");
@@ -5368,6 +5447,7 @@ bool send_health_report(bool useJitter) {
             int toWrite = min(48, msgLen - sentBytes);
             SerialSIT.write(jsonBody + sentBytes, toWrite);
             sentBytes += toWrite;
+            esp_task_wdt_reset(); // ultra-safe WDT reset for slow UART/modem bottlenecks
             vTaskDelay(20 / portTICK_PERIOD_MS); 
         }
         

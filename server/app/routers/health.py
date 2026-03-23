@@ -67,6 +67,8 @@ def get_carrier_from_iccid(iccid: str) -> str:
 
 
 
+_DB_COLUMNS_CACHE = None
+
 def _get_db_columns(db: Session, table: str) -> set:
     """Returns the set of column names currently in the table."""
     inspector = sa_inspect(db.bind)
@@ -77,11 +79,15 @@ def _auto_migrate(db: Session, data: dict, table: str = "health_reports"):
     """
     For each key in `data` that does not yet exist as a column in `table`,
     auto-add the column via ALTER TABLE.
+    Uses a global memory cache to avoid thrashing SQLite table metadata.
     Returns the updated column set.
     """
-    existing = _get_db_columns(db, table)
+    global _DB_COLUMNS_CACHE
+    if _DB_COLUMNS_CACHE is None:
+        _DB_COLUMNS_CACHE = _get_db_columns(db, table)
+        
     for key, val in data.items():
-        if key in _SKIP_FIELDS or key in existing:
+        if key in _SKIP_FIELDS or key in _DB_COLUMNS_CACHE:
             continue
         if not _SAFE_COL.match(key):
             print(f"[AutoMigrate] Skipping unsafe column name: {key!r}")
@@ -91,13 +97,13 @@ def _auto_migrate(db: Session, data: dict, table: str = "health_reports"):
         try:
             db.execute(text(f"ALTER TABLE {table} ADD COLUMN {key} {col_type} DEFAULT {default}"))
             db.commit()
-            existing.add(key)
+            _DB_COLUMNS_CACHE.add(key)
             print(f"[AutoMigrate] ✅ Added column '{key}' ({col_type}) to {table}")
         except Exception as e:
             if "duplicate" not in str(e).lower():
                 print(f"[AutoMigrate] ⚠️  Could not add column '{key}': {e}")
-            existing.add(key)   # treat as existing to avoid retry loops
-    return existing
+            _DB_COLUMNS_CACHE.add(key)   # treat as existing to avoid retry loops
+    return _DB_COLUMNS_CACHE
 
 
 @router.post("/health")
@@ -125,11 +131,6 @@ async def health(request: Request, db: Session = Depends(get_db)):
         sys_mode  = int(data.get("system", 0))
         ver       = str(data.get("ver", "5.00")).strip()
         ota_fails = int(data.get("ota_fails", 0))
-        
-        # TEMPORARY OVERRIDE: Ignore historical device crashes from yesterday so this OTA can finally push!
-        # Once it updates to 5.67, the physical device will natively reset this counter anyway.
-        if stn_id == "1931" or stn_id == "001931":
-            ota_fails = 0
 
         # ── Step 1: Auto-migrate any new columns ─────────────────────────────
         existing_cols = _auto_migrate(db, data)
@@ -249,12 +250,12 @@ async def health(request: Request, db: Session = Depends(get_db)):
                     cmd_id    = timed_out.id
                     timed_out.executed_at = now_utc  # Re-mark as sent now
 
-            # CLEAR_FTP_QUEUE: if backlog > 50 records, server triggers a clear
+            # CLEAR_FTP_QUEUE: if backlog > 400 records (approx 4 days), server triggers a clear
             if not cmd:
                 unsent = int(data.get("unsent_count", 0) or 0)
-                if unsent > 50:
+                if unsent > 400:
                     cmd = "CLEAR_FTP_QUEUE"
-                    print(f"[CMD] {stn_id}: FTP backlog={unsent} > 50 → CLEAR_FTP_QUEUE")
+                    print(f"[CMD] {stn_id}: FTP backlog={unsent} > 400 → CLEAR_FTP_QUEUE")
 
             # v5.57 Fix S3: GET_GPS with 24h cooldown.
             # Previously fired on EVERY health report if GPS was missing, causing

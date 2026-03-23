@@ -1,33 +1,27 @@
-def get_numeric_ver(ver_str: str) -> float:
+import re
+
+def get_numeric_ver(ver_str: str) -> tuple:
     """
-    Safely extracts a comparable numeric version from version strings.
+    Safely extracts a comparable numeric version tuple from version strings.
     Handles both "CODE-VERSION" and "VERSION-CODE" formats.
+    Returns (major, minor) so (5, 10) correctly evaluates > (5, 1)
     """
     if not ver_str:
-        return -1.0
+        return (-1, -1)
     
-    parts = str(ver_str).split("-")
-    
-    # Try the last part (traditional "TWSRF9-GEN-5.79")
-    try:
-        return float(parts[-1])
-    except (ValueError, IndexError):
-        pass
+    # Extract the first matching integer.integer pattern from the string
+    match = re.search(r'(\d+)\.(\d+)', str(ver_str))
+    if match:
+        return (int(match.group(1)), int(match.group(2)))
         
-    # Try the first part (new "5.79-S-AIO")
-    try:
-        return float(parts[0])
-    except (ValueError, IndexError):
-        pass
-        
-    return -1.0
+    return (-1, -1)
 
 
 def needs_ota(device_ver: str, target_ver: str) -> bool:
     """
-    Returns True if device version is different from target version.
-    Uses numeric comparison to handle float edge cases (e.g. 5.9 vs 5.10).
+    Returns True if device version is strictly older than target version.
+    Uses semantic tuple comparison to handle edge cases accurately.
     """
     if not target_ver:
         return False
-    return get_numeric_ver(device_ver) != get_numeric_ver(target_ver)
+    return get_numeric_ver(device_ver) < get_numeric_ver(target_ver)

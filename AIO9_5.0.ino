@@ -311,6 +311,7 @@ RTC_DATA_ATTR int last_recorded_min = 0;
 RTC_DATA_ATTR bool signature_valid = false;
 RTC_DATA_ATTR bool pending_manual_status = false;
 RTC_DATA_ATTR bool pending_manual_gps = false;
+RTC_DATA_ATTR bool pending_manual_health = false;
 // --- End RTC Definitions ---
 
 // --- UI & Server Configurations (v5.65 ODR Fix) ---
@@ -324,25 +325,26 @@ ui_data_t ui_data[FLD_COUNT] = {
     {9, "REGISTRATION", "NA", eLive},                // 6
     {10, "LAST LOGGED AT", "0", eNumeric},           // 7
     {6, "SEND STATUS", "YES ?", eDisplayOnly},       // 8
-    {7, "RF CALIBRATION", "Yes?", eLive},            // 9
-    {25, "RF RESOLUTION", "0.50", eNumeric},         // 10
-    {11, "DELETE DATA?", "YES?", eNumeric},          // 11
-    {12, "COPY TO SDCARD?", "YES?", eDisplayOnly},   // 12
-    {13, "BATTERY VOLTAGE", "0", eLive},             // 13
-    {14, "SOLAR VOLTAGE", "0", eLive},               // 14
-    {15, "SEND LAT/LONG", "YES ?", eDisplayOnly},    // 15
-    {23, "ENABLE WIFI", "PRESS SET", eDisplayOnly},  // 16
-    {21, "LOG (DT TM)", "20260205 08:30", eNumeric}, // 17
-    {16, "WIND DIRECTION", "NA", eLive},             // 18
-    {17, "INST WIND SPEED", "NA", eLive},            // 19
-    {18, "AVG WIND SPEED", "NA", eLive},             // 20
-    {19, "TEMPERATURE", "NA", eLive},                // 21
-    {20, "HUMIDITY", "NA", eLive},                   // 22
-    {24, "PRESSURE", "NA", eLive},                   // 23
-    {26, "STATION ALT", "900", eNumeric},            // 24 BME only
+    {15, "SEND LAT/LONG", "YES ?", eDisplayOnly},    // 9
+    {28, "SEND HEALTH", "YES ?", eDisplayOnly},      // 10
+    {7, "RF CALIBRATION", "Yes?", eLive},            // 11
+    {25, "RF RESOLUTION", "0.50", eNumeric},         // 12
+    {11, "DELETE DATA?", "YES?", eNumeric},          // 13
+    {12, "COPY TO SDCARD?", "YES?", eDisplayOnly},   // 14
+    {13, "BATTERY VOLTAGE", "0", eLive},             // 15
+    {14, "SOLAR VOLTAGE", "0", eLive},               // 16
+    {23, "ENABLE WIFI", "PRESS SET", eDisplayOnly},  // 17
+    {21, "LOG (DT TM)", "20260205 08:30", eNumeric}, // 18
+    {16, "WIND DIRECTION", "NA", eLive},             // 19
+    {17, "INST WIND SPEED", "NA", eLive},            // 20
+    {18, "AVG WIND SPEED", "NA", eLive},             // 21
+    {19, "TEMPERATURE", "NA", eLive},                // 22
+    {20, "HUMIDITY", "NA", eLive},                   // 23
+    {24, "PRESSURE", "NA", eLive},                   // 24
+    {26, "STATION ALT", "900", eNumeric},            // 25 BME only
     {27, "HTTP FAIL STATS", "                ",
-     eLive},                                   // 25 v7.70: HTTP fail counters
-    {22, "TURN OFF LCD", "YES?", eDisplayOnly} // 26
+     eLive},                                         // 26 v7.70: HTTP fail counters
+    {22, "TURN OFF LCD", "YES?", eDisplayOnly}       // 27
 };
 
 #if SYSTEM == 0
@@ -400,7 +402,7 @@ struct http_params httpSet[11] = {
 // --- Volatile Handlers (v5.65 ODR Fix) ---
 volatile bool rtcReady = false;
 volatile bool rtcTimeChanged = false;
-volatile int wakeup_reason_is;
+volatile int wakeup_reason_is = 0;
 volatile int lcdkeypad_start = 0;
 // --- End Volatile Definitions ---
 
@@ -1024,7 +1026,6 @@ void setup() {
 
 #if DEBUG == 1
   print_reset_reason(rtc_get_reset_reason(0));
-  print_reset_reason(rtc_get_reset_reason(1));
 #endif
 
   // Firmware Update from SD Card
@@ -1441,6 +1442,13 @@ void initialize_hw() {
   adc2_config_channel_atten(ADC2_CHANNEL_8,
                             ADC_ATTEN_DB_11); // GPIO 25 (Solar)
 
+  // v5.66: Read Solar ADC immediately before modem power-on to prevent RF/UART contention
+  int solar_raw_initial;
+  if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw_initial) == ESP_OK) {
+    solar = solar_raw_initial;
+    solar_val = (solar / 4096.0) * 3.6 * 7.2;
+  }
+
   Serial.begin(115200);
   // v7.06: CRITICAL! Expand UART RX buffer to 16KB so that incoming AT+HTTPREAD
   // data does not drop bytes when Update.write() blocks the CPU during flash
@@ -1492,11 +1500,21 @@ void initialize_hw() {
   gpio_hold_dis(GPIO_NUM_26);
   gpio_hold_dis(GPIO_NUM_32);
 
-  if (!SPIFFS.begin(false)) { // false = don't auto-format
-    debugln("[BOOT] SPIFFS mount failed. Attempting recovery with format...");
+  bool spiffs_mounted = false;
+  for (int i = 0; i < 3; i++) {
+    if (SPIFFS.begin(false)) { // Safe mount, no auto-format
+      spiffs_mounted = true;
+      break;
+    }
+    debugln("[BOOT] SPIFFS mount failed. Retrying in 1s...");
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+
+  if (!spiffs_mounted) {
+    debugln("[BOOT] SPIFFS mount failed 3 times. Attempting recovery with format...");
     if (!SPIFFS.begin(true)) {
-      debugln("[BOOT] SPIFFS FAILED even after format.");
-      diag_rtc_battery_ok = false; // Reuse as "system health bad" proxy for diagnostics
+      debugln("[BOOT] CRITICAL: SPIFFS FAILED even after format.");
+      // v5.66: Removed misleading diag_rtc_battery_ok = false proxy assignment
     } else {
       debugln("[BOOT] SPIFFS reformatted. All local data lost.");
     }

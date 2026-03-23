@@ -284,6 +284,16 @@ void recoverI2CBus(bool alreadyLocked) {
       return;
     }
   }
+  // Quick check: If SDA is high, the bus is not hung.
+  // v5.66: Prevent false 1-second delays during deep sleep shutdown sequences.
+  pinMode(I2C_SDA, INPUT_PULLUP);
+  if (digitalRead(I2C_SDA) == HIGH) {
+    Wire.begin(I2C_SDA, I2C_SCL, 100000); // Re-attach peripheral peripheral pins
+    Wire.setTimeOut(I2C_TIMEOUT_MS);
+    if (!alreadyLocked) xSemaphoreGive(i2cMutex);
+    return;
+  }
+
   debugln("[I2C] 🚨 Bus hang detected! Attempting recovery...");
 
   // End any existing Wire session
