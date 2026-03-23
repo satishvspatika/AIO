@@ -123,11 +123,8 @@ extern float RF_RESOLUTION;
 #define I2C_MUTEX_WAIT_TIME                                                    \
   2500 // Mutex wait time (slightly longer than I2C timeout to prevent premature
        // timeout)
-#define WDT_TIMEOUT 180
 #define uS_TO_S_FACTOR                                                         \
   1000000 /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP                                                          \
-  15 /* Time ESP32 will go to sleep (in seconds) 5mts = 300 */
 
 // WS
 //#define RADIUS_METERS 0.07       // e.g., 7 cm

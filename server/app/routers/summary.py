@@ -73,7 +73,7 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
                 .all()
             )
 
-            now = datetime.datetime.now()
+            now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             for r in latest_reports:
                 r.eval = evaluate(r, now) # Populate server evaluation
                 if r.reported_at:
@@ -82,11 +82,17 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
                     r.time_ago = f"{mins}m ago" if mins < 60 else f"{mins // 60}h {mins % 60}m ago"
                 else:
                     r.time_ago = "?"
+                
+                # Assign ota_needed for the template
+                r.ota_needed = False
+                if r.ver and fw.current_ver and fw.file_exists:
+                    if get_numeric_ver(r.ver) < get_numeric_ver(fw.current_ver):
+                        r.ota_needed = True
 
             total_seen = len(latest_reports)
             converted  = sum(
                 1 for r in latest_reports
-                if r.ver and get_numeric_ver(r.ver) == get_numeric_ver(fw.current_ver)
+                if r.ver and get_numeric_ver(r.ver) >= get_numeric_ver(fw.current_ver)
             )
             # v7.90: Base health status on SERVER evaluation - essence same
             ok_count   = sum(1 for r in latest_reports if r.eval["verdict"] == "OK")

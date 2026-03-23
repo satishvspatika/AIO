@@ -1021,16 +1021,12 @@ void markFileAsDelivered(const char *fileName, bool alreadyLocked) {
         if (!(diag_sent_mask_cur[sNum / 32] & (1UL << (sNum % 32)))) {
           diag_sent_mask_cur[sNum / 32] |= (1UL << (sNum % 32));
           if (diag_ftp_success_count < 96) diag_ftp_success_count++;
-          if (diag_http_success_count < 96) diag_http_success_count++; 
-          if (diag_http_retry_count < 96) diag_http_retry_count++; // v5.65 P5: Increment Backlog col
           if (diag_net_data_count < 96) diag_net_data_count++;   // v5.65 P5: Update Live count
         }
       } else {
         if (!(diag_sent_mask_prev[sNum / 32] & (1UL << (sNum % 32)))) {
           diag_sent_mask_prev[sNum / 32] |= (1UL << (sNum % 32));
           if (diag_ftp_success_count_prev < 96) diag_ftp_success_count_prev++;
-          if (diag_http_success_count_prev < 96) diag_http_success_count_prev++;
-          if (diag_http_retry_count_prev < 96) diag_http_retry_count_prev++; // v5.65 P5
           if (diag_net_data_count_prev < 96) diag_net_data_count_prev++;    // v5.65 P5
         }
       }

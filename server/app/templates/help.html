@@ -184,18 +184,19 @@
                     <td class="py-2 text-slate-400">Hardware clock failure. Timestamps will be incorrect. Replace
                         internal button cell battery.</td>
                 </tr>
+                <tr>
+                    <td class="py-2 pr-3"><span class="badge-fail" style="background:#450a0a; color:#fca5a5; border-color:#7f1d1d;">✗ OFFLINE</span></td>
+                    <td class="py-2 text-slate-400">No health report received for <strong class="text-white">> 24.5 hours</strong>. Station is completely dead or has lost cellular connection.</td>
+                </tr>
             </tbody>
         </table>
 
         <!-- ── SCENARIO NOTE ────────────────────────────────────── -->
         <div class="mt-4 p-3 bg-slate-900/50 border border-slate-700 rounded-lg">
-            <h4 class="text-white text-[10px] font-bold uppercase mb-1">💡 Note: Offline Behavior</h4>
+            <h4 class="text-white text-[10px] font-bold uppercase mb-1">💡 Note: OFFLINE Detection</h4>
             <p class="text-[11px] text-slate-400 leading-relaxed">
-                The <strong class="text-white">Status</strong> verdict reflects the hardware and data health from the
-                <strong class="text-white">last report</strong> received.
-                If a station goes silent, its Status will remain as its last known condition (e.g., WS-Er).
-                The <strong class="text-white">Last Seen</strong> column is the definitive indicator of current
-                connectivity.
+                If a station goes completely silent and fails to send a health report for <strong class="text-red-400">> 24.5 hours</strong>, the server will override its historical sensor status and aggressively flag the station as <strong class="text-red-400 font-bold border-b border-red-500/50 pb-0.5">OFFLINE</strong>. 
+                The <strong class="text-white">Last Seen</strong> column provides the exact time since the last successful check-in.
             </p>
         </div>
     </div>
@@ -272,14 +273,94 @@
                 <tr>
                     <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Tdy/Ydy HTTP/Backlogs</td>
                     <td class="py-2 text-slate-400">
-                        <strong class="text-white">HTTP:</strong> Standard success.<br>
-                        <strong class="text-white">Backlogs:</strong> Recovered missed data.
+                        <strong class="text-white">HTTP:</strong> Live payload delivered on the very first attempt.<br>
+                        <strong class="text-white">Backlogs:</strong> Records safely recovered later via HTTP retries or FTP.
                     </td>
                 </tr>
                 <tr>
                     <td class="py-2 pr-6 font-bold text-white">Last Seen</td>
                     <td class="py-2 text-slate-400">Time since last check-in. Indicates <strong
                             class="text-blue-300">Current Connectivity</strong>. Hover for exact timestamp.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ── FLEET SUMMARY COLUMNS ──────────────────────────────────── -->
+    <div class="card p-5 mb-6">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">📊 Fleet Summary Column Definitions</h2>
+        <table class="w-full text-xs">
+            <thead>
+                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
+                    <th class="pb-2 pr-6 text-left">Column</th>
+                    <th class="pb-2 text-left">What It Means</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Status (Calc)</td>
+                    <td class="py-2 text-slate-400">Server's computed <strong class="text-white">Ground Truth Objective Health</strong> based on missing data slots and server-received payloads. Highly reliable.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">FW Report</td>
+                    <td class="py-2 text-slate-400">Raw diagnostic string reported directly by the firmware itself.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Data T/Y</td>
+                    <td class="py-2 text-slate-400">Records sent <strong class="text-white">Today</strong> vs <strong class="text-white">Yesterday</strong> (out of 96 slots).</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ── STATION DETAIL COLUMNS ──────────────────────────────────── -->
+    <div class="card p-5 mb-6">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🟣 Station Detail Column Definitions</h2>
+        <table class="w-full text-xs">
+            <thead>
+                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
+                    <th class="pb-2 pr-6 text-left">Column</th>
+                    <th class="pb-2 text-left">What It Means</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Sig</td>
+                    <td class="py-2 text-slate-400">Cellular Signal Strength (dBm). Yellow if worse than -75 dBm.</td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Net / SPIFFS</td>
+                    <td class="py-2 text-slate-400">
+                        <strong class="text-white">Net:</strong> Number of data records successfully delivered to the server for that day.<br>
+                        <strong class="text-white">SPIFFS:</strong> Remaining local storage capacity on the device in kilobytes (kB).
+                    </td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Prev / Consec HTTP</td>
+                    <td class="py-2 text-slate-400">
+                        <strong class="text-white">Prev:</strong> Number of records successfully confirmed for the <strong class="text-white">Previous Day</strong>.<br>
+                        <strong class="text-white">Consec:</strong> Count of current continuous HTTP Live submission failures. Indicates network drop.
+                    </td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">HTTP Fails (Pres/Cum)</td>
+                    <td class="py-2 text-slate-400">
+                        <strong class="text-white">Pr (Present):</strong> Failures attempting to send today's live records.<br>
+                        <strong class="text-white">Cum (Cumulative):</strong> Total HTTP failures including backlog retry attempts.
+                    </td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Reg Fail(Rsn)</td>
+                    <td class="py-2 text-slate-400">
+                        Number of times the modem completely failed to register onto a 2G/4G network tower. High count means SIM/Tower issue. Includes failure error code.
+                    </td>
+                </tr>
+                <tr>
+                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Mutex / B-Log</td>
+                    <td class="py-2 text-slate-400">
+                        <strong class="text-white">Mutex:</strong> Internal firmware lock contention errors.<br>
+                        <strong class="text-white">B-Log:</strong> Exact count of <strong class="text-white">HTTP unsent backlog</strong> files waiting in the queue.
+                    </td>
                 </tr>
             </tbody>
         </table>

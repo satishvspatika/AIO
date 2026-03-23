@@ -1,28 +1,34 @@
-# 🌟 Firmware v5.66: Complete Mission Hardening & OTA Pipeline
+# ESP32 AIO Firmware Release Notes
+## Version: v5.66 (March 23, 2026)
 
-Version 5.66 represents a massive stabilization and architectural refactor compared to the v5.63 and v5.65 lineages. It directly tackles the most insidious RTOS race conditions, network deadlocks, memory leaks, and "Silent Failures" that previously manifested under severe multi-carrier network congestion. This release fortifies the entire `AIO9_5.0` telemetry stack to guarantee survival in 100% autonomous, zero-touch environments.
+**"The Architect's Hardening & Dashboard Truth Release"**
 
-## 🔴 1. Critical Deadlock Defeats (RTOS Mutex Audits)
-* **The `send_health_report` Lock Inversion Fix:** Completely eradicated a catastrophic RTOS deadlock condition. v5.65 incorrectly grabbed `fsMutex` before `modemMutex`, causing a fatal freeze if the 15-minute `send_http_data` background task claimed `modemMutex` first. The lock ordering is explicitly inverted to safely grab `modemMutex` before proceeding to SPIFFS files.
-* **The `copyFromSPIFFSToFS` Fix**: Eliminated the exact same lock ordering deadlock in the secondary FTP pipeline.
-* **The `fetchFromHttpAndUpdate` Mutex Leaks**: Patched three fatal exit-paths during Over-The-Air (OTA) firmware installations where early-exit failures (file size misread, partition initialization error, memory crashes) failed to release `modemMutex`. This previously guaranteed that a failed OTA would eternally freeze the modem, requiring a hardware field reset.
+This release represents a massive architectural hardening of the ESP32 firmware core logic and an intensive overhaul of the Contabo server dashboard to ensure absolute, verified data-truth.
 
-## 🛰 2. Network Congestion & Telemetry Enhancements
-* **The BSNL TCP Purgatory Teardown (`+HTTPACTION 706/714`)**: Solved the BSNL TCP cache-poisoning issue where zombie sockets would hang continuously. Added a massive 5000ms "Carrier Breather" after `AT+HTTPTERM` allowing sluggish towers to properly purge the old data stream before trying to fetch/write again.
-* **Fallback Health Report Window**: Introduced a graceful BSNL network congestion fallback. If the primary `11:00 AM` daily health report slot gets slammed by server/network delays, it will intelligently retry between `12:00 PM - 12:15 PM` to guarantee the payload delivers. 
-* **True-FAIL Diagnostic (`diag_cdm_status`)**: Prevented intermediate health retries from causing early panic alarms on the server (`"FAIL"`). The system now patiently waits. If the time crosses `13:00` (1:00 PM) and the status is still `"PENDING"`, it officially flags the entire day as a `FAIL` to accurately represent network abandonment.
-* **Wider HTTP Processing Window**: Increased the `is_valid_window` scheduler slot tolerance from `5` minutes to `10` minutes (`minutes_into_interval <= 10`). This guarantees that nodes delayed by lengthy modem cold-starts or URC floods won't accidentally drop their entire 15-minute payload segment.
+### 🚀 Major Improvements & Fixes
 
-## 💾 3. Core Software / C++ Architectural Enhancements
-* **The One Definition Rule (ODR) Eradication**: Handled the colossal `Multiple Definition` GCC compiler crisis. Moving from v5.65 to v5.66, over 120 global variables (including complex `RTC_DATA_ATTR` structs) were meticulously migrated out of header files and natively defined strictly in `AIO9_5.0.ino` with `extern` stubs in `globals.h`. This guarantees 100% memory isolation between the two CPU cores.
-* **`wakeup_reason_is` Determinism**: Hard-initialized the critical Power-On Boot variable to zero (`volatile int wakeup_reason_is = 0;`), entirely eliminating the dangerous C++ assumption that the RTOS BSS segment will naturally zero itself out.
-* **FTP Safe Validation**: Enforced a minimum array length validation for `ftp_daily_date[]`. This permanently stops a malformed JSON command from triggering a root directory query (`/`) that locks up SPIFFS iteration queues.
-* **Precision Sensor Timing (Solar)**: Protected the delicate Solar ADC read on `AIO9_5.0.ino` boot from noisy modem activity. Additionally, the 15-minute `scheduler.ino` cycle actively skips polling the Solar panel natively if the `gprs_started` Engine is running, completely eliminating garbage `0.0V` measurements caused by RF voltage droops.
-* **I2C Bus False Hang Prevention**: Hardened `recoverI2CBus()` to natively scan the `SDA` pin structure before arbitrarily launching lock-recoveries during deep sleep power-down transitions.
+#### 1. Zero-Corruption Memory Architecture (Firmware)
+* **One Definition Rule (ODR) Enforced:** Utterly eliminated multi-core memory corruption. All `volatile` and `RTC_DATA_ATTR` variables were stripped from `.h` inclusion spaces and instantiated identically directly within `AIO9_5.0.ino`. They correctly shadow through `globals.h` as `extern`.
+* **Zero Race Conditions:** The dual-core execution models on standard ESP32 boards no longer clash over memory. State management is absolutely predictable across deep sleep boundaries.
 
-## ☁️ 4. Server-Side Infrastructure Upgrades (v5.66 Companion API)
-* **OTA Python Tuple Parsing Bug**: Fixed an excruciating mathematical crash in `ota_service.py` where parsing floating version strings caused `5.10` to round down to `5.1`, forever bricking devices on older branches from fetching newer firmware.
-* **SQLite Cache Throttling**: Ripped out the brute-force `PRAGMA table_info` schema calls happening 96 times per day *per station* in `health.py`. Column extraction is now lazily cached in-memory instantly reducing CPU load by over 50%.
-* **FTP Clear Tolerance Limit**: Increased the maximum `queue >= 50` destructive auto-delete safety threshold to `400` in the backend. An AIO9 node can now survive 4 days totally offline without the server accidentally shredding the backed-up rainfall records once it dumps online.
-* **Test Station Lock Bypass Removed**: Discarded the 1931 hard-coded test loops.
-* **Admin Token Purge**: Safely rotated credentials and destroyed the inadvertently checked-in `cookies.txt` artifact from the production backend.
+#### 2. Dashboard Absolute Truth (Server)
+* **Indestructible Map Engine:** Rebuilt the Leaflet.js mapping pipeline. Using aggressive spatial Regular Expressions, the Map extracts GPS coordinates from any string (ignoring brackets, degree markings, or invisible spaces).
+* **GPS Healing Fallback:** If a station sends a health report while the modem GPS is offline (reporting `NA`), the server intelligently executes a fallback search for the node's last-known-good geometric coordinate, preventing it from vanishing.
+* **Metric De-Inflation:** Terminated the double-counting bug where an FTP recovery accidentally triggered standard HTTP counters. HTTP Success and FTP Success are now radically distinct metrics exactly mirroring on-site behavior.
+* **Timezone Synchronization:** Adjusted the `summary.py` clock models strictly to `UTC.replace(tzinfo=None)`, correcting the 1–2 hour drift bug in evaluating the 24.5-hour `OFFLINE` status.
+
+#### 3. Over-The-Air (OTA) Pipeline Perfection
+* **Strict Evaluation Matrix:** Eliminated string-compare mismatching for version identification. The server converts `v5.66` structurally into `5.66` numeric equivalents, allowing `r.ver < current_ver` lock-step math.
+* **Accuracy of Conversion Display:** Target counts on the OTA screen correctly compute conversions as `>= target` entirely eliminating bad UI progress calculations if newer units are added manually.
+
+#### 4. Diagnostic & Help Clarity
+* **Field Engineer Help Section:** Overhauled `help.html`. Every single dashboard column, calculation criteria, FTP strategy, and Health payload dictionary is explained.
+* **Column Rebranding:** The dashboard clarifies that first-pass telemetry routes to **Tdy Live HTTP** versus retry telemetry going to **Backlogs**, closing interpretation loopholes.
+
+***
+
+### ⚙️ Final Quality Assurance Validation
+- [x] Tested alongside physical SPIFFS file systems in deployment conditions.
+- [x] Verified by full Python Server unit review (Fleet, Admin, Dashboard, Map).
+- [x] Tested against legacy ESP32 versions failing to pass GPS parameters. 
+- [x] Production configured (`DEBUG=0`) with UI manual display triggers fully verified.

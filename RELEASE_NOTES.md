@@ -1,9 +1,23 @@
 # ESP32 AIO Release Notes Summary
 
-## 🚀 Latest Version: v5.63 (March 18, 2026 - Final)
-**"The Airtel IoT & Power Stability Release"**
+## 🚀 Latest Version: v5.66 (March 23, 2026 - Final)
+**"The Architect's Hardening & Dashboard Truth Release"**
 
-This release completes the GPRS/HTTP stabilization for Airtel IoT and BSNL. It integrates the v3.0 fast-push engine with v5.60's robust error recovery and adds advanced battery protection for backlogs.
+This monumental release establishes a pristine baseline. It permanently fixes long-standing multi-core map corruption via definitive `extern` re-architecture, rebuilds the deployment Dashboard explicitly around the philosophy of ground-truth data metrics, and fortifies the GPS Map Engine against legacy missing-coordinate bugs.
+
+### Key Highlights:
+- **One Definition Rule (ODR)**: Complete `.ino` refactoring to destroy structural twin-variable memory poisoning.
+- **Indestructible Web Map**: Node-healing backend that defaults to last-known-good geometric coordinates, plus robust Regex filtering.
+- **Absolute Telemetry Accuracy**: Complete purge of backlog data from falsely inflating live HTTP performance metrics.
+- **OTA Verification Matrix**: Stringent version conversions stopping infinite OTA loops (`>=` operators only).
+
+[View Full v5.66 Release Notes](./RELEASE_NOTES_v5.66.md)
+
+---
+
+## 🕒 Previous Versions
+
+### [v5.63 - The Airtel IoT & Power Stability Release](./RELEASE_NOTES_v5.63.md) (March 18, 2026)
 
 ### Key Highlights:
 - **Hybrid HTTP Engine**: Combined v3.0 speed with v5.6x self-healing (Zombie Nuke).

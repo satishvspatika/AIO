@@ -69,9 +69,9 @@
                 <th class="p-3 text-center whitespace-nowrap">Tdy Sent (Live)</th>
                 <th class="p-3 text-center whitespace-nowrap">Ydy Sent/Stored</th>
                 <th class="p-3 text-center whitespace-nowrap"
-                    title="Today: On-time HTTP pushes / HTTP+FTP Backlog Recovered">Tdy HTTP/Backlogs</th>
+                    title="Today: On-time HTTP pushes / HTTP+FTP Backlog Recovered">Tdy Live HTTP/Backlogs</th>
                 <th class="p-3 text-center whitespace-nowrap"
-                    title="Yesterday: On-time HTTP pushes / HTTP+FTP Backlog Recovered">Ydy HTTP/Backlogs</th>
+                    title="Yesterday: On-time HTTP pushes / HTTP+FTP Backlog Recovered">Ydy Live HTTP/Backlogs</th>
                 <th class="p-3 text-left whitespace-nowrap">Last Seen</th>
                 {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role')
                 == 'supervisor') %}
@@ -166,7 +166,7 @@
 <!-- Data for Map (Safely passed via JSON) -->
 <script id="map-data-json" type="application/json">
 [
-    {% for r in reports if r.gps and ',' in r.gps %}
+    {% for r in reports if r.gps and r.gps.strip() %}
     { 
         "id": "{{ r.stn_id }}", 
         "gps": "{{ r.gps }}", 
@@ -253,10 +253,13 @@
                 // Load station data from the JSON script tag
                 try {
                     const stations = JSON.parse(document.getElementById('map-data-json').textContent);
+                    console.log("Loaded " + stations.length + " stations for Map.");
                     stations.forEach(s => {
-                        const parts = s.gps.split(',');
-                        if (parts.length === 2) {
-                            const lat = parseFloat(parts[0]), lon = parseFloat(parts[1]);
+                        // Extract all floating point numbers safely from the gps string
+                        const matches = s.gps.match(/-?\d+\.\d+/g);
+                        if (matches && matches.length >= 2) {
+                            const lat = parseFloat(matches[0]);
+                            const lon = parseFloat(matches[1]);
                             if (!isNaN(lat) && !isNaN(lon) && lat !== 0) {
                                 const color = s.ok ? '#22c55e' : '#ef4444';
                                 const icon = L.divIcon({

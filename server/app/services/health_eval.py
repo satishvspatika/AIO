@@ -76,6 +76,12 @@ def evaluate(r, now: datetime.datetime = None) -> dict:
     if r.reported_at is None:
         return {"verdict": "OFFLINE", "reasons": ["No report received"], "score": 0}
 
+    delta_mins = (now - r.reported_at).total_seconds() / 60
+    if delta_mins > OFFLINE_MINS:
+        return {"verdict": "OFFLINE",
+                "reasons": [f"No report for {int(delta_mins/60)}h"],
+                "score": 0}
+
     # ── 2. Battery ───────────────────────────────────────────────────────────
     bat = r.bat_v or 0
     if bat < CRITICAL_BAT and bat > 0:

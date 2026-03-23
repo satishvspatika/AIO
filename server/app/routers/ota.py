@@ -38,7 +38,7 @@ async def ota_page(request: Request, db: Session = Depends(get_db)):
             fw.total_stations = len(stations)
             fw.converted = sum(
                 1 for s in stations
-                if s[2] and get_numeric_ver(s[2]) == get_numeric_ver(fw.current_ver)
+                if s[2] and get_numeric_ver(s[2]) >= get_numeric_ver(fw.current_ver)
             )
             # Check if file exists in builds folder
             dest = os.path.join(BUILDS_DIR, f"FW_S{fw.category_id}_{fw.unit_type}.bin")

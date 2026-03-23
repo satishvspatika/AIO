@@ -103,8 +103,7 @@
                         </td>
                         <td class="p-3">
                             <span class="badge-ver">{{ r.ver or '?' }}</span>
-                            {% if r.ver and fw.current_ver and fw.file_exists and r.ver.split('-')[-1] != fw.current_ver
-                            %}
+                            {% if r.ota_needed %}
                             <span class="badge-ota">OTA↑</span>
                             {% endif %}
                         </td>

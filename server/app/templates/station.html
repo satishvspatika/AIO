@@ -176,9 +176,9 @@
                     <th class="p-3">Batt / Sol</th>
                     <th class="p-3">Sig</th>
                     <th class="p-3">Net / SPIFFS</th>
-                    <th class="p-3">Prev / First HTTP</th>
+                    <th class="p-3">Prev / Consec HTTP</th>
                     <th class="p-3">Reg Fail(Rsn)</th>
-                    <th class="p-3">HTTP Fail(Rsn)</th>
+                    <th class="p-3">HTTP Fails (Pres/Cum)</th>
                     <th class="p-3">Mutex / B-Log</th>
                     {% if request.state.user and (request.state.user.role == 'supervisor' or
                     request.state.user.get('role') == 'supervisor') %}
@@ -234,7 +234,7 @@
                     </td>
                     <td class="p-3 font-mono text-slate-400 leading-tight">
                         {{ r.net_cnt_prev or 0 }}<br>
-                        <span class="text-[9px] text-slate-500">First: {{ r.first_http or 0 }}</span>
+                        <span class="text-[9px] text-slate-500">Consec: {{ r.consec_http_fails or 0 }}</span>
                     </td>
                     <td
                         class="p-3 leading-tight {% if r.reg_fails and r.reg_fails > 3 %}text-red-400 font-bold{% else %}text-slate-400{% endif %}">
@@ -242,8 +242,8 @@
                             'NONE')[:10] }}</span>
                     </td>
                     <td
-                        class="p-3 leading-tight {% if r.http_fails and r.http_fails > 3 %}text-red-400 font-bold{% else %}text-slate-400{% endif %}">
-                        {{ r.http_fails or 0 }} <br><span class="text-[9px] text-slate-500">{{ (r.http_fail_reason or
+                        class="p-3 leading-tight {% if (r.http_present_fails and r.http_present_fails > 3) or (r.http_cum_fails and r.http_cum_fails > 10) %}text-red-400 font-bold{% else %}text-slate-400{% endif %}">
+                        Pr: {{ r.http_present_fails or 0 }} <br><span class="text-[9px] text-slate-500">Cum: {{ r.http_cum_fails or 0 }} / {{ (r.http_fail_reason or
                             'NONE')[:10] }}</span>
                     </td>
                     <td class="p-3 leading-tight text-slate-400">

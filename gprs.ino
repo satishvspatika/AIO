@@ -184,6 +184,11 @@ void gprs(void *pvParameters) {
                    (sync_mode == eGPSStart) ? FLD_SEND_GPS :
                    (sync_mode == eHealthStart) ? FLD_SEND_HEALTH : FLD_SEND_GPS;
 
+      // Clear the queued pending flag immediately to prevent double-execution
+      if (sync_mode == eSMSStart) pending_manual_status = false;
+      else if (sync_mode == eGPSStart) pending_manual_gps = false;
+      else if (sync_mode == eHealthStart) pending_manual_health = false;
+
       if (gprs_mode == eGprsInitial) {
         debugln("[GPRS] Manual Trigger: Initiating Power On...");
         strcpy(ui_data[target_fld].bottomRow, "GPRS POWER ON...");
@@ -225,6 +230,10 @@ void gprs(void *pvParameters) {
           } else {
             strcpy(ui_data[target_fld].bottomRow, "SMS FAILED      ");
           }
+          show_now = 1;
+          vTaskDelay(3000 / portTICK_PERIOD_MS);
+          strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+          show_now = 1;
 
           if (sync_mode == eSMSStart)
             sync_mode = eSMSStop;
@@ -278,7 +287,9 @@ void gprs(void *pvParameters) {
              if (health_ok) strcpy(ui_data[target_fld].bottomRow, "HEALTH SUCCESS! ");
              else strcpy(ui_data[target_fld].bottomRow, "HEALTH FAILED   ");
              show_now = 1;
-             vTaskDelay(2000 / portTICK_PERIOD_MS);
+             vTaskDelay(3000 / portTICK_PERIOD_MS);
+             strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+             show_now = 1;
           }
 #else
           debugln("[Health] Startup send skipped (disabled).");
@@ -291,12 +302,24 @@ void gprs(void *pvParameters) {
         if (msg_sent == 1) {
           if (target_fld == FLD_SEND_GPS) {
             snprintf(ui_data[target_fld].bottomRow, 17, "%0.3f,%0.3f", lati, longi);
+            show_now = 1;
+            vTaskDelay(4000 / portTICK_PERIOD_MS);
+            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+            show_now = 1;
           } else if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
             strcpy(ui_data[target_fld].bottomRow, "SENT SUCCESS    ");
+            show_now = 1;
+            vTaskDelay(3000 / portTICK_PERIOD_MS);
+            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+            show_now = 1;
           }
         } else {
           if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
             strcpy(ui_data[target_fld].bottomRow, "SEND FAILED     ");
+            show_now = 1;
+            vTaskDelay(3000 / portTICK_PERIOD_MS);
+            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+            show_now = 1;
           }
         }
         
@@ -2406,7 +2429,6 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
 
         if (upload_success) {
           // last_cmd_res already set in the loop
-          diag_ftp_success_count++; // v5.52 ENH-1: Increment success counter
           diag_consecutive_reg_fails =
               0; // RESET counter on any successful data upload
 
@@ -5410,8 +5432,8 @@ bool send_health_report(bool useJitter) {
     // Rule 59: Lean Sequence (Fast burst, no gaps)
     char ht_url[150];
     snprintf(ht_url, sizeof(ht_url),
-             "AT+HTTPPARA=\"URL\",\"http://%s:%s/health\"", HEALTH_SERVER_IP,
-             HEALTH_SERVER_PORT);
+             "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_IP,
+             HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
     SerialSIT.println(ht_url);
     waitForResponse("OK", 2000);
 

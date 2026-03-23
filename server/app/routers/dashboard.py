@@ -44,6 +44,7 @@ def _all_fields_row(r):
     # v7.86: Offset to IST
     ist_time = r.reported_at + datetime.timedelta(hours=5, minutes=30) if r.reported_at else None
     
+    ev = evaluate(r)
     return [
         ist_time, _g(r, "stn_id"), _g(r, "unit_type"), _g(r, "system"),
         _g(r, "health_sts"), _g(r, "sensor_sts"),
@@ -64,7 +65,7 @@ def _all_fields_row(r):
         _g(r, "ota_fails"), _g(r, "ota_fail_reason"),
         _g(r, "consec_http_fails"), _g(r, "consec_sim_fails"),
         _g(r, "http_backlog_cnt", 0), _g(r, "mutex_fail", 0),    # v5.56
-        " | ".join(evaluate(r).get("reasons", [])) or evaluate(r).get("verdict", "OK")
+        " | ".join(ev.get("reasons", [])) if "reasons" in ev and ev["reasons"] else ev.get("verdict", "OK")
     ]
 
 
@@ -161,6 +162,17 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             r.pending = db.query(CommandQueue).filter_by(
                 stn_id=r.stn_id, executed_at=None
             ).first()
+
+            # GPS Fallback: If latest report has no GPS (e.g. older firmware sends NA during non-GPS wakeups),
+            # search history for the last known good coordinate.
+            if not r.gps or str(r.gps).strip() in ("NA", "0.000000,0.000000", "", "0,0", "None"):
+                last_good = db.query(HealthReport).filter(
+                    HealthReport.stn_id == r.stn_id,
+                    HealthReport.gps.isnot(None),
+                    HealthReport.gps.notin_(("NA", "0.000000,0.000000", "", "0,0"))
+                ).order_by(HealthReport.reported_at.desc()).first()
+                if last_good:
+                    r.gps = last_good.gps
 
         # Final Sort: priority, then station ID
         reports.sort(key=lambda x: (x.sort_priority, x.stn_id))
