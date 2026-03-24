@@ -2336,8 +2336,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
         char file_buf[256];
         while (file1.available()) {
           int bytesRead = file1.read((uint8_t*)file_buf, 255);
-          file_buf[bytesRead] = '\0';
-          SerialSIT.print(file_buf);
+          SerialSIT.write((uint8_t*)file_buf, bytesRead);
         }
         // Send trailing newline just in case FSWRITE is expecting one
         SerialSIT.println();
@@ -5048,8 +5047,7 @@ void copyFromSPIFFSToFS(char *dateFile) {
     char file_buf[256];
     while (file1.available()) {
       int bytesRead = file1.read((uint8_t*)file_buf, 255);
-      file_buf[bytesRead] = '\0';
-      SerialSIT.print(file_buf);
+      SerialSIT.write((uint8_t*)file_buf, bytesRead);
     }
     SerialSIT.println();
     response = waitForResponse("+FSWRITE", 5000);

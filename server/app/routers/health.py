@@ -29,7 +29,8 @@ _ALLOWED_FIELDS = {
     "consec_reg_fails", "consec_http_fails", "consec_sim_fails", "unsent_count", 
     "http_present_fails", "http_cum_fails", "http_backlog_cnt", "last_cmd_id", 
     "mutex_fail", "calib", "gps", "carrier", "iccid", "last_cmd_res", "net_nuke",
-    "dbg_tsk", "last_rst"
+    "dbg_tsk", "last_rst", "health_sts", "sensor_sts", "reg_fail_reason", 
+    "cdm_sts", "ota_fail_reason"
 }
 
 # Known type hints — anything not listed defaults to TEXT

@@ -5,6 +5,7 @@ from app.database import engine
 from app.models import Base
 from app.routers import health, dashboard, ota, commands, summary
 from app.auth import router as auth_router, SESSIONS
+import aiofiles
 
 # Ensure all DB tables exist at startup
 Base.metadata.create_all(bind=engine)
@@ -120,7 +121,6 @@ async def serve_firmware(filename: str, request: Request):
         chunk_size = end - start + 1
 
         async def iter_file():
-            import aiofiles
             async with aiofiles.open(filepath, "rb") as f:
                 await f.seek(start)
                 remaining = chunk_size
@@ -146,7 +146,6 @@ async def serve_firmware(filename: str, request: Request):
     else:
         # Full file request (e.g. for size check via HEAD/GET)
         async def iter_full():
-            import aiofiles
             async with aiofiles.open(filepath, "rb") as f:
                 while True:
                     import asyncio
