@@ -5193,6 +5193,7 @@ void send_at_cmd(char *cmd, char *check, char *spl) {
  * Sends a health report to the Google Sheets "Server"
  * Parameters: stn, type, gbat, ebat, sig
  */
+#if ENABLE_HEALTH_REPORT == 1
 bool send_health_report(bool useJitter) {
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
      debugln("[Health] Error: Modem Mutex Timeout - deferring report");
@@ -5663,6 +5664,7 @@ bool send_health_report(bool useJitter) {
   }
   return success;
 }
+#endif
 
 /*
  *   GRACEFUL REBOOT (v5.58 Fix)
