@@ -81,8 +81,8 @@ void windSpeed(void *pvParameters) {
       cur_wind_speed = WS_CALIBRATION_FACTOR * (avgPulsesPerSec / 4.0);
 
       // Filter spikes
-      if (cur_wind_speed > 100.0)
-        cur_wind_speed = 0;
+      if (cur_wind_speed > 35.0)
+        cur_wind_speed = 0.0;
       if (cur_wind_speed < 0)
         cur_wind_speed = 0;
 

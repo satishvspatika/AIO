@@ -82,6 +82,7 @@ extern char ota_cmd_param[128];       // v75: Target binary name from dashboard
 extern RTC_DATA_ATTR int last_cmd_id;               // v7.92: Command ID for feedback
 extern RTC_DATA_ATTR char last_cmd_res[64];         // v7.92: Result message for feedback
 extern volatile bool ota_silent_mode; // Rule 43: Stop all log leakage
+extern volatile bool bearer_recovery_active;
 
 // SAFETY BUFFER: Reserve 512 bytes at the start of RTC Memory to prevent
 // ULP Program Code (loaded at offset 0) from overwriting C variables.
@@ -204,6 +205,7 @@ extern portMUX_TYPE timerMux0;
 extern portMUX_TYPE timerMux1;
 extern portMUX_TYPE timerMux2;
 extern portMUX_TYPE windMux;
+extern portMUX_TYPE rtcTimeMux;
 
 // Keypad timing
 extern unsigned long last_key_time;
@@ -213,42 +215,42 @@ extern int cur_file_found;
 #if DEBUG == 1
 #define debugln(...)                                                           \
   do {                                                                         \
-    if (!ota_silent_mode)                                                      \
+    if (!ota_silent_mode && !bearer_recovery_active)                           \
       Serial.println(__VA_ARGS__);                                             \
   } while (0)
 #define debug(...)                                                             \
   do {                                                                         \
-    if (!ota_silent_mode)                                                      \
+    if (!ota_silent_mode && !bearer_recovery_active)                           \
       Serial.print(__VA_ARGS__);                                               \
   } while (0)
 #define debugf1(a, x)                                                          \
   do {                                                                         \
-    if (!ota_silent_mode)                                                      \
+    if (!ota_silent_mode && !bearer_recovery_active)                           \
       Serial.printf(a, x);                                                     \
   } while (0)
 #define debugf2(a, x, y)                                                       \
   do {                                                                         \
-    if (!ota_silent_mode)                                                      \
+    if (!ota_silent_mode && !bearer_recovery_active)                           \
       Serial.printf(a, x, y);                                                  \
   } while (0)
 #define debugf3(a, x, y, z)                                                    \
   do {                                                                         \
-    if (!ota_silent_mode)                                                      \
+    if (!ota_silent_mode && !bearer_recovery_active)                           \
       Serial.printf(a, x, y, z);                                               \
   } while (0)
 #define debugf4(a, x, y, z, p)                                                 \
   do {                                                                         \
-    if (!ota_silent_mode)                                                      \
+    if (!ota_silent_mode && !bearer_recovery_active)                           \
       Serial.printf(a, x, y, z, p);                                            \
   } while (0)
 #define debugf5(a, x, y, z, p, q)                                              \
   do {                                                                         \
-    if (!ota_silent_mode)                                                      \
+    if (!ota_silent_mode && !bearer_recovery_active)                           \
       Serial.printf(a, x, y, z, p, q);                                         \
   } while (0)
 #define debugf(a, ...)                                                         \
   do {                                                                         \
-    if (!ota_silent_mode)                                                      \
+    if (!ota_silent_mode && !bearer_recovery_active)                           \
       Serial.printf(a, ##__VA_ARGS__);                                         \
   } while (0)
 #else
@@ -575,6 +577,7 @@ void windDirection(void *pvParameters);
 extern TaskHandle_t scheduler_h, gprs_h, lcdkeypad_h, rtcRead_h;
 extern TaskHandle_t tempHum_h, bmeTask_h, windSpeed_h, windDirection_h;
 extern volatile bool ota_silent_mode;
+extern volatile bool bearer_recovery_active;
 extern int active_cid;
 
 void rtcRead(void *pvParameters);

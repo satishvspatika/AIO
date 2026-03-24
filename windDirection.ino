@@ -14,6 +14,11 @@ void windDirection(void *pvParameters) {
   for (;;) {
     esp_task_wdt_reset();
 
+    while (ota_silent_mode) {
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      esp_task_wdt_reset();
+    }
+
     // Take 10 samples, tracking min and max for stuck detection
     long sum = 0;
     int minVal = 4095, maxVal = 0;

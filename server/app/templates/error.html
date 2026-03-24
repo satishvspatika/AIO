@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}System Error - Spatika Health{% endblock %}
+{% block content %}
+<div class="card p-10 max-w-2xl mx-auto mt-10 text-center border-red-900/50">
+    <div class="text-6xl mb-4">⚠️</div>
+    <h1 class="text-2xl font-black text-red-400 mb-2">System Error</h1>
+    <p class="text-slate-400 mb-6">An unexpected error occurred while processing this request. The issue has been logged securely.</p>
+    <div class="bg-black/50 p-4 rounded text-left font-mono text-xs text-slate-500 overflow-x-auto border border-slate-800">
+        Error Code: 500<br>
+        Transaction: {{ request.url.path }}
+    </div>
+    <div class="mt-8">
+        <a href="/dashboard" class="btn-sm btn-blu px-6 py-2">Return to Dashboard</a>
+    </div>
+</div>
+{% endblock %}

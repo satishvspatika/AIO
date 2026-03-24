@@ -48,6 +48,7 @@ volatile bool force_clear_ftp_queue =
 volatile bool force_delete_data = false; // v7.94: Server-requested Factory Reset
 volatile bool ota_writing_active = false;
 volatile bool ota_silent_mode = false; // Rule 43
+volatile bool bearer_recovery_active = false;
                                        // v6.88
 char ota_cmd_param[128] = "";
 RTC_DATA_ATTR int last_cmd_id = 0;
@@ -167,6 +168,7 @@ portMUX_TYPE timerMux0 = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE timerMux1 = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE timerMux2 = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE windMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE rtcTimeMux = portMUX_INITIALIZER_UNLOCKED;
 
 volatile char show_now = 0;
 TaskHandle_t bmeTask_h;

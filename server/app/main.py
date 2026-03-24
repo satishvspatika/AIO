@@ -29,8 +29,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         is_protected = any(request.url.path.startswith(p) for p in protected_prefixes)
         
         # 2. Get User from Session
+        import time
         session_id = request.cookies.get("session_id")
         user = SESSIONS.get(session_id)
+        
+        if user and user.get("expires_at", 0) < time.time():
+            if session_id in SESSIONS:
+                del SESSIONS[session_id]
+            user = None
         
         # Inject into state so Jinja templates can use it via request.state.user
         request.state.user = user

@@ -1462,6 +1462,9 @@ void send_http_data() {
     return;
   }
   
+  // Clear any stale TCP errors from previous runs to prevent false-positive network nuke loops
+  diag_http_fail_reason[0] = '\0';
+  
   String response;
   const char *charArray;
   /*
@@ -4674,45 +4677,40 @@ void fetchFromHttpAndUpdate(char *fileName) {
 
     // v7.52: Reverted to One-Chunk-One-Session (Rule 41) for binary safety,
     // but using 64KB chunks to maintain high throughput.
-    bool session_active = false;
+    // One-Chunk-One-Session (Rule 41) forced re-init
+    SerialSIT.println("AT+HTTPTERM");
+    waitForResponse("OK", 1000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
 
-    if (!session_active) {
-      SerialSIT.println("AT+HTTPTERM");
-      waitForResponse("OK", 1000);
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
-
-      if (!verify_bearer_or_recover()) {
-        Serial.println("[OTA] ❌ Bearer Recovery Failed");
-        chunk_retries++;
-        consecutive_fails++;
-        if (chunk_retries > 30)
-          break;
-        esp_task_wdt_reset();
-        continue;
-      }
-
-      SerialSIT.println("ATE0");
-      waitForResponse("OK", 1000);
-
-      SerialSIT.println("AT+HTTPINIT");
-      if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
-        Serial.println("[OTA] ⚠️ HTTPINIT Failed");
-        chunk_retries++;
-        consecutive_fails++;
-        esp_task_wdt_reset();
-        continue;
-      }
-
-      SerialSIT.println("AT+HTTPPARA=\"CID\",1");
-      waitForResponse("OK", 2000);
-      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-               "AT+HTTPPARA=\"URL\",\"http://%s:%s/builds/%s\"",
-               HEALTH_SERVER_IP, OTA_SERVER_PORT, fileName);
-      SerialSIT.println(gprs_xmit_buf);
-      waitForResponse("OK", 2000);
-
-      session_active = true;
+    if (!verify_bearer_or_recover()) {
+      Serial.println("[OTA] ❌ Bearer Recovery Failed");
+      chunk_retries++;
+      consecutive_fails++;
+      if (chunk_retries > 30)
+        break;
+      esp_task_wdt_reset();
+      continue;
     }
+
+    SerialSIT.println("ATE0");
+    waitForResponse("OK", 1000);
+
+    SerialSIT.println("AT+HTTPINIT");
+    if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
+      Serial.println("[OTA] ⚠️ HTTPINIT Failed");
+      chunk_retries++;
+      consecutive_fails++;
+      esp_task_wdt_reset();
+      continue;
+    }
+
+    SerialSIT.println("AT+HTTPPARA=\"CID\",1");
+    waitForResponse("OK", 2000);
+    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
+             "AT+HTTPPARA=\"URL\",\"http://%s:%s/builds/%s\"",
+             HEALTH_SERVER_IP, OTA_SERVER_PORT, fileName);
+    SerialSIT.println(gprs_xmit_buf);
+    waitForResponse("OK", 2000);
 
     // Set Range
     int r_start = actual_downloaded;
@@ -5348,7 +5346,7 @@ bool send_health_report(bool useJitter) {
 
   // v7.83: Full payload — all columns now populated on server
   // Buffer: ~1280 bytes to accommodate all new fields
-  char jsonBody[1280];
+  char jsonBody[1536];
   int msgLen = snprintf(
       jsonBody, sizeof(jsonBody),
       "{\"stn_id\":\"%s\",\"unit_type\":\"%s\",\"system\":%d,"

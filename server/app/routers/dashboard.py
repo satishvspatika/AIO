@@ -184,7 +184,8 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             "ota_pending": ota_pending, "low_bat": low_bat,
         })
     except Exception as e:
-        return {"Dashboard Error": str(e)}
+        print(f"CRITICAL 500 DASHBOARD ERROR: {e}")
+        return templates.TemplateResponse("error.html", {"request": request}, status_code=500)
 
 
 @router.get("/station/{stn_id}")
@@ -263,7 +264,8 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
             }
         )
     except Exception as e:
-        return {"Error": str(e)}
+        print(f"CRITICAL 500 STATION ERROR: {e}")
+        return templates.TemplateResponse("error.html", {"request": request}, status_code=500)
 
 
 # ── CSV Downloads ─────────────────────────────────────────────────────────────

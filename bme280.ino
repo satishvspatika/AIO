@@ -43,6 +43,11 @@ void bmeTask(void *pvParameters) {
   }
 
   for (;;) {
+    while (ota_silent_mode) {
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      esp_task_wdt_reset();
+    }
+
     if (bmeType != BME_UNKNOWN) {
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
           pdTRUE) {

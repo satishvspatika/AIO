@@ -134,12 +134,14 @@ void rtcRead(void *pvParameters) {
         }
       }
       // Update global time
+      portENTER_CRITICAL(&rtcTimeMux);
       current_year = yr;
       current_month = mo;
       current_day = dy;
       current_hour = hr;
       current_min = mi;
       current_sec = sec;
+      portEXIT_CRITICAL(&rtcTimeMux);
 
       // Compute nearest 15-min slot
       //        record_hr  = hr;
@@ -332,11 +334,13 @@ void parse_and_convert_clbs_response(const char *response, int year1,
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
     // Assign for making the correct decision on time to sleep
+    portENTER_CRITICAL(&rtcTimeMux);
     current_year = last_recorded_yy;
     current_month = last_recorded_mm;
     current_day = last_recorded_dd;
     current_hour = last_recorded_hr;
     current_min = last_recorded_min;
+    portEXIT_CRITICAL(&rtcTimeMux);
 
     // v5.59: Atomic Save for signature.txt
     File fTmp = SPIFFS.open("/signature.tmp", FILE_WRITE);

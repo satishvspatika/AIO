@@ -32,6 +32,8 @@ USERS = {
 
 SESSIONS = {}
 
+import time
+
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
@@ -40,7 +42,19 @@ def login_page(request: Request):
 def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
     if username in USERS and USERS[username]["password"] == password:
         session_id = secrets.token_hex(16)
-        SESSIONS[session_id] = {"username": username, "role": USERS[username]["role"]}
+        
+        # OOM Memory Fix: Reaper to remove expired sessions
+        now = time.time()
+        expired = [sid for sid, data in SESSIONS.items() if data.get("expires_at", 0) < now]
+        for sid in expired:
+            del SESSIONS[sid]
+            
+        # 7-day expiry
+        SESSIONS[session_id] = {
+            "username": username, 
+            "role": USERS[username]["role"],
+            "expires_at": now + (86400 * 7)
+        }
         
         resp = RedirectResponse(url="/dashboard", status_code=302)
         resp.set_cookie(key="session_id", value=session_id, max_age=86400 * 7, httponly=True)
