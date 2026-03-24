@@ -16,7 +16,7 @@ void rtcRead(void *pvParameters) {
 
   esp_task_wdt_add(NULL);
   String response;
-  signature[16] = 0;
+  memset(signature, 0, sizeof(signature)); // Phase 14: Replaced hardcoded [16]=0 to dynamically protect string lengths
 
   rtcReady = false;
   timeSyncRequired = true;
