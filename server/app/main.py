@@ -84,7 +84,10 @@ async def serve_firmware(filename: str, request: Request):
         from fastapi import Response
         return Response(status_code=403)
 
-    filepath = os.path.join("/app/builds", filename)
+    filepath = os.path.realpath(os.path.join(BUILDS_DIR, filename))
+    if not filepath.startswith(os.path.realpath(BUILDS_DIR)):
+        from fastapi import Response
+        return Response(status_code=403)
     if not os.path.exists(filepath):
         from fastapi import Response
         return Response(status_code=404)
@@ -117,12 +120,13 @@ async def serve_firmware(filename: str, request: Request):
         chunk_size = end - start + 1
 
         async def iter_file():
-            with open(filepath, "rb") as f:
-                f.seek(start)
+            import aiofiles
+            async with aiofiles.open(filepath, "rb") as f:
+                await f.seek(start)
                 remaining = chunk_size
                 while remaining > 0:
                     import asyncio
-                    data = f.read(min(2048, remaining)) # Pull small 2KB chunks
+                    data = await f.read(min(2048, remaining)) # Pull small 2KB chunks
                     if not data:
                         break
                     remaining -= len(data)
@@ -142,10 +146,11 @@ async def serve_firmware(filename: str, request: Request):
     else:
         # Full file request (e.g. for size check via HEAD/GET)
         async def iter_full():
-            with open(filepath, "rb") as f:
+            import aiofiles
+            async with aiofiles.open(filepath, "rb") as f:
                 while True:
                     import asyncio
-                    data = f.read(2048)
+                    data = await f.read(2048)
                     if not data:
                         break
                     yield data

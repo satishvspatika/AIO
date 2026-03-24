@@ -72,3 +72,17 @@ This major milestone explicitly resolves all Security, Data-Integrity, and Netwo
   The monolithic `extern String content` was successfully unlinked from `globals.h` and explicitly sandboxed inside `gprs.ino`. Cross-core race conditions where Core 1 appended logs during Core 0 HTTP evaluations are now mathematically impossible. 
 * **FreeRTOS Deadlock Cured:** 
   An explicitly illegal Arduino `delay(1000)` was utilized in the hardware-dependent FTP handshake. Because this natively locks the FreeRTOS thread engine without surrendering execution, the hardware Watchdog historically bit. It has been universally converted to `vTaskDelay(1000 / portTICK_PERIOD_MS)`.
+
+---
+
+## 🔒 PHASE 6: CONTABO SERVER VULNERABILITIES & EVENT-LOOP STARVATION (FastAPI)
+*Crucial protections against dynamic database poisoning and ASGI/Gunicorn thread starvation.*
+
+* **Arbitrary Schema Poisoning Neutered (`/health`):** 
+  The Python `_auto_migrate` function dynamically spawned SQLite DB columns for *any* unknown JSON key. We implemented a strict 40+ key `_ALLOWED_FIELDS` whitelist array. Unrecognized packet keys are now hard-rejected, protecting `SpatikaFleet.db` from Malicious Column Poisoning.
+* **Firmware Path Traversal Warded:** 
+  In the OTA `serve_firmware` endpoint, the `os.path.join` syntax was strengthened with strict `os.path.realpath` boundary anchoring. Directory escaping via `../../` to access sensitive VPS files is impossible. 
+* **Asynchronous `aiofiles` Event-Loop Thaw:** 
+  The `StreamingResponse` serving massive OTA binaries utilized a native Python synchronous `open()` call. When throttled to 4KB/s across 2 minutes, this completely blocked the global FastAPI Uvicorn worker. Upgraded the physical generator strictly to `aiofiles`, delivering massive concurrency bandwidth parity across the API.
+* **Multi-Worker Database Desync Resolved:** 
+  Terminated the volatile Python-level `_DB_COLUMNS_CACHE` array. In multi-worker ASGI environments, schema modifications in Worker A were physically invisible to Worker B, causing fatal SQLite crash loops. The server now queries table definitions directly through native `PRAGMA` instructions at infinite speed, completely bypassing python memory states.

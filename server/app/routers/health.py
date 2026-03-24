@@ -19,6 +19,19 @@ _SAFE_COL = re.compile(r'^[a-z][a-z0-9_]{0,63}$')
 # Fields never treated as data columns in HealthReport model
 _SKIP_FIELDS = {"id", "reported_at"}
 
+# Phase 6 Fix: Strict whitelist outlaws Database Schema Poisoning
+_ALLOWED_FIELDS = {
+    "stn_id", "unit_type", "system", "ver", "ota_fails", "bat_v", "sol_v", 
+    "rtc_ok", "reset_reason", "signal", "reg_fails", "http_fails", "net_cnt", 
+    "net_cnt_prev", "prev_stored", "http_suc_cnt", "http_suc_cnt_prev", 
+    "http_ret_cnt", "http_ret_cnt_prev", "ftp_suc_cnt", "ftp_suc_cnt_prev", 
+    "ndm_cnt", "pd_cnt", "first_http", "spiffs_kb", "spiffs_total_kb", 
+    "consec_reg_fails", "consec_http_fails", "consec_sim_fails", "unsent_count", 
+    "http_present_fails", "http_cum_fails", "http_backlog_cnt", "last_cmd_id", 
+    "mutex_fail", "calib", "gps", "carrier", "iccid", "last_cmd_res", "net_nuke",
+    "dbg_tsk", "last_rst"
+}
+
 # Known type hints — anything not listed defaults to TEXT
 _INT_FIELDS  = {
     "system","reset_reason","rtc_ok","signal","reg_fails",
@@ -67,8 +80,6 @@ def get_carrier_from_iccid(iccid: str) -> str:
 
 
 
-_DB_COLUMNS_CACHE = None
-
 def _get_db_columns(db: Session, table: str) -> set:
     """Returns the set of column names currently in the table."""
     inspector = sa_inspect(db.bind)
@@ -79,31 +90,29 @@ def _auto_migrate(db: Session, data: dict, table: str = "health_reports"):
     """
     For each key in `data` that does not yet exist as a column in `table`,
     auto-add the column via ALTER TABLE.
-    Uses a global memory cache to avoid thrashing SQLite table metadata.
-    Returns the updated column set.
     """
-    global _DB_COLUMNS_CACHE
-    if _DB_COLUMNS_CACHE is None:
-        _DB_COLUMNS_CACHE = _get_db_columns(db, table)
+    # Phase 6 Fix: Avoid python-level caching which fractures across ASGI workers.
+    # Querying SQLite directly is thread-safe and guarantees schema parity.
+    existing_cols = _get_db_columns(db, table)
         
     for key, val in data.items():
-        if key in _SKIP_FIELDS or key in _DB_COLUMNS_CACHE:
+        if key in _SKIP_FIELDS or key in existing_cols:
             continue
-        if not _SAFE_COL.match(key):
-            print(f"[AutoMigrate] Skipping unsafe column name: {key!r}")
+        if not _SAFE_COL.match(key) or key not in _ALLOWED_FIELDS:
+            print(f"[AutoMigrate] Blocked unwhitelisted arbitrary column: {key!r}")
             continue
         col_type = _infer_sql_type(key, val)
         default  = "0" if col_type in ("INTEGER","REAL") else "''"
         try:
             db.execute(text(f"ALTER TABLE {table} ADD COLUMN {key} {col_type} DEFAULT {default}"))
             db.commit()
-            _DB_COLUMNS_CACHE.add(key)
+            existing_cols.add(key)
             print(f"[AutoMigrate] ✅ Added column '{key}' ({col_type}) to {table}")
         except Exception as e:
             if "duplicate" not in str(e).lower():
                 print(f"[AutoMigrate] ⚠️  Could not add column '{key}': {e}")
-            _DB_COLUMNS_CACHE.add(key)   # treat as existing to avoid retry loops
-    return _DB_COLUMNS_CACHE
+            existing_cols.add(key)   # treat as existing to avoid retry loops
+    return existing_cols
 
 
 @router.post("/health")
