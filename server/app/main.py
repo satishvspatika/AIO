@@ -126,12 +126,13 @@ async def serve_firmware(filename: str, request: Request):
                 remaining = chunk_size
                 while remaining > 0:
                     import asyncio
-                    data = await f.read(min(2048, remaining)) # Pull small 2KB chunks
+                    # Phase 7 Fix: Maximize 2G band delivery. Expanded to 32KB bursts.
+                    data = await f.read(min(32768, remaining)) 
                     if not data:
                         break
                     remaining -= len(data)
                     yield data
-                    await asyncio.sleep(0.5) # Force 500ms delay per 2KB = 4KB/s throttle!
+                    # Phase 7 Fix: Removed artificial 500ms 4KB/s server throttle to save battery!
 
         return StreamingResponse(
             iter_file(),
@@ -149,11 +150,10 @@ async def serve_firmware(filename: str, request: Request):
             async with aiofiles.open(filepath, "rb") as f:
                 while True:
                     import asyncio
-                    data = await f.read(2048)
+                    data = await f.read(32768)
                     if not data:
                         break
                     yield data
-                    await asyncio.sleep(0.5)
 
         return StreamingResponse(
             iter_full(),

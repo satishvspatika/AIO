@@ -201,8 +201,8 @@ volatile bool schedulerBusy = false;
 // --- End Global Definitions ---
 
 // --- RTC Persistent Definitions (v5.65 ODR Fix) ---
-RTC_DATA_ATTR double lati, longi;
-RTC_DATA_ATTR double gps_latitude, gps_longitude;
+RTC_DATA_ATTR double lati = 0.0, longi = 0.0;
+RTC_DATA_ATTR double gps_latitude = 0.0, gps_longitude = 0.0;
 RTC_DATA_ATTR int gps_fix_dd = 0, gps_fix_mm = 0, gps_fix_yy = 0;
 RTC_DATA_ATTR char carrier[20] = "";
 RTC_DATA_ATTR char sim_number[20] = "NA";
@@ -290,11 +290,11 @@ RTC_DATA_ATTR int health_last_sent_day = -1;
 RTC_DATA_ATTR bool diag_fw_just_updated = false;
 RTC_DATA_ATTR bool rtc_daily_sync_done = false;
 
-RTC_DATA_ATTR int current_year, current_month, current_day, current_hour,
-    current_min, current_sec, previous_min, record_hr, record_min,
-    previous_rfclose_year, previous_rfclose_month, previous_rfclose_day,
-    calib_year, calib_month, calib_day, calib_sts;
-RTC_DATA_ATTR int firmwareUpdated;
+RTC_DATA_ATTR int current_year = 0, current_month = 0, current_day = 0, current_hour = 0,
+    current_min = 0, current_sec = 0, previous_min = -1, record_hr = -1, record_min = -1,
+    previous_rfclose_year = 0, previous_rfclose_month = 0, previous_rfclose_day = 0,
+    calib_year = 0, calib_month = 0, calib_day = 0, calib_sts = 0;
+RTC_DATA_ATTR int firmwareUpdated = 0;
 RTC_DATA_ATTR int last_processed_sample_idx = -1;
 RTC_DATA_ATTR bool fresh_boot_check_done = false;
 RTC_DATA_ATTR bool apn_saved_this_sim = false;

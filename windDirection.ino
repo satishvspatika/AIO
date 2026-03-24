@@ -41,7 +41,7 @@ void windDirection(void *pvParameters) {
     // - We require 30 consecutive flat-zero readings (~30 sec) before marking
     // as fault
     static int wd_fault_count = 0;
-    if (tempWindDir == 0 && spread == 0) {
+    if (tempWindDir == 0 && spread < 2) {
       wd_fault_count++;
       // v5.49: Increased threshold to 300 (~5 mins) to prevent false 'NA'
       // at stable North

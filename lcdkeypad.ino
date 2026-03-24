@@ -86,12 +86,14 @@ void IRAM_ATTR onTimer() {
   portEXIT_CRITICAL_ISR(&timerMux1);
 }
 
+volatile bool lcd_power_cut_pending = false;
+
 // LCD Timer ISR callback function
 void IRAM_ATTR lcdTimer() {
   portENTER_CRITICAL_ISR(&timerMux2);
   lcdkeypad_start = 0; // Set the flag when the timer interrupts
-  // protectI2CPins() cannot be called from ISR safely, but GPIO write is fast
-  digitalWrite(32, LOW); // Turn OFF power to LCD (5V)
+  // Phase 7 Fix: Defer physical 5V rail cut to the thread context to avoid corrupting I2C mid-transaction
+  lcd_power_cut_pending = true;
   portEXIT_CRITICAL_ISR(&timerMux2);
 }
 
@@ -316,6 +318,18 @@ void lcdkeypad(void *pvParameters) {
 
   for (;;) {
     esp_task_wdt_reset();
+
+    // Phase 7 Fix: Safely execute the deferred LCD power cut with I2C Mutex protection
+    if (lcd_power_cut_pending) {
+      if (xSemaphoreTake(i2cMutex, portMAX_DELAY) == pdTRUE) {
+        digitalWrite(32, LOW); // Turn OFF power to LCD (5V) safely
+        // Reset the I2C peripheral purely to re-float the pins and avoid diode drops
+        Wire.end();
+        Wire.begin(21, 22);
+        xSemaphoreGive(i2cMutex);
+      }
+      lcd_power_cut_pending = false;
+    }
 
     if (lcdkeypad_start == 1 && wifi_active) {
       timerWrite(lcd_timer, 0);

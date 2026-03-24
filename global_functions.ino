@@ -55,8 +55,9 @@ void start_deep_sleep() {
       Wire.end();                  // Release SDA/SCL before PCF8574 loses power
       digitalWrite(32, LOW);       // Now safe to cut 5V — bus is idle
       
-      // Do NOT give mutex back — hold it through sleep entry
-      // so no other task can attempt I2C after this point
+      // Phase 7 Fix: Don't intentionally leak the mutex into deep sleep.
+      // We will suspend FreeRTOS instead to prevent late I2C attempts.
+      xSemaphoreGive(i2cMutex);
   } else {
       digitalWrite(32, LOW);       // Fallback cut if mutex totally hung
   }
@@ -116,6 +117,15 @@ void start_deep_sleep() {
 
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
 
+  // Phase 7 Fix: Shut down SPI completely to eliminate 4mA SD Card Idle Bleed
+  if (sd_card_ok) {
+    SD.end();
+    SPI.end();
+  }
+
+  // Phase 7 Fix: Suspend all RTOS tasks to freeze system state after tearing down buses
+  vTaskSuspendAll();
+
   Serial.flush();
   debugln("[PWR] Entering Deep Sleep");
   esp_deep_sleep_start();
@@ -174,6 +184,7 @@ void set_wakeup_reason() {
 }
 
 void copyFilesFromSPIFFSToSD(const char *dirname) {
+  if (!sd_card_ok) return; // Phase 7 Fix: Stop VFS File Handle Leaks
   File root = SPIFFS.open(dirname);
   if (!root) {
     debugln("Failed to open directory");
@@ -732,7 +743,7 @@ void subtractUnsentFromMask(const char *uFile) {
 
   while (f.available()) {
     esp_task_wdt_reset(); // v7.80: Handle massive backlog files without timeout
-    vTaskDelay(1 / portTICK_PERIOD_MS); // v5.67: Yield to UI task to prevent freezing
+    vTaskDelay(pdMS_TO_TICKS(1)); // Phase 7 Fix: Native RTOS 1ms yield (Avoids division by 0 on 10ms tick systems)
     long pos = f.position(); // Save position of the FIRST byte of the line
     String line = f.readStringUntil('\n');
 
@@ -950,7 +961,7 @@ void markFileAsDelivered(const char *fileName, bool alreadyLocked) {
 
   while (f.available()) {
     esp_task_wdt_reset(); // v7.67: Prevent WDT on huge backlog files
-    vTaskDelay(1 / portTICK_PERIOD_MS); // v5.67: Yield to UI task to prevent freezing
+    vTaskDelay(pdMS_TO_TICKS(1)); // Phase 7 Fix: Native RTOS yield
     String line = f.readStringUntil('\n');
     line.trim();
     if (line.length() < 10)
@@ -1048,6 +1059,8 @@ void markFileAsDelivered(const char *fileName, bool alreadyLocked) {
 void reset_all_diagnostics() {
   debugln("[SYS] Resetting all diagnostic counters...");
 
+  backfill_done = false; // Phase 7 Fix: Prevent permanent backfill amnesia after factory wipe.
+  
   // Primary counters
   diag_net_data_count = 0;
   diag_net_data_count_prev = 0;
