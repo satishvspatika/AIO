@@ -150,3 +150,10 @@ This major milestone explicitly resolves all Security, Data-Integrity, and Netwo
 * **APN Re-Caching Dead-Locks:** Imposed strict mutex barriers tightly around `load_apn_config()`. If the OS happened to poll the cached string at the precise nanosecond a cell-tower failure triggered a background re-negotiation overwrite (`save_apn_config()`), the networking chip pulled corrupted physical bytes leading to literal APN protocol panics.
 * **Ext0 Ghost-Sleep Clearance:** Shielded the core UI pushbutton OS wakeup protocol (`lcdkeypad_start == 1`) against a subtle state-tearing bug. We explicitly lock `schedulerBusy = false` directly inline before engaging the HTTP escape-hatch, eliminating a sequence where early-boot interrupts would accidentally flag the OS busy unconditionally, permanently destroying deep sleep. 
 * **Daily Midnight Storage Spike Quenched:** Restrained the extremely heavy `reconstructSentMasks()` indexing loop natively strictly alongside the `last_processed_sample_idx == -1` boot indicator. Previously, the `diag_pd_count` zero-out during a daily midnight rollover falsely identified a "cold boot crash", wildly triggering a full-memory sector scan every single day at local midnight. 
+
+---
+
+## ⚕️ PHASE 13: CRITICAL VFS MUTEX LEAK CLOSURE
+*A single swift action resolving an organic bug induced directly by Phase 12 architecture hardening.*
+
+* **Late Wakeup `HANDLE_NO_FILE` Deadlock Severed:** In Phase 12, we holistically stretched the `xSemaphoreTake(fsMutex)` hardware lock to blanket the entirety of the `SPIFFS.open` and instantiation gap loops. However, this unintentionally snared an edge-case where the ESP32 powers on exactly *outside* of a logical 15-minute sensor boundary (e.g. `8:39`), forcing a `goto TRIGGER_HTTP` exit sequence. Bypassing the newly placed `.close()` block at the absolute bottom of the logic functionally permanently choked the flash-memory. We intercepted this `goto` escape hatch and injected an explicit manual `xSemaphoreGive` de-allocation to flawlessly close the sequence. 
