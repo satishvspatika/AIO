@@ -300,6 +300,7 @@ void scheduler(void *pvParameters) {
 
           // We must ensure 'scheduler' doesn't try to wait for GPRS below.
           // We jump to TRIGGER_HTTP to exit "gracefully" from this iteration.
+          schedulerBusy = false; // Phase 12 Fix: Prevent sleep gate leak on fragile goto
           goto TRIGGER_HTTP;
         } else {
           debugln("No UI request. Going straight to sleep.");
@@ -895,8 +896,11 @@ void scheduler(void *pvParameters) {
 
       // v7.82 Reconstruction: Recover sent mask from SPIFFS (Cold Boot or
       // Recovery) Must happen AFTER rollover check to prevent recovered counts
-      // from being wiped.
-      if (diag_pd_count == 0 && current_year > 2024) {
+      // from being wiped. 
+      // Phase 12 Fix: Guard strictly with last_processed_sample_idx == -1 so
+      // normal midnight rollovers (which reset diag_pd_count to 0) do not
+      // unnecessarily trigger a full disk scan!
+      if (diag_pd_count == 0 && current_year > 2024 && last_processed_sample_idx == -1) {
         reconstructSentMasks();
         fresh_boot_check_done = true;
       }
@@ -1795,9 +1799,12 @@ void scheduler(void *pvParameters) {
                 "DAYS  ***********");
         debugln();
         File file1;
-        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        // Phase 12 Fix: Lock fsMutex for the ENTIRE duration of new file creation
+        // to prevent VFS table shredding.
+        bool fs_locked = false;
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
+          fs_locked = true;
           file1 = SPIFFS.open(cur_file, FILE_APPEND);
-          xSemaphoreGive(fsMutex);
         }
         if (!file1) {
           debugln("Failed to open new SPIFFS file");
@@ -1875,12 +1882,11 @@ void scheduler(void *pvParameters) {
           //                                          strlen(append_text);
           //                                          append_text[len] = '\0';
 
-          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+          if (fs_locked) {
             if (file1) {
               file1.print(append_text);
-              file1.close();
+              // Do NOT close here! Must append gaps later!
             }
-            xSemaphoreGive(fsMutex);
           } else {
             debugln("[SCHED] Error: FS Mutex Timeout on 8:45 write.");
           }
@@ -2026,11 +2032,9 @@ void scheduler(void *pvParameters) {
             //                                                    append_text[len]
             //                                                    = '\0';
 
-            if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            if (fs_locked && file1) {
               file1.print(append_text);
-              xSemaphoreGive(fsMutex);
             } else {
-              // v5.57 Fix: Skip write on mutex timeout instead of writing unguarded.
               debugln("[SCHED] ⚠️ FS Mutex Timeout on gap-fill write. Skipping.");
             }
             if (sd_card_ok && sd1) {
@@ -2099,11 +2103,9 @@ void scheduler(void *pvParameters) {
             //                                          strlen(append_text);
             //                                          append_text[len] = '\0';
 
-            if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            if (fs_locked && file1) {
               file1.print(append_text);
-              xSemaphoreGive(fsMutex);
             } else {
-              // v5.57 Fix: Skip write on mutex timeout instead of writing unguarded.
               debugln("[SCHED] ⚠️ FS Mutex Timeout on current-record write. Skipping.");
             }
             if (sd_card_ok && sd1)
@@ -2124,7 +2126,10 @@ void scheduler(void *pvParameters) {
           // Removed misplaced global resets. Rollover is handled at the top
           // of the loop.
 
-          file1.close();
+          if (fs_locked) {
+            if (file1) file1.close();
+            xSemaphoreGive(fsMutex); // Final holistic release
+          }
           if (sd_card_ok && sd1)
             sd1.close();
 

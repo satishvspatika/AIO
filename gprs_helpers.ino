@@ -22,11 +22,20 @@ void save_apn_config(String apn, String ccid) {
 }
 
 bool load_apn_config(String current_ccid, char *target_apn, size_t max_len) {
-  if (!SPIFFS.exists("/apn_config.txt"))
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("APN Load Failed: fsMutex Locked");
     return false;
+  }
+
+  if (!SPIFFS.exists("/apn_config.txt")) {
+    xSemaphoreGive(fsMutex);
+    return false;
+  }
   File f = SPIFFS.open("/apn_config.txt", FILE_READ);
-  if (!f)
+  if (!f) {
+    xSemaphoreGive(fsMutex);
     return false;
+  }
 
   // Use fixed stack buffers to avoid Heap fragmentation/OOM on bad file
   char ccid_buf[50] = {0};
@@ -96,15 +105,18 @@ bool load_apn_config(String current_ccid, char *target_apn, size_t max_len) {
       debugln("Smart APN: ⚠ MISMATCH — Stored APN conflicts with detected carrier. Ignoring cache.");
       // Delete the stale file so it gets re-saved with the correct APN this cycle
       SPIFFS.remove("/apn_config.txt");
+      xSemaphoreGive(fsMutex);
       return false;
     }
 
     strncpy(target_apn, stored_apn_str.c_str(), max_len);
     target_apn[max_len - 1] = '\0';
     debugln("Smart APN: Match Found!");
+    xSemaphoreGive(fsMutex);
     return true;
   }
   debugln("Smart APN: No Match.");
+  xSemaphoreGive(fsMutex);
   return false;
 }
 
