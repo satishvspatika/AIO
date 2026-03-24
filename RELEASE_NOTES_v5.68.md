@@ -44,3 +44,31 @@ This major milestone explicitly resolves all Security, Data-Integrity, and Netwo
   Surgically removed redundant `session_active = false;` assertions from `OTA_Chunk_Loop` and restored unindented control flow. Assures pristine One-Chunk-One-Session sequencing.
 * **Dead-Code Elimination (DCE) on Health Infrastructure:** 
   Completely encapsulated the 500-line `send_health_report()` functionality, the `eStartupGPS` bypass sequence, and the manual `FLD_SEND_HEALTH` physical LCD keys strictly within `#if ENABLE_HEALTH_REPORT == 1`. Switching this master toggle to `0` now triggers aggressive GC Optimizer dead-code elimination, permanently recovering massive banks of FreeRTOS Dynamic RAM and ensuring absolute DB port silence.
+
+---
+
+## ⚡ PHASE 4: FIRMWARE VFS CORRUPTION & MUTEX DEADLOCKS (ESP32)
+*Surgical modifications eliminating physical filesystem corruption and global background task-starvation.*
+
+* **Atomic Signature Flashing:** 
+  In `gprs.ino`, successful HTTP synchronization now strictly routes through an isolated `/signature.tmp` file and employs `SPIFFS.rename()`. This atomic sequence perfectly guards against corrupted `0-byte` datagrams if physical hardware power is lost mid-write.
+* **APN File System Collision Locks:** 
+  Wrapped `save_apn_config()` inside a rigorous `xSemaphoreTake(fsMutex)` gate. This completely mitigates dual-core crashes where the Modem sub-core attempts to cache APN strings at the precise microsecond the Scheduler sub-core modifies the `unsent.txt` weather backlog.
+* **Deadlocking I2C Priority Reversals Extinguished:** 
+  In `tempHum.ino`, the hardware 20-millisecond ADC wait mechanism now voluntarily yields the `i2cMutex`. This explicitly terminates the cascading global freeze that starved the `rtcRead.ino` clock thread from observing precise 15-minute minute boundaries.
+* **The `last_ver` Amnesia Override:** 
+  Re-pointed the fallback Non-Volatile Storage evaluation from `6.55` to dynamically inherit `FIRMWARE_VERSION`. Flash-wiped new field modules no longer intentionally initiate panic-downgrade logic loops upon first energizing.
+
+---
+
+## 💾 PHASE 5: FIRMWARE HEAP EXHAUSTION & STACK OVERFLOWS (ESP32)
+*Correcting runaway RAM usage inside the Core 0 HTTP structures.*
+
+* **Deep Stack Overflow Mitigation:** 
+  The GPRS engine's `waitForResponse()` function pushed a massive 2KB character array explicitly onto the `16KB` RTOS stack. In protracted failure loops requiring nested function recoveries, this guaranteed a physical Stack Smash. This array has been converted to `static`, permanently offloading it to the memory `.BSS` segment. 
+* **FTP RAM-Sledgehammer Nullified:** 
+  The FTP protocol (`send_ftp_file` and `copyFromSPIFFSToFS`) previously employed `.readString()` to ingest up to `100KB` of SPIFFS file data explicitly into the transient Heap before mirroring it to the modem. When physical memory fragmented, this triggered silent `malloc()` crashes, resulting in blank deliveries. I entirely re-wired this logic to iteratively stream out precisely 256 bytes per chunk directly to the UART Socket. 
+* **Global Dual-Core String Contamination Segregated:** 
+  The monolithic `extern String content` was successfully unlinked from `globals.h` and explicitly sandboxed inside `gprs.ino`. Cross-core race conditions where Core 1 appended logs during Core 0 HTTP evaluations are now mathematically impossible. 
+* **FreeRTOS Deadlock Cured:** 
+  An explicitly illegal Arduino `delay(1000)` was utilized in the hardware-dependent FTP handshake. Because this natively locks the FreeRTOS thread engine without surrendering execution, the hardware Watchdog historically bit. It has been universally converted to `vTaskDelay(1000 / portTICK_PERIOD_MS)`.

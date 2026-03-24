@@ -80,7 +80,6 @@ char calib_text[40] = "";
 char calib_content[16] = "";
 char ftpunsent_file[50] = "";
 char ftpdaily_file[50] = "";
-String content = ""; // Global String shared across files
 
 // v5.66: GPRS Counters (Moved from globals.h)
 int http_no = 0, msg_sent = 0;

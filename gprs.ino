@@ -2,6 +2,7 @@
 
 int active_cid = 1;      // Default to 1
 bool http_ready = false; // v5.42: Track if HTTPINIT succeeded for this cycle
+static String content = ""; // Phase 5 Fix: Scoped locally to GPRS core to prevent Core 1 cross-contamination
 
 // Helper to clear UART buffer to prevent stale data contamination between tasks
 void flushSerialSIT() {
@@ -2241,7 +2242,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
   flushSerialSIT(); // Ensure UART buffer is clean before starting FTP
                     // sequence
   debugln("Initializing A7672S for FTP...");
-  delay(1000); // Allow module to settle
+  vTaskDelay(1000 / portTICK_PERIOD_MS); // Allow module to settle
 
   if (SPIFFS.exists(fileName)) {
     send_daily = 2;
@@ -2307,8 +2308,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
 
       fileSize = file1.size();
       file1.seek(s);
-      content = file1.readString(); // Read the rest of the file
-
+      // Phase 5: Removed content = file1.readString(); to prevent massive Heap Exhaustion
       if (fileSize == 0) {
         file1.close();
         debugln("Nothing to FTP .. logging out ...");
@@ -2331,7 +2331,16 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
         vTaskDelay(200 / portTICK_PERIOD_MS);
         SerialSIT.println(gprs_xmit_buf);
         response = waitForResponse("CONNECT", 5000);
-        SerialSIT.println(content);
+        
+        // Phase 5: Chunk stream direct from SPIFFS to UART, avoiding RAM crashes
+        char file_buf[256];
+        while (file1.available()) {
+          int bytesRead = file1.read((uint8_t*)file_buf, 255);
+          file_buf[bytesRead] = '\0';
+          SerialSIT.print(file_buf);
+        }
+        // Send trailing newline just in case FSWRITE is expecting one
+        SerialSIT.println();
         response = waitForResponse("+FSWRITE", 5000);
         debug("Response of FSWRITE is ");
         debugln(response);
@@ -3139,8 +3148,12 @@ void store_current_unsent_data() {
         unsent_file,
         FILE_READ); // Open for reading and appending (writing at end of
                     // file). The file is created if it does not exist.
-    content = file4.readString();
-    debugln(content);
+    char file_buf[256];
+    while (file4.available()) {
+      int bytesRead = file4.read((uint8_t*)file_buf, 255);
+      file_buf[bytesRead] = '\0';
+      debug(file_buf);
+    }
     file4.close();
     debugln();
   }
@@ -3155,8 +3168,12 @@ void store_current_unsent_data() {
         ftpunsent_file,
         FILE_READ); // Open for reading and appending (writing at end of
                     // file). The file is created if it does not exist.
-    content = ftpfile4.readString();
-    debugln(content);
+    char file_buf[256];
+    while (ftpfile4.available()) {
+      int bytesRead = ftpfile4.read((uint8_t*)file_buf, 255);
+      file_buf[bytesRead] = '\0';
+      debug(file_buf);
+    }
     ftpfile4.close();
     debugln();
   }
@@ -5017,8 +5034,8 @@ void copyFromSPIFFSToFS(char *dateFile) {
     debugln(file1.size());
     fileSize = file1.size();
     file1.seek(s);
-    content = file1.readString(); // Read the rest of the file
-
+    // Phase 5 Fix: Removed content = file1.readString() Memory crash
+    
     // filehandle,length,timeout
     snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSWRITE=%d,%d,10\r\n",
              handle_no,
@@ -5026,7 +5043,15 @@ void copyFromSPIFFSToFS(char *dateFile) {
     vTaskDelay(200 / portTICK_PERIOD_MS);
     SerialSIT.println(gprs_xmit_buf);
     response = waitForResponse("CONNECT", 5000);
-    SerialSIT.println(content);
+    
+    // Chunk flow directly to modem UART to bypass 100KB RAM fragmentation
+    char file_buf[256];
+    while (file1.available()) {
+      int bytesRead = file1.read((uint8_t*)file_buf, 255);
+      file_buf[bytesRead] = '\0';
+      SerialSIT.print(file_buf);
+    }
+    SerialSIT.println();
     response = waitForResponse("+FSWRITE", 5000);
     debug("Response of FSWRITE is ");
     debugln(response);
@@ -5118,7 +5143,7 @@ String waitForResponse(String expectedResponse, int timeout) {
   // v5.68 Stability Fix: Buffer UART in static char array instead of 
   // dynamic String (response += c) to prevent massive heap fragmentation
   // on long multi-kilobyte JSON HTTP reads.
-  char buf[2048];
+  static char buf[2048]; // Phase 5 Fix: Moved from Stack to Heap/BSS to stop Stack Overflows
   int buf_idx = 0;
   buf[0] = '\0'; // Initialize empty
   
