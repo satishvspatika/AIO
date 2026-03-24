@@ -1880,7 +1880,14 @@ void send_http_data() {
   // v5.49 Build 5: INDEPENDENT FTP TRIGGER
   // Decoupled from HTTP Success. FTP serves as the robust rescue layer.
   if (gprs_mode == eGprsSignalOk && (signal_lvl > -96)) {
-    send_unsent_data(); // This function will internally take modemMutex
+    // v5.68 FIX: UART Race Condition Prevented. If the user queued a manual
+    // LCD command during the HTTP HTTP-Fill, skip the massive FTP job
+    // so the Modem Mutex is immediately available for the UI.
+    if (!pending_manual_status && !pending_manual_gps && !pending_manual_health) {
+       send_unsent_data(); 
+    } else {
+       debugln("[GPRS] Yielding FTP transfer to instantly service manual LCD/UI request.");
+    }
   }
 #endif
 
@@ -5105,28 +5112,34 @@ char *parse_http_head(char *response, char *check) {
 }
 
 String waitForResponse(String expectedResponse, int timeout) {
-  String response = "";
-  response.reserve(512); // Pre-allocate to reduce heap fragmentation
+  // v5.68 Stability Fix: Buffer UART in static char array instead of 
+  // dynamic String (response += c) to prevent massive heap fragmentation
+  // on long multi-kilobyte JSON HTTP reads.
+  char buf[2048];
+  int buf_idx = 0;
+  buf[0] = '\0'; // Initialize empty
+  
   unsigned long startTime = millis();
 
   while ((millis() - startTime) < timeout) {
     vTaskDelay(1 / portTICK_PERIOD_MS);
-    esp_task_wdt_reset(); // Keep watchdog happy during long AT command
-                          // waits
+    esp_task_wdt_reset(); // Keep watchdog happy during long AT command waits
 
     while (SerialSIT.available()) {
       char c = SerialSIT.read();
-      if (response.length() < 2048) { // Prevent unbounded growth
-        response += c;
+      if (buf_idx < 2047) { // Prevent unbounded growth
+        buf[buf_idx++] = c;
+        buf[buf_idx] = '\0';
       }
     }
 
-    if (response.indexOf(expectedResponse) != -1) {
-      return response;
+    // Use fast C-string search to avoid allocating intermediate Strings
+    if (strstr(buf, expectedResponse.c_str()) != NULL) {
+      return String(buf); // Only allocate the String exactly ONCE on success
     }
   }
 
-  return response;
+  return String(buf); // Return whatever we caught on timeout
 }
 
 int read_line(char *src, char *dest, int max_len, char delim_chr) {

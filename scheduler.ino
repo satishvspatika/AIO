@@ -1254,15 +1254,44 @@ void scheduler(void *pvParameters) {
            goto TRIGGER_HTTP;
         }
 
-        // TIER 1 DATA SANCTITY: Filesystem Space Protection
-        if ((SPIFFS.totalBytes() - SPIFFS.usedBytes()) < 512) {
-           debugln("[SCHED] CRITICAL: SPIFFS nearly full. Pruning old files before write.");
-           signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
-           data_writing_initiated = 0;
-           schedulerBusy = false; // v5.66: Release sleep lock
-           sync_mode = eHttpStop; // v5.66: Abort HTTP queueing
-           xSemaphoreGive(fsMutex);
-           goto TRIGGER_HTTP;
+        // TIER 1 DATA SANCTITY: Filesystem Space Protection (Circular Logging)
+        // v5.68 FIX: Actually prune old files instead of permanently aborting. 
+        // We raised the threshold to 4096 bytes to guarantee a gap-fill burst can fit safely.
+        int prune_attempts = 0;
+        while (((SPIFFS.totalBytes() - SPIFFS.usedBytes()) < 4096) && (prune_attempts < 10)) {
+           debugln("[SCHED] CRITICAL: SPIFFS nearly full. Analyzing filesystem to prune oldest log...");
+           
+           File root = SPIFFS.open("/");
+           File f = root.openNextFile();
+           String oldest_file = "";
+           
+           while (f) {
+               esp_task_wdt_reset();
+               String fName = f.name();
+               // Identify daily log files: e.g. TWS1931_20260324.txt
+               if (fName.indexOf("_20") != -1 && fName.endsWith(".txt")) {
+                   if (oldest_file == "" || fName < oldest_file) {
+                       oldest_file = fName;
+                   }
+               }
+               f.close();
+               f = root.openNextFile();
+           }
+           root.close();
+
+           if (oldest_file != "" && oldest_file.length() > 5) {
+               debugf1("[SPIFFS] Rotating out oldest log to recover space: %s\n", oldest_file.c_str());
+               SPIFFS.remove(oldest_file);
+           } else {
+               debugln("[SPIFFS] FATAL: Could not locate old logs. System files dominating storage. Aborting write.");
+               signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
+               data_writing_initiated = 0;
+               schedulerBusy = false; 
+               sync_mode = eHttpStop; 
+               xSemaphoreGive(fsMutex);
+               goto TRIGGER_HTTP;
+           }
+           prune_attempts++;
         }
 
         // Filling the SPIFF file and SD card file with missing data. Only
@@ -1288,11 +1317,21 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 0
           snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
           File unsent = SPIFFS.open(unsent_file, FILE_APPEND);
+          if (!unsent) {
+              debugln("[SCHED] FATAL GAP: Could not open unsent.txt for Gap Fill!");
+              data_writing_initiated = 0; schedulerBusy = false; sync_mode = eHttpStop;
+              xSemaphoreGive(fsMutex); goto TRIGGER_HTTP;
+          }
 #endif
 
 #if (SYSTEM == 1 || SYSTEM == 2)
           snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
           File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+          if (!ftpunsent) {
+              debugln("[SCHED] FATAL GAP: Could not open ftpunsent.txt for Gap Fill!");
+              data_writing_initiated = 0; schedulerBusy = false; sync_mode = eHttpStop;
+              xSemaphoreGive(fsMutex); goto TRIGGER_HTTP;
+          }
 #endif
 
 #endif
@@ -2855,6 +2894,15 @@ void scheduler(void *pvParameters) {
       debugln();
 
     TRIGGER_HTTP: // Label for duplicate/invalid skip jump
+      // v5.68 FIX: TIER 1 Battery Brownout Gate
+      // If we fell through due to low battery, DO NOT allow the network to spin up!
+      if (li_bat_val < 3.4f && li_bat_val > 0.5f) {
+         debugln("[PWR] FATAL BROWNOUT GUARD: Network blocked. Sleeping immediately to save hardware.");
+         sync_mode = eHttpStop; 
+         httpInitiated = false;
+         data_writing_initiated = 0;
+      } else {
+
       // Wait for manual triggers (SMS/GPS) to finish before proceeding with
       // HTTP/Sleep
       {
@@ -2907,6 +2955,9 @@ void scheduler(void *pvParameters) {
         }
 #endif
       }
+      
+      } // End of Brownout Guard else-block
+      
       vTaskDelay(300 / portTICK_PERIOD_MS);
       last_processed_sample_idx = current_sample_idx; // v5.66: Mark as processed ONLY after successful completion
       schedulerBusy = false; // v5.65: Release sleep lock

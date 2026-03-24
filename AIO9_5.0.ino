@@ -431,12 +431,6 @@ char pres_str[20] = "NA";
 // --- End System Definitions ---
 
 void setup() {
-  // v5.57 Fix: Unconditionally clear healer flag at the very start of setup.
-  // Prevents the flag from getting permanently stuck 'true' if a WDT/brown-out
-  // reset occurs while a healer reboot is in flight. The protection logic below
-  // still works correctly — it just re-reads the flag as false and applies its
-  // own decision.
-  healer_reboot_in_progress = false;
 
   Serial.begin(115200);
   delay(1000);
@@ -1613,10 +1607,12 @@ void loop() {
 
 
     // v5.55 SAFETY VALVE: Total Communication Blackout Recovery
-    // If the system has failed for 8 consecutive cycles (~2 hours), assume 
+    // If the system has failed for 96 consecutive cycles (24 hours), assume 
     // Modem/ESP peripheral state is corrupted and force a hard system reboot.
-    if (diag_consecutive_http_fails >= 8) {
-       debugln("[HEAL] CRITICAL: 8 consecutive slots failed. Forcing System Recovery Reboot...");
+    // v5.68 Fix: Threshold increased from 8 to 96 to prevent infinite reboot
+    // loops during sustained rural cellular network outages.
+    if (diag_consecutive_http_fails >= 96) {
+       debugln("[HEAL] CRITICAL: 96 consecutive slots failed (24h). Forcing System Recovery Reboot...");
        diag_consecutive_http_fails = 0; // Reset so we don't boot loop if it's a real outage
        healer_reboot_in_progress = true; // v5.55: Protect counters
        vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -1713,6 +1709,8 @@ void ULP_COUNTING(uint32_t us) {
     debounce_cnt.val = 0;
     wind_count.val = 0;
     wind_prev_state.val = 0;
+    wind_debounced_state.val = 0;
+    wind_debounce_cnt.val = 0;
     calib_count.val = 0;
     calib_mode_flag.val = 0;
   } else {
@@ -1784,22 +1782,41 @@ void ULP_COUNTING(uint32_t us) {
 
       // --- WIND SECTION (Rising Edge 0 -> 1) ---
       M_LABEL(4),
-      I_GPIO_READ(GPIO_NUM_35),                       // R0 = current state
-      I_MOVI(R3, 0), I_LD(R1, R3, U_WIND_PREV_STATE), // R1 = wind_prev_state
+      I_GPIO_READ(GPIO_NUM_35), // R0 = current state
+      I_MOVI(R3, 0), I_LD(R1, R3, U_WIND_PREV_STATE), // R1 = prev_state
 
-      I_MOVR(R2, R0), I_SUBR(R2, R1, R2), // R2 = prev - curr
-      M_BXZ(5),                           // If same, exit
+      I_MOVR(R2, R0),     // R2 = current state
+      I_ADDR(R0, R1, R2), // R0 = R1 + R2
+      M_BGE(11, 2),        // If both are 1 (2), states haven't changed -> Jump 11
+      M_BL(11, 1),         // If both are 0 (0), states haven't changed -> Jump 11
 
-      I_ST(R0, R3, U_WIND_PREV_STATE), // Update prev
+      // States are different, start debouncing
+      I_MOVI(R3, 0), I_ST(R2, R3, U_WIND_PREV_STATE), // prev_state = current
+      I_MOVI(R0, 3),                                  // Debounce optimized to 3 loops (3ms total)
+      I_ST(R0, R3, U_WIND_DEBOUNCE_CNT),
+      M_BX(5), // Skip to exit while debouncing
 
-      I_MOVI(R2, 1), I_SUBR(R2, R1, R2), // R2 = prev - 1
-      M_BXZ(5), // If prev was 1, it's a 1->0, exit (Rising edge only)
+      M_LABEL(11), I_MOVI(R3, 0), I_LD(R0, R3, U_WIND_DEBOUNCE_CNT),
+      M_BGE(12, 1), // If count > 0, go to decrement
+      M_BX(5),      // If 0, no change, skip to exit
 
-      I_MOVI(R2, 0), I_SUBR(R2, R0, R2), // R2 = curr - 0
-      M_BXZ(5),                          // If curr is 0, exit
+      M_LABEL(12), I_SUBI(R0, R0, 1), I_MOVI(R3, 0),
+      I_ST(R0, R3, U_WIND_DEBOUNCE_CNT), M_BGE(5, 1), // If still > 0, exit
+
+      // Debounce finished! Validate state change
+      I_MOVI(R3, 0), I_LD(R1, R3, U_WIND_PREV_STATE), // R1 = new stable state
+      I_LD(R2, R3, U_WIND_DEBOUNCED_STATE),           // R2 = old stable state
+      I_ADDR(R0, R1, R2), M_BGE(5, 2),           // Steady High (1+1=2) -> Skip
+      M_BL(5, 1),                                // Steady Low (0+0=0) -> Skip
+
+      I_ST(R1, R3, U_WIND_DEBOUNCED_STATE), // Update stable state
+
+      // Transition detected! Is it Rising Edge (0 -> 1)?
+      I_ADDI(R0, R1, 0),
+      M_BL(5, 1), // If new state is Low (0), it's a 1->0 transition, skip (Wind is Rising Edge only)
 
       // Rising Edge!
-      // v5.50 FIX: Removed faulty I_HALT() that killed the Wind counter.
+      // v5.68 FIX: ULP Anemometer Debounce added successfully
       I_LD(R0, R3, U_WIND_COUNT), I_ADDI(R0, R0, 1), I_ST(R0, R3, U_WIND_COUNT),
 
       M_LABEL(5), I_HALT()};

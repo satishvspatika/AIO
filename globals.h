@@ -475,6 +475,8 @@ extern int badReads;
 #define U_WIND_PREV_STATE 518
 #define U_CALIB_COUNT 519
 #define U_CALIB_MODE 520
+#define U_WIND_DEBOUNCED_STATE 521
+#define U_WIND_DEBOUNCE_CNT 522
 
 extern int ULP_WAKEUP_TC; // ulp runs every 1ms (High Resolution for Wind)
 
@@ -490,6 +492,8 @@ extern int ULP_WAKEUP_TC; // ulp runs every 1ms (High Resolution for Wind)
   (*(volatile ulp_var_t *)&RTC_SLOW_MEM[U_WIND_PREV_STATE])
 #define calib_count (*(volatile ulp_var_t *)&RTC_SLOW_MEM[U_CALIB_COUNT])
 #define calib_mode_flag (*(volatile ulp_var_t *)&RTC_SLOW_MEM[U_CALIB_MODE])
+#define wind_debounced_state (*(volatile ulp_var_t *)&RTC_SLOW_MEM[U_WIND_DEBOUNCED_STATE])
+#define wind_debounce_cnt (*(volatile ulp_var_t *)&RTC_SLOW_MEM[U_WIND_DEBOUNCE_CNT])
 
 extern RTC_DATA_ATTR int current_year, current_month, current_day, current_hour,
     current_min, current_sec, previous_min, record_hr, record_min,
