@@ -1827,6 +1827,17 @@ void scheduler(void *pvParameters) {
           debugln("Outside valid window for new file. Skipping retroactive "
                   "logging.");
           data_writing_initiated = 0;
+          
+          // Phase 13 Fix: Cannot goto and bypass the holistic xSemaphoreGive at the bottom!
+          // Must cleanly decouple the SPIFFS handle before jumping out of this block.
+          if (fs_locked) {
+            if (file1) file1.close();
+            xSemaphoreGive(fsMutex);
+          }
+          if (sd_card_ok && sd1) {
+            sd1.close();
+          }
+          
           goto TRIGGER_HTTP;
         }
 
