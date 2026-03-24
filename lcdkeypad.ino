@@ -577,6 +577,7 @@ void lcdkeypad(void *pvParameters) {
               strcpy(ui_data[FLD_SEND_GPS].bottomRow, "PLEASE WAIT..  ");
             }
           } else if (cur_fld_no == FLD_SEND_HEALTH) {
+#if ENABLE_HEALTH_REPORT == 1
             pending_manual_health = true;
             if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
               sync_mode = eHealthStart; // Uses the GPS + HEALTH sequence explicitly
@@ -584,6 +585,9 @@ void lcdkeypad(void *pvParameters) {
             } else {
               strcpy(ui_data[FLD_SEND_HEALTH].bottomRow, "PLEASE WAIT..  ");
             }
+#else
+            strcpy(ui_data[FLD_SEND_HEALTH].bottomRow, "DISABLED       ");
+#endif
           } else if (cur_fld_no == FLD_HTTP_FAILS) {
             if (pcb_clear_state == 0) {
               pcb_clear_state = 1;

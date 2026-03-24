@@ -402,6 +402,7 @@ void gprs(void *pvParameters) {
             debugln("[Health] CDM window entirely missed today. Flagging FAIL.");
           }
 
+#if ENABLE_HEALTH_REPORT == 1
           // v5.76 Post-OTA Confirmation Health Report Check
           bool is_ota_confirm = false;
           if (diag_fw_just_updated && gprs_mode == eGprsSignalOk) {
@@ -427,6 +428,7 @@ void gprs(void *pvParameters) {
           if (is_health_time || is_ota_confirm || is_sensor_fault_trigger) {
             health_in_progress = true; // Block deep sleep
           }
+#endif
 
           if (!skip_primary_http) {
             debugln(
