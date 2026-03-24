@@ -138,6 +138,7 @@ extern float RF_RESOLUTION;
 
 // Record length constants for different systems
 #define RECORD_LENGTH_RF 45    // SYSTEM == 0
+#define FIRMWARE_VERSION "5.68"
 #define RECORD_LENGTH_TWS 53   // SYSTEM == 1 (Standardized without rainfall)
 #define RECORD_LENGTH_TWSRF 60 // SYSTEM == 2
 

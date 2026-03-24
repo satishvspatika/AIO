@@ -2227,7 +2227,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
   int total_no_of_bytes;
   int s = 0,
       fileSize = 0; // Fixed shadowed and uninitialized local variables
-  String content;
+  // Phase 6 Final Polish: Removed dead unused `String content;` to prevent future shadowing.
   String response1;
   int result = -1;
 
@@ -2325,7 +2325,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
 
       } else {
         snprintf(
-            gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSWRITE=%d,%d,10\r\n",
+            gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSWRITE=%d,%d,30\r\n",
             handle_no,
             fileSize); // 0 : if the file does not exist, it will be created
         vTaskDelay(200 / portTICK_PERIOD_MS);
@@ -2334,9 +2334,12 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
         
         // Phase 5: Chunk stream direct from SPIFFS to UART, avoiding RAM crashes
         char file_buf[256];
+        int bytes_streamed = 0;
         while (file1.available()) {
           int bytesRead = file1.read((uint8_t*)file_buf, 255);
           SerialSIT.write((uint8_t*)file_buf, bytesRead);
+          bytes_streamed += bytesRead;
+          if (bytes_streamed % (16 * 1024) == 0) esp_task_wdt_reset(); // Phase 6 Review: Prevent 100KB Watchdog Trips
         }
         // Send trailing newline just in case FSWRITE is expecting one
         SerialSIT.println();
@@ -4985,7 +4988,7 @@ void copyFromSPIFFSToFS(char *dateFile) {
   char *csqstr;
   const char *response_char;
   int len;
-  String content; // content_append; iter17
+  // Phase 6 Final Polish: Removed dead unused `String content;` to prevent future shadowing.
 
   fileSize = 0;
   s = 0; // resetting to 1st record of sd card file ..
@@ -5036,7 +5039,7 @@ void copyFromSPIFFSToFS(char *dateFile) {
     // Phase 5 Fix: Removed content = file1.readString() Memory crash
     
     // filehandle,length,timeout
-    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSWRITE=%d,%d,10\r\n",
+    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSWRITE=%d,%d,30\r\n",
              handle_no,
              fileSize); // 0 : if the file does not exist, it will be created
     vTaskDelay(200 / portTICK_PERIOD_MS);
@@ -5045,9 +5048,12 @@ void copyFromSPIFFSToFS(char *dateFile) {
     
     // Chunk flow directly to modem UART to bypass 100KB RAM fragmentation
     char file_buf[256];
+    int bytes_streamed = 0;
     while (file1.available()) {
       int bytesRead = file1.read((uint8_t*)file_buf, 255);
       SerialSIT.write((uint8_t*)file_buf, bytesRead);
+      bytes_streamed += bytesRead;
+      if (bytes_streamed % (16 * 1024) == 0) esp_task_wdt_reset(); // Phase 6 Review: Prevent Watchdog Trips
     }
     SerialSIT.println();
     response = waitForResponse("+FSWRITE", 5000);
