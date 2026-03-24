@@ -7,12 +7,17 @@ extern HardwareSerial SerialSIT;
 extern String waitForResponse(String, int);
 
 void save_apn_config(String apn, String ccid) {
-  File f = SPIFFS.open("/apn_config.txt", FILE_WRITE);
-  if (f) {
-    f.println(ccid);
-    f.println(apn);
-    f.close();
-    debugln("Saved APN Config: " + apn);
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+    File f = SPIFFS.open("/apn_config.txt", FILE_WRITE);
+    if (f) {
+      f.println(ccid);
+      f.println(apn);
+      f.close();
+      debugln("Saved APN Config: " + apn);
+    }
+    xSemaphoreGive(fsMutex);
+  } else {
+    debugln("APN Save Failed: fsMutex Locked");
   }
 }
 

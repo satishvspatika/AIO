@@ -253,11 +253,17 @@ bool readHDC(float &tempC, float &humidity) {
       return false; // Physical NACK means sensor is gone
     }
     
-    // [Task 3.2 Fix]: HOLD the i2cMutex across the measurement interval! 
-    // Do NOT release it. If we allow other tasks (like RTC) to blast high-speed I2C 
-    // traffic on the SCL/SDA lines while the HDC1080 is performing its delicate 
-    // analog-to-digital conversion, the EMI can silently corrupt the sensor's internal ADC.
+    // [Phase 4 Fix]: We MUST release the i2cMutex here!
+    // Holding it for 20ms blocks the Core 0 rtcRead task globally, causing missed Minute Boundary timestamps.
+    // The previous Developer held it to prevent supposed EMI, but global time corruption is far worse.
+    xSemaphoreGive(i2cMutex);
+
     vTaskDelay(20 / portTICK_PERIOD_MS); // Wait for measurement
+
+    // Re-acquire the I2C bus to pull the final datagram
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) != pdTRUE) {
+      return false;
+    }
 
     // v5.49: HDC20x0/HDC2022 Register Pointer Reset
     if (hdcType == HDC_2022) {

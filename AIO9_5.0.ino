@@ -608,7 +608,7 @@ void setup() {
   ota_fail_reason[sizeof(ota_fail_reason) - 1] = '\0';
 
   String last_ver =
-      prefs.getString("last_ver", "6.55"); // Updated default to 6.55
+      prefs.getString("last_ver", FIRMWARE_VERSION);
   if (last_ver != FIRMWARE_VERSION) {
     debugln("[BOOT] Version Change! Clearing OTA Fail counters.");
     ota_fail_count = 0;

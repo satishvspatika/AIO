@@ -1645,13 +1645,16 @@ void send_http_data() {
 
     // Storing last logged data for signature check
     if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-      File fileTemp2 = SPIFFS.open("/signature.txt", FILE_WRITE);
+      File fileTemp2 = SPIFFS.open("/signature.tmp", FILE_WRITE);
       if (fileTemp2) {
         snprintf(signature, sizeof(signature), "%04d-%02d-%02d,%02d:%02d",
                  last_recorded_yy, last_recorded_mm, last_recorded_dd,
                  last_recorded_hr, last_recorded_min);
         fileTemp2.print(signature);
         fileTemp2.close();
+        
+        SPIFFS.remove("/signature.txt");
+        SPIFFS.rename("/signature.tmp", "/signature.txt");
       }
       xSemaphoreGive(fsMutex);
     }
