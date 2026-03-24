@@ -36,13 +36,29 @@ import json
 class SqliteSessionStore:
     def __init__(self, db_path="app/SpatikaSessions.db"):
         self.db_path = db_path
+        try:
+            os.makedirs(os.path.dirname(db_path), exist_ok=True)
+            with sqlite3.connect(self.db_path, timeout=5.0) as conn:
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS sessions (
+                        session_id TEXT PRIMARY KEY,
+                        data TEXT
+                    )
+                ''')
+        except Exception as e:
+            print(f"[FATAL] Session store init failed: {e}. Falling back to memory.")
+            self.db_path = ":memory:"
+            with sqlite3.connect(self.db_path, timeout=5.0) as conn:
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS sessions (
+                        session_id TEXT PRIMARY KEY,
+                        data TEXT
+                    )
+                ''')
+
+    def purge_expired(self):
         with sqlite3.connect(self.db_path, timeout=5.0) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS sessions (
-                    session_id TEXT PRIMARY KEY,
-                    data TEXT
-                )
-            ''')
+            conn.execute("DELETE FROM sessions WHERE json_extract(data, '$.expires_at') < ?", (time.time(),))
     
     def __setitem__(self, key, value):
         with sqlite3.connect(self.db_path, timeout=5.0) as conn:
@@ -80,11 +96,9 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
     if username in USERS and USERS[username]["password"] == password:
         session_id = secrets.token_hex(16)
         
-        # OOM Memory Fix: Reaper to remove expired sessions
+        # OOM Memory Fix: Reaper to remove expired sessions natively via SQLite
         now = time.time()
-        expired = [sid for sid, data in SESSIONS.items() if data.get("expires_at", 0) < now]
-        for sid in expired:
-            del SESSIONS[sid]
+        SESSIONS.purge_expired()
             
         # 7-day expiry
         SESSIONS[session_id] = {

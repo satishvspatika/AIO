@@ -40,3 +40,4 @@ logs
 builds/
 spiffs_*.txt
 *_types.txt
+*.db

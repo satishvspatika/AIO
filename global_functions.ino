@@ -1,5 +1,9 @@
 #include "globals.h"
-#include "esp_adc_cal.h"
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  #include "esp_adc/adc_cali_scheme.h"
+#else
+  #include "esp_adc_cal.h"
+#endif
 
 void start_deep_sleep() {
 
@@ -130,6 +134,10 @@ void start_deep_sleep() {
   Serial.flush();
   debugln("[PWR] Entering Deep Sleep");
   esp_deep_sleep_start();
+  
+  // Phase 9 Fix: Nuclear fallback. esp_deep_sleep_start() should never logically return.
+  // If it fails silently, the disconnected RTOS will brick. Reboot immediately!
+  ESP.restart();
 }
 
 // Validate ULP counters to prevent memory corruption
@@ -1187,9 +1195,13 @@ int get_total_backlogs() {
 }
 
 float get_calibrated_battery_voltage() {
-  esp_adc_cal_characteristics_t adc_chars;
-  // Characterize ADC at 11dB attenuation for 3.3V range
-  esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &adc_chars);
+  static esp_adc_cal_characteristics_t adc_chars;
+  static bool initialized = false;
+  if (!initialized) {
+    // Characterize ADC at 11dB attenuation for 3.3V range
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &adc_chars);
+    initialized = true;
+  }
   // ADC1_CHANNEL_5 corresponds to GPIO 33
   uint32_t voltage_mv = esp_adc_cal_raw_to_voltage(adc1_get_raw(ADC1_CHANNEL_5), &adc_chars);
   // Apply our custom voltage divider ratio: 840K / 620K

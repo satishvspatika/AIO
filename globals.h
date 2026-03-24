@@ -28,6 +28,10 @@
 #include <esp_task_wdt.h>
 #include <esp_wifi.h>
 #include <hulp_arduino.h>
+
+#include "esp_adc_cal.h"
+
+float get_calibrated_battery_voltage();
 #include <vector>
 #else
 // Linter fallback for non-Arduino environment (e.g. host-side analysis)

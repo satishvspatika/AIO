@@ -189,7 +189,7 @@ void refresh_sensor_data() {
   static unsigned long last_bat = 0;
   if (millis() - last_bat > 5000) {
     last_bat = millis();
-    li_bat = adc1_get_raw(ADC1_CHANNEL_5);
+    // li_bat ADC reads handled inside get_calibrated_battery_voltage
     li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
     snprintf(ui_data[FLD_BATTERY].bottomRow, 17, "%04.1f", li_bat_val);
     bat_val = li_bat_val;
@@ -321,14 +321,16 @@ void lcdkeypad(void *pvParameters) {
 
     // Phase 7 Fix: Safely execute the deferred LCD power cut with I2C Mutex protection
     if (lcd_power_cut_pending) {
-      if (xSemaphoreTake(i2cMutex, portMAX_DELAY) == pdTRUE) {
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
         digitalWrite(32, LOW); // Turn OFF power to LCD (5V) safely
         // Reset the I2C peripheral purely to re-float the pins and avoid diode drops
         Wire.end();
-        Wire.begin(21, 22);
+        Wire.begin(I2C_SDA, I2C_SCL, 100000); // Phase 9 Fix: Force exactly 100kHz for DS1307 stability
+        Wire.setTimeOut(I2C_TIMEOUT_MS);
         xSemaphoreGive(i2cMutex);
+        lcd_power_cut_pending = false; // Successfully cleared
       }
-      lcd_power_cut_pending = false;
+      // If we failed to get Mutex, leave lcd_power_cut_pending = true. It will retry next loop!
     }
 
     if (lcdkeypad_start == 1 && wifi_active) {

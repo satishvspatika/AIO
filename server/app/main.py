@@ -13,12 +13,20 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Spatika Health API v3.0")
 
-# Phase 8 Fix: Stop command_queue from growing infinitely over years of operation
-from app.database import SessionLocal
+# Phase 8/9 Fix: Stop command_queue from growing infinitely over years of operation
 from sqlalchemy import text
-with SessionLocal() as db:
-    db.execute(text("DELETE FROM command_queue WHERE created_at < datetime('now', '-30 days')"))
-    db.commit()
+from app.database import SessionLocal
+
+@app.on_event("startup")
+async def prune_old_commands():
+    db = SessionLocal()
+    try:
+        db.execute(text("DELETE FROM command_queue WHERE created_at < datetime('now', '-30 days')"))
+        db.commit()
+    except Exception as e:
+        print(f"Startup Command Queue Prune Error: {e}")
+    finally:
+        db.close()
 
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):

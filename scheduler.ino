@@ -8,7 +8,7 @@ void scheduler(void *pvParameters) {
 
   //    li_bat,li_bat_val;
   // Battery Sense
-  li_bat = adc1_get_raw(ADC1_CHANNEL_5);
+  // li_bat ADC reads are handled fully inside get_calibrated_battery_voltage()
   li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
 
   if (!wifi_active) {
@@ -149,6 +149,7 @@ void scheduler(void *pvParameters) {
   strcpy(cum_rf, "000.00");
   strcpy(ftpcum_rf, "00.00");
 
+  // Minimal yield to allow sensor tasks to begin before first loop iteration.
   vTaskDelay(pdMS_TO_TICKS(500)); // Phase 8 Fix: Trim idle wake time to save battery
 
   for (;;) {
@@ -317,7 +318,7 @@ void scheduler(void *pvParameters) {
       // the for loop) is only executed once at ESP32 restart, so bat_val in
       // every record after the first boot would be stale. Re-reading here  
       // ensures each 15-min HTTP payload carries the actual voltage right now.
-      li_bat = adc1_get_raw(ADC1_CHANNEL_5);
+      // li_bat ADC reads handled inside get_calibrated_battery_voltage
       li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
       bat_val = li_bat_val;
       snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);

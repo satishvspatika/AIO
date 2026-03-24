@@ -1770,10 +1770,10 @@ void send_http_data() {
         while (unsent_pointer_count < fileSize) {
           vTaskDelay(100 / portTICK_PERIOD_MS); // iter10
 
-          uCount++;
+          backlog_processed_count++;
           debugln();
-          debug("Line Number ");
-          debugln(uCount);
+          debug("Record Number ");
+          debugln(backlog_processed_count);
           file1.seek(unsent_pointer_count);
           content = file1.readStringUntil('\n'); 
           unsent_pointer_count = file1.position(); // v5.56: Use actual file position (Variable length support)
@@ -4009,7 +4009,7 @@ void prepare_and_send_status(char *gsm_no) {
   else
     solar_conn = 0;
 
-  li_bat = adc1_get_raw(ADC1_CHANNEL_5); // Changed from analogRead(33)
+  // li_bat ADC reads handled inside get_calibrated_battery_voltage
   li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
   snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
   bat_val = li_bat_val; // bat_val is given for storage in spiffs
@@ -4120,7 +4120,7 @@ void get_gps_coordinates() {
       // Response format: +CLBS: 0,12.989436,77.537910,550
       // Phase 8 Fix: Use %lf and double to retain all 7+ decimal places of 64-bit precision!
       if (sscanf(csqstr, "+CLBS: %d,%lf,%lf,", &tmp, &lat, &lon) >= 3) {
-        if (lat != 0 && lon != 0) {
+        if (fabs(lat) > 0.00001 && fabs(lon) > 0.00001) {
           lati = lat;
           longi = lon;
           debug("Latitude: ");
