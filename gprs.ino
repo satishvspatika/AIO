@@ -1816,7 +1816,7 @@ void send_http_data() {
               break;
           }
           
-          if (++backlog_processed_count >= 15) {
+          if (backlog_processed_count >= 15) {
               debugln("[Power] Backlog limit (15) reached. Saving remainder for next wakeup.");
               // Update pointer for next time
               File unsent_count = SPIFFS.open("/unsent_pointer.txt", FILE_WRITE);
@@ -2131,65 +2131,72 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
       xSemaphoreGive(fsMutex); // Ensure release on missing file
     }
 
+    // v5.68 BUGFIX: fsMutex was released at 2121 to allow background FTP.
+    // We MUST legally retake it before performing SPIFFS file modifications for Daily FTP!
     if (sampleNo == 3) { // v5.65 P2: Fixed cleanup condition — only run at 09:30 AM (sampleNo 3) 
                           // to avoid accidental backlog clears if sampleNo 7 is reached via reboot.
-      if (current_hour == 9 && current_min > 30 && current_min < 45) {
-        // Cleanup at start of 09:30 AM cycle
-        snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-        SPIFFS.remove(ftpunsent_file);
-        debug("Cleaned up unsent file at start of new Daily FTP (09:30): ");
-        debugln(ftpunsent_file);
-      }
-      debugln();
-      debug("***DAILY FTP file name is ");
-      debugln(fileName);
-      previous_rfclose_day = rf_cls_dd;
-      previous_rfclose_month = rf_cls_mm;
-      previous_rfclose_year = rf_cls_yy;
-      previous_date(
-          &previous_rfclose_day, &previous_rfclose_month,
-          &previous_rfclose_year); // to ge the previous rf_close_date file
-      // v5.52 BUG-1 FIX: Removed duplicate snprintf (was copy-paste error)
-      snprintf(temp_file, sizeof(temp_file), "/dailyftp_%04d%02d%02d.txt",
-               previous_rfclose_year, previous_rfclose_month,
-               previous_rfclose_day);
-
-      // Maintain original standard filename
-      int ftp_year = rf_cls_yy % 100;
-      char stnId[16];
-      if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
-        snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
-      } else {
-        strcpy(stnId, ftp_station);
-      }
-
-#if SYSTEM == 1
-      if (strstr(UNIT, "SPATIKA"))
-        snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.swd",
-                 stnId, ftp_year, rf_cls_mm, rf_cls_dd, record_hr, record_min);
-      else
-        snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd",
-                 stnId, ftp_year, rf_cls_mm, rf_cls_dd, record_hr, record_min);
-#endif
-#if SYSTEM == 2
-      if (strstr(UNIT, "SPATIKA"))
-        snprintf(fileName, sizeof(fileName),
-                 "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
-                 rf_cls_mm, rf_cls_dd, record_hr, record_min);
-      else
-        snprintf(fileName, sizeof(fileName),
-                 "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
-                 rf_cls_mm, rf_cls_dd, record_hr, record_min);
-#endif
-
-      if (SPIFFS.exists(temp_file)) {
-        copyFile(temp_file, fileName); // copyFile(source,destination);
-        debug("Retrieved file is ");
+      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+        if (current_hour == 9 && current_min > 30 && current_min < 45) {
+          // Cleanup at start of 09:30 AM cycle
+          snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
+          SPIFFS.remove(ftpunsent_file);
+          debug("Cleaned up unsent file at start of new Daily FTP (09:30): ");
+          debugln(ftpunsent_file);
+        }
+        debugln();
+        debug("***DAILY FTP file name is ");
         debugln(fileName);
-        esp_task_wdt_reset();
-        send_ftp_file(fileName, true, true); // v5.66: alreadyLocked=true
+        previous_rfclose_day = rf_cls_dd;
+        previous_rfclose_month = rf_cls_mm;
+        previous_rfclose_year = rf_cls_yy;
+        previous_date(
+            &previous_rfclose_day, &previous_rfclose_month,
+            &previous_rfclose_year); // to ge the previous rf_close_date file
+        // v5.52 BUG-1 FIX: Removed duplicate snprintf (was copy-paste error)
+        snprintf(temp_file, sizeof(temp_file), "/dailyftp_%04d%02d%02d.txt",
+                 previous_rfclose_year, previous_rfclose_month,
+                 previous_rfclose_day);
+
+        // Maintain original standard filename
+        int ftp_year = rf_cls_yy % 100;
+        char stnId[16];
+        if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
+          snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
+        } else {
+          strcpy(stnId, ftp_station);
+        }
+
+  #if SYSTEM == 1
+        if (strstr(UNIT, "SPATIKA"))
+          snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.swd",
+                   stnId, ftp_year, rf_cls_mm, rf_cls_dd, record_hr, record_min);
+        else
+          snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd",
+                   stnId, ftp_year, rf_cls_mm, rf_cls_dd, record_hr, record_min);
+  #endif
+  #if SYSTEM == 2
+        if (strstr(UNIT, "SPATIKA"))
+          snprintf(fileName, sizeof(fileName),
+                   "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
+                   rf_cls_mm, rf_cls_dd, record_hr, record_min);
+        else
+          snprintf(fileName, sizeof(fileName),
+                   "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
+                   rf_cls_mm, rf_cls_dd, record_hr, record_min);
+  #endif
+
+        if (SPIFFS.exists(temp_file)) {
+          copyFile(temp_file, fileName); // copyFile(source,destination);
+          debug("Retrieved file is ");
+          debugln(fileName);
+          esp_task_wdt_reset();
+          send_ftp_file(fileName, true, true); // v5.66: alreadyLocked=true
+        } else {
+          debugln("Daily FTP: Temp file not found. Skipping.");
+        }
+        xSemaphoreGive(fsMutex); // Final explicit drop of Daily FTP cycle lock
       } else {
-        debugln("Daily FTP: Temp file not found. Skipping.");
+        debugln("[FTP] Failed to retake fsMutex for Daily operation. Skipping.");
       }
     }
   } else {
@@ -2513,14 +2520,21 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
             }
             rootDir.close();
             
-          // v5.66: Retake fsMutex for cleanup (Targeted operation)
-          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+          // v5.66: Retake fsMutex for cleanup (Targeted operation) if not already held
+          bool localLock = false;
+          if (!alreadyLocked) {
+             localLock = (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE);
+          }
+          
+          if (alreadyLocked || localLock) {
             for (const String& fPath : filesToDelete) {
               debugf1("Removing file: %s\n", fPath.c_str());
               vTaskDelay(50 / portTICK_PERIOD_MS);
               SPIFFS.remove(fPath);
             }
-            xSemaphoreGive(fsMutex);
+            if (localLock) {
+              xSemaphoreGive(fsMutex);
+            }
           }
         }
 
@@ -4913,7 +4927,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
       p.putString("status", "success");
       p.end();
       debugln("[OTA] Rebooting in 3s...");
-      delay(3000);
+      vTaskDelay(3000 / portTICK_PERIOD_MS);
       ESP.restart();
     } else {
       String err = Update.errorString();

@@ -1173,6 +1173,19 @@ int get_total_backlogs() {
     if (SPIFFS.exists(files[i])) {
       File f = SPIFFS.open(files[i], FILE_READ);
       if (f) {
+        // v5.68 BUGFIX: Accurate UI Backlog Count
+        // Fast-forward past already transmitted JSON records so the LCD shows true remaining count
+        if (i == 0 && SPIFFS.exists("/unsent_pointer.txt")) {
+          File ptrFile = SPIFFS.open("/unsent_pointer.txt", FILE_READ);
+          if (ptrFile) {
+            long ptrVal = ptrFile.readString().toInt();
+            if (ptrVal > 0 && ptrVal < f.size()) {
+              f.seek(ptrVal);
+            }
+            ptrFile.close();
+          }
+        }
+
         // v5.67 UI FREEZE FIX: Switch from slow String allocation to raw buffer read
         char tbuf[128];
         while (f.available()) {
