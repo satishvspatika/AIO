@@ -1255,8 +1255,8 @@ void setup() {
   // Task creation and spawning
   xTaskCreatePinnedToCore(rtcRead, "rtcReadTask", 8192, NULL, 2, &rtcRead_h,
                           1); // Core 1
-  xTaskCreatePinnedToCore(scheduler, "schedulerTask", 14336, NULL, 3,
-                          &scheduler_h, 1); // Core 1
+  xTaskCreatePinnedToCore(scheduler, "schedulerTask", 14336, NULL, 2,
+                          &scheduler_h, 1); // Core 1 (Phase 10: Dropped from P3 to P2 to prevent starvation)
   xTaskCreatePinnedToCore(gprs, "gprsTask", 16384, NULL, 2, &gprs_h,
                           0); // Core 0
 

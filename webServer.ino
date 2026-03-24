@@ -28,6 +28,12 @@ void webServer(void *pvParameters) {
   char ap_name[32];
   snprintf(ap_name, sizeof(ap_name), "SpatikaWeb");
   
+  // Phase 10 Fix: Assure wifi_active is declared TRUE *before* spinning the radio
+  // so concurrent sensor tasks don't accidentally execute ADC2 hardware reads
+  // into the collapsing voltage lane!
+  wifi_active = true; 
+  last_wifi_activity_time = millis();
+
   // Use a completely unique password to instantly break any OS caching bugs
   WiFi.softAP(ap_name, "Spatika123");
   IPAddress IP = WiFi.softAPIP();
@@ -37,9 +43,6 @@ void webServer(void *pvParameters) {
   if (MDNS.begin("spatika")) {
     debugln("MDNS responder started");
   }
-
-  wifi_active = true;
-  last_wifi_activity_time = millis();
 
   // Set up the web server routes
   server.on("/", []() {

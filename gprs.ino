@@ -2653,12 +2653,17 @@ void graceful_modem_shutdown() {
 
   if (!session_unstable) {
     debugln("[GPRS] Session clean. Attempting graceful shutdown...");
-    SerialSIT.println("AT");
-    if (waitForResponse("OK", 500).indexOf("OK") != -1) {
-      debugln("[GPRS] Modem alive. Closing network session gracefully...");
-      SerialSIT.println("AT+CPOWD=1"); // Normal Power Down
-      waitForResponse("NORMAL POWER DOWN", 8000); // Extended timeout for graceful detach
-      vTaskDelay(500 / portTICK_PERIOD_MS);
+    if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      SerialSIT.println("AT");
+      if (waitForResponse("OK", 500).indexOf("OK") != -1) {
+        debugln("[GPRS] Modem alive. Closing network session gracefully...");
+        SerialSIT.println("AT+CPOWD=1"); // Normal Power Down
+        waitForResponse("NORMAL POWER DOWN", 8000); // Extended timeout for graceful detach
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+      }
+      xSemaphoreGive(modemMutex);
+    } else {
+      debugln("[GPRS] ⚠️ modemMutex locked by running task. Skipping AT+CPOWD.");
     }
   } else {
     debugln("[GPRS] ⚠️ Session was unstable (reg fails). Hard Hardware "

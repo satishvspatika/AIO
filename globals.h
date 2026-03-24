@@ -1,6 +1,19 @@
 #ifndef GATEWAY_GLOBALS_H
 #define GATEWAY_GLOBALS_H
 
+// =========================================================================
+// PHASE 10 FIRMWARE MUTEX HIERARCHY (ABBA DEADLOCK PREVENTION):
+// To prevent permanent RTOS dual-core lockups, NEVER acquire semaphores 
+// in reverse order. ALWAYS follow this strict acquisition sequence:
+// 
+// 1. modemMutex (Highest level - Network/UART ops)
+// 2. fsMutex    (Mid level - SPIFFS/VFS ops)
+// 3. i2cMutex   (Lowest level - Local hardware/LCD/RTC ops)
+//
+// Example: If a task holds fsMutex, it CANNOT grab modemMutex. It must 
+// drop fsMutex entirely, grab modemMutex, and then re-grab fsMutex.
+// =========================================================================
+
 #ifdef ARDUINO
 #include "driver/rtc_io.h"
 #include "esp32/ulp.h"

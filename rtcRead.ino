@@ -340,19 +340,24 @@ void parse_and_convert_clbs_response(const char *response, int year1,
     portEXIT_CRITICAL(&rtcTimeMux);
 
     // v5.59: Atomic Save for signature.txt
-    File fTmp = SPIFFS.open("/signature.tmp", FILE_WRITE);
-    if (!fTmp) {
-      debugln("Failed to open signature.tmp for writing");
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      File fTmp = SPIFFS.open("/signature.tmp", FILE_WRITE);
+      if (!fTmp) {
+        debugln("Failed to open signature.tmp for writing");
+      } else {
+        snprintf(signature, sizeof(signature), "%04d-%02d-%02d,%02d:%02d",
+                 last_recorded_yy, last_recorded_mm, last_recorded_dd,
+                 last_recorded_hr, last_recorded_min);
+        fTmp.print(signature);
+        fTmp.close();
+        if (SPIFFS.exists("/signature.txt"))
+          SPIFFS.remove("/signature.txt");
+        SPIFFS.rename("/signature.tmp", "/signature.txt");
+        debugln("[RTC] Signature persisted ATOMICALLY.");
+      }
+      xSemaphoreGive(fsMutex);
     } else {
-      snprintf(signature, sizeof(signature), "%04d-%02d-%02d,%02d:%02d",
-               last_recorded_yy, last_recorded_mm, last_recorded_dd,
-               last_recorded_hr, last_recorded_min);
-      fTmp.print(signature);
-      fTmp.close();
-      if (SPIFFS.exists("/signature.txt"))
-        SPIFFS.remove("/signature.txt");
-      SPIFFS.rename("/signature.tmp", "/signature.txt");
-      debugln("[RTC] Signature persisted ATOMICALLY.");
+      debugln("[RTC] Failed to take fsMutex for signature save. File skipped.");
     }
     vTaskDelay(500 / portTICK_PERIOD_MS);
 
