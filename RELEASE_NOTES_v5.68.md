@@ -110,3 +110,25 @@ This major milestone explicitly resolves all Security, Data-Integrity, and Netwo
 * **Automated SQLite Command Sweep:** Bootstrapped the ASGI Event Runtime (`main.py`) to systematically prune any pending database queries older than 30 Days spanning the `command_queue` on system startup. Destroys unbounded server table volume bloat dynamically over multi-year lifespans.
 * **Static Memory Iteration Fix:** Repositioned the persistent `uCount` integer logic inside the physical FTP backlog evaluation scope (`gprs.ino`). Counter iterations dynamically reset on every file transaction instead of rolling over over massive uptimes.
 * **Rapid UI Electrical Spool-up:** Severed 1.5 Seconds of blocking scheduler latency upon first-boot `vTaskDelay`. Spooling up into field sensor telemetry modes is instantly sharper dynamically across the solar boot periods without overstraining hardware capacitances.
+
+---
+
+## 🛠️ PHASE 9: SURGICAL HARDWARE FIXES & COMPILER STABILITY (ESP32)
+*Resolving strict compiler regressions, I2C collision events, and 64-bit boundary floats.*
+
+* **I2C Bus Frequency Recovery:** Hardcoded `Wire.begin(21, 22, 100000)` accompanied by `Wire.setTimeOut()` directly into the LCD power-cut `i2cMutex` handler. This strictly prevents the silicon from auto-escalating to `400kHz` mode, which physically destroyed legacy DS1307 real-time clock interactions.
+* **Global Equatorial GPS Dead-Zones Nullified:** Swapped the rigid float `lat != 0` check for the math-standard `fabs(lat) > 0.00001` operation. The 64-bit IEEE telemetry logic no longer artificially discards perfectly flawless geographical coordinates laying directly on the Earth's Equator.
+* **Dead Assignment Variable Purge:** Scoured the codebase and eliminated four redundant `li_bat = adc1_get_raw(ADC1_CHANNEL_5)` execution lines spanning across the scheduler, LCD, and GPRS loops, solidifying the new `get_calibrated_battery_voltage()` functional supremacy.
+* **Nuclear Deep-Sleep Hardware Handlers:** Cemented a logical `ESP.restart()` immediately beneath the deepest `esp_deep_sleep_start()` fallback string. If the CPU logic physically refuses XTAL hardware hibernation due to interrupt queues, the system violently reboots rather than surviving indefinitely as a frozen brick.
+* **eFuse Legacy GCC Support Fix:** Trashed the dangerous explicit `#if ESP_IDF_VERSION >= 5.0.0` wrappers in `globals.h`. Because Arduino formally integrates a backward-compatible shim for `esp_adc_cal`, aggressively stripping the header while maintaining legacy V4 operations caused an insurmountable compiler failure. The logic evaluates perfectly unmodified.
+
+---
+
+## 🧬 PHASE 10: RTOS THREAD ARCHITECTURE & MUTEX DISCIPLINE
+*Mitigating FreeRTOS task starvation, dual-core ABBA lockouts, and VFS corruption events.*
+
+* **Thread Priority Starvation Resolved:** Downgraded the `schedulerTask` thread running across Core 1 from `Priority 3` to `Priority 2`. By bringing it horizontally in line with the RTC/Sensor tasks, 10+ second SPIFFS "gap-fill" DB operations physically yield Core 1 clock time to the real-time systems, absolutely zeroing out time-drift anomalies.
+* **SPIFFS Temporary File Shielding:** Explicitly wrapped the flash-destructive `SPIFFS.open("/signature.tmp")` sequence inside the `rtcRead.ino` `resync_time()` logic perfectly within the `fsMutex` semaphore block. This formally eliminates any chance of VFS table obliteration if the Scheduler triggers a file-append simultaneously against the memory buffer.
+* **Deep-Sleep UART Command Slicing Shielded:** Protected the `SerialSIT.println("AT")` power-off burst natively inside `graceful_modem_shutdown()`. By forcing it to explicitly honor `xSemaphoreTake(modemMutex)`, `start_deep_sleep()` can infinitely no longer forcefully inject raw AT bytes into the middle of a concurrently broadcasting FTP session pipeline.
+* **FreeRTOS Mutex Hierarchy Statically Enforced:** Officially documented the `modemMutex` → `fsMutex` → `i2cMutex` reverse locking restrictions permanently at the top of `globals.h`, creating an ironclad barrier against catastrophic dual-core ABBA deadlocks. 
+* **ADC2 Background Voltage Race Eliminated:** Flushed the `wifi_active = true;` boolean up ahead of `WiFi.softAP()` in the WebServer execution path. Reversing the sequence safely neutralizes nanosecond hardware race conditions where peripheral sensor logic could inadvertently sample `ADC2` states whilst the 160MHz networking silicon was physically un-spooling.
