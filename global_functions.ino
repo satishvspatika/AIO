@@ -128,11 +128,9 @@ void start_deep_sleep() {
     SPI.end();
   }
 
-  // Phase 7 Fix: Suspend all RTOS tasks to freeze system state after tearing down buses
-  vTaskSuspendAll();
-
   Serial.flush();
   debugln("[PWR] Entering Deep Sleep");
+
   esp_deep_sleep_start();
   
   // Phase 9 Fix: Nuclear fallback. esp_deep_sleep_start() should never logically return.

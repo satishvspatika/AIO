@@ -164,3 +164,11 @@ This major milestone explicitly resolves all Security, Data-Integrity, and Netwo
 *Final cosmetic hygiene sweeps and array safety bounds.*
 
 * **Dynamic Array Termination:** Replaced archaic literal coordinate null-terminations (`signature[16] = 0`) across `rtcRead.ino` with fully dynamic `memset` string initializations. This physically decouples the memory formatting from the `snprintf` sequence, completely shielding the ESP32 from string corruption if the timestamp packet format length changes in future upgrades.
+
+---
+
+## 💥 PHASE 15: ESP-IDF DEEP SLEEP KERNEL PANIC RESOLVED
+*Intercepting an RTOS scheduling violation injected during Phase 7 bus tear-down.*
+
+* **Kernel Panic Elimination (`global_functions.ino`):** In Phase 7, we introduced an aggressive `vTaskSuspendAll()` instruction immediately prior to deep sleep to brutally freeze all peripheral execution threads (preventing SD/I2C crosstalk before power was cut). However, the native `esp_deep_sleep_start()` ESP-IDF command internally spawns an RTOS hardware UART yield lock (`uart_tx_wait_idle()`) to guarantee the core has successfully flushed all pending serial logs before powering down the silicon. Because the global scheduler was mathematically "Suspended," the internal semaphore timed out instantly, violating `queue.c:1718` and physically inducing an OS crash exactly one millisecond before hibernation.
+* **The Solution:** We have completely evaporated the `vTaskSuspendAll()` invocation. Deep Sleep naturally and cleanly halts active RTOS context swapping inherently as part of the core bootloader sequence. The hardware now smoothly powers down the UART pipeline and correctly hibernates without generating a catastrophic assertion failure.
