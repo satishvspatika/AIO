@@ -90,16 +90,7 @@ void IRAM_ATTR lcdTimer() {
   portEXIT_CRITICAL_ISR(&timerMux2);
 }
 
-// v5.49: Pin protection helpers for electrical stability
-void protectI2CPins() {
-  pinMode(21, INPUT); // High impedance - prevent back-feeding
-  pinMode(22, INPUT);
-}
 
-void unprotectI2CPins() {
-  pinMode(21, INPUT_PULLUP);
-  pinMode(22, INPUT_PULLUP);
-}
 
 // v5.60: Central drawing function - differential to eliminate flicker
 void draw_current_page() {
@@ -121,10 +112,14 @@ void draw_current_page() {
         snprintf(line0, 17, "%-16s", ui_data[cur_fld_no].topRow);
         snprintf(line1, 17, "%-16s", ui_data[cur_fld_no].bottomRow);
 
-        // Blink "PLEASE WAIT.." for manual status queue
+        // Blink active manual states so the user knows it hasn't crashed
         bool is_pending = (pending_manual_status && cur_fld_no == FLD_SEND_STATUS) ||
                           (pending_manual_gps && cur_fld_no == FLD_SEND_GPS) ||
-                          (pending_manual_health && cur_fld_no == FLD_SEND_HEALTH);
+                          (pending_manual_health && cur_fld_no == FLD_SEND_HEALTH) ||
+                          (sync_mode == eHealthStart && cur_fld_no == FLD_SEND_HEALTH) ||
+                          (sync_mode == eGPSStart && cur_fld_no == FLD_SEND_GPS) ||
+                          (sync_mode == eSMSStart && cur_fld_no == FLD_SEND_STATUS) ||
+                          (sync_mode == eStartupGPS && cur_fld_no == FLD_SEND_GPS);
         if (is_pending && (millis() / 500) % 2 == 0) {
           memset(line1, ' ', 16);
           line1[16] = '\0';
@@ -329,14 +324,12 @@ void lcdkeypad(void *pvParameters) {
       // We ping the LCD expander (0x27) to verify the bus is electrically alive.
       if (wakeupKey != NO_KEY) {
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
-          unprotectI2CPins(); // Awaken the SDA/SCL pins
           Wire.beginTransmission(0x27);
           if (Wire.endTransmission() != 0) {
             // No ACK from the LCD. The physical power switch must be OFF.
             wakeupKey = NO_KEY; // Ignore ghost key
             // debugln("[UI] Ignored ghost keypress. LCD switch is currently OFF."); // Optional, avoid spam
           }
-          protectI2CPins(); // Put pins back to safe-sleep mode
           xSemaphoreGive(i2cMutex);
         }
       }
@@ -352,13 +345,12 @@ void lcdkeypad(void *pvParameters) {
     bool should_activate = (wakeup_reason_is == ext0) || (wired == 1 && wakeup_reason_is == 0 && lcd_timer == NULL);
 
     if (last_lcd_state == 1 && lcdkeypad_start == 0) {
-      protectI2CPins();
+      // Intentionally empty. No longer breaking the I2C peripheral connection.
     }
     last_lcd_state = lcdkeypad_start;
 
     if (should_activate) {
       if (lcdkeypad_start == 0 || lcd_timer == NULL) {
-        unprotectI2CPins();
         digitalWrite(32, HIGH);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
         cur_fld_no = 0; // v5.60: Ensure we always start at Station ID on wakeup
@@ -599,17 +591,28 @@ void lcdkeypad(void *pvParameters) {
             } else {
               // WIPE BACKLOG
               if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                lcd.clear(); lcd.print("Wiping Backlog");
-                SPIFFS.remove("/unsent.txt");
-                SPIFFS.remove("/ftpunsent.txt");
-                SPIFFS.remove("/unsent_pointer.txt");
-                diag_http_present_fails = 0;
-                diag_http_cum_fails = 0;
-                pcb_clear_state = 0;
-                vTaskDelay(2000 / portTICK_PERIOD_MS);
-                lcd.clear(); lcd.print("BACKLOG CLEARED");
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-                xSemaphoreGive(i2cMutex);
+                 lcd.clear(); lcd.print("Wiping Backlog");
+                 xSemaphoreGive(i2cMutex); // Safely release immediately
+                 
+                 debugln("[LCD] User confirmed CLEAR BACKLOG.");
+                 SPIFFS.remove("/unsent.txt");
+                 SPIFFS.remove("/ftpunsent.txt");
+                 SPIFFS.remove("/unsent_pointer.txt");
+                 diag_http_present_fails = 0;
+                 diag_http_cum_fails = 0;
+                 pcb_clear_state = 0;
+                 
+                 vTaskDelay(1000 / portTICK_PERIOD_MS);
+                 
+                 if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                    lcd.clear(); lcd.print("BACKLOG CLEARED");
+                    vTaskDelay(1000 / portTICK_PERIOD_MS); // allow humans to read it
+                    xSemaphoreGive(i2cMutex);
+                 }
+              } else {
+                 debugln("[LCD] ERROR: Failed to acquire i2cMutex for CLEAR BACKLOG!");
+                 pcb_clear_state = 0;
+                 strcpy(ui_data[FLD_HTTP_FAILS].bottomRow, "MUTEX TIMEOUT  ");
               }
             }
           } else if (cur_fld_no == FLD_RF_CALIB) {
@@ -645,24 +648,35 @@ void lcdkeypad(void *pvParameters) {
               File f = SPIFFS.open("/rf_res.txt", FILE_WRITE);
               if (f) { f.print(RF_RESOLUTION); f.close(); }
               // Requirement: Wipe all data and reboot after resolution change
-              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
                  lcd.clear(); lcd.print("RES CHANGED!");
                  vTaskDelay(1000/portTICK_PERIOD_MS);
                  lcd.clear(); lcd.print("WIPING DATA...");
+                 xSemaphoreGive(i2cMutex); // Release before doing massive flash wipes
+                 
+                 debugln("[LCD] Resolution changed. Factory wiping SPIFFS...");
                  SPIFFS.remove("/unsent.txt"); SPIFFS.remove("/ftpunsent.txt");
                  File root = SPIFFS.open("/"); 
                  File file = root.openNextFile();
                  while(file) {
                     String n = file.name();
-                    if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt")) {
+                    if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt")) { // Exclude res configuration too
+                      debug("Removing: "); debugln(n);
                       SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
                     }
                     file.close(); file = root.openNextFile();
                  }
                  root.close();
-                 lcd.clear(); lcd.print("DONE! REBOOTING");
+                 
+                 if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                    lcd.clear(); lcd.print("DONE! REBOOTING");
+                    xSemaphoreGive(i2cMutex);
+                 }
+                 debugln("[LCD] Wipe complete. Rebooting...");
                  vTaskDelay(2000 / portTICK_PERIOD_MS);
                  ESP.restart();
+              } else {
+                 debugln("[LCD] ERROR: Failed to acquire i2cMutex during RF_RES factory wipe!");
               }
             }
           } else if (cur_fld_no == FLD_DELETE_DATA) {
@@ -670,34 +684,60 @@ void lcdkeypad(void *pvParameters) {
               delete_confirm_state = 1;
               strcpy(ui_data[FLD_DELETE_DATA].topRow, "ARE YOU SURE?");
               strcpy(ui_data[FLD_DELETE_DATA].bottomRow, "PRESS SET: YES");
+              debugln("[LCD] User selected DELETE_DATA. Awaiting confirmation...");
             } else {
+              debugln("[LCD] User confirmed Factory Reset via Keypad! Initiating...");
               // Perform deletion
-              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
                  lcd.clear(); lcd.print("Deleting...");
+                 xSemaphoreGive(i2cMutex); // Release immediately so background processes don't stall 
+                 
+                 debugln("[LCD] Erasing /unsent.txt & /ftpunsent.txt...");
                  SPIFFS.remove("/unsent.txt"); SPIFFS.remove("/ftpunsent.txt");
+                 
+                 debugln("[LCD] Erasing old daily log files...");
                  File root = SPIFFS.open("/"); 
                  File file = root.openNextFile();
                  while(file) {
                     String n = file.name();
-                    if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc")) {
+                    if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt")) {
+                      debug("Removing: "); debugln(n);
                       SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
                     }
                     file.close(); file = root.openNextFile();
                  }
                  root.close();
-                 lcd.clear(); lcd.print("DONE! REBOOTING");
+                 
+                 if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                    lcd.clear(); lcd.print("DONE! REBOOTING");
+                    xSemaphoreGive(i2cMutex);
+                 }
+                 debugln("[LCD] Delete complete. Restarting ESP32...");
                  vTaskDelay(2000 / portTICK_PERIOD_MS);
                  ESP.restart();
+              } else {
+                 debugln("[LCD] ERROR: Failed to acquire i2cMutex during DELETE_DATA!");
+                 delete_confirm_state = 0;
+                 strcpy(ui_data[FLD_DELETE_DATA].topRow, "DELETE DATA?");
+                 strcpy(ui_data[FLD_DELETE_DATA].bottomRow, "MUTEX TIMEOUT");
               }
             }
           } else if (cur_fld_no == FLD_SD_COPY) {
             if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
               lcd.clear(); lcd.print("COPYING TO SD...");
+              xSemaphoreGive(i2cMutex); // Release lock BEFORE massive file copy sequence
+
+              debugln("[LCD] User initiated bulk copy from SPIFFS to SD Card...");
               copyFilesFromSPIFFSToSD("/"); 
-              lcd.clear(); lcd.print("SD COPY DONE");
-              vTaskDelay(2000 / portTICK_PERIOD_MS);
-              xSemaphoreGive(i2cMutex);
+              
+              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                 lcd.clear(); lcd.print("SD COPY DONE");
+                 vTaskDelay(2000 / portTICK_PERIOD_MS);
+                 xSemaphoreGive(i2cMutex);
+              }
               show_now = 1;
+            } else {
+              debugln("[LCD] ERROR: Failed to acquire i2cMutex for SD Copy!");
             }
           } else if (cur_fld_no == FLD_LOG) {
              if (cur_mode == eEditOff) {
@@ -781,13 +821,25 @@ void lcdkeypad(void *pvParameters) {
              if (cur_mode == eEditOff) {
                 if (ui_data[cur_fld_no].fieldType != eDisplayOnly && ui_data[cur_fld_no].fieldType != eLive) {
                    cur_mode = eEditOn;
-                   strcpy(input_buf, ui_data[cur_fld_no].bottomRow);
+                   if (cur_fld_no == FLD_STATION) {
+                      // UX Request: Start with a completely blank slate for Station ID
+                      memset(input_buf, ' ', 16);
+                      input_buf[16] = '\0';
+                   } else {
+                      strcpy(input_buf, ui_data[cur_fld_no].bottomRow);
+                   }
                    cur_pos_no = 0; cur_char_no = 0;
                 }
              } else {
                 if (cur_fld_no == FLD_STATION) {
                    String trimmed = String(input_buf);
                    trimmed.trim();
+                   
+                   // Fallback: If user accidentally hit SET on a completely blank screen
+                   if (trimmed.length() == 0) {
+                       trimmed = String(station_name);
+                   }
+
                    // Requirement (v5.56): if it's numeric "00XXXX", treat as "XXXX"
                    if (trimmed.length() == 6 && isDigitStr(trimmed.c_str()) && trimmed.startsWith("00")) {
                       trimmed = trimmed.substring(2);

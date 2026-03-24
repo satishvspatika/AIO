@@ -1129,14 +1129,41 @@ void setup() {
       }
       debug("Firmware ver stored in SPIFFS is ");
       debugln(UNIT_VER);
-      // v5.59-Sanctity: DO NOT delete unsent data files on version update.
-      // This ensures that backlog accumulated in the field is preserved across OTA.
-      /*
-      SPIFFS.remove("/unsent.txt");
-      SPIFFS.remove("/unsent_pointer.txt"); // 2024 iter6
-      SPIFFS.remove("/ftpunsent.txt");
-      */
-      debugln("[OTA] Version change detected. Preserving backlog data.");
+      
+      // v5.67: Differentiate between a simple OTA patch and a cross-architecture flash
+      // (e.g. changing from TWS to TWS-RF where the CSV structures physically change)
+      int lastDash1 = String(UNIT_VER).lastIndexOf('-');
+      int lastDash2 = temp.lastIndexOf('-');
+      bool isCrossFlash = true;
+      if (lastDash1 > 0 && lastDash2 > 0) {
+          String prefix1 = String(UNIT_VER).substring(0, lastDash1);
+          String prefix2 = temp.substring(0, lastDash2);
+          if (prefix1 == prefix2) {
+              isCrossFlash = false;
+          }
+      }
+
+      if (isCrossFlash) {
+          debugln("[OTA] CROSS-FLASH DETECTED (Different config type). Automating factory wipe to prevent CSV parsing crashes...");
+          SPIFFS.remove("/unsent.txt");
+          SPIFFS.remove("/unsent_pointer.txt");
+          SPIFFS.remove("/ftpunsent.txt");
+
+          File root = SPIFFS.open("/"); 
+          File file = root.openNextFile();
+          while(file) {
+              String n = file.name();
+              if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt" || n == "firmware.doc")) {
+                  debug("Removing incompatible structure: "); debugln(n);
+                  SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
+              }
+              file.close(); file = root.openNextFile();
+          }
+          root.close();
+          debugln("[OTA] Wipe complete.");
+      } else {
+          debugln("[OTA] Minor version update detected. Preserving backlog data intact.");
+      }
 
       // RF
 #if (SYSTEM == 0) || (SYSTEM == 2)
@@ -1719,7 +1746,7 @@ void ULP_COUNTING(uint32_t us) {
 
       // States are different, start debouncing
       I_MOVI(R3, 0), I_ST(R2, R3, U_PREV_STATE), // prev_state = current
-      I_MOVI(R0, 10),                            // v7.95: Debounce set to 10ms
+      I_MOVI(R0, 5),                             // Debounce optimized to 5 loops (10ms total)
       I_ST(R0, R3, U_DEBOUNCE_CNT),
       M_BX(4), // Skip to next sensor while debouncing
 

@@ -437,23 +437,6 @@ void scheduler(void *pvParameters) {
           WS_CALIBRATION_FACTOR *
           (avgPulsesPerSecond / 4.0); // factor is 2*pi*r (r is 7cms) //
 
-      // --- Golden Summary WS & Rain Checks ---
-      if (cur_avg_wind_speed < 0 || cur_avg_wind_speed > 72.0)
-        diag_ws_erv = true;
-
-      static float prev_ws = -1.0;
-      if (abs(cur_avg_wind_speed - prev_ws) < 0.01) {
-        diag_ws_same_count++;
-        if (diag_ws_same_count >= 40)
-          diag_ws_cv = true;
-      } else {
-        diag_ws_same_count = 0;
-        if (diag_ws_cv && !diag_ws_erv) {
-          diag_ws_cv = false; // v5.65: Clear stale CV flag — sensor has recovered
-          debugln("[DIAG] WS Constant-Value fault cleared — sensor is varying again.");
-        }
-      }
-      prev_ws = cur_avg_wind_speed;
 
 #if (SYSTEM == 0) || (SYSTEM == 2)
       if (rf_value > 10.0)
@@ -539,10 +522,17 @@ void scheduler(void *pvParameters) {
 
       // --- Golden Summary Multi-Fault Detection (v5.43) ---
       // 1. Temperature Checks
-      if (check_temp < 2.0 || check_temp > 45.0)
+      if (check_temp < 2.0 || check_temp > 50.0) {
         diag_temp_erv = true;
-      if (check_temp == 0.0)
+      } else {
+        diag_temp_erv = false;
+      }
+      
+      if (check_temp == 0.0) {
         diag_temp_erz = true;
+      } else {
+        diag_temp_erz = false;
+      }
 
       if (abs(check_temp - prev_15min_temp) < 0.01) {
         temp_same_count++;
@@ -556,10 +546,17 @@ void scheduler(void *pvParameters) {
       }
 
       // 2. Humidity Checks
-      if (check_hum < 1.0 || check_hum > 100.0)
+      if (check_hum < 1.0 || check_hum > 100.0) {
         diag_hum_erv = true;
-      if (check_hum == 0.0)
+      } else {
+        diag_hum_erv = false;
+      }
+      
+      if (check_hum == 0.0) {
         diag_hum_erz = true;
+      } else {
+        diag_hum_erz = false;
+      }
 
       if (abs(check_hum - prev_15min_hum) < 0.01) {
         hum_same_count++;
@@ -577,8 +574,11 @@ void scheduler(void *pvParameters) {
       // ─────────────────────────────────────────────────────────────────────
       
       // 3. Wind Speed Checks
-      if (cur_avg_wind_speed < 0.0 || cur_avg_wind_speed > 60.0)
+      if (cur_avg_wind_speed < 0.0 || cur_avg_wind_speed > 60.0) {
         diag_ws_erv = true;
+      } else {
+        diag_ws_erv = false;
+      }
 
       if (abs(cur_avg_wind_speed - prev_15min_ws) < 0.01) {
         diag_ws_same_count++;
@@ -1975,7 +1975,7 @@ void scheduler(void *pvParameters) {
                      i, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
-                     "%s;%04d-%02d-%02d,%02d:%02d;000.00;000.0;000.0;00.00;000;"
+                     "%s;%04d-%02d-%02d,%02d:%02d;00.00;000.0;000.0;00.00;000;"
                      "%04d;%04.1f\r\n",
                      stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);

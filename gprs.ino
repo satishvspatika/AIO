@@ -2094,8 +2094,10 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
                 SPIFFS.remove("/ftpremain.txt");
                 debugln("[FTP] Backlog fully chunked into Active Payload.");
               }
-            } else {
+          } else {
             debugln("Failed to open ftpunsent.txt for chunking.");
+            xSemaphoreGive(fsMutex);
+            return; // Hygiene Fix: Abort on source failure to prevent wasted blank FTP sequence
           }
           debug("Retrieved file is ");
           debugln(fileName);
@@ -2630,7 +2632,7 @@ void graceful_modem_shutdown() {
     if (waitForResponse("OK", 500).indexOf("OK") != -1) {
       debugln("[GPRS] Modem alive. Closing network session gracefully...");
       SerialSIT.println("AT+CPOWD=1"); // Normal Power Down
-      waitForResponse("NORMAL POWER OFF", 3000);
+      waitForResponse("NORMAL POWER DOWN", 8000); // Extended timeout for graceful detach
       vTaskDelay(500 / portTICK_PERIOD_MS);
     }
   } else {
@@ -3028,8 +3030,12 @@ void store_current_unsent_data() {
   File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
   if (ftpfile2) {
     String cleanFtp = "";
+
+    // BUG-C4 fix v5.65: Re-derive FTP string from lastrecorded CSV to prevent stale global consumption
+    // EXCEPTION: For SYSTEM == 2, the CSV string possesses a 6-character rain width, which ruins 
+    // the 5-character FTP layout requirement. ftpappend_text is inherently safe and correctly padded.
+#if SYSTEM != 2
     if (strlen(finalStringBuffer) > 20) {
-        // BUG-C4 fix v5.65: Re-derive FTP string from lastrecorded CSV to prevent stale global consumption
         String csv = String(finalStringBuffer);
         csv.trim();
         int firstComma = csv.indexOf(',');
@@ -3057,6 +3063,7 @@ void store_current_unsent_data() {
             debugln("[FTP-Store] Re-derived record from lastrecorded CSV.");
         }
     }
+#endif
 
     if (cleanFtp.length() < 50) {
         cleanFtp = String(ftpappend_text);
@@ -3442,8 +3449,13 @@ void get_registration() {
     }
 
 #if FORCE_2G_ONLY == 1
-    debugln("[GPRS] FORCE_2G_ONLY flag active. Setting CNMP=13 immediately.");
-    SerialSIT.println("AT+CNMP=13"); // GSM Only
+    if (isBSNL) {
+      debugln("[GPRS] FORCE_2G_ONLY flag active & BSNL SIM. Setting CNMP=13.");
+      SerialSIT.println("AT+CNMP=13"); // GSM Only
+    } else {
+      debugln("[GPRS] FORCE_2G_ONLY flag bypassed: Detected 4G-M2M SIM.");
+      SerialSIT.println("AT+CNMP=2");  // Automatic Mode (LTE/GSM)
+    }
 #else
     SerialSIT.println("AT+CNMP=2");     // Automatic Mode (LTE/GSM)
 #endif
@@ -5014,7 +5026,7 @@ void copyFromSPIFFSToFS(char *dateFile) {
              handle_no); // FILEHANDLE,offset,(0:start of file 1:cur pos of
                          // pointer 2: end of file
     SerialSIT.println(gprs_xmit_buf);
-    response = waitForResponse("+FSCLOSE", 5000);
+    response = waitForResponse("OK", 5000); // Fixed: FSCLOSE responds with OK, not URC
     vTaskDelay(200 / portTICK_PERIOD_MS);
 
     // v5.65 Fix: Pass default mode 1 (Passive) for compatibility
@@ -5262,7 +5274,6 @@ bool send_health_report(bool useJitter) {
   if (diag_temp_erv || diag_temp_erz) H_FAULT("TEMP_UNREAL");
   if (diag_hum_erv || diag_hum_erz) H_FAULT("HUM_UNREAL");
   if (diag_ws_erv) H_FAULT("WS_UNREAL");
-  if (diag_ws_cv) H_FAULT("WS_STUCK");
   if (diag_wd_fail) H_FAULT("WD_FAIL");
   if (diag_rain_jump) H_FAULT("RAIN_SPIKE");
   if (diag_rain_reset) H_FAULT("RAIN_RESET");

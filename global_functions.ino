@@ -17,7 +17,7 @@ void start_deep_sleep() {
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
           pdTRUE) {
         lcd.noBacklight();
-        digitalWrite(32, LOW); // Turn OFF power to LCD (5V)
+        // Do NOT cut GPIO 32 power here! It causes SDA/SCL ESD diode glitches
         xSemaphoreGive(i2cMutex);
       }
     }
@@ -28,7 +28,7 @@ void start_deep_sleep() {
   calib_flag = 0; // Reset UI state too
 
   WiFi.disconnect();
-  digitalWrite(32, LOW); // Turn off LCD (5V)
+  // LCD power cut deferred to end of function to protect I2C bus
 
   // Ensure GPRS is shut down gracefully ALWAYS before cutting power
   esp_task_wdt_reset();
@@ -49,7 +49,16 @@ void start_deep_sleep() {
       DateTime now = rtc.now();
       current_min = now.minute(); // Update globals for accurate calc
       live_sec = now.second();
-      xSemaphoreGive(i2cMutex);
+      
+      // Shut down I2C bus BEFORE cutting LCD power
+      // Prevents PCF8574 ESD diodes from corrupting in-flight RTC/HDC transactions
+      Wire.end();                  // Release SDA/SCL before PCF8574 loses power
+      digitalWrite(32, LOW);       // Now safe to cut 5V — bus is idle
+      
+      // Do NOT give mutex back — hold it through sleep entry
+      // so no other task can attempt I2C after this point
+  } else {
+      digitalWrite(32, LOW);       // Fallback cut if mutex totally hung
   }
 
   // Calculate time to sleep to target the NEXT exact 15-minute boundary

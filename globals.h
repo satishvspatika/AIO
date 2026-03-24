@@ -600,8 +600,7 @@ void fetchFromHttpAndUpdate(char *fileName);
 void copyFromSPIFFSToFS(char *dateFile);
 void loadGPS();
 // I2C Protection (v5.49)
-void protectI2CPins();
-void unprotectI2CPins();
+
 
 // MODEM / GPRS
 String waitForResponse(String expectedResponse, int timeout);

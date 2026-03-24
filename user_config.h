@@ -7,13 +7,13 @@
  * ========================================================================= */
 
 // --- 1. CORE SYSTEM IDENTITY ---
-#define SYSTEM 0              // 0: TRG, 1: TWS, 2: TWS-RF Addon
-#define UNIT_CFG "BIHAR_TRG" // Exact station network name:
+#define SYSTEM 1              // 0: TRG, 1: TWS, 2: TWS-RF Addon
+#define UNIT_CFG "KSNDMC_TWS" // Exact station network name:
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 
-#define FIRMWARE_VERSION "5.66"
+#define FIRMWARE_VERSION "5.67"
 
 #define ENABLE_HEALTH_REPORT  1 // Master Switch: Enable automated device health reporting
 #define TEST_HEALTH_DEFAULT  0 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)
