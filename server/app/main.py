@@ -13,6 +13,13 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Spatika Health API v3.0")
 
+# Phase 8 Fix: Stop command_queue from growing infinitely over years of operation
+from app.database import SessionLocal
+from sqlalchemy import text
+with SessionLocal() as db:
+    db.execute(text("DELETE FROM command_queue WHERE created_at < datetime('now', '-30 days')"))
+    db.commit()
+
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # 1. Skip auth for APIs: /health, /trg_gprs, /tws_gprs (if handled differently)

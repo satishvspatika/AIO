@@ -1,4 +1,5 @@
 #include "globals.h"
+#include "esp_adc_cal.h"
 
 void start_deep_sleep() {
 
@@ -1183,4 +1184,14 @@ int get_total_backlogs() {
   diag_backlog_total = total;
   last_backlog_check = millis();
   return total;
+}
+
+float get_calibrated_battery_voltage() {
+  esp_adc_cal_characteristics_t adc_chars;
+  // Characterize ADC at 11dB attenuation for 3.3V range
+  esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &adc_chars);
+  // ADC1_CHANNEL_5 corresponds to GPIO 33
+  uint32_t voltage_mv = esp_adc_cal_raw_to_voltage(adc1_get_raw(ADC1_CHANNEL_5), &adc_chars);
+  // Apply our custom voltage divider ratio: 840K / 620K
+  return ((float)voltage_mv / 1000.0) * (840.0 / 620.0);
 }

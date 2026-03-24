@@ -8,10 +8,7 @@ int sec, mi, hr, dy, mo, yr;
 
 int bcdToDec(byte val) { return ((val >> 4) * 10) + (val & 0x0F); }
 
-int timeToMinutes(int years, int months, int dd, int hr, int mins) {
-  return (((years - 2000) * 365 + (months - 1) * 30 + (dd - 1)) * 24 * 60) +
-         (hr * 60 + mins);
-}
+
 
 bool rtc_ok;
 byte data[7];

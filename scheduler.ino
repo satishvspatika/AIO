@@ -8,8 +8,8 @@ void scheduler(void *pvParameters) {
 
   //    li_bat,li_bat_val;
   // Battery Sense
-  li_bat = adc1_get_raw(ADC1_CHANNEL_5); // Changed from analogRead(33)
-  li_bat_val = li_bat * 0.0010915;       // 0.0010915; //(3.3/4096) * (840/620);
+  li_bat = adc1_get_raw(ADC1_CHANNEL_5);
+  li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
 
   if (!wifi_active) {
     int solar_raw;
@@ -149,7 +149,7 @@ void scheduler(void *pvParameters) {
   strcpy(cum_rf, "000.00");
   strcpy(ftpcum_rf, "00.00");
 
-  vTaskDelay(2000 / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(500)); // Phase 8 Fix: Trim idle wake time to save battery
 
   for (;;) {
     esp_task_wdt_reset();
@@ -318,7 +318,7 @@ void scheduler(void *pvParameters) {
       // every record after the first boot would be stale. Re-reading here  
       // ensures each 15-min HTTP payload carries the actual voltage right now.
       li_bat = adc1_get_raw(ADC1_CHANNEL_5);
-      li_bat_val = li_bat * 0.0010915;
+      li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
       bat_val = li_bat_val;
       snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
       if (!wifi_active && !gprs_started) {

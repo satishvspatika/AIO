@@ -190,7 +190,7 @@ void refresh_sensor_data() {
   if (millis() - last_bat > 5000) {
     last_bat = millis();
     li_bat = adc1_get_raw(ADC1_CHANNEL_5);
-    li_bat_val = li_bat * 0.0010915;
+    li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
     snprintf(ui_data[FLD_BATTERY].bottomRow, 17, "%04.1f", li_bat_val);
     bat_val = li_bat_val;
 

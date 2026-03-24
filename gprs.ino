@@ -1770,7 +1770,6 @@ void send_http_data() {
         while (unsent_pointer_count < fileSize) {
           vTaskDelay(100 / portTICK_PERIOD_MS); // iter10
 
-          static int uCount = 0;
           uCount++;
           debugln();
           debug("Line Number ");
@@ -4011,7 +4010,7 @@ void prepare_and_send_status(char *gsm_no) {
     solar_conn = 0;
 
   li_bat = adc1_get_raw(ADC1_CHANNEL_5); // Changed from analogRead(33)
-  li_bat_val = li_bat * 0.0010915;       //(3.3/4096) * (840/620);
+  li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
   snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
   bat_val = li_bat_val; // bat_val is given for storage in spiffs
 
@@ -4102,7 +4101,7 @@ void get_gps_coordinates() {
   
   String response;
   int tmp;
-  float lat, lon;
+  double lat, lon;
   const char *response_char;
   char *csqstr;
 
@@ -4119,8 +4118,8 @@ void get_gps_coordinates() {
     csqstr = strstr(response_char, "+CLBS");
     if (csqstr != NULL) {
       // Response format: +CLBS: 0,12.989436,77.537910,550
-      // We use %f to capture standard floats, but print with better precision
-      if (sscanf(csqstr, "+CLBS: %d,%f,%f,", &tmp, &lat, &lon) >= 3) {
+      // Phase 8 Fix: Use %lf and double to retain all 7+ decimal places of 64-bit precision!
+      if (sscanf(csqstr, "+CLBS: %d,%lf,%lf,", &tmp, &lat, &lon) >= 3) {
         if (lat != 0 && lon != 0) {
           lati = lat;
           longi = lon;
@@ -4657,8 +4656,8 @@ void fetchFromHttpAndUpdate(char *fileName) {
   Serial.println("[OTA] OTA begun. Downloading in 64KB Range chunks...");
 
   const int RANGE_SIZE =
-      65536; // v7.52: 64KB (Balanced for RAM & 2G throughput)
-  const int READ_SIZE = 65536;
+      32768; // Phase 8 Fix: Shrink to 32KB to avoid fragmentation failures
+  const int READ_SIZE = 32768;
   uint8_t *buf = (uint8_t *)malloc(READ_SIZE);
   if (!buf) {
     debugln("[OTA] malloc failed!");
