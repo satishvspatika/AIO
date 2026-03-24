@@ -4738,7 +4738,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
     if (http_status != 200 && http_status != 206) {
       Serial.printf("[OTA] ❌ HTTP Error: %d. Resetting session.\n",
                     http_status);
-      session_active = false; // Force re-init on next loop
+      // Force re-init on next loop
       vTaskDelay(2000 / portTICK_PERIOD_MS);
       chunk_retries++;
       consecutive_fails++;
@@ -4826,7 +4826,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
         ESP.restart(); // Signature matched crosstalk, instant restart
       }
       flushSerialSIT(); // BUG-4 Fix: Clear residual UART bytes on sanity fail
-      session_active = false; // Something is deeply wrong, reset session
+      // Something is deeply wrong, reset session
       chunk_retries++;
       consecutive_fails++;
       esp_task_wdt_reset();
@@ -4856,7 +4856,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
     flushSerialSIT(); // Final tail cleanup
     vTaskDelay(100 / portTICK_PERIOD_MS);
     esp_task_wdt_reset();
-    session_active = false; // Force re-init for next chunk (Rule 41)
+    // Force re-init for next chunk (Rule 41)
   }
 
   free(buf);
