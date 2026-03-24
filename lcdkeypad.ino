@@ -37,6 +37,11 @@ bool isFieldVisible(int fld_id) {
     return false;
 #endif
 
+#if ENABLE_HEALTH_REPORT == 0
+  if (fld_id == FLD_SEND_HEALTH)
+    return false;
+#endif
+
 #if ENABLE_PRESSURE_SENSOR == 1
   if (fld_id == FLD_PRESSURE || fld_id == FLD_ALTITUDE) {
     if (SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP"))
