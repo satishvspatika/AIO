@@ -313,7 +313,11 @@
     function promptFtpDaily(stnId) {
         const date = prompt("Enter Date in YYYYMMDD format (e.g. 20260228):");
         if (date && /^\d{8}$/.test(date)) {
-            window.location.href = `/cmd/${stnId}/FTP_DAILY?param=${date}`;
+            fetch(`/cmd/${stnId}/FTP_DAILY?param=${date}`, { method: "POST" })
+            .then(res => {
+                if(res.ok) window.location.reload();
+                else alert("Failed to queue FTP_DAILY");
+            });
         } else if (date) {
             alert("Invalid date format. Please use YYYYMMDD.");
         }

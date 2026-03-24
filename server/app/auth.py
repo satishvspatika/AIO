@@ -9,14 +9,23 @@ templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["ist"] = ist_filter
 
 import os
+import sys
+
+ADMIN_PASS = os.getenv("ADMIN_PASS", "")
+GUEST_PASS = os.getenv("GUEST_PASS", "")
+
+if not ADMIN_PASS or not GUEST_PASS:
+    print("FATAL ERROR: ADMIN_PASS and GUEST_PASS must be strictly defined in the .env file.")
+    print("Refusing to start server with empty passwords. This prevents the '1-Click' 0-day bypass.")
+    sys.exit(1)
 
 USERS = {
     os.getenv("ADMIN_USER", "admin"): {
-        "password": os.getenv("ADMIN_PASS", ""), 
+        "password": ADMIN_PASS, 
         "role": "supervisor"
     },
     os.getenv("GUEST_USER", "guest"): {
-        "password": os.getenv("GUEST_PASS", ""), 
+        "password": GUEST_PASS, 
         "role": "normal"
     }
 }

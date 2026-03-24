@@ -349,52 +349,29 @@ ui_data_t ui_data[FLD_COUNT] = {
 
 #if SYSTEM == 0
 struct http_params httpSet[7] = {
-    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80",
-     "sit1040", "x-www-form-urlencoded"}, // KSNDMC Original link
-    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80",
-     "pse2420", "x-www-form-urlencoded"}, // KSNDMC Server with link to accept
-                                          // backlog from HTTP
-    {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085",
-     "bmsk1234", "json"}, // BIHAR Govt Server
-    {"rtdasbih.spatika.net", "185.250.105.225",
-     "/trg_gprs/upload_bih_trg_data_new", "80", "bmsk12345",
-     "json"}, // Bihar Spatika Server
-    {"104.211.5.142", "104.211.5.142", "/esprain", "3002", "sit", "json"},
-    {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", "sit",
-     "x-www-form-urlencoded"},
-    {"rtdas1.spatika.net", "89.32.144.163", "/hmrtdas/trg_gen", "80",
-     "sitgen100", "x-www-form-urlencoded"}, // spatika general version
+    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80", SEC_KS_TRG_OLD, "x-www-form-urlencoded"}, 
+    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80", SEC_KS_TRG_NEW, "x-www-form-urlencoded"}, 
+    {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085", SEC_BIH_GOV, "json"}, 
+    {"rtdasbih.spatika.net", "185.250.105.225", "/trg_gprs/upload_bih_trg_data_new", "80", SEC_BIH_SPT, "json"}, 
+    {"104.211.5.142", "104.211.5.142", "/esprain", "3002", SEC_EX_SIT, "json"},
+    {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", SEC_EX_SIT, "x-www-form-urlencoded"},
+    {"rtdas1.spatika.net", "89.32.144.163", "/hmrtdas/trg_gen", "80", SEC_SPT_GEN, "x-www-form-urlencoded"}, 
 };
 #endif
 
 #if (SYSTEM == 1) || (SYSTEM == 2)
 struct http_params httpSet[11] = {
-    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80",
-     "sit1040", "x-www-form-urlencoded"}, // KSNDMC Original link KSNDMC_OLD
-    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80",
-     "pse2420", "x-www-form-urlencoded"}, // KSNDMC Server with link to accept
-                                          // backlog from HTTP : KSNDMC_TRG
-    {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085",
-     "bmsk1234", "json"}, // BIHAR Govt Server : BIHAR_TRG
-    {"rtdasbih.spatika.net", "185.250.105.225",
-     "/trg_gprs/upload_bih_trg_data_new", "80", "bmsk12345",
-     "json"}, // Bihar Spatika Server
-    {"104.211.5.142", "104.211.5.142", "/esprain", "3002", "sit", "json"},
-    {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", "sit",
-     "x-www-form-urlencoded"},
-    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_tws_data_v2", "80",
-     "climate4p2013",
-     "x-www-form-urlencoded"}, // KSNDMC Server for TWS : KSNDMC_TWS
-    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_twsrf_data_v2",
-     "80", "rfclimate5p13",
-     "x-www-form-urlencoded"}, // KSNDMC Server for TWS-RF : KSNDMC_ADDON
-    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_tws_data_v2",
-     "80", "climate4p2013", "x-www-form-urlencoded"}, // Spatika Server for TWS
-    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_twsrf_data_v2",
-     "80", "rfclimate5p13",
-     "x-www-form-urlencoded"}, // Spatika Server for TWS-RF
-    {"rtdas.spatika.net", "89.32.144.163", "/tws_gprs/twsrf_gen", "80",
-     "wsgen2014", "x-www-form-urlencoded"}, // Spatika Server for TWS-RF
+    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80", SEC_KS_TRG_OLD, "x-www-form-urlencoded"}, 
+    {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80", SEC_KS_TRG_NEW, "x-www-form-urlencoded"}, 
+    {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085", SEC_BIH_GOV, "json"}, 
+    {"rtdasbih.spatika.net", "185.250.105.225", "/trg_gprs/upload_bih_trg_data_new", "80", SEC_BIH_SPT, "json"}, 
+    {"104.211.5.142", "104.211.5.142", "/esprain", "3002", SEC_EX_SIT, "json"},
+    {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", SEC_EX_SIT, "x-www-form-urlencoded"},
+    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_tws_data_v2", "80", SEC_KS_TWS, "x-www-form-urlencoded"}, 
+    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_twsrf_data_v2", "80", SEC_KS_ADDON, "x-www-form-urlencoded"}, 
+    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_tws_data_v2", "80", SEC_KS_TWS, "x-www-form-urlencoded"}, 
+    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_twsrf_data_v2", "80", SEC_KS_ADDON, "x-www-form-urlencoded"}, 
+    {"rtdas.spatika.net", "89.32.144.163", "/tws_gprs/twsrf_gen", "80", SEC_SPT_TWS_RF, "x-www-form-urlencoded"}, 
 };
 #endif
 // --- End Configuration Tables ---

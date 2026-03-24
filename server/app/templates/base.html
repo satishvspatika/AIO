@@ -350,6 +350,29 @@
     }
     tick();
     setInterval(tick, 1000);
+
+    // CSRF Protection: Convert all /cmd/ and /delete/ danger links to POST requests automatically
+    document.addEventListener("click", function(e) {
+        let link = e.target.closest("a");
+        if (!link || !link.href) return;
+        
+        let url = new URL(link.href);
+        if (url.pathname.startsWith("/cmd/") || 
+            url.pathname.startsWith("/delete/") ||
+            url.pathname.startsWith("/delete-category/") ||
+            url.pathname.startsWith("/clear-queue/") ||
+            url.pathname.startsWith("/clear-ota-queue/") ||
+            url.pathname.startsWith("/toggle-ota-lock/")) {
+            e.preventDefault();
+            if (confirm("⚠️ SECURITY WARNING: Are you sure you want to execute this destructive command?")) {
+                fetch(url.href, { method: "POST" })
+                .then(res => {
+                    if (res.ok) window.location.reload();
+                    else alert("Command execution failed. Check server logs.");
+                });
+            }
+        }
+    });
   </script>
   {% block extra_js %}{% endblock %}
 </body>

@@ -39,12 +39,12 @@ def _g(r, attr, default=None):
     return getattr(r, attr, default)
 
 
-def _all_fields_row(r):
+def _all_fields_row(r, now=None):
     """Returns a flat list of all health report fields for CSV export."""
     # v7.86: Offset to IST
     ist_time = r.reported_at + datetime.timedelta(hours=5, minutes=30) if r.reported_at else None
     
-    ev = evaluate(r)
+    ev = evaluate(r, now)
     return [
         ist_time, _g(r, "stn_id"), _g(r, "unit_type"), _g(r, "system"),
         _g(r, "health_sts"), _g(r, "sensor_sts"),
@@ -275,11 +275,12 @@ def csv_summary(db: Session = Depends(get_db)):
     Good for sharing fleet status snapshots.
     """
     reports = get_latest_per_station(db)
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     output  = io.StringIO()
     writer  = csv.writer(output)
     writer.writerow(ALL_FIELDS_HEADER)
     for r in reports:
-        writer.writerow(_all_fields_row(r))
+        writer.writerow(_all_fields_row(r, now))
     output.seek(0)
     return StreamingResponse(
         output, media_type="text/csv",
@@ -298,11 +299,17 @@ def csv_full_history(db: Session = Depends(get_db)):
         .order_by(HealthReport.stn_id, HealthReport.reported_at.desc())
         .all()
     )
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    today = datetime.date.today()
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(ALL_FIELDS_HEADER)
     for r in records:
-        writer.writerow(_all_fields_row(r))
+        if r.reported_at and r.reported_at.date() < today:
+            eval_now = r.reported_at + datetime.timedelta(hours=1)
+        else:
+            eval_now = now
+        writer.writerow(_all_fields_row(r, eval_now))
     output.seek(0)
     return StreamingResponse(
         output, media_type="text/csv",
@@ -321,11 +328,17 @@ def station_csv(stn_id: str, db: Session = Depends(get_db)):
         .order_by(HealthReport.reported_at.desc())
         .all()
     )
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    today = datetime.date.today()
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(ALL_FIELDS_HEADER)
     for r in history:
-        writer.writerow(_all_fields_row(r))
+        if r.reported_at and r.reported_at.date() < today:
+            eval_now = r.reported_at + datetime.timedelta(hours=1)
+        else:
+            eval_now = now
+        writer.writerow(_all_fields_row(r, eval_now))
     output.seek(0)
     return StreamingResponse(
         output, media_type="text/csv",

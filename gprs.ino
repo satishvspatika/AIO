@@ -4305,13 +4305,13 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
     if (send_daily == 1) {
       ftpServer = "ftphbih.spatika.net";
       ftpUser = "trg_desbih_csvdt";
-      ftpPassword = "rf24hrcsv2021";
+      ftpPassword = FTP_PASS_BIH_D;
       portName = 21;
       send_daily = 0;
     } else {
       ftpServer = "89.32.144.163"; // dot.spatika.net
       ftpUser = "dota_bih";
-      ftpPassword = "airdata2024";
+      ftpPassword = FTP_PASS_BIH_GEN;
       portName = 21;
     }
   } else if (strstr(UNIT, "KSNDMC")) {
@@ -4319,20 +4319,20 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
     if (send_daily == 1) {
       ftpServer = "ftp1.ksndmc.net";
       ftpUser = "trg_spatika_v2@ksndmc.net";
-      ftpPassword = "trgsp#123";
+      ftpPassword = FTP_PASS_KS_TRG;
       portName = 21;
       send_daily = 0;
     } else if (send_daily == 2) {
 #if SYSTEM == 1
       ftpServer = "ftp1.ksndmc.net";
       ftpUser = "tws_spatika_v2";
-      ftpPassword = "twssp#987";
+      ftpPassword = FTP_PASS_KS_TWS;
       portName = 21;
 #endif
 #if SYSTEM == 2
       ftpServer = "ftp1.ksndmc.net";
       ftpUser = "twsrf_spatika_v2";
-      ftpPassword = "sittao#10";
+      ftpPassword = FTP_PASS_KS_ADD;
       portName = 21;
 #endif
       //            ftpServer = "ftp.spatika.net";

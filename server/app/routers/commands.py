@@ -17,7 +17,7 @@ def get_db():
         db.close()
 
 
-@router.get("/cmd/{stn_id}/{command}")
+@router.post("/cmd/{stn_id}/{command}")
 def queue_command(
     stn_id:  str,
     command: str,
@@ -40,14 +40,14 @@ def queue_command(
     return RedirectResponse(url=f"/station/{stn_id}")
 
 
-@router.get("/clear-queue/{stn_id}")
+@router.post("/clear-queue/{stn_id}")
 def clear_queue(stn_id: str, db: Session = Depends(get_db)):
     """Deletes all pending commands (like queued OTAs) for a station."""
     db.query(CommandQueue).filter_by(stn_id=stn_id, executed_at=None).delete()
     db.commit()
     return RedirectResponse(url=f"/station/{stn_id}")
 
-@router.get("/clear-ota-queue/{stn_id}")
+@router.post("/clear-ota-queue/{stn_id}")
 def clear_ota_queue(stn_id: str, db: Session = Depends(get_db)):
     """Deletes ONLY pending OTA_CHECK commands for a station."""
     db.query(CommandQueue).filter_by(stn_id=stn_id, cmd="OTA_CHECK", executed_at=None).delete()
@@ -55,7 +55,7 @@ def clear_ota_queue(stn_id: str, db: Session = Depends(get_db)):
     return RedirectResponse(url=f"/station/{stn_id}")
 
 
-@router.get("/toggle-ota-lock/{stn_id}")
+@router.post("/toggle-ota-lock/{stn_id}")
 def toggle_ota_lock(stn_id: str, db: Session = Depends(get_db)):
     from fastapi.responses import RedirectResponse
     setting = db.query(StationSettings).filter_by(stn_id=stn_id).first()
@@ -73,7 +73,7 @@ def toggle_ota_lock(stn_id: str, db: Session = Depends(get_db)):
     return RedirectResponse(url=f"/station/{stn_id}")
 
 
-@router.get("/delete/{stn_id}")
+@router.post("/delete/{stn_id}")
 def delete_station(stn_id: str, db: Session = Depends(get_db)):
     from app.models import HealthReport
     db.query(HealthReport).filter_by(stn_id=stn_id).delete()
@@ -81,7 +81,7 @@ def delete_station(stn_id: str, db: Session = Depends(get_db)):
     db.commit()
     return RedirectResponse(url="/dashboard")
 
-@router.get("/delete-category/{stn_id}/{unit_type}/{system}")
+@router.post("/delete-category/{stn_id}/{unit_type}/{system}")
 def delete_station_category(stn_id: str, unit_type: str, system: int, db: Session = Depends(get_db)):
     """Surgical delete: Removes a station only from a specific category (e.g. KSNDMC_TWS)."""
     from app.models import HealthReport
@@ -89,7 +89,7 @@ def delete_station_category(stn_id: str, unit_type: str, system: int, db: Sessio
     db.commit()
     return RedirectResponse(url="/summary")
 
-@router.get("/delete/record/{report_id}")
+@router.post("/delete/record/{report_id}")
 def delete_record(report_id: int, db: Session = Depends(get_db)):
     record = db.query(HealthReport).filter_by(id=report_id).first()
     if record:

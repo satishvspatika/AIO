@@ -7,7 +7,9 @@ from app.database import SessionLocal
 from app.models import FirmwareRegistry, HealthReport, CommandQueue
 from app.services.health_eval import ist_filter
 from app.services.ota_service import get_numeric_ver
-import os, shutil
+from app.services.ota_service import get_numeric_ver
+import os, shutil, re
+from fastapi import HTTPException
 
 router    = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -67,7 +69,17 @@ async def ota_upload(
             dest = os.path.join(BUILDS_DIR, fw_filename)
             tmp  = dest + ".tmp"
             with open(tmp, "wb") as b:
-                b.write(await file.read())
+                size = 0
+                while True:
+                    chunk = await file.read(64 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > 2.5 * 1024 * 1024:
+                        b.close()
+                        if os.path.exists(tmp): os.remove(tmp)
+                        raise HTTPException(status_code=413, detail="Payload too large. Max 2.5MB strict ceiling.")
+                    b.write(chunk)
             shutil.move(tmp, dest)  # Atomic rename — safe even if upload fails mid-way
         
         fw.filename = fw_filename
@@ -103,12 +115,27 @@ async def station_individual_ota(
     db:     Session    = Depends(get_db)
 ):
     """Upload a custom .bin targeted at ONE specific station only."""
+    if not re.match(r"^[a-zA-Z0-9_\-]+$", stn_id):
+        raise HTTPException(status_code=400, detail="Path Traversal Blocked: Invalid characters in station ID")
+
     os.makedirs(BUILDS_DIR, exist_ok=True)
     filename = f"FW_CUSTOM_{stn_id}.bin"
     dest     = os.path.join(BUILDS_DIR, filename)
     tmp      = dest + ".tmp"
+    
     with open(tmp, "wb") as b:
-        b.write(await file.read())
+        size = 0
+        while True:
+            chunk = await file.read(64 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > 2.5 * 1024 * 1024:
+                b.close()
+                if os.path.exists(tmp): os.remove(tmp)
+                raise HTTPException(status_code=413, detail="Payload too large. Max 2.5MB strict ceiling.")
+            b.write(chunk)
+            
     shutil.move(tmp, dest)
     # Queue an OTA command specifically for this station
     db.add(CommandQueue(stn_id=stn_id, cmd="OTA_CHECK", cmd_param=filename))
