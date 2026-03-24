@@ -1,55 +1,57 @@
-# 🦅 SPATIKA AIO 9.5.0 - Master Roadmap (Phases 4-6 for v5.69+)
+# 🦅 SPATIKA AIO 9.5.0 - Master Roadmap (Phases 4-6)
 
-Now that the core OTA Deployment Pipeline, Server Cloud APIs, and Health Report Triggers have been fully stabilized in **Phase 1-3 (v5.68)**, our focus shifts to isolating the underlying operating system and file-storage vulnerabilities that can cause "Silent Failures" or mathematical errors on the sensor bus itself.
-
-This roadmap dictates the architectural fixes for **Phase 4, 5, and 6**.
+Based on the highly refined security & architecture audit (v5.68), the following roadmap extracts only the genuinely critical "Silent Death", Data Corruption, and Security flaws while stripping away hallucinated or non-essential cosmetic warnings.
 
 ---
 
-## 💾 PHASE 4: SPIFFS STORAGE & HEAP MEMORY RESILIENCE
-*These vulnerabilities cause valid data to disappear without generating HTTP errors, or crash the dynamic ESP32 memory heap over time.*
+## ⚡ PHASE 4: FIRMWARE VFS CORRUPTION & MUTEX DEADLOCKS (ESP32)
+*These logic flows cause the ESP32 filesystems to implode or stall global thread execution entirely.*
 
-1. **The SPIFFS Auto-Pruning Dead End:** 
-   The firmware contains a 512-byte size limit for the main log file. If exceeded, it prints "Pruning..." but doesn't actually delete any lines—it just silently aborts the write instruction. This permanently skips weather logging until `FILLGAP` runs.
-   **[Goal]:** Implement a true Line-By-Line Circular Buffer (FIFO) loop removing the oldest string, and expand the file headroom generously.
-   
-2. **Gap-Fill "Black Hole" Recovery Bug:** 
-   Throughout the `FILLGAP` loop, the file handler for `unsent.txt` is opened and blindly pushed to. If the file is locked or fails to mount `if (!unsent)`, the station will infinitely print recovery data to the `NULL` console, losing 15-minute bursts entirely.
-   **[Goal]:** Wrap all file `print/write` commands inside a strict file-sanity closure block before execution.
-
-3. **UART Heap Memory Fragmentation (`response += c`):**
-   The SIM module driver frequently builds enormous JSON responses inside `waitForResponse()` character-by-byte using the `String` concatenation operator (`+=`). This rapidly allocates and destroys memory blocks 500+ times per API call, heavily fragmenting FreeRTOS memory until `malloc` aborts and SIM operations fake-fail.
-   **[Goal]:** Swap dynamic `String` aggregation for a fast, static compile-time Character Arrays `char stream_buf[1024]`.
-
----
-
-## ⚡ PHASE 5: HARDWARE SENSOR PHYSICS & THREADING 
-*Mitigating chaotic electrical noise, power limits, and race conditions.*
-
-4. **ULP Wind Speed Extreme Data Inflation:**
-   The `windSpeed.ino` ULP hardware pin absolutely lacks native software debounce logic. A 3ms vibration on the mechanical reed switch (due to physical wind-tower shaking) registers as 3 fully completed wind rotations internally heavily inflating cyclonic data. 
-   **[Goal]:** Engineer the equivalent `U_DEBOUNCE_CNT` assembly-level gating block that exists within the Rain Gauge into the Wind Speed sub-processor logic.
-
-5. **Battery Brownout "Instant Death" Guard:**
-   The A7672S GPRS 4G module rips huge 2+ Amp instantaneous current bursts during payload upload. Doing this when the internal LiPo cell rests at <3.5V immediately crashes the internal `VCC` voltage rails causing Hardware Panic Shutdowns (Reset 15).
-   **[Goal]:** Intercept `health_in_progress` and the HTTP upload wrapper early. If `bat_val < 3.5V`, blindly write records directly into `unsent.txt` and sleep without ever waking the modem. 
-
-6. **The UART Multi-Threading Fatal Collision:**
-   The `modemMutex` briefly and intentionally unlocks during complex gap-fill sequencing. If a field technician hits `SEND STATUS / SMS` on the LCD during that exact microsecond, both systems aggressively wrestle for the UART Tx/Rx pipeline simultaneously obliterating both.
-   **[Goal]:** Implement an asynchronous `eHttpBusy` lock state flag. The LCD Keypad will queue physical button presses until the SIM modem has structurally terminated its session.
+1. **`signature.txt` Non-Atomic Write Destruction:**
+   Currently, the HTTP-Success block opens `/signature.txt` for `FILE_WRITE`. If power is lost or a brownout hits mid-write, the signature truncates to 0 bytes. Upon reboot, the system misidentifies the time anchor, generating cascading data gaps.
+   **[Goal]:** Mirror the `resync_time` sequence. Write to `/signature.tmp`, flush, and then `SPIFFS.rename()` atomically.
+2. **Concurrent `fsMutex` Collision on APN Config:**
+   `save_apn_config()` inside `gprs_helpers.ino` blindly executes `SPIFFS.open()` without claiming `fsMutex`. If the Core 1 Scheduler attempts to write `unsent.txt` in that exact millisecond, the physical VFS index corrupts.
+   **[Goal]:** Wrap `save_apn_config()` strictly within an `xSemaphoreTake(fsMutex)` block.
+3. **Global System-Starvation via `i2cMutex` (readHDC):**
+   The Temp/Hum task holds `i2cMutex` exclusively through a hardware `vTaskDelay(20ms)` simply to wait for the ADC IC to settle. This totally locks the Core 0 `rtcRead` task and breaks instantaneous timekeeping boundaries for the rest of the ESP32.
+   **[Goal]:** Release the `i2cMutex` during the 20ms hardware conversion sleep, then re-acquire it merely to pull the final datagram.
+4. **The "6.55" Permanent Amnesia Bug:**
+   `last_ver = prefs.getString("last_ver", "6.55")` forces every brand-new or cleanly flashed module to falsely interpret a "Version Change" against firmware `5.68`. This erroneously wipes the node's internal state mechanics and resets critical anchor variables.
+   **[Goal]:** Match default NVS query states to dynamically align with `UNIT_VER` directly.
 
 ---
 
-## 📡 PHASE 6: ADVANCED SERVER FLEET MANAGEMENT
-*Server-side scaling protections and administrative oversight additions.*
+## 💾 PHASE 5: FIRMWARE HEAP EXHAUSTION & STACK OVERFLOWS (ESP32)
+*Correcting runaway RAM usage inside the Core 0 HTTP structures.*
 
-7. **Fleet-Wide Configuration Database (PostgreSQL):**
-   Right now, the FastAPI app stores local `.env` values and hardcoded station identifiers. Transitioning completely to a strictly relational SQL schema for station authorization logic.
-   
-8. **Automated Telegram / Email Exception Relaying:**
-   Server internal 500 Errors currently render user-facing crash pages safely (Fixed in Phase 2), however, they require manual administrator log inspection `cat /var/log/spatika`.
-   **[Goal]:** Hook `error.html` fallbacks into an immediate Notification Pipeline so administrators know instantly when a background anomaly occurs.
+5. **2KB Stack Overflow Risk (`waitForResponse`):**
+   The GPRS subsystem relies on `char buf[2048]` allocated *on the stack* inside `waitForResponse`. During extremely deep OTA failure paths, multiple functions push 2KB frames onto the limited 16KB FreeRTOS envelope, culminating in catastrophic stack-smash reboots.
+   **[Goal]:** Convert `buf` to a `static` array safely; the overarching `modemMutex` already serializes this function globally.
+6. **FTP Ram-Sledgehammer (`readString`):**
+    `content = file1.readString()` attempts to copy an entire contiguous 100KB FTP log directly into the dynamic String Heap. Fragmented systems cannot find a continuous 100KB block, resulting in silent `malloc()` failure and blank payload FTP deliveries.
+    **[Goal]:** Chunk the file read `file.read(buf, 256)` actively into the `AT+FSWRITE` socket rather than pre-buffering.
+7. **`content` String Core 0 / Core 1 Cross-Contamination:**
+    A globally scoped `extern String content` is accessed by both the Scheduler Core and the Modem Core without `fsMutex` guarding. At scale, Core-0 reading the `.c_str()` while Core-1 appends JSON will mathematically induce a hard CPU panic.
+    **[Goal]:** Eliminate the shared String structure and segregate execution scopes via controlled Mutex buffers.
+8. **FreeRTOS Dead-Lock via Arduino `delay(1000)`:**
+    In the FTP pipeline, an explicit Arduino `delay(1000)` is issued. This forcefully halts the FreeRTOS RTOS Task Context completely without surrendering processing ticks to the Watchdog, frequently prompting `Task Watchdog Triggers`.
+    **[Goal]:** Universal upgrade to `vTaskDelay(pdMS_TO_TICKS(1000))`.
 
-9. **Modem Raw-Command Auditing Engine:**
-   When testing new firmware remotely via `/cmd/{stn}/AT+...`, the responses blindly print or disappear. 
-   **[Goal]:** Build an integrated Server-side viewer archiving pure AT serial logs remotely streamed from isolated 1% beta stations.
+---
+
+## 🔒 PHASE 6: CONTABO SERVER VULNERABILITIES & EVENT-LOOP STARVATION (Cloud API)
+*These fixes protect the Fast API host from remote compromise, database poisoning, and asynchronous connection blockages.*
+
+9. **Arbitrary Schema Poisoning via `/health`:** 
+   The `_auto_migrate` function dynamically adds SQLite columns for *any* unknown JSON key. A malicious or malformed packet could instantly flood `SpatikaFleet.db` with thousands of garbage columns, irreparably corrupting the fleet database.
+   **[Goal]:** Implement a strict Python `_ALLOWED_FIELDS` whitelist array; reject unknown payload keys.
+10. **Path Traversal on `/builds/` Endpoint:** 
+   The OS file-joiner `os.path.join("/app/builds", filename)` does not protect against directory escaping if a user injects `../../`.
+   **[Goal]:** Enforce `os.path.realpath` boundary anchoring.
+11. **Synchronous OTA Event-Loop Starvation:**
+   `StreamingResponse` for OTA firmware chunks relies on a synchronous python `open(filepath, "rb")`. Reading chunk sequences directly blocks the Uvicorn global event loop. A 2-minute sluggish OTA download will literally queue and freeze health reports from the entire fleet.
+   **[Goal]:** Transpose the generator to use `aiofiles.open()` for non-blocking asynchronous disk streaming.
+12. **_DB_COLUMNS_CACHE Multi-Worker Desync:**
+   The SQLite schema cache is a process-local object. In a multi-worker ASGI setup, Worker B won't see Worker A's auto-migrated schema changes, causing SQLite `OperationalError: duplicate column name` loops.
+   **[Goal]:** Convert the cache to a forced live-query or shared state machine across workers.
