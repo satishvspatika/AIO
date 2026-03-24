@@ -202,6 +202,14 @@ void resync_time() {
   } else {
     debugln("[RTC] Error: Modem Mutex Timeout - deferring resync");
     diag_modem_mutex_fails++;
+    
+    // Phase 11 Fix: Restore all pre-flight state so loop() can sleep normally.
+    // Without this, health_in_progress=true and sync_mode=eHttpTrigger
+    // are leaked permanently, blocking the sleep gate until reboot!
+    health_in_progress = false;
+    gprs_started = false;
+    sync_mode = eExceptionHandled;
+    
     return;
   }
   

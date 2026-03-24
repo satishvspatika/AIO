@@ -1579,7 +1579,7 @@ void loop() {
        (sync_mode == eExceptionHandled)) &&
       (lcdkeypad_start == 0) && (wifi_active == false) &&
       (httpInitiated == false) && (health_in_progress == false) &&
-      (schedulerBusy == false) &&
+      (schedulerBusy == false) && (gprs_started == false) &&
       (force_reboot == false) && (force_ota == false) &&
       (ota_writing_active == false)) {
 
@@ -1598,10 +1598,13 @@ void loop() {
     }
 
     // TIER 2 LIVE RACES: Mid-Slot Deep Sleep Race guard
-    // Double-check the scheduler hasn't just woken up in the last microsecond
+    // Double-check the system hasn't just woken up in the last microsecond
     vTaskDelay(50 / portTICK_PERIOD_MS);
-    if (schedulerBusy) {
-        debugln("[PWR] Race Prevented: Scheduler woke up just as sleep began. Aborting sleep.");
+    
+    // Phase 11 Fix: Re-evaluate the full gate, not just schedulerBusy,
+    // to catch any state changes during the 50ms yield.
+    if (schedulerBusy || gprs_started || health_in_progress || httpInitiated) {
+        debugln("[PWR] Race Prevented: System became active during sleep delay. Aborting.");
         return; // Re-enter the loop
     }
 
