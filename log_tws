@@ -4,60 +4,52 @@ rst:0x5 (DEEPSLEEP_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
 configsip: 0, SPIWP:0xee
 clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
 mode:DIO, clock div:1
-load:0x3fff0030,len:1344
-load:0x40078000,len:13964
-load:0x40080400,len:3600
-entry 0x400805f0
-
+load:0x3fff0030,len:4980
+load:0x40078000,len:16612
+load:0x40080400,len:3500
+entry 0x400805b4
+E (48) esp_core_du=⸮}⸮⸮⸮͡⸮r⸮⸮⸮ɕ⸮"յ⸮⸮⸮⸮⸮ѥѥ⸮⸮⸮2⸮չ⸮⸮jRT	⸮J*⸮⸮}⸮⸮ɕ}⸮յ⸮}⸮⸮⸮͡⸮r⸮⸮⸮ɕ⸮"յ⸮⸮⸮⸮⸮ѥѥ⸮⸮⸮2⸮չ⸮⸮jR⸮
 
 [BOOT] HELLO! System starting... (Debug Enabled)
-[BME] Testing I2C address 0x77...
-[BME] 0x77 failed. Testing I2C address 0x76...
-[BME] Init: SENSOR NOT FOUND!
 [HDC] Checking 1080 ID (Reg 0xFF): 0x1050
 [HDC] Init: SUCCESS (HDC1080)
 [BOOT] RTC: OK
 [BOOT] SPIFFS: OK
 [BOOT] SD Card: FAILED (Not Inserted/Hardware)
-[BOOT] BME280: NOT FOUND
 [BOOT] HDC Sensor: OK
+[BOOT] Rainfall Counter: OK
 [BOOT] Hardware Initialized.
 [BOOT] Preserving counters for reset reason: 5
 Health Mode: DAILY (11am)
-[GPS] Loaded from SPIFFS: 12.993216,77.537743 (Fix: 23/03/2026)
+[GPS] No persisted location found.
 [BOOT] Station Altitude: 0.00
 Active RF Resolution: 0.50
-[BOOT] Unit: TWS9-DMC-5.68 | Network: KSNDMC | Type: TWS
+[BOOT] Unit: TWSRF9-GEN-6.03 | Network: SPATIKA | Type: TWS-RF
 
 Wakeup caused by timer
 [BOOT] Reset Reason: DEEPSLEEP_RESET
-Chip ID: D89CCC641D44
+Chip ID: A09B2029E748
 [RTC] Task Started
-[PWR] Battery: 4.09V | Solar: 0.00V
+[PWR] Battery: 4.02V | Solar: 0.00V
 
 
 
-[RTC] Time: 18:00
+[RTC] Time: 20:00
 [BOOT] BME280 not found. bmeTask NOT created.
+Loaded Prev Wind Speed Avg: 0.00
 [GPRS] Powering On...
-[GPRS] Waiting for active UART...
-The FILE content of FTP UNSENT file /ftpunsent.txt
-File Size: 285
-
-The FILE content of LAST RECORDED file /lastrecorded_1996.txt
-Loaded Prev Wind Speed Avg: 0.59
+The FILE content of LAST RECORDED file /lastrecorded_WS0034.txt
 
 ULP Counting Enabled (attachInterrupt 27 Disabled).
-The FILE content of CLOSING DATA file /closingdata_1996.txt
+[GPRS] Waiting for active UART...
 
-
-[SCHED] Seeded 778 ULP wind pulses from direct ULP read.
+[SCHED] Seeded 8597 ULP wind pulses from direct ULP read.
 Scheduler: RTC Sync acquired.
 Scheduler: Waiting for GPRS task...
 ULP Wakeup Period set to 1ms (High Resolution for Wind)[ULP] Init. HW Reason: 5
 [ULP] Warm Boot. Preserving Counters. RF=0
 ULP Program loaded and started.
-[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=941, Rain=0
+[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=10235, Rain=0
 [GPRS] Modem ready in 9 iterations!
 [GPRS] Polling for SIM (CPIN)...
 [GPRS] SIM ready in 1000 ms!
@@ -73,40 +65,136 @@ Signal strength IN gprs task is 85
 Signal Level is -111
 Signal strength IN gprs task is 85
 Signal Level is -111
-Signal strength IN gprs task is -65
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+[RTC] Time: 20:01
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is -51
 
 ************************
 GETTING NETWORK 
 ************************
 Raw CICCID Resp: 
-+ICCID: 89917190324928140980
++ICCID: 89917190324927658487
 
 OK
 
-Final CCID parsed: 89917190324928140980
+Final CCID parsed: 89917190324927658487
 [CACHE] Using cached carrier/number to save power.
 
 ************************
 GETTING REGISTRATION 
 ************************
 [GPRS] Pre-setting APN for CID 1 & 6: bsnlnet
-[GPRS] FORCE_2G_ONLY flag active & BSNL SIM. Setting CNMP=13.
-[GPRS] Registered via CREG! (2G:1)
+[GPRS] Enabling Automatic Mode (LTE/GSM) for all carriers.
+Reg Search [BSNL:1]... Status:0 Iter:#1/24
+Reg Search [BSNL:1]... Status:0 Iter:#2/24
+Reg Search [BSNL:1]... Status:0 Iter:#3/24
+[GPRS] BSNL Stubborn Idle. Forcing Frequency Re-scan (COPS=0)...
+Reg Search [BSNL:1]... Status:0 Iter:#4/24
+Reg Search [BSNL:1]... Status:0 Iter:#5/24
+[RTC] Time: 20:02
+[GPRS] Tier1 @ iter5: Radio-Off SIM Scrub...
+Reg Search [BSNL:1]... Status:0 Iter:#6/24
+Reg Search [BSNL:1]... Status:0 Iter:#7/24
+Reg Search [BSNL:1]... Status:0 Iter:#8/24
+[RTC] Time: 20:03
+Reg Search [BSNL:1]... Status:0 Iter:#9/24
+[GPRS] CGREG registered during adaptive wait!
 Registration Successful.
 Registration Successful.
 Raw CICCID Resp: 
-+ICCID: 89917190324928140980
++ICCID: 89917190324927658487
 
 OK
 
-Final CCID parsed: 89917190324928140980
+Final CCID parsed: 89917190324927658487
 --- GPRS SETTING PDP ---
 
 ************************
 Setting PDP context 
 ************************
 
-Memory Check - Stored CCID: 89917190324928140980 | Stored APN: bsnlnet
+Memory Check - Stored CCID: 89917190324927658487 | Stored APN: bsnlnet
 Smart APN: Match Found!
 Trying APN: bsnlnet
 CGACT Resp: 
@@ -115,68 +203,52 @@ OK
 Scheduler: GPRS task ready or timeout.
 
 --- Sensor Data Snapshot ---
-Temperature : 31.24 C
-Humidity    : 44.57 %
-Wind Speed  : 0.11 m/s
-Wind Dir    : 113 deg
-Wind Pulses : 941.00
+Temperature : 30.28 C
+Humidity    : 48.85 %
+Wind Speed  : 1.25 m/s
+Wind Dir    : 132 deg
+Wind Pulses : 10235.00
+Rain Pulses : 0.00
+Rainfall    : 0.00 mm
 ----------------------------
 --- Storage Status ---
-SPIFFS: 99/4699
+SPIFFS: 498/4640
 SD Card: FAILED/NOT FOUND
 ----------------------------
 ------- ENTERING SCHEDULER 15 MIN LOOP --------  
 
-Current SampleNo is 37
+Current SampleNo is 45
 Sample is less than or equal to 60
 
-RF Close date from RTC = 2026-03-25  
-[GPRS] State Change: sync_mode=1 gprs_mode=1
+RF Close date from RTC = 2026-03-26  
 
 -------- SPIFFS FILE EXISTS w/ OR WIHOUT ANY GAPS  --------
 
-The last line of the file is :36,2026-03-24,17:45,031.3,044.1,00.46,103,-111,04.1
+The last line of the file is :44,2026-03-25,19:45,000.00,030.2,049.2,00.00,156,-051,04.0
 
-Last sample No stored : 36
-Last recorded hour/min is 17:45
+Last Parse: CRF=0.00 T=30.20 H=49.20
 
 NO GAPS FOUND ...
 
 
-Current data inserted is 37,2026-03-24,18:00,031.2,044.6,00.11,113,-065,04.1
+Current data inserted is 45,2026-03-25,20:00,000.00,030.3,048.9,01.25,132,-051,04.0
 
 
-append_text->store_text : Used for internal status: 37,2026-03-24,18:00,031.2,044.6,00.11,113,-065,04.1
+append_text->store_text : Used for internal status: 45,2026-03-25,20:00,000.00,030.3,048.9,01.25,132,-051,04.0
 
 
-append_text written to lastrecorded_<stationname>.txt is : 37,2026-03-24,18:00,031.2,044.6,00.11,113,-065,04.1
+append_text written to lastrecorded_<stationname>.txt is : 45,2026-03-25,20:00,000.00,030.3,048.9,01.25,132,-051,04.0
 
 
 
-[FILE] SPIFFS: /1996_20260325.txt | Size: 2014
+[FILE] SPIFFS: /WS0034_20260326.txt[GPRS] State Change: sync_mode=1 gprs_mode=1
+ | Size: 120
    ... [Tail Content] ...
-33,2026-03-24,17:00,029.4,051.4,00.20,103,-111,04.1
-34,2026-03-24,17:15,031.6,044.5,00.59,103,-111,04.1
-35,2026-03-24,17:30,031.4,044.3,00.47,103,-111,04.1
-36,2026-03-24,17:45,031.3,044.1,00.46,103,-111,04.1
-37,2026-03-24,18:00,031.2,044.6,00.11,113,-065,04.1
+44,2026-03-25,19:45,000.00,030.2,049.2,00.00,156,-051,04.0
+45,2026-03-25,20:00,000.00,030.3,048.9,01.25,132,-051,04.0
 -----------------------
 
-[FILE] SD: /1996_20260325.txt
-
---- UNSENT DATA START ---
-001996;2026-03-24,16:45;031.6;046.0;00.59;012;-065;04.1
-
-001996;2026-03-24,17:00;029.4;051.4;00.20;103;-111;04.1
-
-001996;2026-03-24,17:15;031.6;044.5;00.59;103;-111;04.1
-
-001996;2026-03-24,17:30;031.4;044.3;00.47;103;-111;04.1
-
-001996;2026-03-24,17:45;031.3;044.1;00.46;103;-111;04.1
-
---- UNSENT DATA END ---
-
+[FILE] SD: /WS0034_20260326.txt
 
 
 [GPRS] State Change: sync_mode=2 gprs_mode=1
@@ -184,28 +256,28 @@ append_text written to lastrecorded_<stationname>.txt is : 37,2026-03-24,18:00,0
 ****************
 Starting Automated Data Flow
 ****************
-[Health] CDM window entirely missed today. Flagging FAIL.
 [BATT] Proceeding with Spatika Upload regardless of battery voltage.
-[GPRS] Prepared URL: AT+HTTPPARA="URL","http://rtdas.ksndmc.net:80/tws_gprs/update_tws_data_v2"
+[GPRS] Prepared URL: AT+HTTPPARA="URL","http://rtdas.spatika.net:80/tws_gprs/twsrf_gen"
 [GPRS] PDP context inactive. Activating for DNS/HTTP...
 [GPRS] Bearer status check: Re-initializing IP stack...
 [GPRS] Starting HTTP...
-HTTP POST REQUEST IS AT+HTTPPARA="URL","http://rtdas.ksndmc.net:80/tws_gprs/update_tws_data_v2"
+HTTP POST REQUEST IS AT+HTTPPARA="URL","http://rtdas.spatika.net:80/tws_gprs/twsrf_gen"
 
 *********  STARTING TO SEND HTTP ... ***********
 
 
 *********  Sending Current data to main server... ***********
 
-SPIFF FILE EXISTS ..../1996_20260325.txt
+SPIFF FILE EXISTS ..../WS0034_20260326.txt
 
-Current Data to be sent is : 37,2026-03-24,18:00,031.2,044.6,00.11,113,-065,04.1
+Current Data to be sent is : 45,2026-03-25,20:00,000.00,030.3,048.9,01.25,132,-051,04.0
 
-http_data format is stn_no=001996&rec_time=2026-03-24,18:00&temp=031.2&humid=044.6&w_speed=00.11&w_dir=113&signal=-065&key=climate4p2013&bat_volt=04.1&bat_volt2=04.1
 
-Payload is stn_no=001996&rec_time=2026-03-24,18:00&temp=031.2&humid=044.6&w_speed=00.11&w_dir=113&signal=-065&key=climate4p2013&bat_volt=04.1&bat_volt2=04.1
+Key is wsgen2014
+http_data format is stn_id=WS0034&rec_time=2026-03-25,20:00&key=wsgen2014&rainfall=00.00&temp=030.3&humid=048.9&w_speed=01.25&w_dir=132&signal=-051&bat_volt=04.0&bat_volt2=04.0
+
+Payload is stn_id=WS0034&rec_time=2026-03-25,20:00&key=wsgen2014&rainfall=00.00&temp=030.3&humid=048.9&w_speed=01.25&w_dir=132&signal=-051&bat_volt=04.0&bat_volt2=04.0
 [HTTP] Using Fast v3.0 Handshake...
-[RTC] Time: 18:01
 Response of AT+HTTPACTION=1 is 
 OK
 
@@ -224,115 +296,9 @@ GPRS SEND : It is a Success
 [RTC-Sync] No 'tm' field in server response. Skipping.
 Saved APN Config: bsnlnet
 
-**** Storing Last Logged Data as 2026-03-24,18:00
+**** Storing Last Logged Data as 2026-03-25,20:00
 Entering FTP mode and checking if data period is correct for sending and if there is any file to be sent
-[FTP-Gate] unsent=5 cur_time=18:01 sched=YES cleanup=NO
-[FTP] HTTP finished. Waiting 5s for Tower to release context (Breather)...
-[FTP] Backlog Push: 5 records found. Mode: SCHEDULED_SLOT
-
-FTP file name is /TWS_001996_260325_180000.kwd
-
-SampleNo  is 37
-
-Entering time bound FTP loop
-[FTP] Checking Registration before backlog upload...
-
-************************
-GETTING REGISTRATION 
-************************
-[GPRS] Fast-Track: Modem already registered! Bypassing setup block.
-Registration Successful.
-Registration Successful.
-[FTP] Registration OK. Verifying IP (PDP Context)...
-Raw CICCID Resp: 
-+ICCID: 89917190324928140980
-
-OK
-
-Final CCID parsed: 89917190324928140980
---- GPRS SETTING PDP ---
-
-************************
-Setting PDP context 
-************************
-
-APN Load Failed: fsMutex Locked
-APN: Starting Carrier-Aware APN Search...
-APN: Trying carrier-matched APN first -> bsnlnet
-Trying APN: bsnlnet
-CGACT Resp: 
-OK
-
-APN Save Failed: fsMutex Locked
-[FTP] Assigned IP. Waiting 5s for tower stabilization...
-[FTP] Backlog fully chunked into Active Payload.
-Retrieved file is /TWS_001996_260325_180000.kwd
-Initializing A7672S for FTP...
-[FTP] BSNL/Other detected. Smart Default: Active (0).
-
-ERROR
-
-OK
-
-+CFTPSSTART: 0
-
-[FTP] Using Active Mode (transmode=0) — BSNL 2G path
-[FTP] Warming up DNS...
-
-+CDNSGIP: 1,"ftp1.ksndmc.net","27.34.245.70"
-
-OK
-
-
-OK
-
-+CFTPSLOGIN: 0
-
-Result is 0
-FTP Login success
-Response of AT+FSCD 
-+FSCD: C:/
-
-OK
-
-Response is 
-+FSOPEN: 1
-
-OK
-
-File size of the file is 285
-Response of FSWRITE is 
-+FSWRITE: 285,285
-
-OK
-
-Response of FSCLOSE is 
-OK
-
-About to send CFTPSPUTFILE ... Attempt: 1
-[RTC] Time: 18:02
-Response of AT+CFTPSPUTFILE 
-OK
-
-+CFTPSPUTFILE: 0
-
-[FTP] Smart Mode Saved: Active
-[GoldenData] Marked records from /TWS_001996_260325_180000.kwd as DELIVERED.
-Cleared ftpunsent.txt permanently after full upload.
-Response of AT+CFTPSLOGOUT is 
-OK
-
-+CFTPSLOGOUT: 0
-
-Response of AT+CFTPSSTOP is 
-OK
-
-+CFTPSSTOP: 0
-
-
-[GPRS] Checking SMS...
-
-Removed READ/SENT messages (UNREAD preserved)
+[FTP-Gate] unsent=0 cur_time=20:03 sched=NO cleanup=NO
 [GPRS] Cycle fully complete (including Commands).
 [GPRS] No queued commands. Allowing sleep.
 [PWR] All tasks done. Entering Deep Sleep...
@@ -340,6 +306,502 @@ Removed READ/SENT messages (UNREAD preserved)
 [GPRS] Session clean. Attempting graceful shutdown...
 [GPRS] Modem alive. Closing network session gracefully...
 [GPRS] Cutting physical VCC power (GPIO 26 -> LOW).
-[PWR] Sleep: CurTime=18:2:29
- Sleep=12:41 (min:sec)
+[PWR] Sleep: CurTime=20:3:51
+ Sleep=11:19 (min:sec)
+[PWR] Entering Deep Sleep
+ets Jul 29 2019 12:21:46
+
+rst:0x5 (DEEPSLEEP_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:1
+load:0x3fff0030,len:4980
+load:0x40078000,len:16612
+load:0x40080400,len:3500
+entry 0x400805b4
+E (48) esp_core_duy⸮ }⸮⸮⸮͡⸮r⸮⸮⸮ɕ⸮"յ⸮⸮⸮⸮⸮ѥѥ⸮⸮⸮2⸮չ⸮⸮jRT	⸮J*⸮⸮}⸮⸮ɕ}⸮յ⸮}⸮⸮⸮͡⸮r⸮⸮⸮ɕ⸮"յ⸮⸮⸮⸮⸮ѥѥ⸮⸮⸮2⸮չ⸮⸮jR⸮
+
+[BOOT] HELLO! System starting... (Debug Enabled)
+[HDC] Checking 1080 ID (Reg 0xFF): 0x1050
+[HDC] Init: SUCCESS (HDC1080)
+[BOOT] RTC: OK
+[BOOT] SPIFFS: OK
+[BOOT] SD Card: FAILED (Not Inserted/Hardware)
+[BOOT] HDC Sensor: OK
+[BOOT] Rainfall Counter: OK
+[BOOT] Hardware Initialized.
+[BOOT] Preserving counters for reset reason: 5
+Health Mode: DAILY (11am)
+[GPS] No persisted location found.
+[BOOT] Station Altitude: 0.00
+Active RF Resolution: 0.50
+[BOOT] Unit: TWSRF9-GEN-6.03 | Network: SPATIKA | Type: TWS-RF
+
+Wakeup caused by timer
+[BOOT] Reset Reason: DEEPSLEEP_RESET
+Chip ID: A09B2029E748
+[RTC] Task Started
+[PWR] Battery: 4.02V | Solar: 0.00V
+
+
+
+[RTC] Time: 20:15
+[BOOT] BME280 not found. bmeTask NOT created.
+Loaded Prev Wind Speed Avg: 1.25
+[GPRS] Powering On...
+The FILE content of LAST RECORDED file /lastrecorded_WS0034.txt
+
+ULP Counting Enabled (attachInterrupt 27 Disabled).
+[GPRS] Waiting for active UART...
+
+[SCHED] Seeded 9055 ULP wind pulses from direct ULP read.
+Scheduler: RTC Sync acquired.
+Scheduler: Waiting for GPRS task...
+ULP Wakeup Period set to 1ms (High Resolution for Wind)[ULP] Init. HW Reason: 5
+[ULP] Warm Boot. Preserving Counters. RF=0
+ULP Program loaded and started.
+[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=22190, Rain=0
+[GPRS] Modem ready in 9 iterations!
+[GPRS] Polling for SIM (CPIN)...
+[GPRS] SIM ready in 1000 ms!
+************************
+GETTING SIGNAL STRENGTH 
+************************
+
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is -79
+
+************************
+GETTING NETWORK 
+************************
+Raw CICCID Resp: 
++ICCID: 89917190324927658487
+
+OK
+
+Final CCID parsed: 89917190324927658487
+[CACHE] Using cached carrier/number to save power.
+
+************************
+GETTING REGISTRATION 
+************************
+[GPRS] Fast-Track: Modem already registered! Bypassing setup block.
+Registration Successful.
+Registration Successful.
+Raw CICCID Resp: 
++ICCID: 89917190324927658487
+
+OK
+
+Final CCID parsed: 89917190324927658487
+--- GPRS SETTING PDP ---
+
+************************
+Setting PDP context 
+************************
+
+Memory Check - Stored CCID: 89917190324927658487 | Stored APN: bsnlnet
+Smart APN: Match Found!
+Trying APN: bsnlnet
+CGACT Resp: 
++CME ERROR: unknown error
+
++CGEV: EPS PDN ACT 1
+
+PB DONE
+
++CGEV: ME PDN DEACT 9
+
++CGEV: ME PDN DEACT 8
+
+APN: Starting Carrier-Aware APN Search...
+APN: Trying carrier-matched APN first -> bsnlnet
+Trying APN: bsnlnet
+CGACT Resp: 
+OK
+
+Saved APN Config: bsnlnet
+Scheduler: GPRS task ready or timeout.
+
+--- Sensor Data Snapshot ---
+Temperature : 30.27 C
+Humidity    : 47.67 %
+Wind Speed  : 1.46 m/s
+Wind Dir    : 123 deg
+Wind Pulses : 11955.00
+Rain Pulses : 0.00
+Rainfall    : 0.00 mm
+----------------------------
+--- Storage Status ---
+SPIFFS: 498/4640
+SD Card: FAILED/NOT FOUND
+----------------------------
+------- ENTERING SCHEDULER 15 MIN LOOP --------  
+
+Current SampleNo is 46
+Sample is less than or equal to 60
+
+RF Close date from RTC = 2026-03-26  
+[GPRS] State Change: sync_mode=1 gprs_mode=1
+
+-------- SPIFFS FILE EXISTS w/ OR WIHOUT ANY GAPS  --------
+
+The last line of the file is :45,2026-03-25,20:00,000.00,030.3,048.9,01.25,132,-051,04.0
+
+Last Parse: CRF=0.00 T=30.30 H=48.90
+
+NO GAPS FOUND ...
+
+
+Current data inserted is 46,2026-03-25,20:15,000.00,030.3,047.7,01.46,123,-079,04.0
+
+
+append_text->store_text : Used for internal status: 46,2026-03-25,20:15,000.00,030.3,047.7,01.46,123,-079,04.0
+
+
+append_text written to lastrecorded_<stationname>.txt is : 46,2026-03-25,20:15,000.00,030.3,047.7,01.46,123,-079,04.0
+
+
+
+[FILE] SPIFFS: /WS0034_20260326.txt | Size: 180
+   ... [Tail Content] ...
+44,2026-03-25,19:45,000.00,030.2,049.2,00.00,156,-051,04.0
+45,2026-03-25,20:00,000.00,030.3,048.9,01.25,132,-051,04.0
+46,2026-03-25,20:15,000.00,030.3,047.7,01.46,123,-079,04.0
+-----------------------
+
+[FILE] SD: /WS0034_20260326.txt
+
+
+[GPRS] State Change: sync_mode=2 gprs_mode=1
+
+****************
+Starting Automated Data Flow
+****************
+[BATT] Proceeding with Spatika Upload regardless of battery voltage.
+[GPRS] Prepared URL: AT+HTTPPARA="URL","http://rtdas.spatika.net:80/tws_gprs/twsrf_gen"
+[GPRS] PDP context inactive. Activating for DNS/HTTP...
+[RTC] Time: 20:16
+[GPRS] Bearer status check: Re-initializing IP stack...
+[GPRS] Starting HTTP...
+HTTP POST REQUEST IS AT+HTTPPARA="URL","http://rtdas.spatika.net:80/tws_gprs/twsrf_gen"
+
+*********  STARTING TO SEND HTTP ... ***********
+
+
+*********  Sending Current data to main server... ***********
+
+SPIFF FILE EXISTS ..../WS0034_20260326.txt
+
+Current Data to be sent is : 46,2026-03-25,20:15,000.00,030.3,047.7,01.46,123,-079,04.0
+
+
+Key is wsgen2014
+http_data format is stn_id=WS0034&rec_time=2026-03-25,20:15&key=wsgen2014&rainfall=00.00&temp=030.3&humid=047.7&w_speed=01.46&w_dir=123&signal=-079&bat_volt=04.0&bat_volt2=04.0
+
+Payload is stn_id=WS0034&rec_time=2026-03-25,20:15&key=wsgen2014&rainfall=00.00&temp=030.3&humid=047.7&w_speed=01.46&w_dir=123&signal=-079&bat_volt=04.0&bat_volt2=04.0
+[HTTP] Using Fast v3.0 Handshake...
+Response of AT+HTTPACTION=1 is 
+OK
+
++CGEV: ME PDN DEACT 8
+
++HTTPACTION: 1,713,0
+
+HTTP Error (706/713/714). Clean stack requested.
+[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt 2)...
+Payload is stn_id=WS0034&rec_time=2026-03-25,20:15&key=wsgen2014&rainfall=00.00&temp=030.3&humid=047.7&w_speed=01.46&w_dir=123&signal=-079&bat_volt=04.0&bat_volt2=04.0
+[HTTP] Using Fast v3.0 Handshake...
+Response of AT+HTTPACTION=1 is 
+ERROR
+
++CGEV: ME PDN DEACT 8
+
++CGEV: ME PDN ACT 8,0
+
++CGEV: ME PDN DEACT 8
+
++CGEV: ME PDN ACT 8,0
+
+[HTTP] HTTPACTION timed out — no URC received from modem.
+[HTTP] 2nd Attempt (Fast) also failed. Falling back to Robust method...
+Payload is stn_id=WS0034&rec_time=2026-03-25,20:15&key=wsgen2014&rainfall=00.00&temp=030.3&humid=047.7&w_speed=01.46&w_dir=123&signal=-079&bat_volt=04.0&bat_volt2=04.0
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+[RTC] Time: 20:17
+[HTTP] AT+HTTPDATA failed (Missing DOWNLOAD).
+[HTTP] Attempt 1 failed. Re-initialising stack for single retry...
+[HTTP] TCP Zombie (706/714) detected. Executing Hard Bearer Nuke...
+[HTTP] Retry attempt...
+Payload is stn_id=WS0034&rec_time=2026-03-25,20:15&key=wsgen2014&rainfall=00.00&temp=030.3&humid=047.7&w_speed=01.46&w_dir=123&signal=-079&bat_volt=04.0&bat_volt2=04.0
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,9
+
+Response (P) of AT+HTTPREAD=0,290 is 
+OK
+
++HTTPREAD: 9
+Success
+
+
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+[HTTP] Retry succeeded.
+
+**** Storing Last Logged Data as 2026-03-25,20:15
+Entering FTP mode and checking if data period is correct for sending and if there is any file to be sent
+[FTP-Gate] unsent=0 cur_time=20:17 sched=NO cleanup=NO
+[GPRS] Skipping SMS check (hourly task).
+[GPRS] Cycle fully complete (including Commands).
+[GPRS] No queued commands. Allowing sleep.
+[PWR] All tasks done. Entering Deep Sleep...
+[GPRS] State Change: sync_mode=4 gprs_mode=1
+[GPRS] Session clean. Attempting graceful shutdown...
+[GPRS] Modem alive. Closing network session gracefully...
+[GPRS] Cutting physical VCC power (GPIO 26 -> LOW).
+[PWR] Sleep: CurTime=20:17:39
+ Sleep=12:35 (min:sec)
+[PWR] Entering Deep Sleep
+ets Jul 29 2019 12:21:46
+
+rst:0x5 (DEEPSLEEP_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:1
+load:0x3fff0030,len:4980
+load:0x40078000,len:16612
+load:0x40080400,len:3500
+entry 0x400805b4
+E (48) esp_core_duy⸮_flash: No core dump partition found!
+E (48) esp_core_dump_flash: No core dump partition found!
+
+
+[BOOT] HELLO! System starting... (Debug Enabled)
+[HDC] Checking 1080 ID (Reg 0xFF): 0x1050
+[HDC] Init: SUCCESS (HDC1080)
+[BOOT] RTC: OK
+[BOOT] SPIFFS: OK
+[BOOT] SD Card: FAILED (Not Inserted/Hardware)
+[BOOT] HDC Sensor: OK
+[BOOT] Rainfall Counter: OK
+[BOOT] Hardware Initialized.
+[BOOT] Preserving counters for reset reason: 5
+Health Mode: DAILY (11am)
+[GPS] No persisted location found.
+[BOOT] Station Altitude: 0.00
+Active RF Resolution: 0.50
+[BOOT] Unit: TWSRF9-GEN-6.03 | Network: SPATIKA | Type: TWS-RF
+
+Wakeup caused by timer
+[BOOT] Reset Reason: DEEPSLEEP_RESET
+Chip ID: A09B2029E748
+[RTC] Task Started
+[PWR] Battery: 4.03V | Solar: 0.00V
+
+
+
+[RTC] Time: 20:30
+[BOOT] BME280 not found. bmeTask NOT created.
+Loaded Prev Wind Speed Avg: 1.46
+[GPRS] Powering On...
+The FILE content of LAST RECORDED file /lastrecorded_WS0034.txt
+
+ULP Counting Enabled (attachInterrupt 27 Disabled).
+[GPRS] Waiting for active UART...
+
+[SCHED] Seeded 9202 ULP wind pulses from direct ULP read.
+Scheduler: RTC Sync acquired.
+Scheduler: Waiting for GPRS task...
+ULP Wakeup Period set to 1ms (High Resolution for Wind)[ULP] Init. HW Reason: 5
+[ULP] Warm Boot. Preserving Counters. RF=0
+ULP Program loaded and started.
+[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=33364, Rain=0
+[GPRS] Modem ready in 9 iterations!
+[GPRS] Polling for SIM (CPIN)...
+[GPRS] SIM ready in 1000 ms!
+************************
+GETTING SIGNAL STRENGTH 
+************************
+
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is -83
+
+************************
+GETTING NETWORK 
+************************
+Raw CICCID Resp: 
++ICCID: 89917190324927658487
+
+OK
+
+Final CCID parsed: 89917190324927658487
+[CACHE] Using cached carrier/number to save power.
+
+************************
+GETTING REGISTRATION 
+************************
+[GPRS] Fast-Track: Modem already registered! Bypassing setup block.
+Registration Successful.
+Registration Successful.
+Raw CICCID Resp: 
++ICCID: 89917190324927658487
+
+OK
+
+Final CCID parsed: 89917190324927658487
+--- GPRS SETTING PDP ---
+
+************************
+Setting PDP context 
+************************
+
+Memory Check - Stored CCID: 89917190324927658487 | Stored APN: bsnlnet
+Smart APN: Match Found!
+Trying APN: bsnlnet
+CGACT Resp: 
+APN: Starting Carrier-Aware APN Search...
+APN: Trying carrier-matched APN first -> bsnlnet
+Trying APN: bsnlnet
+[RTC] Time: 20:31
+CGACT Resp: 
++CME ERROR: unknown error
+
+OK
+
+Saved APN Config: bsnlnet
+Scheduler: GPRS task ready or timeout.
+
+--- Sensor Data Snapshot ---
+Temperature : 30.28 C
+Humidity    : 48.36 %
+Wind Speed  : 1.37 m/s
+Wind Dir    : 120 deg
+Wind Pulses : 11174.00
+Rain Pulses : 0.00
+Rainfall    : 0.00 mm
+----------------------------
+--- Storage Status ---
+SPIFFS: 498/4640
+SD Card: FAILED/NOT FOUND
+----------------------------
+------- ENTERING SCHEDULER 15 MIN LOOP --------  
+
+Current SampleNo is 47
+Sample is less than or equal to 60
+
+RF Close date from RTC = 2026-03-26  
+[GPRS] State Change: sync_mode=1 gprs_mode=1
+
+-------- SPIFFS FILE EXISTS w/ OR WIHOUT ANY GAPS  --------
+
+The last line of the file is :46,2026-03-25,20:15,000.00,030.3,047.7,01.46,123,-079,04.0
+
+Last Parse: CRF=0.00 T=30.30 H=47.70
+
+NO GAPS FOUND ...
+
+
+Current data inserted is 47,2026-03-25,20:30,000.00,030.3,048.4,01.37,120,-083,04.0
+
+
+append_text->store_text : Used for internal status: 47,2026-03-25,20:30,000.00,030.3,048.4,01.37,120,-083,04.0
+
+
+append_text written to lastrecorded_<stationname>.txt is : 47,2026-03-25,20:30,000.00,030.3,048.4,01.37,120,-083,04.0
+
+
+
+[FILE] SPIFFS: /WS0034_20260326.txt | Size: 240
+   ... [Tail Content] ...
+44,2026-03-25,19:45,000.00,030.2,049.2,00.00,156,-051,04.0
+45,2026-03-25,20:00,000.00,030.3,048.9,01.25,132,-051,04.0
+46,2026-03-25,20:15,000.00,030.3,047.7,01.46,123,-079,04.0
+47,2026-03-25,20:30,000.00,030.3,048.4,01.37,120,-083,04.0
+-----------------------
+
+[FILE] SD: /WS0034_20260326.txt
+
+
+[GPRS] State Change: sync_mode=2 gprs_mode=1
+
+****************
+Starting Automated Data Flow
+****************
+[BATT] Proceeding with Spatika Upload regardless of battery voltage.
+[GPRS] Prepared URL: AT+HTTPPARA="URL","http://rtdas.spatika.net:80/tws_gprs/twsrf_gen"
+[GPRS] PDP context inactive. Activating for DNS/HTTP...
+[GPRS] Bearer status check: Re-initializing IP stack...
+[GPRS] Starting HTTP...
+HTTP POST REQUEST IS AT+HTTPPARA="URL","http://rtdas.spatika.net:80/tws_gprs/twsrf_gen"
+[GPRS] HTTPINIT Failed. Trying TERM then INIT...
+
+*********  STARTING TO SEND HTTP ... ***********
+
+
+*********  Sending Current data to main server... ***********
+
+SPIFF FILE EXISTS ..../WS0034_20260326.txt
+
+Current Data to be sent is : 47,2026-03-25,20:30,000.00,030.3,048.4,01.37,120,-083,04.0
+
+
+Key is wsgen2014
+http_data format is stn_id=WS0034&rec_time=2026-03-25,20:30&key=wsgen2014&rainfall=00.00&temp=030.3&humid=048.4&w_speed=01.37&w_dir=120&signal=-083&bat_volt=04.0&bat_volt2=04.0
+
+[HTTP] HTTP session not ready. Fast-fail to backlog.
+[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt 2)...
+[HTTP] HTTP session not ready. Fast-fail to backlog.
+[HTTP] 2nd Attempt (Fast) also failed. Falling back to Robust method...
+[HTTP] HTTP session not ready. Fast-fail to backlog.
+[HTTP] Attempt 1 failed. Re-initialising stack for single retry...
+[RTC] Time: 20:32
+[HTTP] Retry attempt...
+Payload is stn_id=WS0034&rec_time=2026-03-25,20:30&key=wsgen2014&rainfall=00.00&temp=030.3&humid=048.4&w_speed=01.37&w_dir=120&signal=-083&bat_volt=04.0&bat_volt2=04.0
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+[RTC] Time: 20:33
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,9
+
+Response (P) of AT+HTTPREAD=0,290 is 
+OK
+
++HTTPREAD: 9
+Success
+
+
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+[HTTP] Retry succeeded.
+
+**** Storing Last Logged Data as 2026-03-25,20:30
+Entering FTP mode and checking if data period is correct for sending and if there is any file to be sent
+[FTP-Gate] unsent=0 cur_time=20:33 sched=NO cleanup=NO
+[GPRS] Skipping SMS check (hourly task).
+[GPRS] Cycle fully complete (including Commands).
+[GPRS] No queued commands. Allowing sleep.
+[PWR] All tasks done. Entering Deep Sleep...
+[GPRS] State Change: sync_mode=4 gprs_mode=1
+[GPRS] Session clean. Attempting graceful shutdown...
+[GPRS] Modem alive. Closing network session gracefully...
+[GPRS] Cutting physical VCC power (GPIO 26 -> LOW).
+[PWR] Sleep: CurTime=20:33:23
+ Sleep=11:49 (min:sec)
 [PWR] Entering Deep Sleep

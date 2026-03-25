@@ -239,6 +239,7 @@ void scheduler(void *pvParameters) {
       schedulerBusy = true; // v5.65: Lock system awake during 15-min processing
       // last_processed_sample_idx = current_sample_idx; // v5.66: Moved to END of successful processing to allow retries on failure
       skip_primary_http = false; // Reset on new slot processing start
+      bool fs_locked = false; // v6.04: Logic Guard to prevent Mutex Leaks on jumps
 
       // PREVENT SLEEP: Flag active operation so loop() doesn't sleep if LCD
       // turns off
@@ -639,8 +640,9 @@ void scheduler(void *pvParameters) {
           if (check_temp > 55.0) check_temp = 55.0;
           debugf1("[RESCUE] Temp corrected to %.1f (fault)\n", check_temp);
         } else {
-          last_valid_temp = check_temp; // Update golden anchor
-          prev_15min_temp = check_temp; // Update stuck detection anchor
+          // v6.05 Fix BUG-M6: Anchor to the RAW sensor value, not the jittered/corrected value
+          last_valid_temp = temp_read; 
+          prev_15min_temp = check_temp; // Use corrected for stuck detection
         }
 
         // Humidity Rescue
@@ -652,8 +654,9 @@ void scheduler(void *pvParameters) {
           if (check_hum > 100.0) check_hum = 100.0;
           debugf1("[RESCUE] Hum corrected to %.1f (fault)\n", check_hum);
         } else {
-          last_valid_hum = check_hum; // Update golden anchor
-          prev_15min_hum = check_hum; // Update stuck detection anchor
+          // v6.05 Fix BUG-M6: Anchor to the RAW sensor value, not the jittered/corrected value
+          last_valid_hum = hum_read; 
+          prev_15min_hum = check_hum; // Use corrected for stuck detection
         }
       }
       // ─────────────────────────────────────────────────────────────────────
@@ -665,7 +668,11 @@ void scheduler(void *pvParameters) {
       snprintf(inst_hum, sizeof(inst_hum), "%05.1f", check_hum);
       snprintf(avg_wind_speed, sizeof(avg_wind_speed), "%05.2f",
                cur_avg_wind_speed);
-      snprintf(inst_wd, sizeof(inst_wd), "%03d", windDir);
+      int snap_wind_dir;
+      portENTER_CRITICAL(&windMux);
+      snap_wind_dir = windDir;
+      portEXIT_CRITICAL(&windMux);
+      snprintf(inst_wd, sizeof(inst_wd), "%03d", snap_wind_dir); // v6.05 Fix BUG-H3: Atomic snapshot
 
       debugln();
       debugln("--- Sensor Data Snapshot ---");
@@ -1258,7 +1265,9 @@ void scheduler(void *pvParameters) {
                String fName = f.name();
                // Identify daily log files: e.g. TWS1931_20260324.txt
                if (fName.indexOf("_20") != -1 && fName.endsWith(".txt")) {
-                   if (oldest_file == "" || fName < oldest_file) {
+            // v6.05 Fix BUG-M2: Skip the current daily log file during space recovery
+            if (cur_file && strstr(fName.c_str(), cur_file + 1) != NULL) continue; 
+            if (oldest_file == "" || fName < oldest_file) {
                        oldest_file = fName;
                    }
                }
@@ -1556,8 +1565,11 @@ void scheduler(void *pvParameters) {
               // Wind Direction (Simple random around current/last midpoint)
               if ((windDir > WIND_DIR_MIN_VALID) &&
                   (windDir < WIND_DIR_MAX_VALID)) {
+                // v6.05 Fix BUG-H3: Capture windDir under windMux to prevent race conditions
+                portENTER_CRITICAL(&windMux);
                 fill_WD = random(windDir - WIND_DIR_RANGE,
                                  windDir + WIND_DIR_RANGE + 1);
+                portEXIT_CRITICAL(&windMux);
                 snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", fill_WD);
               } else {
                 snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", windDir);
@@ -1786,7 +1798,6 @@ void scheduler(void *pvParameters) {
         File file1;
         // Phase 12 Fix: Lock fsMutex for the ENTIRE duration of new file creation
         // to prevent VFS table shredding.
-        bool fs_locked = false;
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
           fs_locked = true;
           file1 = SPIFFS.open(cur_file, FILE_APPEND);
@@ -2108,6 +2119,26 @@ void scheduler(void *pvParameters) {
               sd1.print(append_text);
 
             debugln(append_text);
+
+            // v6.05 Fix BUG-H1: Fresh Boot Mid-day Skip leaves record unqueued
+            if (data_writing_initiated == 1 && skip_primary_http) {
+#if SYSTEM == 0
+                debugln("[SCHED] Fresh boot skip. Queuing to unsent.txt...");
+                File f_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
+                if (f_unsent) {
+                    f_unsent.print(append_text);
+                    f_unsent.close();
+                }
+#endif
+#if (SYSTEM == 1 || SYSTEM == 2)
+                debugln("[SCHED] Fresh boot skip. Queuing to ftpunsent.txt...");
+                File f_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+                if (f_ftp) {
+                    f_ftp.print(ftpappend_text);
+                    f_ftp.close();
+                }
+#endif
+            }
           } else {
             debugln("[SCHED] Skipping write of current record (SampleNo) due "
                     "to fresh boot session safety.");
@@ -2511,8 +2542,11 @@ void scheduler(void *pvParameters) {
                 // Wind Direction
                 if ((windDir > WIND_DIR_MIN_VALID) &&
                     (windDir < WIND_DIR_MAX_VALID)) {
+                  // v6.05 Fix BUG-H3: Capture windDir under windMux to prevent race conditions
+                  portENTER_CRITICAL(&windMux);
                   fill_WD = random(windDir - WIND_DIR_RANGE,
                                    windDir + WIND_DIR_RANGE + 1);
+                  portEXIT_CRITICAL(&windMux);
                   snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", fill_WD);
                 } else {
                   snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", windDir);
@@ -2623,7 +2657,10 @@ void scheduler(void *pvParameters) {
         } // matches the brace for 'else' at line 1527
       }   // matches the brace for 'else' at line 1390
       
-      xSemaphoreGive(fsMutex); // Release after recording/gapfill
+      if (fs_locked) {
+    xSemaphoreGive(fsMutex); // Release after recording/gapfill
+    fs_locked = false;
+  }
       
       //          len = strlen(append_text);
       //          append_text[len] = '\0';
@@ -2641,6 +2678,7 @@ void scheduler(void *pvParameters) {
                station_name);
       { // Scope for filelastrecord
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+          fs_locked = true;
           File filelastrecord = SPIFFS.open(temp_file, FILE_WRITE);
           if (!filelastrecord) {
             debugln("Failed to open lastrecorded file for writing");
@@ -2743,12 +2781,14 @@ void scheduler(void *pvParameters) {
           0; // Need to make it zero to capture instantaneous RF every 15 mins
       rf_value =
           0; // Need to make it zero to capture instantaneous RF every 15 mins
+      last_raw_rf_count = 0; // v6.05 Fix BUG-C3: Sync anchor to post-zero state immediately
 #endif
 
       if (sampleNo == MAX_SAMPLE_NO) {
         snprintf(temp_file, sizeof(temp_file), "/closingdata_%s.txt",
                  station_name);
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+          fs_locked = true;
           File file5 = SPIFFS.open(temp_file, FILE_APPEND);
           if (!file5) {
             debugln("Failed to open closing data file for appending");
@@ -2893,6 +2933,18 @@ void scheduler(void *pvParameters) {
       debugln();
 
     TRIGGER_HTTP: // Label for duplicate/invalid skip jump
+      // v6.05 Fix BUG-C2: Always mark current slot as PROCESSED before exiting
+      // This prevents re-entry loops during low-battery brownout.
+      last_processed_sample_idx = current_sample_idx;
+      // v6.04 Fix: Ensure any local goto path releases the File System lock
+      if (fs_locked) {
+        xSemaphoreGive(fsMutex);
+        fs_locked = false;
+      }
+      
+      // v6.04 Fix: Centralized reset to ensure Deep Sleep is NEVER blocked by local goto paths
+      schedulerBusy = false; 
+
       // v5.68 FIX: TIER 1 Battery Brownout Gate
       // If we fell through due to low battery, DO NOT allow the network to spin up!
       if (li_bat_val < 3.4f && li_bat_val > 0.5f) {

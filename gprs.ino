@@ -2,7 +2,7 @@
 
 int active_cid = 1;      // Default to 1
 bool http_ready = false; // v5.42: Track if HTTPINIT succeeded for this cycle
-static String content = ""; // Phase 5 Fix: Scoped locally to GPRS core to prevent Core 1 cross-contamination
+static String backlog_content = ""; // Phase 5 Fix: Scoped locally to GPRS core to prevent Core 1 cross-contamination
 
 // Helper to clear UART buffer to prevent stale data contamination between tasks
 void flushSerialSIT() {
@@ -428,8 +428,8 @@ void gprs(void *pvParameters) {
                 "voltage.");
             sync_mode = eHttpStarted;
             send_http_data();
-            primary_data_delivered =
-                (success_count == 1); // v5.51 Track session success
+            primary_data_delivered = (success_count == 1); 
+            sync_mode = eHttpStop; // v6.02: Advance state to allow deep sleep entry
           } else {
             debugln("[SCHED] Skipping Duplicate/Fresh Upload. Checking Backlog/Health...");
             primary_data_delivered = true; // Assume 'Success' to allow backlog
@@ -605,31 +605,38 @@ void gprs(void *pvParameters) {
       debugln("[CMD] DELETE_DATA: Factory Reset requested by server...");
       strcpy(last_cmd_res, "Success: Deleting & Reboot");
 
-      // Perform deletion (Matches LCD Factory Reset logic)
-      SPIFFS.remove("/unsent.txt");
-      SPIFFS.remove("/ftpunsent.txt");
-      SPIFFS.remove("/unsent_pointer.txt");
+      // v6.05 Fix BUG-M5: Acquire fsMutex before massive SPIFFS deletion
+      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+        // Perform deletion (Matches LCD Factory Reset logic)
+        SPIFFS.remove("/unsent.txt");
+        SPIFFS.remove("/ftpunsent.txt");
+        SPIFFS.remove("/unsent_pointer.txt");
 
-      File root = SPIFFS.open("/");
-      File file = root.openNextFile();
-      while (file) {
-        String fileName = file.name();
-        String fullPath = fileName.startsWith("/") ? fileName : "/" + fileName;
+        File root = SPIFFS.open("/");
+        File file = root.openNextFile();
+        while (file) {
+          String fileName = file.name();
+          String fullPath = fileName.startsWith("/") ? fileName : "/" + fileName;
 
-        // List of files to PRESERVE (Only basic station info)
-        if (fullPath == "/station.doc" || fullPath == "/station.txt" ||
-            fullPath == "/rf_fw.txt") {
-          debug("Preserving: ");
-          debugln(fullPath);
-        } else {
-          debug("Deleting: ");
-          debugln(fullPath);
-          SPIFFS.remove(fullPath);
+          // List of files to PRESERVE (Only basic station info)
+          if (fullPath == "/station.doc" || fullPath == "/station.txt" ||
+              fullPath == "/rf_fw.txt") {
+            debug("Preserving: ");
+            debugln(fullPath);
+          } else {
+            debug("Deleting: ");
+            debugln(fullPath);
+            SPIFFS.remove(fullPath);
+          }
+          file.close();
+          file = root.openNextFile();
         }
-        file.close();
-        file = root.openNextFile();
+        root.close();
+        xSemaphoreGive(fsMutex);
+      } else {
+        debugln("[CMD] ERROR: fsMutex Timeout – skipping deletion to prevent crash.");
+        strcpy(last_cmd_res, "FAIL: FS BUSY");
       }
-      root.close();
 
       reset_all_diagnostics(); // Reset all RTC RAM diagnostic counters
 
@@ -667,10 +674,12 @@ void gprs(void *pvParameters) {
         sync_mode = eHealthStart;
       }
       
-      if (sync_mode == eHttpStop || sync_mode == eExceptionHandled) { // No commands transition
+      // v6.03: Final terminal states for cycle completion. 
+      // Narrowed from '>=' to specific enums to ensure manual commands (modes 6, 8, 10) are NOT cancelled.
+      if (sync_mode == eHttpStop || sync_mode == eExceptionHandled || sync_mode == eSMSStop) { 
         debugln("[GPRS] No queued commands. Allowing sleep.");
-        sync_mode = eHttpStop;
-        httpInitiated = false;
+        sync_mode = eHttpStop; // Normalize to Stop
+        httpInitiated = false; // Reset cycle trigger
       }
     }
 
@@ -803,7 +812,7 @@ void prepare_data_and_send() {
   const char *charArray;
 
   // v5.56: Global Sanity Check for record content
-  if (content.length() < 10 && data_mode == eUnsentData) {
+  if (backlog_content.length() < 10 && data_mode == eUnsentData) {
       debugln("[HTTP] Skip: Record too short/Empty — advancing pointer without counting as sent.");
       // P2 fix v5.65: Use sentinel value 2 (not 1) to signal 'skipped'.
       // success_count==1 increments diag_http_retry_count in the caller,
@@ -860,13 +869,13 @@ void prepare_data_and_send() {
       s = file1.size();
       s = (s > record_length) ? s - record_length : 0;
       file1.seek(s);
-      content = file1.readString(); // Read the rest of the file
+      backlog_content = file1.readString(); // Read the rest of the file
       file1.close();
     }
   }
 
   // v5.56: Ensure pointer follows current 'content' regardless of source
-  charArray = content.c_str(); 
+  charArray = backlog_content.c_str(); 
 
   debugln();
   debugf1("Current Data to be sent is : %s", charArray);
@@ -1631,7 +1640,7 @@ void send_http_data() {
   debugln();
   debugln("*********  STARTING TO SEND HTTP ... ***********");
   debugln();
-  charArray = content.c_str();
+  charArray = backlog_content.c_str();
   data_mode = eCurrentData; // Set the data mode
   prepare_data_and_send();
 
@@ -1644,7 +1653,7 @@ void send_http_data() {
     last_recorded_yy = current_year;
 
     // Storing last logged data for signature check
-    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
       File fileTemp2 = SPIFFS.open("/signature.tmp", FILE_WRITE);
       if (fileTemp2) {
         snprintf(signature, sizeof(signature), "%04d-%02d-%02d,%02d:%02d",
@@ -1774,16 +1783,16 @@ void send_http_data() {
           debug("Record Number ");
           debugln(backlog_processed_count);
           file1.seek(unsent_pointer_count);
-          content = file1.readStringUntil('\n'); 
+          backlog_content = file1.readStringUntil('\n'); 
           unsent_pointer_count = file1.position(); // v5.56: Use actual file position (Variable length support)
           
-          content.trim(); 
-          if (content.length() < 10) {
+          backlog_content.trim(); 
+          if (backlog_content.length() < 10) {
             debugln("Skipping blank/invalid line in unsent backlog.");
             continue; 
           }
           
-          charArray = content.c_str();
+          charArray = backlog_content.c_str();
 
           // Set the data mode
           data_mode = eUnsentData;
@@ -1881,8 +1890,8 @@ void send_http_data() {
   SerialSIT.println("AT+CGEREP=2");
   waitForResponse("OK", 1000);
 
-  xSemaphoreGive(modemMutex); // v5.55: Release modem early to allow sub-calls to take it
-  
+  xSemaphoreGive(modemMutex); // v6.03: Restored to original position to avoid self-deadlock in send_unsent_data()
+
 #if (SYSTEM == 1 || SYSTEM == 2)
   // v5.49 Build 5: INDEPENDENT FTP TRIGGER
   // Decoupled from HTTP Success. FTP serves as the robust rescue layer.
@@ -1901,7 +1910,7 @@ void send_http_data() {
   // v5.65 Selective SMS Check: Guaranteed once an hour (at Minute 0 slot)
   if (record_min == 0) {
     sync_mode = eSMSStart;
-    send_sms(); // This function will internally take modemMutex
+    // send_sms(); // Removed redundant call, handled by loopTask state 7
   } else {
     debugln("[GPRS] Skipping SMS check (hourly task).");
     sync_mode = eHttpStop;
@@ -1936,10 +1945,13 @@ void send_daily_file(
 }
 
 void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
+  bool fs_locked = false;
   if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
     debugln("[SPIFFS] Mutex Timeout: Skipping send_unsent_data");
     return;
   }
+  fs_locked = true;
+
   const char
                           // *charArray;
       *ptr;
@@ -2077,7 +2089,10 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
               if (!chunk) {
                 debugln("[FTP] CRITICAL: Failed to create chunk file. Aborting FTP.");
                 src.close(); if (remainder) remainder.close();
-                xSemaphoreGive(fsMutex);
+                if (fs_locked) {
+                  xSemaphoreGive(fsMutex);
+                  fs_locked = false;
+                }
                 return;
               }
 
@@ -2110,19 +2125,28 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
               }
           } else {
             debugln("Failed to open ftpunsent.txt for chunking.");
-            xSemaphoreGive(fsMutex);
+            if (fs_locked) {
+              xSemaphoreGive(fsMutex);
+              fs_locked = false;
+            }
             return; // Hygiene Fix: Abort on source failure to prevent wasted blank FTP sequence
           }
           debug("Retrieved file is ");
           debugln(fileName);
           esp_task_wdt_reset();
           // v5.66: Release FS mutex before long FTP upload to allow scheduler to record
-          xSemaphoreGive(fsMutex); 
+          if (fs_locked) {
+            xSemaphoreGive(fsMutex); // v6.04 Fix BUG-1: Release fsMutex BEFORE acquiring modemMutex in send_ftp_file (Break ABBA inversion)
+            fs_locked = false;
+          }
           send_ftp_file(fileName, false, false); // Pass alreadyLocked=false
           // Note: send_ftp_file will take its own lock for cleanup
         } else {
           debugln("[FTP] Skip: Registration lost. Retrying next hour.");
-          xSemaphoreGive(fsMutex); // Ensure release on skip
+          if (fs_locked) {
+            xSemaphoreGive(fsMutex); // Ensure release on skip
+            fs_locked = false;
+          }
         }
       } // end else (signal OK)
     } else {
@@ -5140,14 +5164,15 @@ void copyFromSPIFFSToFS(char *dateFile) {
 
 char *parse_http_head(char *response, char *check) {
   char *search_str = NULL;
-  char *token = strtok(response, "\r\n");
+  char *saveptr;
+  char *token = strtok_r(response, "\r\n", &saveptr);
   while (token != NULL) {
     if (strstr(token, check) != NULL) {
       search_str = strchr(token, ':') +
                    2; // eg. Skip the "+CSQ: " prefix ... +2 to skip \r\n
       break;
     }
-    token = strtok(NULL, "\r\n");
+    token = strtok_r(NULL, "\r\n", &saveptr);
   }
   return search_str;
 }
@@ -5251,8 +5276,8 @@ bool send_health_report(bool useJitter) {
   // Airtel M2M firewall blocks non-whitelisted foreign IPs — repeated attempts waste ~3 minutes
   if (strstr(carrier, "Airtel") && strstr(apn_str, "airteliot")) {
       debugln("[Health] Skipping: Airtel M2M SIM + foreign health server. Request IP whitelist from Airtel.");
-      xSemaphoreGive(modemMutex);
       xSemaphoreGive(fsMutex);
+      xSemaphoreGive(modemMutex);
       return false;
   }
 

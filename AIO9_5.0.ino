@@ -113,7 +113,7 @@ bool valid_dt = false, valid_time = false;
 int ftp_login_flag = 0;
 size_t len = 0;
 char last_logged[16] = "";
-char http_data[350] = ""; 
+char http_data[512] = ""; 
 char sample_cum_rf[10], sample_inst_rf[10], sample_temp[10], sample_hum[10],
     sample_avgWS[10], sample_WD[10], sample_bat[10], ftpsample_avgWS[10],
     ftpsample_cum_rf[10];
@@ -453,8 +453,11 @@ void setup() {
   // Reason 12 is triggered by 'DELETE DATA' or manually via ESP.restart().
   // v5.55 SELF-HEALING: Protect metrics during maintenance reboots.
   // If healer_reboot_in_progress is set, skip wiping counters even on Reason 12.
-  if ((rr == POWERON_RESET || rr == EXT_CPU_RESET || rr == 12) && !healer_reboot_in_progress) {
-    debugf("[BOOT] Fresh Start (Reason %d). Initializing RTC variables.\n", (int)rr);
+  // v6.04 Fix BUG-5: handling EXT_CPU_RESET (Reason 14/Watchdog) for anchor preservation
+  if ((rr == 1 || rr == 14 || rr == 12) && !healer_reboot_in_progress) {
+    debugln("[BOOT] Fresh Start (Reason 1/14/12). Initializing RTC variables.");
+    last_raw_wind_count = wind_count.val;
+    last_raw_rf_count = rf_count.val;
     // v5.60: Time-of-day dependent sensor anchor initialization
     int boot_hr = 10; // Default to mid-morning if RTC fails
     if (diag_rtc_battery_ok) {
@@ -1106,8 +1109,7 @@ void setup() {
       }
       debug("Firmware ver stored in SPIFFS is ");
       debugln(UNIT_VER);
-      
-      // v5.67: Differentiate between a simple OTA patch and a cross-architecture flash
+        // v5.67: Differentiate between a simple OTA patch and a cross-architecture flash
       // (e.g. changing from TWS to TWS-RF where the CSV structures physically change)
       int lastDash1 = String(UNIT_VER).lastIndexOf('-');
       int lastDash2 = temp.lastIndexOf('-');
@@ -1129,12 +1131,14 @@ void setup() {
           File root = SPIFFS.open("/"); 
           File file = root.openNextFile();
           while(file) {
+              if (!file) break; // v6.04 Fix BUG-8: Guard against null iterator crash
               String n = file.name();
               if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt" || n == "firmware.doc")) {
                   debug("Removing incompatible structure: "); debugln(n);
                   SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
               }
-              file.close(); file = root.openNextFile();
+              file.close(); 
+              file = root.openNextFile();
           }
           root.close();
           debugln("[OTA] Wipe complete.");
@@ -1242,10 +1246,8 @@ void setup() {
           }
         } else {
           debugln(
-              "Firmware update failed, keeping /firmware.bin for analysis.");
-          if (SPIFFS.exists("/firmware.ready")) {
-            SPIFFS.remove("/firmware.ready");
-          }
+              "[OTA] Update FAILED. Keeping /firmware.bin and /firmware.ready for retry.");
+          // v6.04: BUG-12: NOT deleting .ready so setup() can try again on next boot
         }
 
         delay(500); // TRG8-3.0.5g reduced from 2secs to 500ms

@@ -52,6 +52,7 @@ void start_deep_sleep() {
   int live_sec = current_sec; // fallback
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
       DateTime now = rtc.now();
+      current_hour = now.hour(); // v6.05 Fix BUG-H5: Refresh hour for accurate sleep calc
       current_min = now.minute(); // Update globals for accurate calc
       live_sec = now.second();
       
@@ -566,7 +567,7 @@ void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
 }
 
 // One-time reconstruction of sent masks from SPIFFS files (Session Recovery)
-RTC_DATA_ATTR bool backfill_done = false;
+static bool backfill_done = false;
 
 void scanFileToMask(const char *fName, uint32_t *mask) {
   if (!SPIFFS.exists(fName))

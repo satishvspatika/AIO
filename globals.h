@@ -418,7 +418,8 @@ extern int cur_fld_no;
 extern char ftp_station[16];
 extern size_t len;
 extern char last_logged[16];
-extern char http_data[350]; 
+extern char http_data[512]; 
+extern char content[512], content1[512];
 extern char sample_cum_rf[10], sample_inst_rf[10], sample_temp[10], sample_hum[10],
     sample_avgWS[10], sample_WD[10], sample_bat[10], ftpsample_avgWS[10],
     ftpsample_cum_rf[10];
