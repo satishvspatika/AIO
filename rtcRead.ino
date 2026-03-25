@@ -264,7 +264,10 @@ void resync_time() {
     }
   } else {
     debugln("Error: +CLBS not found in response - will retry later");
-    // Removed ESP.restart() to prevent boot loops on poor signal
+    // v6.02 Fix: Reset flags so loop() can enter deep sleep despite failure
+    gprs_started = false;
+    health_in_progress = false;
+    sync_mode = eExceptionHandled;
   }
 
   //  sscanf(csqstr, "+CLBS: %d,%f,%f,%d,%d/%d/%d,%d:%d:%d", &tmp,

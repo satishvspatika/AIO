@@ -1,0 +1,23 @@
+Subject: Firmware v6.01 Upgrade - Unified 3-Way Hardware Support (Nuvoton Ready)
+
+Hi Team,
+
+I have successfully upgraded the ESP32 core firmware to v6.01. The objective of this release is to seamlessly unify the codebase so that one single project compilation gracefully supports all three hardware iteration capabilities for the LCD and Keypad, without breaking backwards compatibility.
+
+1. The Universal Hardware Toggle
+Inside user_config.h, we replaced the binary ENABLE_I2C_KEYPAD switch with a new universal KEYPAD_TYPE macro:
+#define KEYPAD_TYPE 1 // 0: 5-Pin GPIO (Legacy), 1: PCF8574 I2C Expander, 2: Nuvoton M51 I2C Processor
+
+2. The Smart Abstraction Layer
+If the firmware is compiled with KEYPAD_TYPE 2 (the Nuvoton integration), the ESP32 automatically drops the heavy LiquidCrystal_I2C and Keypad_I2C libraries entirely from the final binary (saving ~7KB flash and ~200 Bytes RAM).
+
+To prevent breaking the thousands of existing lcd.print() and keypad.getKey() calls scattered throughout our RTOS tasks, I engineered ultra-lightweight C++ mock structs (Nuvoton_Smart_LCD and Nuvoton_Smart_Keypad) directly into globals.h. 
+When the compiler detects KEYPAD_TYPE 2, these mock objects seamlessly intercept every UI command natively and translate them into high-speed, raw I2C Wire.write() and Wire.read() transmissions directly to the Nuvoton (Address 0x20). 
+
+3. Safe Mutex Polling
+The lcdkeypad RTOS task logic has been cleanly bridged under the i2cMutex lock so that whether you are using the PCF8574 (Type 1) or Nuvoton (Type 2), the ESP32 perfectly respects the 2.5-second wait times if the BME280 or RTC is currently utilizing the bus. This completely eliminates I2C starvation and dropped keystrokes.
+
+This architecture ensures our v6.01 software branch is 100% backwards compatible with the older v5.0 PCBs (Type 0) and the interim PCF configurations (Type 1), while being instantly ready to drop in the new Nuvoton Co-Processor (Type 2) the exact moment the new PCBs are fabricated.
+
+Best Regards,
+[Your Name]

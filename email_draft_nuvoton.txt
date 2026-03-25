@@ -1,0 +1,26 @@
+Subject: Architecture Upgrade: Nuvoton M51 as Smart UI Co-Processor (LCD & Keypad)
+
+Hi Team,
+
+To dramatically optimize our ESP32's CPU overhead and clear I2C bus congestion, we are proposing a shift from the "dumb" PCF8574T expander to a Nuvoton M51 (MS51 / N76E003) acting as a dedicated Smart UI Co-Processor.
+
+I have already generated the baseline C firmware for the Nuvoton (saved as Nuvoton_M51_Smart_UI_Controller.c). This program configures the Nuvoton to run autonomously on its own internal clock:
+
+1. Keypad Matrix Scanning (I2C Read)
+The Nuvoton physically wires to the Keypad Rows (P01, P02) and Columns (P03, P04, P05) and handles all the 50ms debouncing logic itself. 
+When a valid keypress is detected:
+- It pulls its INT pin (P10) LOW, which is wired to the ESP32's ext0 (GPIO 27) to instantly wake the main system.
+- The ESP32 simply executes a standard Wire.requestFrom(0x20, 1), and the Nuvoton's hardware I2C Interrupt routine instantly hands over the exact ASCII character pressed.
+
+2. LCD Graphics Strobing (I2C Write)
+Instead of forcing the ESP32 to bit-bang 4-bit nibbles over the I2C bus just to print a single character (using the heavy LiquidCrystal_I2C Arduino library), we will wire the HD44780 screen natively to the Nuvoton's GPIOs (P11-P16).
+- When the ESP32 needs to print to the screen, it simply sends the raw ASCII string over I2C once.
+- For example, the ESP32 sends a single 0x01 byte for "Clear Screen", or physical text like "Spatika Online". The Nuvoton catches this text and strictly handles all the microsecond Enable-pin strobing locally.
+
+The Hardware Benefits
+By adopting this architecture, we completely eliminate the Keypad_I2C and LiquidCrystal_I2C libraries from the ESP32 codebase. This frees up 7KB of flash, ~200 Bytes of static RAM, and critically offloads 90% of the UI signaling traffic from our main I2C bus, ensuring our BME280 and RTC sensors operate perfectly without contention.
+
+Please review the provided Nuvoton_M51_Smart_UI_Controller.c source file. We can compile this using Keil or NuEclipse.
+
+Best Regards,
+[Your Name]

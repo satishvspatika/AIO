@@ -88,12 +88,18 @@ bool load_apn_config(String current_ccid, char *target_apn, size_t max_len) {
       current_ccid.indexOf(stored_ccid_str) != -1 &&
       stored_apn_str.length() > 0) {
 
+    bool apn_carrier_mismatch = false;
     // v5.65 CRITICAL FIX: Cross-check stored APN against current carrier.
     // A stale cache (e.g. from a test with Airtel SIM) can store airteliot.com
     // for a BSNL SIM's ICCID. If the carrier (set by get_network() via CSPN/COPS)
     // disagrees with the stored APN, REJECT the cache and force fresh discovery.
-    bool apn_carrier_mismatch = false;
-    if (strstr(carrier, "BSNL") && strstr(stored_apn_str.c_str(), "airtel")) {
+    // v6.06 FIX: Even if carriers match (Airtel == Airtel), the APN string must match.
+    // If live CSPN detection found "airteliot.com" but cache has "airtelgprs.com",
+    // the cache is potentially stale or wrong for this SIM sub-type.
+    if (strlen(apn_str) > 0 && strcasecmp(stored_apn_str.c_str(), apn_str) != 0) {
+       debugln("Smart APN: ⚠ MISMATCH — Stored APN '" + stored_apn_str + "' differs from detected '" + String(apn_str) + "'. Ignoring cache.");
+       apn_carrier_mismatch = true;
+    } else if (strstr(carrier, "BSNL") && strstr(stored_apn_str.c_str(), "airtel")) {
       apn_carrier_mismatch = true;
     } else if (strstr(carrier, "Jio") && !strstr(stored_apn_str.c_str(), "jio")) {
       apn_carrier_mismatch = true;
@@ -102,7 +108,6 @@ bool load_apn_config(String current_ccid, char *target_apn, size_t max_len) {
     }
 
     if (apn_carrier_mismatch) {
-      debugln("Smart APN: ⚠ MISMATCH — Stored APN conflicts with detected carrier. Ignoring cache.");
       // Delete the stale file so it gets re-saved with the correct APN this cycle
       SPIFFS.remove("/apn_config.txt");
       xSemaphoreGive(fsMutex);

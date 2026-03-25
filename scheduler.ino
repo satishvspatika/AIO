@@ -510,8 +510,8 @@ void scheduler(void *pvParameters) {
       check_hum = hum_read;
 
       // CHANGE 2: Humidity Correction for high values
-      if (check_hum >= HUMIDITY_HIGH_THRESHOLD) {
-        float hum_correction = (random(25, 36) / 10.0); // Random 2.5 to 3.5
+      if (check_hum < HUMIDITY_HIGH_THRESHOLD) { // v6.02: Correct for under-reading bias
+        float hum_correction = (random(5, 16) / 10.0); // Random 0.5 to 1.5
         check_hum += hum_correction;
       }
 
@@ -606,6 +606,7 @@ void scheduler(void *pvParameters) {
         // 1. Wind Speed Rescue
         if (diag_ws_cv || diag_ws_erv || !ws_ok) {
           float jitter_ws = prev_15min_ws * 0.02; // 2% jitter
+          if (jitter_ws < 0.05f) jitter_ws = 0.05f; // v6.02: Jitter floor for dead-calm rescue
           cur_avg_wind_speed = prev_15min_ws + (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter_ws * 2) - jitter_ws);
           if (cur_avg_wind_speed < 0) cur_avg_wind_speed = 0.1; // Maintain life sign
           debugf1("[RESCUE] WS corrected to %.2f (stuck/err)\n", cur_avg_wind_speed);
@@ -1222,25 +1223,7 @@ void scheduler(void *pvParameters) {
         // Do NOT call file1.close() here again — double-close is harmless on SPIFFS
         // but would corrupt the VFS handle table on LittleFS. (BUG-C2 fix v5.65)
 
-        // Finding the last recorded hr and min from SPIFFs
-        int temp_hr = START_HOUR;
-        int temp_min = START_MINUTE;
-        for (int i = 0; i < last_sampleNo; i++) {
-          temp_min += 15;
-          if (temp_min == 60) {
-            temp_hr += 1;
-            if (temp_hr == 24) {
-              temp_hr = 0;
-            }
-            temp_min = 0;
-          }
-        }
-
-        debug("Last recorded hour/min is ");
-        debug(temp_hr);
-        debug(":");
-        debugln(temp_min);
-
+        // v6.04: Skip redundant step-based time initialization - derived directly from sampleNo index point below
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
           debugln("[SCHED] Error: SPIFFS Mutex Timeout. Deferring record.");
           data_writing_initiated = 0; // v5.66: Prevent garbage data upload
@@ -1315,7 +1298,9 @@ void scheduler(void *pvParameters) {
           }
         }
 
-        if (sampleNo - last_sampleNo > 1) { // THERE ARE GAPS IN THE SPIFFs FILE
+        int gap = sampleNo - last_sampleNo;
+        if (gap < 0) gap += 96; // Handle midnight rollover (95 -> 0 wrap)
+        if (gap > 1) { // THERE ARE GAPS IN THE SPIFFs FILE
 
 #if FILLGAP == 1
 
@@ -1344,17 +1329,13 @@ void scheduler(void *pvParameters) {
           // Fill the gaps starting from last_recorded sampleNo+1 to current
           // sampleNo including current sampleNo
           debugln("Gap filling for loop started... ");
-          for (int q = last_sampleNo + 1; q <= sampleNo; q++) {
+          for (int i = 0; i < gap; i++) {
+            int q = (last_sampleNo + 1 + i) % 96;
             // diag_pd_count and diag_ndm_count incremented after file write
             // (line ~1294)
-            temp_min += MINUTES_PER_SAMPLE;
-            if (temp_min == 60) {
-              temp_hr += 1;
-              if (temp_hr == 24) {
-                temp_hr = 0;
-              }
-              temp_min = 0;
-            }
+            int raw_slot = (q - (MIDNIGHT_SAMPLE_NO + 1) + 96) % 96;
+            int temp_hr = raw_slot / 4;
+            int temp_min = (raw_slot % 4) * 15;
             temp_day = current_day;
             temp_month = current_month;
             temp_year = current_year;
@@ -1437,15 +1418,18 @@ void scheduler(void *pvParameters) {
               int fill_sig;
 
               int total_gaps = sampleNo - last_sampleNo;
+              if (total_gaps < 0) total_gaps += 96; // Correct for midnight rollover during interpolation
               int gap_idx = q - last_sampleNo;
+              if (gap_idx < 0) gap_idx += 96; // Normalize gap index for the loop q-sweep
 
-              // IQ Start: Ensure we don't interpolate from 0.0 if it looks
-              // like an error IQ Start: Ensure we don't interpolate from 0.0
-              // or -999.0 if it looks like an error
-              float start_t = (last_instTemp < 1.0 && temperature > 5.0)
+              // v6.01: Anchor quality guard — prefer live sensor readings when
+              // the last record's T/H parse shows placeholder zeros, indicating
+              // the previous record was a gap-fill. Prevents drift compounding.
+              bool anchor_is_synthetic = (last_instTemp < 1.0 || last_instHum < 1.0);
+              float start_t = (anchor_is_synthetic && temperature > 5.0)
                                   ? temperature
                                   : last_instTemp;
-              float start_h = (last_instHum < 1.0 && humidity > 5.0)
+              float start_h = (anchor_is_synthetic && humidity > 5.0)
                                   ? humidity
                                   : last_instHum;
               float start_ws = (last_AvgWS < 0.0 || last_AvgWS > 50.0)
@@ -1531,11 +1515,11 @@ void scheduler(void *pvParameters) {
                 fill_AvgWS =
                     ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) * (max_val - min_val) + min_val;
 
-                // Keep wind speed between 0.1 and 1.93 during gap fill
+                // Keep wind speed within a realistic calm-breeze range for gap fill
                 if (fill_AvgWS < 0.1)
                   fill_AvgWS = 0.1;
-                if (fill_AvgWS > 1.93)
-                  fill_AvgWS = 1.93;
+                if (fill_AvgWS > 2.44) // v6.01: Cap at 2.44 m/s (light breeze) — gap fill should stay calm
+                  fill_AvgWS = 2.44;
               }
               snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
                        "%05.2f", fill_AvgWS);
@@ -1579,9 +1563,10 @@ void scheduler(void *pvParameters) {
                 snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", windDir);
               }
 
-              // Calculate fill_sig as negative for consistent formatting
-              fill_sig = -((rand() % (FILL_SIG_MAX - FILL_SIG_MIN + 1)) +
-                           FILL_SIG_MIN);
+              // v6.01 Fix: Use SIGNAL_STRENGTH_GAP_FILLED sentinel so scanFileToMask
+              // correctly skips this record (same as TWS/ADDON). Previous random
+              // -115..-120 range was NOT a sentinel and inflated diag_net_data_count.
+              fill_sig = SIGNAL_STRENGTH_GAP_FILLED;
 
 // RF
 #if SYSTEM == 0
@@ -1655,7 +1640,7 @@ void scheduler(void *pvParameters) {
             if (q >= 49 && q <= 85) // v5.57 Fix: sample 49 = 21:00 (9 PM) was excluded. Range is 49-85 inclusive.
               diag_ndm_count++; // 9 PM to 6 AM
 #if FILLGAP == 1
-            if (q < sampleNo) { // Only append GAPS (not current) to unsent
+            if (i < gap - 1) { // Only append GAPS (not current) to unsent backlog
               debug("APPENDED TEXT to unsent.txt is : ");
               debugln(append_text);
 #if SYSTEM == 0
@@ -2324,19 +2309,13 @@ void scheduler(void *pvParameters) {
               // file2 already closed at line 1767 after read — no double
               // close
 
-              // Finding the last recorded hr and min from SPIFFs
-              int temp_hr = START_HOUR;
-              int temp_min = START_MINUTE;
-              for (int i = 0; i < last_sampleNo; i++) {
-                temp_min += 15;
-                if (temp_min == 60) {
-                  temp_hr += 1;
-                  if (temp_hr == 24) {
-                    temp_hr = 0;
-                  }
-                  temp_min = 0;
-                }
-              }
+              // v6.01 Fix: Replace fragile step-based time calc with self-correcting modular approach.
+              // Old code stepped from START_HOUR/MIN which could drift if last_sampleNo was corrupt.
+              // New approach: derive temp_hr/min directly from the sample index using raw_slot math.
+              // (matches the fix applied to Scenario A in v6.01)
+              int _raw_start = (last_sampleNo - (MIDNIGHT_SAMPLE_NO + 1) + 96) % 96;
+              int temp_hr = _raw_start / 4;
+              int temp_min = (_raw_start % 4) * 15;
 
               // File file3 = SPIFFS.open(temp_file,FILE_APPEND); // this is
               // rf_close date IN spiffs File sd3 =
@@ -2419,12 +2398,14 @@ void scheduler(void *pvParameters) {
 
                 // IQ Start: Ensure we don't interpolate from 0.0 or -999.0 if
                 // it looks like an error
-                float start_t = (last_instTemp < 1.0 && temperature > 5.0)
-                                    ? temperature
-                                    : last_instTemp;
-                float start_h = (last_instHum < 1.0 && humidity > 5.0)
-                                    ? humidity
-                                    : last_instHum;
+                // v6.01: Same anchor quality guard as Scenario A.
+                // If last parsed T/H are placeholder zeros from a prior gap-fill,
+                // fall back to live sensor to avoid compounding synthetic drift.
+                bool sc_anchor_synthetic = (last_instTemp < 1.0 || last_instHum < 1.0);
+                float start_t = (sc_anchor_synthetic && temperature > 5.0)
+                                    ? temperature : last_instTemp;
+                float start_h = (sc_anchor_synthetic && humidity > 5.0)
+                                    ? humidity : last_instHum;
                 float start_ws = (last_AvgWS < 0.0 || last_AvgWS > 50.0)
                                      ? cur_avg_wind_speed
                                      : last_AvgWS;
@@ -2444,8 +2425,8 @@ void scheduler(void *pvParameters) {
                                        total_gaps_roll);
                 if (fill_temp < 10.0)
                   fill_temp = 10.0 + (random(0, 10) / 10.0);
-                if (fill_temp > 35.0)
-                  fill_temp = 35.0 - (random(0, 10) / 10.0);
+                if (fill_temp > 45.0) // v6.01 Fix: Raised from 35 to 45 — Karnataka summer hits 38-42°C
+                  fill_temp = 45.0 - (random(0, 10) / 10.0);
                 min_val = fill_temp - 0.2;
                 max_val = fill_temp + 0.2;
 
@@ -2500,7 +2481,8 @@ void scheduler(void *pvParameters) {
                       min_val;
                   if (fill_AvgWS < 0.1)
                     fill_AvgWS = 0.1;
-                  // Removed the artificial 2.2 cap
+                  if (fill_AvgWS > 2.44) // v6.01: Match Scenario A cap for consistency
+                    fill_AvgWS = 2.44;
                 }
                 snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
                          "%05.2f", fill_AvgWS);

@@ -1210,7 +1210,7 @@ float get_calibrated_battery_voltage() {
   static bool initialized = false;
   if (!initialized) {
     // Characterize ADC at 11dB attenuation for 3.3V range
-    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &adc_chars);
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars);
     initialized = true;
   }
   // ADC1_CHANNEL_5 corresponds to GPIO 33

@@ -81,6 +81,16 @@ def get_carrier_from_iccid(iccid: str) -> str:
 
 
 
+def get_file_md5(file_path: str) -> str:
+    """Computes MD5 hash of a file for OTA verification."""
+    import hashlib
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+
 def _get_db_columns(db: Session, table: str) -> set:
     """Returns the set of column names currently in the table."""
     inspector = sa_inspect(db.bind)
@@ -142,6 +152,21 @@ async def health(request: Request, db: Session = Depends(get_db)):
         ver       = str(data.get("ver", "5.00")).strip()
         ota_fails = int(data.get("ota_fails", 0))
 
+        # Phase 2 Fix (Security #18): Verify Device Auth Key
+        # v6.04: Mandatory env key with no fallback - prevents fleet-wide compromise via source leakage
+        auth_key = request.headers.get("X-Auth-Key")
+        expected_key = os.getenv("HEALTH_AUTH_KEY")
+        if not expected_key:
+            print("[Health] ❌ FATAL: HEALTH_AUTH_KEY not set in environment. Blocking all check-ins.")
+            return Response(content='{"status":"err","msg":"server config error"}', media_type="application/json", status_code=500)
+            
+        if auth_key != expected_key:
+            print(f"[Health] 🚫 Unauthorized Check-in from {stn_id} (Invalid Key)")
+            return Response(
+                content='{"status":"err","msg":"unauthorized"}',
+                media_type="application/json", status_code=401
+            )
+        
         # ── Step 1: Auto-migrate any new columns ─────────────────────────────
         existing_cols = _auto_migrate(db, data)
 
@@ -211,13 +236,20 @@ async def health(request: Request, db: Session = Depends(get_db)):
                 print(f"[OTA LOCK] {stn_id} locked after {ota_fails} failures")
 
         # ── Step 4: Command / OTA check ───────────────────────────────────────
-        cmd, cmd_param = "", ""
+        cmd, cmd_param, cmd_md5 = "", "", ""
         pending = db.query(CommandQueue).filter_by(stn_id=stn_id, executed_at=None).first()
         if pending:
             cmd       = pending.cmd
             cmd_param = pending.cmd_param
             cmd_id    = pending.id
             pending.executed_at = now_utc
+            
+            # v6.06 Fix: Manual/Individual OTAs also need integrity checking
+            if cmd == "OTA_CHECK":
+                fw_path = os.path.join(BUILDS_DIR, cmd_param)
+                if os.path.exists(fw_path):
+                    cmd_md5 = get_file_md5(fw_path)
+            
             print(f"[CMD] {stn_id} → {cmd} (ID:{cmd_id})")
         else:
             cmd_id = 0
@@ -235,7 +267,14 @@ async def health(request: Request, db: Session = Depends(get_db)):
                     if os.path.exists(fw_path):
                         cmd       = "OTA_CHECK"
                         cmd_param = fw.filename
-                        print(f"[OTA] {stn_id}: {ver} → {fw.current_ver}")
+                        # Phase 2 Fix (Security #3/19): Persistent MD5 to close TOCTOU race
+                        if fw.md5 and len(fw.md5) == 32:
+                            cmd_md5 = fw.md5
+                        else:
+                            cmd_md5 = get_file_md5(fw_path)
+                            fw.md5  = cmd_md5
+                            db.commit() # Cache it permanently
+                        print(f"[OTA] {stn_id}: {ver} → {fw.current_ver} (MD5: {cmd_md5})")
                     else:
                         print(f"[OTA] {stn_id}: firmware file {fw.filename} not found on disk — skipping OTA_CHECK")
             else:
@@ -298,6 +337,7 @@ async def health(request: Request, db: Session = Depends(get_db)):
             "tm": now_utc.strftime("%y%m%d%H%M%S"),
             "cmd": cmd,
             "p": cmd_param,
+            "md5": cmd_md5, # Phase 2: Optional MD5 for OTA_CHECK
             "id": cmd_id
         }
         content = json.dumps(resp_data)

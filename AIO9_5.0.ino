@@ -51,6 +51,7 @@ volatile bool ota_silent_mode = false; // Rule 43
 volatile bool bearer_recovery_active = false;
                                        // v6.88
 char ota_cmd_param[128] = "";
+char ota_md5_hash[33] = ""; // Phase 2: Secure binary verification
 RTC_DATA_ATTR int last_cmd_id = 0;
 RTC_DATA_ATTR char last_cmd_res[64] = "N/A";
 int ota_fail_count = 0;
@@ -157,7 +158,11 @@ char present_bottomRow[17] = "";
 
 // Definitions of global objects (v5.65 Extern Pass)
 HardwareSerial SerialSIT(2);
+#if KEYPAD_TYPE == 2
+Nuvoton_Smart_LCD lcd;
+#else
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+#endif
 SemaphoreHandle_t i2cMutex = NULL;
 SemaphoreHandle_t serialMutex = NULL;
 SemaphoreHandle_t modemMutex = NULL;

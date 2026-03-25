@@ -138,16 +138,15 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
     xSemaphoreGive(i2cMutex);
   }
 
-  // v5.66: 🚨 CRITICAL FIX - Update ALL globals immediately!
-  // If the physical RTC battery died and it woke up in 1970, we MUST legally
-  // update the current_day/year variables or else the rest of this waking cycle 
-  // will create data filed under 1970 despite the physical RTC being fixed!
+  // v6.02 Fix: Atomic protection for cross-task RTC globals
+  portENTER_CRITICAL(&rtcTimeMux);
   current_day = s_dd;
   current_month = s_mm;
   current_year = s_yy + 2000;
   current_hour = s_hh;
   current_min = s_mi;
   current_sec = s_ss;
+  portEXIT_CRITICAL(&rtcTimeMux);
 
   if (!force) {
     rtc_daily_sync_done = true;
@@ -186,9 +185,9 @@ void gprs(void *pvParameters) {
                    (sync_mode == eHealthStart) ? FLD_SEND_HEALTH : FLD_SEND_GPS;
 
       // Clear the queued pending flag immediately to prevent double-execution
-      if (sync_mode == eSMSStart) pending_manual_status = false;
-      else if (sync_mode == eGPSStart) pending_manual_gps = false;
-      else if (sync_mode == eHealthStart) pending_manual_health = false;
+      if (sync_mode == eSMSStart) { pending_manual_status = false; msg_sent = 0; }
+      else if (sync_mode == eGPSStart) { pending_manual_gps = false; msg_sent = 0; }
+      else if (sync_mode == eHealthStart) { pending_manual_health = false; msg_sent = 0; }
 
       if (gprs_mode == eGprsInitial) {
         debugln("[GPRS] Manual Trigger: Initiating Power On...");
@@ -302,26 +301,18 @@ void gprs(void *pvParameters) {
         // Unified result display for Manual Triggers
         if (msg_sent == 1) {
           if (target_fld == FLD_SEND_GPS) {
-            snprintf(ui_data[target_fld].bottomRow, 17, "%0.3f,%0.3f", lati, longi);
+            snprintf(ui_data[target_fld].bottomRow, 17, "%.4f,%.4f", lati, longi);
             show_now = 1;
             vTaskDelay(4000 / portTICK_PERIOD_MS);
-            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-            show_now = 1;
-          } else if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
-            strcpy(ui_data[target_fld].bottomRow, "SENT SUCCESS    ");
+          } else {
+            strcpy(ui_data[target_fld].bottomRow, "SMS SUCCESS     ");
             show_now = 1;
             vTaskDelay(3000 / portTICK_PERIOD_MS);
-            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-            show_now = 1;
           }
         } else {
-          if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
-            strcpy(ui_data[target_fld].bottomRow, "SEND FAILED     ");
-            show_now = 1;
-            vTaskDelay(3000 / portTICK_PERIOD_MS);
-            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-            show_now = 1;
-          }
+          strcpy(ui_data[target_fld].bottomRow, "SEND FAILED     ");
+          show_now = 1;
+          vTaskDelay(3000 / portTICK_PERIOD_MS);
         }
         
         show_now = 1; // Trigger UI refresh
@@ -513,6 +504,8 @@ void gprs(void *pvParameters) {
             debugln("[GPRS] Signal too weak for HTTP/FTP. Storing data to backlog.");
             store_current_unsent_data();
           }
+          // v6.01 Fix: transition to Stop to avoid infinite loop when signal is weak.
+          sync_mode = eHttpStop; 
         }
       }
     }
@@ -658,17 +651,23 @@ void gprs(void *pvParameters) {
         pending_manual_status = false;
         target_fld = FLD_SEND_STATUS; // v5.50 must set target_fld for the eSMSStart runner
         sync_mode = eSMSStart;       // Transition to SMS flow before stopping
-      } else if (pending_manual_gps) {
+      } 
+      
+      if (pending_manual_gps) {
         debugln("[GPRS] 💡 Found queued manual GPS request. Handling now...");
         pending_manual_gps = false;
         target_fld = FLD_SEND_GPS;
         sync_mode = eGPSStart;
-      } else if (pending_manual_health) {
+      } 
+      
+      if (pending_manual_health) {
         debugln("[GPRS] 💡 Found queued manual Health request. Handling now...");
         pending_manual_health = false;
         target_fld = FLD_SEND_HEALTH;
         sync_mode = eHealthStart;
-      } else {
+      }
+      
+      if (sync_mode == eHttpStop || sync_mode == eExceptionHandled) { // No commands transition
         debugln("[GPRS] No queued commands. Allowing sleep.");
         sync_mode = eHttpStop;
         httpInitiated = false;
@@ -2190,11 +2189,12 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
           debug("Retrieved file is ");
           debugln(fileName);
           esp_task_wdt_reset();
-          send_ftp_file(fileName, true, true); // v5.66: alreadyLocked=true
+          xSemaphoreGive(fsMutex); // v6.02: Drop FS mutex before long FTP upload to prevent inversion
+          send_ftp_file(fileName, true, false); // alreadyLocked = false
         } else {
           debugln("Daily FTP: Temp file not found. Skipping.");
+          xSemaphoreGive(fsMutex); // Rescue release
         }
-        xSemaphoreGive(fsMutex); // Final explicit drop of Daily FTP cycle lock
       } else {
         debugln("[FTP] Failed to retake fsMutex for Daily operation. Skipping.");
       }
@@ -2209,41 +2209,29 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
 } // end send_unsent_data
 
 void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
-  if (!alreadyLocked) {
-    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
-      debugln("[SPIFFS] Mutex Timeout: Skipping send_ftp_file");
-      return;
-    }
-  }
-  String response;
-  const char *response_char;
-  const char *charArray; // Added as per instruction
-  const char *resp;      // Added as per instruction
-  // Use a local module-safe path (removes leading slash for cellular module
-  // commands)
-  char *modulePath = (fileName[0] == '/') ? &fileName[1] : fileName;
-
-  char gprs_xmit_buf[300];
-  String rssiStr;
-  int rssiIndex, rssiEndIndex, retries, registration;
-  int handle_no;
-  const char *ftpCharArray;
-  char *csqstr;
-  int success;
-  int total_no_of_bytes;
-  int s = 0,
-      fileSize = 0; // Fixed shadowed and uninitialized local variables
-  // Phase 6 Final Polish: Removed dead unused `String content;` to prevent future shadowing.
-  String response1;
-  int result = -1;
-
+  // v6.02: STRICT HIERARCHY - Acquire modemMutex BEFORE fsMutex
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
     debugln("[FTP] Error: Modem Mutex Timeout - deferring upload");
     diag_modem_mutex_fails++;
-    if (!alreadyLocked)
-      xSemaphoreGive(fsMutex); // RELEASE FS MUTEX
     return;
   }
+
+  if (!alreadyLocked) {
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+      debugln("[SPIFFS] Mutex Timeout: Skipping send_ftp_file");
+      xSemaphoreGive(modemMutex); // Release modem if FS fails
+      return;
+    }
+  }
+  
+  String response, response1;
+  const char *response_char;
+  char gprs_xmit_buf[300];
+  char *modulePath = (fileName[0] == '/') ? &fileName[1] : fileName;
+  char *csqstr;
+  int handle_no;
+  const char *charArray;
+  const char *resp;
 
   flushSerialSIT(); // Ensure UART buffer is clean before starting FTP
                     // sequence
@@ -2260,11 +2248,11 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
     if (preferred_ftp_mode != -1) {
        initial_ftp_mode = preferred_ftp_mode;
        debugln("[FTP] Using SAVED Smart Mode: " + String(initial_ftp_mode == 1 ? "Passive" : "Active"));
-    } else if (strstr(carrier, "AIRTEL") || strstr(carrier, "Airtel") || strstr(carrier, "Jio")) {
+    } else if (strstr(carrier, "AIRTEL") || strstr(carrier, "Airtel") || strstr(carrier, "Jio") || isLTE) {
       initial_ftp_mode = 1; 
-      debugln("[FTP] Airtel/Jio detected. Smart Default: Passive (1).");
+      debugln("[FTP] 4G Carrier detected (Airtel/Jio/BSNL-LTE). Smart Default: Passive (1).");
     } else {
-      debugln("[FTP] BSNL/Other detected. Smart Default: Active (0).");
+      debugln("[FTP] BSNL 2G/Other detected. Smart Default: Active (0).");
     }
     
     ftp_login_flag = setup_ftp(initial_ftp_mode);
@@ -3509,6 +3497,10 @@ void get_registration() {
       SerialSIT.println("AT+CNMP=2");  // Automatic Mode (LTE/GSM)
     }
 #else
+    // v6.01 Fix: Default to Auto for BSNL too. 
+    // Existing tiered-retry logic in registration loop will force 
+    // CNMP=13 (2G) after 10 failed registration attempts (20 seconds).
+    debugln("[GPRS] Enabling Automatic Mode (LTE/GSM) for all carriers.");
     SerialSIT.println("AT+CNMP=2");     // Automatic Mode (LTE/GSM)
 #endif
     waitForResponse("OK", 1000);
@@ -3551,50 +3543,32 @@ void get_registration() {
     //                         and wait.
     int r2 = -1, r4 = -1;
 
-    if (!isBSNL) {
-      // --- 4G Path (Airtel / Jio): Check CEREG first ---
-      SerialSIT.println("AT+CEREG?");
-      String resp4 = waitForResponse("+CEREG:", 2000);
-      int c4 = resp4.indexOf(",");
-      if (c4 != -1) {
-        r4 = resp4.substring(c4 + 1).toInt();
-
-        // v5.45.6: Check for cell info after the stat field.
-        // +CEREG: 2,3,TAC,CID → has a second comma after the stat.
-        // +CEREG: 2,3         → no second comma. Truly no signal.
-        if (r4 == 3) {
-          int c4b = resp4.indexOf(',', c4 + 1); // comma after stat field
-          bool has_cell_info = (c4b != -1);
-          if (has_cell_info) {
-            // Tower is visible but Airtel denies 2G CS registration.
-            // This is the "Airtel 2G Ghost" — treat as still searching.
-            debugln(
-                "[GPRS] CEREG=3 but LTE cell visible (Airtel 4G-only tower)."
-                " Pushing CGATT and waiting...");
-            SerialSIT.println("AT+CGATT=1");
-            waitForResponse("OK", 3000);
-            r4 = 0; // Reset to 'searching' — do NOT count as denied
-          } else {
-            debugln("[GPRS] CEREG=3, no cell info. Truly no LTE signal.");
-          }
+    // v6.01 Fix: Unified registration check for all carriers.
+    // Normalized CEREG=3 (Airtel/BSNL-ghost) handled universally.
+    
+    // --- LTE Path (CEREG) ---
+    SerialSIT.println("AT+CEREG?");
+    String resp4 = waitForResponse("+CEREG:", 2000);
+    int c4 = resp4.indexOf(",");
+    if (c4 != -1) {
+      r4 = resp4.substring(c4 + 1).toInt();
+      if (r4 == 3) {
+        int c4b = resp4.indexOf(',', c4 + 1);
+        if (c4b != -1) {
+          debugln("[GPRS] LTE cell visible but stat=3. Pushing CGATT...");
+          SerialSIT.println("AT+CGATT=1");
+          waitForResponse("OK", 3000);
+          r4 = 0; // Searching
         }
       }
-
-      // Also check CREG as fallback for 2G/3G registration
-      SerialSIT.println("AT+CREG?");
-      String resp2 = waitForResponse("+CREG:", 2000);
-      int c2 = resp2.indexOf(",");
-      if (c2 != -1)
-        r2 = resp2.substring(c2 + 1).toInt();
-    } else {
-      // --- BSNL Path: 2G/3G only. Check CREG + CGREG (adaptive wait below)
-      // ---
-      SerialSIT.println("AT+CREG?");
-      String resp2 = waitForResponse("+CREG:", 2000);
-      int c2 = resp2.indexOf(",");
-      if (c2 != -1)
-        r2 = resp2.substring(c2 + 1).toInt();
     }
+
+    // --- GSM/2G Path (CREG) ---
+    SerialSIT.println("AT+CREG?");
+    String resp2 = waitForResponse("+CREG:", 2000);
+    int c2 = resp2.indexOf(",");
+    if (c2 != -1)
+      r2 = resp2.substring(c2 + 1).toInt();
 
     // Determine overall registration status (4G preferred)
     // r4 has already been normalized (Airtel ghost CEREG=3 → set to 0)
@@ -4091,8 +4065,10 @@ void prepare_and_send_status(char *gsm_no) {
   response = waitForResponse(">", 15000);
   if (response.indexOf(">") != -1) {
     debugln(" Received!");
+    strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "DIALING SMS...  "); show_now = 1;
     SerialSIT.print(status_response); //  SerialSIT.write(26);
     debug("Waiting for +CMGS confirmation...");
+    strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "WAITING CMGS... "); show_now = 1;
     response = waitForResponse("+CMGS:", 35000); // 35s for BSNL 2G
     debugln(" Done.");
     debug("Response of AT+CMGS is ");
@@ -4191,9 +4167,11 @@ void get_lat_long_date_time(char *gsm_no) {
 
   // To find Latitude and Longitude. Only with A7672S
 
-  vTaskDelay(5000 / portTICK_PERIOD_MS); // M7 FIX: was bare 5000 ticks = 50s
+  strcpy(ui_data[FLD_SEND_GPS].bottomRow, "DIALING GPS...  "); show_now = 1;
+  // v7.72: Remove legacy 5s blind delay that felt like a hang
+  // vTaskDelay(5000 / portTICK_PERIOD_MS); 
   SerialSIT.println("AT+CLBS=1");
-  response = waitForResponse("+CLBS:", 10000);
+  response = waitForResponse("+CLBS:", 15000); // Increased to 15s
   vTaskDelay(200 / portTICK_PERIOD_MS);
   debug("Response of AT+CLBS=1 is ");
   debugln(response);
@@ -4203,6 +4181,9 @@ void get_lat_long_date_time(char *gsm_no) {
   csqstr = strstr(response_char, "+CLBS");
   if (csqstr == NULL) {
     debugln("Error: +CLBS not found in response");
+    strcpy(ui_data[FLD_SEND_GPS].bottomRow, "GPS: NO LOCK    ");
+    show_now = 1;
+    vTaskDelay(2000 / portTICK_PERIOD_MS); // v6.01 UX: Allow user to read specific error before caller overwrites
     return; // Exit if response is invalid
   }
   //  sscanf(csqstr, "+CLBS: %d,%f,%f,%d,%d/%d/%d,%d:%d:%d", &tmp,
@@ -4251,9 +4232,11 @@ void get_lat_long_date_time(char *gsm_no) {
   response = waitForResponse(">", 15000);
   if (response.indexOf(">") != -1) {
     debugln(" Received!");
+    strcpy(ui_data[FLD_SEND_GPS].bottomRow, "DIALING SMS...  "); show_now = 1;
     SerialSIT.print(status_response); //  SerialSIT.write(26);
     debug("Waiting for +CMGS confirmation...");
-    response = waitForResponse("+CMGS:", 15000);
+    strcpy(ui_data[FLD_SEND_GPS].bottomRow, "WAITING CMGS... "); show_now = 1;
+    response = waitForResponse("+CMGS:", 20000);
     debugln(" Done.");
     debug("Response of AT+CMGS is ");
     debugln(response);
@@ -4652,6 +4635,14 @@ void fetchFromHttpAndUpdate(char *fileName) {
   // output from leaking to the UART during partition initialization.
   ota_silent_mode = true;
   flushSerialSIT(); // Hard flush the UART before starting partition write
+
+  // v6.02 Phase 2: Secure OTA Binary Verification
+  if (strlen(ota_md5_hash) == 32) {
+    debugf1("[OTA] Enforcing MD5 match: %s\n", ota_md5_hash);
+    Update.setMD5(ota_md5_hash);
+  } else {
+    debugln("[OTA] ⚠️ Warning: No MD5 found, continuing without verification.");
+  }
 
   // === STEP 2: Begin OTA partition write ===
   if (!Update.begin(total_no_of_bytes, U_FLASH)) {
@@ -5512,6 +5503,12 @@ bool send_health_report(bool useJitter) {
     SerialSIT.println(ht_url);
     waitForResponse("OK", 2000);
 
+    // Phase 2 Fix (Security #18): Device Authentication via Custom Header
+    char ht_auth[128];
+    snprintf(ht_auth, sizeof(ht_auth), "AT+HTTPPARA=\"USERDATA\",\"X-Auth-Key: %s\"", HEALTH_AUTH_KEY);
+    SerialSIT.println(ht_auth);
+    waitForResponse("OK", 1000);
+
     SerialSIT.println("AT+HTTPPARA=\"CID\",1");
     waitForResponse("OK", 1000);
 
@@ -5622,6 +5619,26 @@ bool send_health_report(bool useJitter) {
                   }
                 }
               }
+            }
+            
+            // Phase 2 Fix (Security #3): Parse MD5 for Secure OTA
+            int md5Tag = body.indexOf("\"md5\"");
+            if (md5Tag != -1) {
+              int valStart = body.indexOf(":", md5Tag);
+              if (valStart != -1) {
+                int q1 = body.indexOf("\"", valStart);
+                if (q1 != -1) {
+                  int q2 = body.indexOf("\"", q1 + 1);
+                  if (q2 != -1) {
+                    String md5Val = body.substring(q1 + 1, q2);
+                    strncpy(ota_md5_hash, md5Val.c_str(), sizeof(ota_md5_hash) - 1);
+                    ota_md5_hash[sizeof(ota_md5_hash) - 1] = '\0';
+                    debugf1("[OTA] Received MD5: %s\n", ota_md5_hash);
+                  }
+                }
+              }
+            } else {
+              ota_md5_hash[0] = '\0'; // Clear if not provided
             }
           }
           if (body.indexOf("\"FTP_BACKLOG\"") != -1)

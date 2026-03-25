@@ -83,6 +83,7 @@ async def ota_upload(
             shutil.move(tmp, dest)  # Atomic rename — safe even if upload fails mid-way
         
         fw.filename = fw_filename
+        fw.md5      = "" # v6.06: Invalidate cached hash when binary is replaced
         db.commit()
     return RedirectResponse(url="/ota", status_code=303)
 

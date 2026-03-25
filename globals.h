@@ -22,8 +22,14 @@
 #include "soc/sens_reg.h"
 #include <Arduino.h>
 #include <HardwareSerial.h>
+#if KEYPAD_TYPE == 1
+#include <Keypad_I2C.h>
+#elif KEYPAD_TYPE == 0
 #include <Keypad.h>
+#endif
+#if KEYPAD_TYPE != 2
 #include <LiquidCrystal_I2C.h>
+#endif
 #include <MD5Builder.h>
 #include <Preferences.h>
 #include <RTClib.h>
@@ -96,6 +102,7 @@ extern volatile bool ota_writing_active; // v6.88: Prevent FS collision
 extern int ota_fail_count;
 extern char ota_fail_reason[48];
 extern char ota_cmd_param[128];       // v75: Target binary name from dashboard
+extern char ota_md5_hash[33]; // Phase 2: Binary Integrity Checksum
 extern RTC_DATA_ATTR int last_cmd_id;               // v7.92: Command ID for feedback
 extern RTC_DATA_ATTR char last_cmd_res[64];         // v7.92: Result message for feedback
 extern volatile bool ota_silent_mode; // Rule 43: Stop all log leakage
@@ -211,7 +218,47 @@ extern float station_altitude_m;
 #define FILL_SIG_MAX 120
 
 extern HardwareSerial SerialSIT;
+#if KEYPAD_TYPE == 2
+struct Nuvoton_Smart_LCD : public Print {
+    void init() {}
+    void begin() {}
+    void display() {}
+    void backlight() {}
+    void noBacklight() {}
+    void clear() { Wire.beginTransmission(0x20); Wire.write(0x01); Wire.endTransmission(); vTaskDelay(2 / portTICK_PERIOD_MS); }
+    void noCursor() {}
+    void noBlink() {}
+    void setCursor(uint8_t col, uint8_t row) { 
+        uint8_t cmd = (row == 0 ? 0x80 : 0xC0) + col;
+        Wire.beginTransmission(0x20); Wire.write(cmd); Wire.endTransmission();
+    }
+    size_t write(uint8_t c) override {
+        Wire.beginTransmission(0x20); Wire.write(c); Wire.endTransmission(); return 1;
+    }
+    size_t write(const uint8_t *buffer, size_t size) override {
+        Wire.beginTransmission(0x20);
+        for(size_t i=0; i<size; i++) Wire.write(buffer[i]);
+        Wire.endTransmission();
+        return size;
+    }
+};
+extern Nuvoton_Smart_LCD lcd;
+
+struct Nuvoton_Smart_Keypad {
+    void setDebounceTime(int t) {}
+    void setHoldTime(int t) {}
+    void begin() {}
+    char getKey() {
+        char k = NO_KEY;
+        Wire.requestFrom((uint8_t)0x20, (uint8_t)1);
+        if(Wire.available()) k = Wire.read();
+        return k;
+    }
+};
+extern Nuvoton_Smart_Keypad keypad;
+#else
 extern LiquidCrystal_I2C lcd;
+#endif
 extern SemaphoreHandle_t i2cMutex;
 extern SemaphoreHandle_t serialMutex;
 extern SemaphoreHandle_t modemMutex;
