@@ -924,7 +924,7 @@ void handleDisconnect() {
                   "tab.</p><script>setTimeout(function(){window.close();}, "
                   "2000);</script></body></html>");
 
-  delay(1000); // Allow HTTP response to flush
+  vTaskDelay(1000 / portTICK_PERIOD_MS); // Allow HTTP response to flush
   WiFi.softAPdisconnect(true);
   wifi_active = false;
   webServerStarted = false;

@@ -6,6 +6,11 @@
 #endif
 
 void start_deep_sleep() {
+  // v5.70: Deep Sleep Guard (Issue 3) - Abort sleep if critical tasks are mid-flight
+  if (health_in_progress || ota_writing_active || gprs_started) {
+    debugln("[PWR] Critical Activity (Health/OTA/Modem) in progress. Deferring sleep.");
+    return;
+  }
 
   if (wired == 1) {
     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==

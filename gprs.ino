@@ -392,7 +392,10 @@ void gprs(void *pvParameters) {
 
     // --- REGULAR AUTOMATED DATA REPORTING ---
     if (timeSyncRequired == false) {
-      if (sync_mode == eHttpBegin) {
+      portENTER_CRITICAL(&syncMux);
+      int http_snap = sync_mode;
+      portEXIT_CRITICAL(&syncMux);
+      if (http_snap == eHttpBegin) {
         if (gprs_mode == eGprsSignalOk) {
           if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
             debugln("\n****************\nStarting Automated Data "
@@ -456,7 +459,9 @@ void gprs(void *pvParameters) {
             debugln(
                 "[BATT] Proceeding with Spatika Upload regardless of battery "
                 "voltage.");
+            portENTER_CRITICAL(&syncMux);
             sync_mode = eHttpStarted;
+            portEXIT_CRITICAL(&syncMux);
             send_http_data();
             primary_data_delivered =
                 (success_count == 1); // v5.51 Track session success
@@ -616,15 +621,20 @@ void gprs(void *pvParameters) {
       debugln(
           "[CMD] CLEAR_FTP_QUEUE: Removing ftpunsent.txt by server request...");
       bool cleared = false;
-      if (SPIFFS.exists("/ftpunsent.txt")) {
-        SPIFFS.remove("/ftpunsent.txt");
-        debugln("[CMD] /ftpunsent.txt cleared.");
-        cleared = true;
-      }
-      if (SPIFFS.exists("/ftpremain.txt")) {
-        SPIFFS.remove("/ftpremain.txt");
-        debugln("[CMD] /ftpremain.txt cleared.");
-        cleared = true;
+      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+          if (SPIFFS.exists("/ftpunsent.txt")) {
+            SPIFFS.remove("/ftpunsent.txt");
+            debugln("[CMD] /ftpunsent.txt cleared.");
+            cleared = true;
+          }
+          if (SPIFFS.exists("/ftpremain.txt")) {
+            SPIFFS.remove("/ftpremain.txt");
+            debugln("[CMD] /ftpremain.txt cleared.");
+            cleared = true;
+          }
+          xSemaphoreGive(fsMutex);
+      } else {
+          debugln("[CMD] fsMutex Timeout: Could not clear FTP queue.");
       }
       strcpy(last_cmd_res, cleared ? "Success: Queue Cleared" : "Success: Already Empty");
       force_clear_ftp_queue = false;
@@ -826,6 +836,13 @@ void prepare_data_and_send() {
   // v5.65 P0: Range guard for server configuration index
   if (http_no < 0 || http_no >= (int)(sizeof(httpSet) / sizeof(httpSet[0]))) {
       debugln("[HTTP] FATAL: http_no out of range (" + String(http_no) + "). Aborting send.");
+      success_count = 0;
+      return;
+  }
+
+  // v5.70: Secure Filesystem access for backlog/current-data reads
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+      debugln("[FS] Mutex Timeout in prepare_data_and_send. Skipping.");
       success_count = 0;
       return;
   }
@@ -1501,6 +1518,8 @@ fail_handling:
       } // closes if(data_mode == eCurrentData)
     }   // closes if(success_count == 0 - second try)
   }     // closes if(success_count == 0 - first try)
+  // v5.70: Release filesystem lock before finishing
+  xSemaphoreGive(fsMutex);
 } // closes prepare_data_and_send()
 
 
@@ -4471,12 +4490,12 @@ void fetchFromHttpAndUpdate(char *fileName) {
   debugf1("[OTA] File size: %d bytes\n", total_no_of_bytes);
   if (total_no_of_bytes <= 100000) {
     debugln("[OTA] Invalid file size. Aborting.");
+    xSemaphoreGive(modemMutex); // v5.70: Fix Mutex Hierarchy - release before NVS
     Preferences p;
     p.begin("ota-track", false);
     p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
     p.putString("fail_res", "Bad size");
     p.end();
-    xSemaphoreGive(modemMutex); // v5.66: Fix missing mutex release
     return;
   }
 
@@ -4489,13 +4508,13 @@ void fetchFromHttpAndUpdate(char *fileName) {
   if (!Update.begin(total_no_of_bytes, U_FLASH)) {
     // Direct Serial print since ota_silent_mode is true
     Serial.printf("[OTA] Update.begin failed: %s\n", Update.errorString());
+    xSemaphoreGive(modemMutex); // v5.70: Fix Mutex Hierarchy - release before NVS
     Preferences p;
     p.begin("ota-track", false);
     p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
     p.putString("fail_res", "Begin fail: " + String(Update.errorString()));
     p.end();
     ota_silent_mode = false; // Release silence on early-exit failure
-    xSemaphoreGive(modemMutex); // v5.66: Fix missing mutex release
     return;
   }
   // BUG-9 Fix: Duplicate URC silence commands removed — already silenced
@@ -4749,10 +4768,13 @@ void fetchFromHttpAndUpdate(char *fileName) {
   if (actual_downloaded == total_no_of_bytes && total_no_of_bytes > 0) {
     if (Update.end()) {
       debugln("[OTA] Flash COMPLETE and VERIFIED!");
-      File firm = SPIFFS.open("/firmware.doc", FILE_WRITE);
-      if (firm) {
-        firm.print(UNIT_VER);
-        firm.close();
+      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        File firm = SPIFFS.open("/firmware.doc", FILE_WRITE);
+        if (firm) {
+          firm.print(UNIT_VER);
+          firm.close();
+        }
+        xSemaphoreGive(fsMutex);
       }
       Preferences p;
       p.begin("ota-track", false);

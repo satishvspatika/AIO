@@ -72,6 +72,8 @@ void bmeTask(void *pvParameters) {
         }
         xSemaphoreGive(i2cMutex);
       } else {
+        debugln("[BME] I2C Mutex Timeout - Attempting bus recovery...");
+        recoverI2CBus(false);
       }
     } else {
       // SENSOR MISSING: enforce 0.0 and NA

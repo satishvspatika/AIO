@@ -177,12 +177,18 @@ void draw_current_page() {
 
 // v5.60: Background data refresh - exact original formatting
 void refresh_sensor_data() {
+  int d, m, y, hr, mi;
+  portENTER_CRITICAL(&rtcTimeMux);
+  d = current_day; m = current_month; y = current_year;
+  hr = current_hour; mi = current_min;
+  portEXIT_CRITICAL(&rtcTimeMux);
+
   // Update static fields
   strcpy(ui_data[FLD_STATION].topRow, "STATION ID");
   snprintf(ui_data[FLD_STATION].bottomRow, 17, "%-16s", station_name);
   snprintf(ui_data[FLD_VERSION].bottomRow, 17, "%-16s", UNIT_VER);
-  snprintf(ui_data[FLD_DATE].bottomRow, 17, "%02d-%02d-%04d", current_day, current_month, current_year);
-  snprintf(ui_data[FLD_TIME].bottomRow, 17, "%02d:%02d", current_hour, current_min);
+  snprintf(ui_data[FLD_DATE].bottomRow, 17, "%02d-%02d-%04d", d, m, y);
+  snprintf(ui_data[FLD_TIME].bottomRow, 17, "%02d:%02d", hr, mi);
   if (strlen(last_logged) == 0) {
     snprintf(ui_data[FLD_LAST_LOGGED].bottomRow, 17, "%-16s", "NA");
   } else {
@@ -416,6 +422,8 @@ void lcdkeypad(void *pvParameters) {
           show_now = 1;
           xSemaphoreGive(i2cMutex);
         } else {
+          debugln("[UI] I2C Mutex Timeout on LCD Init - Attempting bus recovery...");
+          recoverI2CBus(false);
           lcdkeypad_start = 0;
         }
       } else {
@@ -834,26 +842,28 @@ void lcdkeypad(void *pvParameters) {
 
                 char fn[50]; snprintf(fn, 50, "/%s_%04d%02d%02d.txt", station_name, yr, mo, dy);
                 
-                if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-                   lcd.clear();
-                   
-                   // Fallback check for legacy/normalized prefix mismatch (v5.56 standard)
-                   if (!SPIFFS.exists(fn)) {
-                      char fallback[50];
-                      if (strlen(station_name) == 4 && isDigitStr(station_name)) {
-                         snprintf(fallback, sizeof(fallback), "/00%s_%04d%02d%02d.txt", station_name, yr, mo, dy);
-                      } else if (strlen(station_name) == 6 && strncmp(station_name, "00", 2) == 0) {
-                         snprintf(fallback, sizeof(fallback), "/%s_%04d%02d%02d.txt", station_name + 2, yr, mo, dy);
-                      } else {
-                         strcpy(fallback, "");
-                      }
-                      if (strlen(fallback) > 0 && SPIFFS.exists(fallback)) {
-                         strcpy(fn, fallback);
-                      }
-                   }
+                if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                   lcd.clear(); lcd.setCursor(0, 0); lcd.print("SCANNING...");
+                   xSemaphoreGive(i2cMutex);
+                }                
 
-                // v5.70: Protect search with fsMutex
+                // v5.70: DEADLOCK PREVENTION - Release i2cMutex BEFORE taking fsMutex (Issue 32 Cleanup)
                 if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                    // Fallback check for legacy/normalized prefix mismatch (v5.56 standard)
+                    if (!SPIFFS.exists(fn)) {
+                       char fallback[50];
+                       if (strlen(station_name) == 4 && isDigitStr(station_name)) {
+                          snprintf(fallback, sizeof(fallback), "/00%s_%04d%02d%02d.txt", station_name, yr, mo, dy);
+                       } else if (strlen(station_name) == 6 && strncmp(station_name, "00", 2) == 0) {
+                          snprintf(fallback, sizeof(fallback), "/%s_%04d%02d%02d.txt", station_name + 2, yr, mo, dy);
+                       } else {
+                          strcpy(fallback, "");
+                       }
+                       if (strlen(fallback) > 0 && SPIFFS.exists(fallback)) {
+                          strcpy(fn, fallback);
+                       }
+                    }
+
                     if (SPIFFS.exists(fn)) {
                       File f = SPIFFS.open(fn, FILE_READ);
                       bool found = false;
@@ -890,20 +900,19 @@ void lcdkeypad(void *pvParameters) {
                          vTaskDelay(5000 / portTICK_PERIOD_MS);
                       } else { 
                         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                            lcd.print("NOT IN FILE"); xSemaphoreGive(i2cMutex);
+                            lcd.clear(); lcd.print("NOT IN FILE"); xSemaphoreGive(i2cMutex);
                         }
                         vTaskDelay(2000/portTICK_PERIOD_MS); 
                       }
                     } else { 
                        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                          lcd.print("FILE NOT FOUND"); xSemaphoreGive(i2cMutex);
+                          lcd.clear(); lcd.print("FILE NOT FOUND"); xSemaphoreGive(i2cMutex);
                        }
                        vTaskDelay(2000/portTICK_PERIOD_MS); 
                     }
                     xSemaphoreGive(fsMutex);
                 } else {
-                  debugln("[UI] Mutex Timeout: Skipping search.");
-                }
+                   debugln("[UI] Mutex Timeout: Skipping search.");
                 }
                 cur_mode = eEditOff;
              }

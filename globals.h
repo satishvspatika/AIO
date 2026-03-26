@@ -189,6 +189,8 @@ extern SemaphoreHandle_t i2cMutex;
 extern SemaphoreHandle_t serialMutex;
 extern SemaphoreHandle_t modemMutex;
 extern SemaphoreHandle_t fsMutex;
+extern volatile bool gprs_pdp_ready;
+extern volatile bool gprs_started;
 extern RTC_DS1307 rtc;
 
 extern portMUX_TYPE timerMux0;
@@ -289,7 +291,7 @@ extern volatile bool wifi_active;
 extern unsigned long last_wifi_activity_time;
 extern float temp_crf, temp_instrf, temp_bat, temp_temp, temp_hum, temp_avg_ws;
 extern int temp_sampleNo, temp_day, temp_month, temp_year, temp_hr, temp_min, temp_sig;
-extern int data_writing_initiated;
+extern volatile int data_writing_initiated;
 extern int time_to_deepsleep;
 // Common
 extern char UNIT_VER[20], STATION_TYPE[10], NETWORK[10];

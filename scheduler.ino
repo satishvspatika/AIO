@@ -208,10 +208,13 @@ void scheduler(void *pvParameters) {
     // Index will be 90 (at 10:45). This labels the 10:30-10:45 window as 10:45.
     // This arrives at the server at 10:45:10, which is safely in the past.
     // v5.70: Capture Atomic Time Snapshot to prevent torn reads across cores
-    int cur_hr, cur_min;
+    int cur_hr, cur_min, cur_day, cur_month, cur_year;
     portENTER_CRITICAL(&rtcTimeMux);
     cur_hr = current_hour;
     cur_min = current_min;
+    cur_day = current_day;
+    cur_month = current_month;
+    cur_year = current_year;
     portEXIT_CRITICAL(&rtcTimeMux);
 
     int total_now_mins = cur_hr * 60 + cur_min;
@@ -771,8 +774,8 @@ void scheduler(void *pvParameters) {
       // v7.87: Boundary-Safe Timestamp Logic
       // If we are at exactly 10:45, we want to record "10:30" (the start of the
       // slot).
-      r_m = (current_min / 15) * 15;
-      r_h = current_hour;
+      r_m = (cur_min / 15) * 15;
+      r_h = cur_hr;
 
       /*
             if (current_min % 15 == 0) {
@@ -789,9 +792,9 @@ void scheduler(void *pvParameters) {
       record_min = r_m;
       record_hr = r_h;
 
-      rf_cls_dd = current_day;
-      rf_cls_mm = current_month;
-      rf_cls_yy = current_year; 
+      rf_cls_dd = cur_day;
+      rf_cls_mm = cur_month;
+      rf_cls_yy = cur_year; 
 
       // Find current sampleNo
       sampleNo = record_hr * SAMPLES_PER_HOUR +
@@ -1244,7 +1247,9 @@ void scheduler(void *pvParameters) {
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
           debugln("[SCHED] Error: SPIFFS Mutex Timeout. Deferring record.");
           data_writing_initiated = 0; // v5.66: Prevent garbage data upload
+          portENTER_CRITICAL(&syncMux);
           sync_mode = eHttpStop;      // v5.66: Abort HTTP queueing
+          portEXIT_CRITICAL(&syncMux);
           goto TRIGGER_HTTP;
         }
 
@@ -1254,8 +1259,10 @@ void scheduler(void *pvParameters) {
            signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
            data_writing_initiated = 0;
            schedulerBusy = false;
-           sync_mode = eHttpStop;
            xSemaphoreGive(fsMutex);
+           portENTER_CRITICAL(&syncMux);
+           sync_mode = eHttpStop;
+           portEXIT_CRITICAL(&syncMux);
            goto TRIGGER_HTTP;
         }
 
@@ -1291,10 +1298,11 @@ void scheduler(void *pvParameters) {
                debugln("[SPIFFS] FATAL: Could not locate old logs. System files dominating storage. Aborting write.");
                signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
                data_writing_initiated = 0;
-               schedulerBusy = false; 
-               sync_mode = eHttpStop; 
-               xSemaphoreGive(fsMutex);
-               goto TRIGGER_HTTP;
+               schedulerBusy = false;                xSemaphoreGive(fsMutex);
+                portENTER_CRITICAL(&syncMux);
+                sync_mode = eHttpStop; 
+                portEXIT_CRITICAL(&syncMux);
+                goto TRIGGER_HTTP;
            }
            prune_attempts++;
         }
@@ -1324,8 +1332,12 @@ void scheduler(void *pvParameters) {
           File unsent = SPIFFS.open(unsent_file, FILE_APPEND);
           if (!unsent) {
               debugln("[SCHED] FATAL GAP: Could not open unsent.txt for Gap Fill!");
-              data_writing_initiated = 0; schedulerBusy = false; sync_mode = eHttpStop;
-              xSemaphoreGive(fsMutex); goto TRIGGER_HTTP;
+              data_writing_initiated = 0; schedulerBusy = false; 
+              xSemaphoreGive(fsMutex); 
+              portENTER_CRITICAL(&syncMux);
+              sync_mode = eHttpStop;
+              portEXIT_CRITICAL(&syncMux);
+              goto TRIGGER_HTTP;
           }
 #endif
 
@@ -1334,8 +1346,12 @@ void scheduler(void *pvParameters) {
           File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
           if (!ftpunsent) {
               debugln("[SCHED] FATAL GAP: Could not open ftpunsent.txt for Gap Fill!");
-              data_writing_initiated = 0; schedulerBusy = false; sync_mode = eHttpStop;
-              xSemaphoreGive(fsMutex); goto TRIGGER_HTTP;
+              data_writing_initiated = 0; schedulerBusy = false; 
+              xSemaphoreGive(fsMutex); 
+              portENTER_CRITICAL(&syncMux);
+              sync_mode = eHttpStop;
+              portEXIT_CRITICAL(&syncMux);
+              goto TRIGGER_HTTP;
           }
 #endif
 
@@ -2050,7 +2066,7 @@ void scheduler(void *pvParameters) {
 
             snprintf(append_text, sizeof(append_text),
                      "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%04.1f\r\n",
-                     sampleNo, current_year, current_month, current_day,
+                     sampleNo, cur_year, cur_month, cur_day,
                      record_hr, record_min, inst_rf, cum_rf, signal_strength,
                      bat_val);
 #endif
@@ -2060,12 +2076,12 @@ void scheduler(void *pvParameters) {
             snprintf(
                 append_text, sizeof(append_text),
                 "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
-                sampleNo, current_year, current_month, current_day, record_hr,
+                sampleNo, cur_year, cur_month, cur_day, record_hr,
                 record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                 signal_strength, bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
                      "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
-                     stnId, current_year, current_month, current_day, record_hr,
+                     stnId, cur_year, cur_month, cur_day, record_hr,
                      record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                      signal_strength, bat_val);
 #endif
@@ -2075,14 +2091,13 @@ void scheduler(void *pvParameters) {
             snprintf(
                 append_text, sizeof(append_text),
                 "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
-                sampleNo, current_year, current_month, current_day, record_hr,
+                sampleNo, cur_year, cur_month, cur_day, record_hr,
                 record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed,
                 inst_wd, signal_strength, bat_val);
-            // v7.53: Legacy ADDON FTP Format (63 bytes)
             snprintf(
                 ftpappend_text, sizeof(ftpappend_text),
                 "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
-                stnId, current_year, current_month, current_day, record_hr,
+                stnId, cur_year, cur_month, cur_day, record_hr,
                 record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
                 inst_wd, signal_strength, bat_val);
 #endif
