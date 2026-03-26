@@ -1,21 +1,28 @@
 # ESP32 AIO Release Notes Summary
 
-## 🚀 Latest Version: v5.66 (March 23, 2026 - Final)
-**"The Architect's Hardening & Dashboard Truth Release"**
+## 🚀 Latest Version: v5.69 (March 26, 2026 - Current)
+**"The Concurrency & Atomic Stability Release"**
 
-This monumental release establishes a pristine baseline. It permanently fixes long-standing multi-core map corruption via definitive `extern` re-architecture, rebuilds the deployment Dashboard explicitly around the philosophy of ground-truth data metrics, and fortifies the GPS Map Engine against legacy missing-coordinate bugs.
+This version (v5.69) serves as a critical stability patch following the major v5.68 hardening phase. It specifically resolves deep-seated race conditions between the Modem (Core 0) and the Sensor Scheduler (Core 1) via a strict Mutex Hierarchy, while introducing hardware-level I2C bus recovery and atomic timekeeping snapshots.
 
 ### Key Highlights:
-- **One Definition Rule (ODR)**: Complete `.ino` refactoring to destroy structural twin-variable memory poisoning.
-- **Indestructible Web Map**: Node-healing backend that defaults to last-known-good geometric coordinates, plus robust Regex filtering.
-- **Absolute Telemetry Accuracy**: Complete purge of backlog data from falsely inflating live HTTP performance metrics.
-- **OTA Verification Matrix**: Stringent version conversions stopping infinite OTA loops (`>=` operators only).
+- **ABBA Deadlock Eradication**: Strict global acquisition sequence (`modemMutex -> fsMutex -> i2cMutex`) preventing task freezes.
+- **Atomic Time Precision**: Port-level spinlock (`rtcTimeMux`) for all master time variables, ensuring 00:00:00 midnight record consistency.
+- **I2C Self-Healing**: New bit-banging hardware recovery for stuck bus conditions caused by electrical noise.
+- **Boot-Wipe Protect**: Unified SPIFFS cleanup/protection during initial startup.
 
-[View Full v5.66 Release Notes](./RELEASE_NOTES_v5.66.md)
+[View Full v5.69 Release Notes](./RELEASE_NOTES_v5.69.md)
 
 ---
 
 ## 🕒 Previous Versions
+
+### [v5.68 - The Full-Spectrum Hardening Release](./RELEASE_NOTES_v5.68.md) (March 24, 2026)
+- **FastAPI / FastAPI Server Hardening**: Resolved CSRF vulnerabilities and RAM overflow guards.
+- **Firmware Memory Leaks**: Converted GPRS/FTP buffers from stack to static/heap.
+- **Energy Efficiency**: Eliminated 4mA battery leaks during deep sleep by tearing down SPI/SD buses.
+
+### [v5.66 - The Architect's Hardening & Dashboard Truth Release](./RELEASE_NOTES_v5.66.md) (March 23, 2026)
 
 ### [v5.63 - The Airtel IoT & Power Stability Release](./RELEASE_NOTES_v5.63.md) (March 18, 2026)
 

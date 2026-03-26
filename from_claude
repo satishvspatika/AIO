@@ -1,276 +1,160 @@
+Audit Summary — v5.69 Mutex Fix Source
+vs v5.70-Hardened-Final baseline
 
-Claude's response. please review it carefully and filter out noise and provde only roadmap to fix them. As you might have already fixed some of them already . do not fix.
-v6.02 Hardened Final — Race Condition & Mutex Audit Results
-✅ Issues Confirmed Fixed
-Issue 1 (syncMux — sync_mode cross-core race): Partially applied. syncMux is now wrapped around the most critical scheduler entry point and several GPRS transitions. This is progress.
-Issue 27 (sync_rtc_from_server_tm writes current_* without rtcTimeMux): ✅ Fully fixed. portENTER_CRITICAL(&rtcTimeMux) now wraps all six global writes.
-Issue 12 — Partial fix: A snapshot cur_hr/cur_min is now taken under rtcTimeMux for the slot index calculation. This is correct for the entry gate.
+Fix Progress
+IDIssueStatusNotesC-01/NEW-3fs_locked shadow — file-exists path leaks fsMutexFIXEDfs_locked=true added after take at ~1266; shadow bool removed at ~1815, replaced with fs_locked=false resetNEW-1Orphan xSemaphoreGive(fsMutex) in send_unsent_data else-branchFIXEDStale else-block and comment fully removedNEW-2fileSize never set — unsent.txt never deletedFIXEDGranular lock block added before while-loop; fileSize = f_size.size() correctly captured; while-loop condition changed to while (unsent_pointer_count < fileSize) — cleaner than the old == fileSize checkH-02Midnight date logic inverted for daytime samplesFIXEDNew condition if (sampleNo <= 60 || rf_cls_dd != cur_day) inside the outer if (sampleNo <= MIDNIGHT_SAMPLE_NO) — effectively unconditional for all met-day samples, which is correctM-04backfill_done not reset on rolloverNOT FIXEDbackfill_done still only cleared on factory wipe; reconstructSentMasks() returns immediately on midnight rolloverM-02schedulerBusy missing from start_deep_sleep() guardNOT FIXEDGuard still health_in_progress || ota_writing_active || gprs_started onlyM-03Humidity jitter applied before diagnosticsNOT FIXEDcheck_hum += hum_correction still runs before stuck-detection and diag_hum_erv checksC-03All tasks priority 2, gap-fill yield on wrong iterationNOT FIXEDAll tasks still priority 2; vTaskDelay(1ms) still only inside if (q == sampleNo) branch — the 94 interpolation iterations before it have no yield and no esp_task_wdt_reset()H-01Prune loop holds fsMutex for entire FS walkPARTIAL10ms yield per file still present; structural issue (lock held for full walk) unchanged
 
-🔴 Critical Issues Still Present
-Issue 1 — syncMux coverage is INCOMPLETE
-The syncMux guard was added at approximately 30 of roughly 45+ sync_mode write sites. The following sites remain unprotected bare writes:
+🔴 CRITICAL — 1
+C-03 Gap-fill yield still on wrong iteration — WDT risk on multi-day backlog
+File: scheduler.ino Line: ~1442
+What: vTaskDelay(1ms) and esp_task_wdt_reset() are inside the if (q == sampleNo) branch which executes only on the final iteration. All 94 preceding interpolation iterations (the heavy ones — esp_random() ×4, snprintf ×6, SPIFFS.print() ×2 per gap) run with no yield and no WDT pet.
+Why it crashes: A 95-slot gap-fill (one missed day) with SPIFFS writes takes ~500–800 ms solid. With the 120 s WDT and all tasks at priority 2, tempHum and windSpeed are starved during this window. On BSNL stations that lose signal for entire nights, a 2–3 day gap fill on wakeup will WDT-reset mid-write, leaving a corrupt partial record in the daily log that future gap-detection misreads.
+Fix:
+cppfor (int q = last_sampleNo + 1; q <= sampleNo; q++) {
+  esp_task_wdt_reset();               // ADD at top of loop body
+  vTaskDelay(1 / portTICK_PERIOD_MS); // ADD at top of loop body
+  // ... existing snprintf / interpolation / file.print work ...
+}
 
-gprs.ino:459 — sync_mode = eHttpStarted (inside the main HTTP dispatch — this is the highest-traffic path, called every 15 minutes)
-gprs.ino:980 — sync_mode = eHttpStop (inside the send_http_data return path for signal-too-weak)
-gprs.ino:1935,1939 — both branches of the SMS-at-minute-0 block
-gprs.ino:2498,2525 — both send_sms() exit paths
-gprs.ino:3000 — the store-unsent-data error exit
-gprs.ino:5520 — the OTA silence path sets sync_mode = 4 (magic number, not even using the enum)
-scheduler.ino:1247, 1257, 1295, 1327, 1337 — all five goto TRIGGER_HTTP error paths inside the record write block
-scheduler.ino:2895, 2923, 2926, 2939, 2972 — the brownout guard and all TRIGGER_HTTP label downstream assignments
+🟠 HIGH — 1 (H-02 note)
+H-02 is technically fixed but has a minor redundancy worth noting:
+H-02 Fix has dead inner condition
+File: scheduler.ino Line: ~825
+What: if (sampleNo <= 60 || rf_cls_dd != cur_day) inside if (sampleNo <= MIDNIGHT_SAMPLE_NO) — the first sub-condition is always true because the outer guard already guarantees sampleNo <= 60. The rf_cls_dd != cur_day sub-condition is always false because rf_cls_dd = cur_day was assigned 5 lines earlier. Net result is correct (next_date always called for sampleNo 0–60) but the logic is confusing for future maintainers.
+Fix: replace the entire inner if with an unconditional next_date() call — one line, no condition needed.
 
-The most dangerous unprotected site is gprs.ino:459 (sync_mode = eHttpStarted). This runs on Core 0 at the exact moment the scheduler on Core 1 is watching for eHttpBegin → eHttpStarted to decide whether to proceed with data writing. A torn write here causes the scheduler to see neither eHttpBegin nor eHttpStarted, falling through to eHttpStop and triggering a premature sleep.
-Issue 12 — rtcTimeMux read protection is INCOMPLETE
-The atomic snapshot only covers current_hour and current_min for the slot index calculation at the top of the scheduler loop. The following bare reads of time globals remain completely unprotected and execute on Core 1 while rtcRead (also Core 1) and sync_rtc_from_server_tm (Core 0) can write them concurrently:
+🟡 MEDIUM — 3
+M-04 Rollover reconstruction blocked by backfill_done
+File: global_functions.ino Line: ~866 | scheduler.ino rollover block
+What: After midnight rollover, diag_pd_count is reset to 0 which triggers the reconstructSentMasks() call, but the function returns immediately because backfill_done == true (set at boot, never cleared on rollover).
+Fix: Add backfill_done = false; inside the rollover destructive-reset block in scheduler.ino.
+M-02 start_deep_sleep() missing schedulerBusy guard
+File: global_functions.ino Line: ~9
+What: Guard is health_in_progress || ota_writing_active || gprs_started — schedulerBusy not checked.
+Fix: Add || schedulerBusy to the guard condition. One token change, OTA-safe.
+M-03 Humidity saturation jitter inflates diagnostic anchor
+File: scheduler.ino Line: ~526
+What: check_hum += hum_correction runs before diag_hum_erv and stuck-detection checks, so the jitter-inflated value (~98–99%) becomes the last_valid_hum anchor. After sensor recovery, rescued values cluster near 99% indefinitely.
+Fix: Compute float hum_output = check_hum; after all diagnostics; apply jitter to hum_output; use hum_output in snprintf(inst_hum, ...) only.
 
-scheduler.ino:738 — current_min % 15 in mins_into calculation
-scheduler.ino:774–775 — r_m = (current_min / 15) * 15 and r_h = current_hour — these directly set record_min and record_hr which go into the log file name and HTTP payload
-scheduler.ino:792–794 — rf_cls_dd = current_day; rf_cls_mm = current_month; rf_cls_yy = current_year — the closing date used to build cur_file filename
-scheduler.ino:809 — if (record_hr <= current_hour) — date rollover decision
-scheduler.ino:2053, 2063, 2068, 2078, 2085 — current_year, current_month, current_day used directly in snprintf building the SPIFFS record string
-
-Lines 774–775 and 792–794 are the most dangerous: they determine which file gets written and what timestamp goes into the HTTP payload. A torn read here at a minute boundary logs a record to the wrong date file — silent data corruption that is nearly impossible to detect after the fact.
-The fix required is a single broader snapshot at the start of the current_sample_idx != last_processed_sample_idx block:
-cppportENTER_CRITICAL(&rtcTimeMux);
-int snap_hr = current_hour; int snap_min = current_min;
-int snap_day = current_day; int snap_month = current_month;
-int snap_year = current_year;
-portEXIT_CRITICAL(&rtcTimeMux);
-Then use snap_* throughout the entire slot-processing block instead of reading globals directly.
-Issue 19 — prepare_data_and_send() SPIFFS read without fsMutex — NOT FIXED
-The function still opens and reads temp_file via SPIFFS.open() and readString() at line ~888 with no mutex. Called from send_http_data() which holds only modemMutex. The scheduler can be writing to the exact same file simultaneously while holding fsMutex. Every 15-minute HTTP cycle is a live filesystem corruption race.
-Issue 20 — force_clear_ftp_queue and force_delete_data still touch SPIFFS without fsMutex — NOT FIXED
-Both remote command handlers still call SPIFFS.remove() and SPIFFS.open() with zero mutex protection. The force_delete_data handler iterates the entire filesystem — a multi-second operation — with no lock.
-Issue 24 — windSpeed.ino startup SPIFFS read without fsMutex — NOT FIXED
-Lines 12–13 still open /prevWindSpeed.txt with no mutex, racing against the scheduler's boot-time SPIFFS reconstruction.
-Issue 28 — OTA firmware.doc write without fsMutex — NOT FIXED
-Line 4716 still writes to SPIFFS directly inside fetchFromHttpAndUpdate() after ota_silent_mode is cleared, with no fsMutex.
-Issue 17 — webServer.ino SPIFFS access without fsMutex — NOT FIXED
-All SPIFFS reads in the web server task remain unguarded.
-Issue 3 — start_deep_sleep() has no internal activity guard — NOT FIXED
-No guard check at the top of start_deep_sleep(). The direct call from scheduler.ino at line 308 still bypasses the loop() gate entirely.
-
-Summary Scorecard
-IssueDescriptionStatus1syncMux applied to sync_mode⚠️ Partial — ~35% of write sites still bare2ABBA deadlock (modemMutex→fsMutex)✅ Previously addressed per your note3start_deep_sleep() internal guard❌ Not fixed12rtcTimeMux read protection⚠️ Partial — slot calc only, record build still bare17webServer SPIFFS without mutex❌ Not fixed19prepare_data_and_send() SPIFFS without mutex❌ Not fixed20Command handler SPIFFS without mutex❌ Not fixed24windSpeed startup SPIFFS without mutex❌ Not fixed27sync_rtc_from_server_tm rtcTimeMux✅ Fixed28OTA firmware.doc write without mutex❌ Not fixed
-The two most urgent remaining fixes are the incomplete syncMux coverage (particularly gprs.ino:459) and the bare current_day/month/year reads at scheduler.ino:792–794 used to construct the record filename. These are the two paths most likely to produce silent data corruption on every single deployment cycle.
-
-v6.02 Hardened Final — Authoritative Audit Results
 ✅ Confirmed Fixed
-IssueDescriptionVerdict2ABBA deadlock modemMutex→fsMutex✅ Fixed27sync_rtc_from_server_tm writes current_* without rtcTimeMux✅ FixedLoop gateloop() sleep gate reads sync_mode under syncMux (both first check and 50ms race re-check)✅ Fixedlcdkeypad sync_mode writesAll three LCD-triggered sync_mode writes protected✅ FixedrtcRead sync_mode writesAll three eExceptionHandled assignments protected✅ FixedIssue 22delay() in gprs.ino replaced✅ Fixed
 
-🔴 Critical — Still Present
-Issue 1 — syncMux coverage incomplete (12 unprotected write sites remain)
-The following bare sync_mode writes survive:
+C-01/NEW-3 — fs_locked shadow removed, outer correctly set to true on file-exists take. Both paths (file-exists and HANDLE_NO_FILE) now release via the same guarded give at ~2648.
+NEW-1 — Orphan xSemaphoreGive(fsMutex) in send_unsent_data else-branch fully removed.
+NEW-2 — fileSize captured from f_size.size() under granular lock before while-loop; while condition uses < fileSize which is cleaner and correct.
+H-02 — next_date() now unconditionally called for all sampleNo 0–60, correct met-day close-date for all daytime slots.
+C-02, H-03, H-04, H-05, M-01 — carried forward from previous version, still intact.
 
-gprs.ino:459 — sync_mode = eHttpStarted — highest-risk, runs every 15 minutes on the primary HTTP dispatch path on Core 0 while scheduler (Core 1) is actively watching this transition
-gprs.ino:980 — sync_mode = eHttpStop inside send_http_data early-exit (signal-too-weak guard)
-gprs.ino:1935,1939 — both branches of the SMS-at-minute-0 selector inside send_http_data exit
-gprs.ino:2525 — send_sms() final exit
-gprs.ino:3000 — send_unsent_data error exit
-scheduler.ino:1257, 1295, 1327, 1337 — all four fsMutex-timeout error paths that goto TRIGGER_HTTP
-scheduler.ino:2895 — brownout guard eHttpStop
-scheduler.ino:2939 — eHttpBegin trigger after manual task wait
-scheduler.ino:2972 — idle-trap eHttpStop
+Audit Summary (continued)
 
-The most dangerous is gprs.ino:459. When the scheduler sees sync_mode == eHttpBegin and dispatches, it writes eHttpStarted bare on Core 0. The scheduler's while() loop on Core 1 could read a partial write, miss the state change, and issue a premature sleep call.
-Issue 12 — rtcTimeMux read protection incomplete
-Only current_hour and current_min are snapshotted for the slot index calculation. The fields used to build the actual log file name and HTTP record — current_day, current_month, current_year, record_hr, record_min — are still read bare at scheduler.ino:774–775, 792–794, 2053–2085. A torn read here writes data to the wrong date file.
-Issue 19 — prepare_data_and_send() SPIFFS read without fsMutex — Not fixed
-Issue 20 — force_clear_ftp_queue / force_delete_data SPIFFS without fsMutex — Not fixed
-Issue 24 — windSpeed.ino startup SPIFFS read without fsMutex — Not fixed
-Issue 28 — OTA firmware.doc write without fsMutex — Not fixed
-Issue 17 — webServer.ino all SPIFFS reads without fsMutex — Not fixed
-Issue 32 — APN mismatch double fsMutex acquire deadlock — Not fixed. start_gprs() (called with modemMutex held) → load_apn_config() (takes fsMutex) → mismatch path releases fsMutex → save_apn_config() re-takes fsMutex on a non-recursive mutex. On the first SIM swap or carrier detection event this path is walked, the GPRS task deadlocks permanently.
+🟠 HIGH — 2 new findings
+R-01 Torn time read in FTP scheduled-slot check
+File: gprs.ino Lines: ~2071–2073
+What: scheduled_slot and morning_cleanup read current_hour and current_min as two separate unprotected statements. rtcRead runs on Core 1 and writes these every second.
+Why it matters: At 02:59:59 → 03:00:00, current_hour can be read as 2 while current_min is already 0, making 2 % 3 != 0 → scheduled_slot = false. The 3 AM FTP backlog push is silently skipped. Happens once per scheduled boundary per day — on a field unit with 6 hours of backlog, this means delayed delivery. Fix: snapshot both into locals under portENTER_CRITICAL(&rtcTimeMux) before evaluating.
+R-02 SPIFFS.exists() outside fsMutex before SPIFFS.open() inside
+File: gprs.ino Line: ~895, and multiple other sites
+What: SPIFFS.exists(temp_file) is called outside fsMutex; if the prune loop (also holding fsMutex) deletes that file between the exists() returning true and the open() call, open() returns a null handle. The null handle is checked and skipped correctly, but the outgoing record for that slot is silently dropped — the data is lost without queuing to unsent.
+Fix: Remove the SPIFFS.exists() guard entirely; take fsMutex, open directly, check the handle, release.
 
-🟠 High — Still Present
-Issue 3 — start_deep_sleep() no internal guard — Not fixed. Direct call from scheduler.ino:308 bypasses loop() gate entirely.
-Issue 6 — data_writing_initiated not volatile — Not fixed. Still plain int.
-Issue 13 — gprs_pdp_ready missing extern in globals.h — Not fixed.
-Issue 22 — delay() in webServer.ino:927 — Still present. delay(1000) before WiFi.softAPdisconnect() blocks the Core 0 scheduler for 1 second, freezing the LCD.
+🟡 MEDIUM — 2 new findings
+R-03 sync_rtc_from_server_tm() three-field torn read for drift calculation
+File: gprs.ino Line: ~107
+What: rtc_total_sec = current_hour * 3600 + current_min * 60 + current_sec reads three globals in three separate statements while rtcRead on Core 1 may increment them between reads. At an exact hour boundary this produces a ~3597 s apparent drift, triggering a spurious RTC correction that writes the wrong time to the DS1307.
+Fix: Read all three fields under a single portENTER_CRITICAL(&rtcTimeMux) snapshot.
+R-04 loop() polls at 500 ms — 10 extra seconds of idle burn on every wakeup
+File: AIO9_5.0.ino Line: ~1640
+What: delay(500) at the bottom of loop() means the sleep gate is re-evaluated every 500 ms. In practice the system stays awake ~5–15 s after the GPRS task completes waiting for sync_mode to settle. At 80 mA idle + 3 mA modem-off quiescent = ~2 mAh per wakeup wasted on polling alone across 96 cycles/day = ~190 mAh/day.
+Fix: Reduce to delay(100). Already done at line ~1313 for a different path — apply consistently to the main loop tail.
 
-Prioritised Fix Order for Next Iteration
+✅ Still clean
 
-Wrap gprs.ino:459 with syncMux — one line, eliminates the highest-frequency race
-Wrap all remaining scheduler sync_mode writes (lines 1257, 1295, 1327, 1337, 2895, 2939, 2972) — each is a one-liner
-Wrap gprs.ino:980, 1935, 1939, 2525, 3000 — all single-line fixes
-Extend the rtcTimeMux snapshot to capture current_day/month/year and use those snapshots through the entire record-build block (lines 774–794 and all snprintf calls at 2053–2085)
-Add fsMutex to prepare_data_and_send() — single acquire at function entry, release before send_at_cmd_data()
-Add fsMutex to force_clear_ftp_queue and force_delete_data handlers
-Fix APN deadlock — release fsMutex before save_apn_config() call, or restructure load_apn_config to not hold fsMutex across the mismatch delete
-Add fsMutex to windSpeed.ino startup read and OTA firmware.doc write
-Replace delay(1000) with vTaskDelay in webServer.ino:927
-Add extern volatile bool gprs_pdp_ready to globals.h and add volatile to data_writing_initiated
+waitForResponse uses static char[2048] — no heap churn per call, vTaskDelay(1ms) inside loop.
+srand(esp_random()) in setup — jitter values are now unique per boot.
+CPU at 80 MHz confirmed.
+SD.end() / SPI.end() called before sleep.
+GPIO 26/32 hold enabled before esp_deep_sleep_start().
+String tail = file.readString() in debug dumps now correctly seeks to last 500 bytes — avoids loading full multi-KB unsent files into heap.
 
-v6.02 Hardened Final — Part 2 Audit Results
-🔴 Critical — New Issues Introduced By the Partial Fix
-NEW ISSUE A — syncMux Cannot Safely Wrap sync_mode Writes Inside fsMutex-Held Sections
-This is the most dangerous consequence of the partial fix. scheduler.ino:1247, 1257, 1295, 1327, 1337 all write sync_mode while fsMutex is held. The natural fix of wrapping them with portENTER_CRITICAL(&syncMux) is architecturally forbidden here. portENTER_CRITICAL is a spinlock that disables interrupts on the calling core. Holding a FreeRTOS binary mutex (fsMutex) while disabling interrupts prevents the FreeRTOS tick ISR from running — if the GPRS task on Core 0 is simultaneously spinning on portENTER_CRITICAL(&syncMux) waiting for the scheduler to release it, both cores stall indefinitely. The correct fix is to use a local boolean flag inside the fsMutex block, release fsMutex, then apply the syncMux-guarded write outside:
-cppbool need_abort = false;
-// ... inside fsMutex block ...
-need_abort = true;
-if (fs_locked) xSemaphoreGive(fsMutex);
-// ... outside fsMutex block ...
-if (need_abort) {
-    portENTER_CRITICAL(&syncMux);
-    sync_mode = eHttpStop;
-    portEXIT_CRITICAL(&syncMux);
-}
-NEW ISSUE B — mode_snap Captured Under syncMux But Dispatch Logic Uses Raw sync_mode
-gprs.ino:173 correctly captures mode_snap under syncMux. But at gprs.ino:190–194, the actual dispatch if (sync_mode == eSMSStart) reads the raw variable again. Worse, gprs.ino:395 — the critical eHttpBegin gate — reads raw sync_mode with no protection at all. The mode_snap snapshot is currently used only for debug logging and pending-flag clearing, not for any operational dispatch. The entire dispatch block must be converted to use mode_snap consistently throughout.
-NEW ISSUE C — mode_snap Pending-Flag Clearing Creates a Silent Command-Drop Race
-At gprs.ino:197–200, pending_manual_status/gps/health flags are cleared based on mode_snap, but the outer if() condition that gates this block checks raw sync_mode. If sync_mode changed between the snapshot and the check, the outer if can fail (correctly skipping the SMS/GPS action) while the inner if (mode_snap == eSMSStart) still clears pending_manual_status = false. The result: an operator's manual SMS command is silently discarded with no retry.
-
-🔴 Critical — Remaining From Previous Audit
-Issue 1 — syncMux incomplete: gprs.ino:459 (eHttpStarted), gprs.ino:980, 1935, 1939, 2525, 3000, and scheduler.ino:2895, 2939, 2972 remain bare. Note that scheduler.ino:1247, 1257, 1295, 1327, 1337 cannot be simply wrapped — see New Issue A above.
-Issue 12 — current_year/month/day bare in record build: scheduler.ino:2053–2086 (the current-record snprintf block) still uses raw globals. Only gap-fill records use the safe temp_* copies. This creates an asymmetry: gap records have stable timestamps, current records can have torn year/day values at midnight.
-Issues 19, 20, 24, 28, 17 — fsMutex gaps all remain unfixed.
-Issue 32 — APN mismatch double fsMutex deadlock confirmed still present.
-Issue 9 — recoverI2CBus() called from inside i2cMutex in tempHum.ino:175 — confirmed still a deadlock path on non-recursive mutex.
-Issue 35 — readHDC() 20ms i2cMutex release gap — still present at line 261.
-Issue 3 — start_deep_sleep() no internal guard — still absent.
-Issues 22, 37 — delay() in webServer.ino:927 — still blocking.
-
-Priority Fix Order (Revised With New Findings)
-
-Fix New Issue A — restructure all sync_mode writes inside fsMutex blocks to use deferred flag pattern to avoid spinlock+FreeRTOS mutex collision
-Fix New Issue B — replace all raw sync_mode reads in the GPRS dispatch chain with mode_snap, especially the eHttpBegin gate at line 395
-Wrap gprs.ino:459 with syncMux — the single highest-frequency bare write
-Extend rtcTimeMux snapshot to include current_day/month/year and use in the current-record snprintf block
-Add fsMutex to prepare_data_and_send() entry
-Fix recoverI2CBus(true) in tempHum.ino to pass alreadyLocked=true
-Fix APN deadlock in gprs_helpers.ino / start_gprs() sequence
-Add fsMutex to force_clear_ftp_queue, force_delete_data, windSpeed startup, OTA firmware.doc
-Replace delay() with vTaskDelay in webServer.ino:927
-Add internal guard to start_deep_sleep()
-
-
-Part 6 Audit — Additional Findings
-🔴 NEW Critical — copyFile() Accesses SPIFFS Without Any Mutex
-File: gprs.ino:2422–2446
-copyFile() opens two SPIFFS files (source and destination) with no mutex protection of any kind. At line 2221, copyFile() is called from inside send_unsent_data() which already holds fsMutex. This single call-site is safe because fsMutex is already held by the caller, but the function has no internal guard. Any future call to copyFile() from a path that does not hold fsMutex — and the signature of the function gives no indication of this requirement — is a silent filesystem corruption risk.
-🔴 NEW Critical — Dispatch Inconsistency: Manual Trigger Block Uses Mixed mode_snap/Raw sync_mode
-File: gprs.ino:190, 222, 251, 266, 269
-The outer condition at line 190 checks if (sync_mode == eSMSStart) (raw). The inner state transition at line 251 uses if (mode_snap == eSMSStart). If sync_mode changes from eSMSStart to eHttpBegin between lines 173 and 190 — which is possible since Core 1 scheduler runs concurrently — the outer if at line 190 fails but mode_snap still carries eSMSStart. In a different branch the inverse happens: the eStartupGPS/eHealthStart path at line 269 still reads raw sync_mode while the adjacent GPS path at line 253 uses mode_snap. These inconsistencies mean the dispatch outcome depends on which value the compiler chose to re-read at each specific line — undefined and non-deterministic behavior in a multi-core context.
-🟠 HIGH — saveGPS() Has Same Power-Fail Gap as signature.txt
-File: global_functions.ino:379–381
-cppif (SPIFFS.exists("/gps_fix.txt")) SPIFFS.remove("/gps_fix.txt");
-SPIFFS.rename("/gps_fix.tmp", "/gps_fix.txt");
-Identical gap to Issue 21. Power loss here eliminates the GPS coordinates. On next boot the station transmits lati=0, longi=0 in perpetuity until a GPS re-acquire succeeds — which requires cellular signal and can take 5–15 minutes per boot. No boot-time recovery scans for orphaned .tmp files.
-🟠 HIGH — SPIFFS Pruning Lexicographic Sort Is Not Guaranteed Chronological
-File: scheduler.ino:1275–1278
-The oldest-file selection uses fName < oldest_file — a pure string comparison. For multi-station deployments where station IDs have different lengths or prefixes (e.g. "TWS1931_" vs "KSNDMC_TRG_"), the alphabetically "smallest" filename is not necessarily the chronologically oldest log. In the worst case this deletes a current-day file instead of the oldest, corrupting the active data record for the day.
-🟠 HIGH — prepare_data_and_send() Failure Path Writes unsent.txt Without fsMutex
-File: gprs.ino:1418–1423
-When HTTP transmission fails, the record is appended to unsent.txt at line 1419 with no mutex. The scheduler can simultaneously be writing gap-fill records to unsent.txt while holding fsMutex. The result is interleaved record corruption: a partial HTTP failure record and a partial gap-fill record occupy the same byte range.
-Complete Status Table (All Issues, This Version)
-#SevStatusDescription1🔴⚠️ PartialsyncMux: ~12 bare writes remain; 5 inside fsMutex cannot be naively wrappedNew A🔴🆕 NewsyncMux inside fsMutex block = spinlock+FreeRTOS mutex = deadlock riskNew B🔴🆕 NewManual trigger dispatch mixes mode_snap and raw sync_mode — non-deterministicNew C🟠🆕 Newpending_manual_* flags cleared from stale mode_snap — silent command drop2🔴✅ FixedABBA deadlock modemMutex→fsMutex3🔴❌ Openstart_deep_sleep() no internal guard12🔴⚠️ PartialrtcTimeMux: slot calc protected; current_year/day in record snprintf still bare13🔴❌ Opengprs_pdp_ready no extern in globals.h19🔴❌ Openprepare_data_and_send() SPIFFS read without fsMutex20🔴❌ Openforce_clear_ftp_queue/force_delete_data SPIFFS without mutex24🟠❌ OpenwindSpeed.ino startup SPIFFS read without fsMutex27🔴✅ Fixedsync_rtc_from_server_tm wrapped with rtcTimeMux28🟠❌ OpenOTA firmware.doc write without fsMutex32🟠❌ OpenAPN mismatch: double fsMutex acquire deadlock inside start_gprsNew D🔴🆕 NewcopyFile() accesses SPIFFS with no mutex — caller-contract not enforcedNew E🟠🆕 NewsaveGPS() power-fail gap identical to signature.txt Issue 21New F🟠🆕 NewSPIFFS pruning uses lexicographic not chronological sort — may delete wrong fileNew G🟠🆕 Newprepare_data_and_send() failure path appends unsent.txt without fsMutex6🟠❌ Opendata_writing_initiated not volatile9🟠❌ OpenrecoverI2CBus() called inside i2cMutex in tempHum.ino — deadlock17🟡❌ OpenwebServer SPIFFS without fsMutex22/37🟠⚠️ Partialgprs.ino delay() fixed; webServer.ino:927 still blocking30🟠❌ Openota_writing_active not cleared before break on Update.abort()35🟠❌ OpenreadHDC() 20ms i2cMutex gap — measurement corruption
-Current tally: 7 Fixed · 9 Critical Open · 12 High Open including 4 newly introduced issues from the partial syncMux fix.
-
-
-Part 7 — Final Systematic Findings
-🔴 Issue 23 — NVS/Preferences Before modemMutex Release: TWO Paths Still Unfixed
-The HTTPINIT fail path was fixed (mutex released before Preferences). But two OTA failure paths remain broken:
-
-gprs.ino:4438–4443 — "Bad size" path: Preferences.begin/put/end executes with modemMutex held, then xSemaphoreGive(modemMutex) follows
-gprs.ino:4454–4463 — Update.begin failure path: same ordering — NVS write while modemMutex is held
-
-Both require moving the xSemaphoreGive(modemMutex) call to before the Preferences block.
-
-🔴 NEW — record_hr/record_min Read Bare current_hour/current_min AFTER the Protected Snapshot
-File: scheduler.ino:774–775
-The protected snapshot at lines 211–215 captures cur_hr/cur_min. But lines 774–775 re-read the globals bare:
-cppr_m = (current_min / 15) * 15;   // ← bare read
-r_h = current_hour;               // ← bare read
-These flow directly into record_min and record_hr, which appear in every logged record and every HTTP payload. If rtcRead updates current_min between the snapshot and line 774 — crossing a minute boundary — the slot index says "10:45" but the record is stamped "10:46". The server sees a record with a timestamp that does not align with the data window, which triggers duplicate-detection rejections or incorrect gap-fill on the server side.
-Fix: Replace lines 774–775 with cur_min and cur_hr from the existing snapshot.
-
-✅ Issue 23 Partial — HTTPINIT OTA Path Is Fixed
-The HTTPINIT failure path now releases modemMutex before calling Preferences. This is correct.
-
-Summary: Net Change From v1 to v2
-Categoryv1 Countv2 CountChange🔴 Critical99↔ Same count, different mix🟠 High1919↔ Same count, different mixFixed issues05✅ +5 fixedNew issues introduced05🆕 +5 newNet stability improvement——Marginal
-The five fixed issues (ABBA deadlock, sync_rtc_from_server_tm, loop sleep gate, lcdkeypad/rtcRead sync_mode writes, one OTA Preferences path) are genuine improvements. However the five newly introduced issues — particularly the syncMux-inside-fsMutex deadlock risk and the mode_snap/raw-sync_mode dispatch inconsistency — mean the codebase is not yet in a better overall state for the highest-priority race conditions. The partial syncMux application introduced a structural hazard that must be resolved before the remaining unprotected writes can be safely fixed.
-The single most impactful one-line fix available right now: change scheduler.ino:774 from r_m = (current_min / 15) * 15 to r_m = (cur_min / 15) * 15 and line 775 from r_h = current_hour to r_h = cur_hr. This costs zero risk, aligns the record timestamp with the already-protected slot index, and eliminates the most common timestamp-corruption scenario.
-
-Part 7 — Complete Definitive Fix Specification
-This is the authoritative, exhaustive repair guide covering every confirmed open issue, grouped by the type of fix required. Each entry gives the exact file, line(s), constraint, and the minimal correct change.
-
-GROUP A — sync_mode Bare Writes Safely Wrappable With syncMux
-(Outside all FreeRTOS mutexes — wrap directly)
-Rule: portENTER_CRITICAL(&syncMux) immediately before assignment, portEXIT_CRITICAL(&syncMux) immediately after.
-FileLineCurrentConstraintgprs.ino459sync_mode = eHttpStarted;Highest frequency — every 15-min HTTP cyclegprs.ino980sync_mode = eHttpStop;Inside send_http_data early exitgprs.ino1935sync_mode = eSMSStart;End-of-HTTP SMS selectorgprs.ino1939sync_mode = eHttpStop;End-of-HTTP no-SMS pathgprs.ino2525sync_mode = eSMSStop;send_sms() exitgprs.ino3000sync_mode = eHttpStop;send_unsent_data error exitscheduler.ino2895sync_mode = eHttpStop;Brownout guard at TRIGGER_HTTPscheduler.ino2939sync_mode = eHttpBegin;Confirmed slot, trigger HTTPscheduler.ino2972sync_mode = eHttpStop;Idle trap 15s timeout exit
-
-GROUP B — sync_mode Writes Inside fsMutex Block — Deferred Flag Required
-(Cannot use portENTER_CRITICAL while holding a FreeRTOS mutex — spinlock + FreeRTOS mutex = deadlock)
-Rule: Set a local bool need_stop = true;, release fsMutex (and close any open file handles), then apply the syncMux-guarded write outside the mutex block.
-Pattern:
-cpp// Inside the fsMutex-held block:
-bool abort_slot = false;
-// ... error condition detected ...
-abort_slot = true;
-if (file1) file1.close();
-if (fs_locked) xSemaphoreGive(fsMutex);
-// ... fall through to after the mutex block ...
-
-// Outside, after the fsMutex block:
-if (abort_slot) {
-    portENTER_CRITICAL(&syncMux);
-    sync_mode = eHttpStop;
-    portEXIT_CRITICAL(&syncMux);
-    goto TRIGGER_HTTP;
-}
-FileLine(s)Contextscheduler.ino1247fsMutex timeout at record-write entry — goto TRIGGER_HTTPscheduler.ino1257Battery-too-low guard — fsMutex already held — goto TRIGGER_HTTPscheduler.ino1295SPIFFS prune failure — fsMutex held — goto TRIGGER_HTTPscheduler.ino1327Gap-fill unsent.txt open failure — fsMutex held — goto TRIGGER_HTTPscheduler.ino1337Gap-fill ftpunsent.txt open failure — fsMutex held — goto TRIGGER_HTTP
-
-GROUP C — Compound Check-Then-Write Blocks Requiring Atomic syncMux Wrap
-(Read and write must be inside the same critical section to prevent TOCTOU)
-scheduler.ino:2920–2928 — The entire compound check-then-set:
-cpp// BEFORE (broken - read and write not atomic):
-if (sync_mode != eSMSStart && sync_mode != eGPSStart && ...) {
-    sync_mode = eHttpBegin;  // or eHttpStop
+🔴 CRITICAL — 1 new
+R-05 A7672S ERROR 601 Zombie Loops Forever — CFUN=1,1 Cannot Recover It
+File: gprs.ino Line: ~1418–1428
+What: After 4 consecutive HTTP failures, the code issues AT+CFUN=1,1 (soft modem reset) then resets diag_consecutive_http_fails to 0. On a 601 zombie (modem passes AT and CREG but all HTTP returns error), CFUN=1,1 does not recover the A7672S — this is a documented hardware behaviour. The counter resets, the modem re-registers, the next 4 slots fail identically, and the cycle repeats indefinitely. The GPIO power cycle path (digitalWrite(26,LOW/HIGH)) only triggers via diag_consecutive_reg_fails — an entirely separate counter that never increments in this failure mode.
+Why it's critical: In the field on Airtel, a 601 zombie state occurs roughly once per week per unit. Without a GPIO power cycle the unit transmits nothing until manually power-cycled. Data for the entire period is queued to unsent and sent on next manual recovery — if unsent doesn't overflow first.
+Fix:
+cppif (diag_consecutive_http_fails >= 4) {
+  // CFUN=1,1 cannot recover ERROR 601 on A7672S. Use GPIO hard reset.
+  SerialSIT.println("AT+HTTPTERM");
+  waitForResponse("OK", 2000);
+  digitalWrite(26, LOW);
+  vTaskDelay(2500 / portTICK_PERIOD_MS); // ≥2s guaranteed off
+  digitalWrite(26, HIGH);
+  vTaskDelay(8000 / portTICK_PERIOD_MS); // boot + SIM init
+  diag_consecutive_http_fails = 0;
 }
 
-// AFTER (correct):
-portENTER_CRITICAL(&syncMux);
-if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
-    sync_mode != eStartupGPS && sync_mode != eHealthStart) {
-    sync_mode = (is_valid_window || timeSyncRequired) ? eHttpBegin : eHttpStop;
-}
-portEXIT_CRITICAL(&syncMux);
-gprs.ino:190–214 — The manual trigger dispatch block: the outer if (sync_mode ==) and the inner transitions must all use mode_snap. The current partial fix clears pending flags from mode_snap but dispatches from raw sync_mode — they must be unified. Replace all sync_mode == reads in lines 190–269 with mode_snap ==, and wrap each sync_mode = eSMSStop/eSMSStart write at lines 214, 251, 266, 315, 368 with syncMux.
-gprs.ino:395 — The eHttpBegin automated dispatch gate:
-cpp// BEFORE: if (sync_mode == eHttpBegin) {
-// AFTER — capture a fresh snapshot just before:
-portENTER_CRITICAL(&syncMux);
-int http_snap = sync_mode;
-portEXIT_CRITICAL(&syncMux);
-if (http_snap == eHttpBegin) {
-This is necessary because the mode_snap from line 173 is captured before hundreds of lines of manual-trigger processing execute and is completely stale by line 395.
+🟠 HIGH — 2 new
+R-06 +CFTPSPUTFILE Response Accumulated via String += Char-by-Char in 60s Loop
+File: gprs.ino send_ftp_file(), Lines: ~2388–2395
+What: response1 += (char)SerialSIT.read() inside a while (millis() < put_start + 60000) loop causes repeated heap reallocation — one realloc() per received character. A 50-byte URC at 115200 baud arrives in ~4 ms; the loop runs at 500 ms intervals meaning 120 iterations, each triggering heap growth. On a 320 KB heap already under pressure from other tasks this fragments memory silently.
+Fix: Replace with a fixed char buffer — the URC is at most 30 bytes: char put_buf[64]; int put_idx=0; then put_buf[put_idx++] = c with bounds check. strstr(put_buf, "+CFTPSPUTFILE: 0") replaces response1.indexOf(...).
+R-07 Server Response Success Check Misses 201 Created — Valid Responses Treated as Failures
+File: gprs.ino send_at_cmd_data(), Line: ~2641
+What: if (response.indexOf("200") == -1) fails the send if the server returns HTTP 201 (Created) or 202 (Accepted) — both are valid success codes per HTTP spec and some KSNDMC/Spatika endpoints may use them. The data gets queued to unsent.txt and retried, creating duplicate records on the server once network conditions improve and both the retry and original succeed.
+Fix: if (response.indexOf(",200,") == -1 && response.indexOf(",201,") == -1 && response.indexOf(",202,") == -1) — or better, parse the status code numerically and check code >= 200 && code < 300.
 
-GROUP D — rtcTimeMux Read Extension
-(Current snapshot covers only cur_hr/cur_min — must extend to day/month/year)
-scheduler.ino:211–215 — Extend the atomic snapshot:
-cppportENTER_CRITICAL(&rtcTimeMux);
-cur_hr    = current_hour;
-cur_min   = current_min;
-cur_day   = current_day;    // ADD
-cur_month = current_month;  // ADD
-cur_year  = current_year;   // ADD
-portEXIT_CRITICAL(&rtcTimeMux);
-Then propagate cur_day/month/year everywhere current_day/month/year are used within the slot-processing block:
+🟡 MEDIUM — 1 new
+R-08 vTaskDelay(500ms) After AT+HTTPACTION Wastes 0.5s of Modem-On Time Per Slot
+File: gprs.ino send_at_cmd_data(), Line: ~2682
+What: A fixed 500 ms delay after the +HTTPACTION: 1,200,N URC before AT+HTTPREAD is conservative — the A7672S has the HTTP body ready immediately after the URC. At 96 wakeups/day with modem drawing 80–150 mA this wastes ~48–72 mAh/day.
+Fix: Remove the fixed delay; if AT+HTTPREAD fails immediately, retry once with a 200 ms delay — this handles the rare case where the body buffer isn't ready yet without penalising every successful slot.
 
-scheduler.ino:774–775 — r_m = (cur_min / 15) * 15; r_h = cur_hr; — fixes record timestamp/slot index mismatch
-scheduler.ino:792–794 — rf_cls_dd = cur_day; rf_cls_mm = cur_month; rf_cls_yy = cur_year; — fixes filename date
-scheduler.ino:809 — if (record_hr <= cur_hr) — fixes date rollover logic
-scheduler.ino:2053–2086 — replace all current_year, current_month, current_day in record snprintf calls with cur_year, cur_month, cur_day — the most critical fix for production records using bare globals
+✅ Additional items confirmed solid
 
+waitForResponse: static char buf[2048] prevents stack overflow; vTaskDelay(1ms) + esp_task_wdt_reset() inside loop are correct.
+graceful_modem_shutdown: AT+CPOWD=1 → wait 8 s → GPIO LOW → I2C recovery — correct sequence.
+FTP PUT waits up to 60 s for +CFTPSPUTFILE: 0 URC before proceeding — correct race window handling.
+markFileAsDelivered() gated strictly inside if (upload_success) — no premature delivery marking.
+srand(esp_random()) in setup — jitter sequences are unique per boot and per unit.
+SD.end() / SPI.end() called before sleep when sd_card_ok — no SPI idle bleed.
+GPIO 26/32 held low during deep sleep — no ESD diode bleed from floating UART lines.
 
-GROUP E — fsMutex Gap Fixes (Five Sites)
-Each site needs xSemaphoreTake(fsMutex, ...) before the first SPIFFS. call and xSemaphoreGive(fsMutex) on all exit paths.
-FileEntry PointSPIFFS Operationsgprs.ino:825prepare_data_and_send()read temp_file; append unsent.txt/ftpunsent.txt on failuregprs.ino:613force_clear_ftp_queue handlerSPIFFS.exists(), SPIFFS.remove()gprs.ino:635force_delete_data handlerfull filesystem iteration and SPIFFS.remove()windSpeed.ino:12task startupread /prevWindSpeed.txtgprs.ino:4716OTA Update.end() successwrite /firmware.doc
+🟠 HIGH — 2 new
+R-09 send_health_report() Holds fsMutex for 5+ Seconds on BSNL — Scheduler Write Times Out
+File: gprs.ino Lines: ~5112–5128
+What: fsMutex is taken at entry (line ~5112) and held through the entire payload build. On BSNL, vTaskDelay(5000ms) fires immediately after take — before any file reads. At 11:00 AM the health report and the scheduler's 15-minute write compete for fsMutex. The scheduler's take has a 5 s timeout; the health report holds it for 5 s delay + AT silencing (~2 s) + SPIFFS reads (~200 ms) = ~7 s minimum. Scheduler times out, aborts the record write, and that slot's data is permanently lost — no retry, no queue.
+Fix: Move the BSNL delay to before the fsMutex take. The breather is a modem settling time — it does not need filesystem protection.
+cpp// BSNL breather BEFORE taking fsMutex
+if (strstr(carrier, "BSNL")) vTaskDelay(5000 / portTICK_PERIOD_MS);
+else vTaskDelay(1000 / portTICK_PERIOD_MS);
 
-GROUP F — APN Mismatch Double fsMutex Deadlock (Issue 32)
-gprs_helpers.ino:107–108 / gprs.ino:3640, 3652, 3669
-start_gprs() is called while modemMutex is held (line 387). Inside, load_apn_config() takes fsMutex. On APN mismatch, fsMutex is released. Then save_apn_config() immediately re-takes fsMutex. Since FreeRTOS mutexes are non-recursive, the second take succeeds (the mutex was released). The deadlock risk is actually subtler than previously described: if a context switch to another task (e.g., lcdkeypad) occurs between the fsMutex release and the save_apn_config() take, and that other task takes and holds fsMutex, the GPRS task blocks inside save_apn_config() while holding modemMutex. Any task needing modemMutex then starves. Fix: restructure start_gprs() to collect the APN to save, release modemMutex first, then call save_apn_config().
+if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) { ... }
+R-10 Scheduler 15-Min Slot Has No Protection Against Concurrent Health Report
+File: scheduler.ino slot entry gate | AIO9_5.0.ino
+What: health_in_progress only gates loop()'s sleep path — it does not block the scheduler from entering its 15-minute write block. Both the scheduler and send_health_report() can hold or contend fsMutex simultaneously on the hour (11:00, 12:00, 13:00). Even with the R-09 fix, the broader design has no explicit mutual exclusion between these two paths. On a BSNL station at 11:00 AM this collision is deterministic — it happens every health report day.
+Fix: Set schedulerBusy = true before the fsMutex take in the scheduler write path (already done), and add a check in send_health_report() to defer if schedulerBusy is true:
+cppbool send_health_report(bool useJitter) {
+  if (schedulerBusy) {
+    debugln("[Health] Deferring: scheduler mid-write.");
+    return false; // will retry next slot
+  }
+  // ... existing mutex takes ...
 
-GROUP G — Remaining Single-Site Fixes
-#FileLine(s)Fix9tempHum.ino:175recoverI2CBus()Change to recoverI2CBus(true) — already holds i2cMutex23gprs.ino:4438Bad-size OTA pathMove xSemaphoreGive(modemMutex) to before Preferences block23gprs.ino:4453Update.begin fail pathMove xSemaphoreGive(modemMutex) to before Preferences block6AIO9_5.0.ino:393data_writing_initiatedChange to volatile int data_writing_initiated = 0;13globals.hmissing externAdd extern volatile bool gprs_pdp_ready;3global_functions.ino:8start_deep_sleep()Add guard at entry: if (health_in_progress || ota_writing_active || gprs_started) return;30gprs.ino:4690Update.abort() before breakAdd ota_writing_active = false; before the break22/37webServer.ino:927delay(1000)Change to vTaskDelay(1000 / portTICK_PERIOD_MS)17webServer.ino:161,551,587,777bare SPIFFS readsWrap each handler function body with fsMutex acquire/releaseNew Eglobal_functions.ino:379saveGPS() power-fail gapAdd boot-time recovery: if (SPIFFS.exists("/gps_fix.tmp") && !SPIFFS.exists("/gps_fix.txt")) SPIFFS.rename("/gps_fix.tmp", "/gps_fix.txt");New Fscheduler.ino:1275Lexicographic pruningReplace string comparison with date-component extraction from filenameNew Dgprs.ino:2422copyFile() no mutexAdd comment contract: caller must hold fsMutex; add assert or internal take with alreadyLocked parameter
+🟡 MEDIUM — 2 new
+R-11 tempHum Task Polls Every 5 s — LCD Update Latency Acceptable, But readHDC Holds i2cMutex Across Two Wire Transactions With a 20 ms Gap
+File: tempHum.ino readHDC(), lines: ~trigger → release → delay(20ms) → re-acquire
+What: The Phase 4 Fix correctly releases i2cMutex for the 20 ms conversion wait. However, between release and re-acquire there is a window where rtcRead or lcdkeypad can grab the mutex and initiate their own I2C transaction. If rtcRead reads the DS1307 during this window and the HDC sensor is mid-conversion, the HDC's I2C state machine is interrupted. On the HDC2022 this is benign (the conversion completes independently). On the HDC1080 the data register pointer resets on any bus activity — the subsequent requestFrom will read stale data from the last measurement, producing a reading that is correct in value but from one cycle ago. Not data loss, but a 5-second stale reading once per I2C collision. Field impact: negligible unless the station is used for sub-minute analysis.
+R-12 printf() in parse_and_convert_clbs_response() Bypasses ota_silent_mode Guard
+File: rtcRead.ino parse_and_convert_clbs_response(), lines with printf("Original GMT Time...")
+What: printf() on ESP32 writes to UART0 (same physical pin as Serial). It bypasses the ota_silent_mode check in the debugln macro. During an OTA download, if resync_time() fires concurrently (RTC battery dead, badReads >= 24), the printf output will inject bytes into the modem's UART read buffer through the shared UART0, corrupting the firmware binary stream. On the A7672S, the OTA range-GET reads the modem UART directly — a few stray bytes at a 32 KB chunk boundary will cause Update.write() to fail with a checksum mismatch, aborting the OTA and leaving the device on the old firmware.
+Fix: Replace both printf calls with debugf (which respects ota_silent_mode).
+
+✅ Additional items confirmed solid
+
+rtcRead: portENTER_CRITICAL(&rtcTimeMux) wraps all six global time writes atomically — correct.
+resync_time(): modemMutex held for the full AT sequence including CLBS=4; released before SPIFFS write — correct hierarchy.
+Phase 11 Fix in resync_time() correctly restores health_in_progress=false, gprs_started=false, sync_mode=eExceptionHandled on mutex timeout — sleep gate not permanently blocked.
+readHDC(): releases i2cMutex for the 20 ms HDC conversion wait — prevents rtcRead minute-boundary miss.
+windDirection: uses ADC1 (GPIO39), not ADC2 — no WiFi conflict.
+ULP anchor init: correctly syncs on POWERON/SW reset, preserves RTC_DATA_ATTR values on deep sleep wakeup.
+validate_ulp_counters() only resets calib_count (diagnostic tool) — does not touch wind or rain 32-bit accumulators.

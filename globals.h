@@ -346,6 +346,7 @@ extern char httpPostRequest[256], httpContent[12];
 extern char append_text[160], store_text[160], ftpappend_text[160];
 extern int cur_mode;
 extern int cur_fld_no;
+extern int last_lcd_state; // v5.70: Fix mysterious visibility issue in lcdkeypad.ino
 extern char ftp_station[16];
 extern size_t len;
 extern char last_logged[16];
@@ -591,6 +592,9 @@ void resync_time();
 char *parse_http_head(char *response, char *check);
 void next_date(int *Nd, int *Nm, int *Ny);
 void previous_date(int *Cd, int *Cm, int *Cy);
+void get_p_file_info(char *pfn, int *pdd, int *pmm, int *pyy);
+void get_c_file_info(char *cfn, int *cdd, int *cmm, int *cyy);
+void getTimeSnapshot(struct tm *timeinfo); // v5.79: Hardened Time Sync
 int send_at_cmd_data(char *payload, String response_arg);
 void send_http_data();
 bool send_health_report(bool useJitter = true);
@@ -613,7 +617,7 @@ void saveYearToSPIFFS(int year);
 void configure_sensors_for_awake();
 void configure_sensors_for_sleep();
 void copyFilesFromSPIFFSToSD(const char *dirname);
-void copyFile(const char *sourcePath, const char *destPath);
+void copyFile(const char *sourcePath, const char *destPath, bool alreadyLocked = false); // v5.75
 void flushSerialSIT();
 bool copyFile_legacy(String fileName);
 void validate_ulp_counters();
@@ -631,7 +635,7 @@ void get_network();
 void get_registration();
 void get_a7672s();
 void prepare_and_send_status(char *number);
-void get_lat_long_date_time(char *number);
+void get_lat_long_date_time(char *number, bool alreadyLocked = false);
 void store_current_unsent_data();
 void get_gps_coordinates();
 void prepare_data_and_send();

@@ -299,13 +299,13 @@ void parse_and_convert_clbs_response(const char *response, int year1,
   timeinfo.tm_sec = seconds1;
 
   // Print the original GMT time
-  printf("Original GMT Time: %s", asctime(&timeinfo));
+  debugf("Original GMT Time: %s", asctime(&timeinfo));
 
   // Convert to IST
   convert_gmt_to_ist(&timeinfo);
 
   // Print the converted IST time
-  printf("Converted IST Time: %s", asctime(&timeinfo));
+  debugf("Converted IST Time: %s", asctime(&timeinfo));
 
   if ((timeinfo.tm_mon + 1) <= 12 && (timeinfo.tm_mday <= 31) &&
       (timeinfo.tm_year + 1900 <= 2099) && (timeinfo.tm_hour < 24) &&

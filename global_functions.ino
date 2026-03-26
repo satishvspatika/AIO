@@ -7,8 +7,9 @@
 
 void start_deep_sleep() {
   // v5.70: Deep Sleep Guard (Issue 3) - Abort sleep if critical tasks are mid-flight
-  if (health_in_progress || ota_writing_active || gprs_started) {
-    debugln("[PWR] Critical Activity (Health/OTA/Modem) in progress. Deferring sleep.");
+  // v5.75: Added schedulerBusy to guard (M-02 fix)
+  if (health_in_progress || ota_writing_active || gprs_started || schedulerBusy) {
+    debugln("[PWR] Critical Activity (Health/OTA/Modem/Scheduler) in progress. Deferring sleep.");
     return;
   }
 
@@ -47,17 +48,18 @@ void start_deep_sleep() {
   delay(100);
 
   // SELF-HEALING: Force GPIO 26 and 32 to stay strictly LOW during sleep
-  // This prevents the modem from staying in a "zombie" state.
-  gpio_hold_en(GPIO_NUM_26);
-  gpio_hold_en(GPIO_NUM_32);
-  gpio_deep_sleep_hold_en();
-
+  // v5.79 Fix: digitalWrite LOW must happen BEFORE gpio_hold_en()
+  
   // TIER 3: SLEEP TIMER EARLY-WAKE DRIFT
   // Eliminate up to 90 seconds of RTOS polling staleness by reading the hardware directly.
   int live_sec = current_sec; // fallback
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
       DateTime now = rtc.now();
+      
+      portENTER_CRITICAL(&rtcTimeMux);
       current_min = now.minute(); // Update globals for accurate calc
+      portEXIT_CRITICAL(&rtcTimeMux);
+      
       live_sec = now.second();
       
       // Shut down I2C bus BEFORE cutting LCD power
@@ -65,11 +67,19 @@ void start_deep_sleep() {
       Wire.end();                  // Release SDA/SCL before PCF8574 loses power
       digitalWrite(32, LOW);       // Now safe to cut 5V — bus is idle
       
+      // Hardware Hold: Capture the LOW state for the duration of the sleep
+      gpio_hold_en(GPIO_NUM_32);
+      gpio_hold_en(GPIO_NUM_26); // Modem was cut in graceful_modem_shutdown()
+      gpio_deep_sleep_hold_en();
+      
       // Phase 7 Fix: Don't intentionally leak the mutex into deep sleep.
       // We will suspend FreeRTOS instead to prevent late I2C attempts.
       xSemaphoreGive(i2cMutex);
   } else {
       digitalWrite(32, LOW);       // Fallback cut if mutex totally hung
+      gpio_hold_en(GPIO_NUM_32);
+      gpio_hold_en(GPIO_NUM_26);
+      gpio_deep_sleep_hold_en();
   }
 
   // Calculate time to sleep to target the NEXT exact 15-minute boundary
@@ -528,8 +538,10 @@ void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
   *hasUnresolvedPD = false;
   *hasUnresolvedNDM = false;
 
-  // Calculate where we are in the meteorological day (0-95) for live testing
-  int current_s_idx = current_hour * 4 + current_min / 15;
+  // v5.79: Torn Time Read Fix
+  struct tm snapshot;
+  getTimeSnapshot(&snapshot);
+  int current_s_idx = snapshot.tm_hour * 4 + snapshot.tm_min / 15;
   current_s_idx = (current_s_idx + 61) % 96;
 
   for (int i = 0; i < 96; i++) {
@@ -588,20 +600,19 @@ void scanFileToMask(const char *fName, uint32_t *mask) {
   File f = SPIFFS.open(fName, FILE_READ);
   if (!f)
     return;
+  char buf[128];
   while (f.available()) {
-    String line = f.readStringUntil('\n');
-    if (line.length() < 5)
+    int l = f.readBytesUntil('\n', buf, sizeof(buf) - 1);
+    buf[l] = '\0';
+    if (l < 5)
       continue;
-    int commaIdx = line.indexOf(',');
-    if (commaIdx != -1) {
+
+    char *commaPtr = strchr(buf, ',');
+    if (commaPtr != NULL) {
       int sNum = -1;
       int sigVal = 0;
       
-      // Basic CSV parse to find SampleNo and SignalStrength
-      char buf[128];
-      strncpy(buf, line.c_str(), sizeof(buf)-1);
-      buf[sizeof(buf)-1] = '\0';
-      
+      // Basic CSV parse to find SampleNo and SignalStrength using strtok_r
       char *token;
       char *saveptr_scan = NULL;
       token = strtok_r(buf, ",", &saveptr_scan);
@@ -648,16 +659,18 @@ int countStored(const char *fName) {
   if (!f)
     return 0;
   int count = 0;
+  char line_buf[128];
   while (f.available()) {
     // v7.95: Keep WDT alive during file scan
     esp_task_wdt_reset();
-    String line = f.readStringUntil('\n');
-    // v7.70: Relaxed length to 10 for safety; check for comma (CSV) or semicolon (FTP format)
-    // v5.52 BUG-2 FIX: FTP records use ';' not ',', so check both separators
-    if (line.length() >= 10 && (line.indexOf(',') != -1 || line.indexOf(';') != -1)) {
+    int l = f.readBytesUntil('\n', line_buf, sizeof(line_buf) - 1);
+    line_buf[l] = '\0';
+    
+    // v5.79: Optimized char search (No heap String)
+    if (l >= 10 && (strchr(line_buf, ',') || strchr(line_buf, ';'))) {
       count++;
       if (count >= 120) // v7.95: Increased cap to 120 for safety
-        break; // v7.59: Cap — ghost gap-fill cannot inflate beyond one day
+        break; 
     }
   }
   f.close();
@@ -735,12 +748,15 @@ int countNightStored(const char *fName) {
   if (!f)
     return 0;
   int count = 0;
+  char line_buf[128];
   while (f.available()) {
-    String line = f.readStringUntil('\n');
-    if (line.length() >= 10) {
-      int commaIdx = line.indexOf(',');
-      if (commaIdx != -1) {
-        int sNum = line.substring(0, commaIdx).toInt();
+    esp_task_wdt_reset(); // Keep watchdog happy during scan
+    int l = f.readBytesUntil('\n', line_buf, sizeof(line_buf) - 1);
+    line_buf[l] = '\0';
+    if (l >= 10) {
+      char *commaPtr = strchr(line_buf, ',');
+      if (commaPtr != NULL) {
+        int sNum = atoi(line_buf);
         if (sNum >= 49 && sNum <= 85) {
           count++;
         }
@@ -762,68 +778,57 @@ void subtractUnsentFromMask(const char *uFile) {
       (strstr(uFile, ".kwd") != NULL || strstr(uFile, ".swd") != NULL ||
        strstr(uFile, "ftpunsent") != NULL);
 
+  char line_buf[128];
   while (f.available()) {
     esp_task_wdt_reset(); // v7.80: Handle massive backlog files without timeout
-    vTaskDelay(pdMS_TO_TICKS(1)); // Phase 7 Fix: Native RTOS 1ms yield (Avoids division by 0 on 10ms tick systems)
+    vTaskDelay(pdMS_TO_TICKS(1)); // Phase 7 Fix: Native RTOS 1ms yield
     long pos = f.position(); // Save position of the FIRST byte of the line
-    String line = f.readStringUntil('\n');
-
-    // v5.65 P4 Fix: For TRG (SYSTEM 0), skip records that are already
-    // marked as 'Processed' by the pointer to avoid inflating 'Missing' count.
+    // v5.80: Final heap optimization - direct buffer parsing
+    int l = f.readBytesUntil('\n', line_buf, sizeof(line_buf) - 1);
+    line_buf[l] = '\0';
+    
 #if SYSTEM == 0
     if (strstr(uFile, "unsent.txt") && !strstr(uFile, "ftpunsent.txt")) {
-        if (pos < unsent_pointer_count) continue;
+        if (pos < (long)unsent_pointer_count) continue;
     }
 #endif
 
-    line.trim();
-    if (line.length() < 10)
-      continue;
+    if (l < 10) continue;
 
     int sNum = -1;
-    int d_year = current_year, d_month = current_month,
-        d_day = current_day; // Default if unparseable
+    int d_year = current_year, d_month = current_month, d_day = current_day;
 
     if (isFtpFile) {
       // FTP format: stnId;YYYY-MM-DD,HH:MM;...
-      int semi1 = line.indexOf(';');
-      if (semi1 == -1)
-        continue;
-      int semi2 = line.indexOf(';', semi1 + 1);
-      if (semi2 == -1)
-        continue;
-      String dateTime = line.substring(semi1 + 1, semi2); // "YYYY-MM-DD,HH:MM"
-      if (dateTime.length() >= 10) {
-        d_year = dateTime.substring(0, 4).toInt();
-        d_month = dateTime.substring(5, 7).toInt();
-        d_day = dateTime.substring(8, 10).toInt();
+      char *semi1 = strchr(line_buf, ';');
+      if (semi1 == NULL) continue;
+      char *semi2 = strchr(semi1 + 1, ';');
+      if (semi2 == NULL) continue;
+      
+      *semi2 = '\0'; // Null terminate at second semicolon
+      char *dateTime = semi1 + 1;
+      if (strlen(dateTime) >= 10) {
+          d_year = atoi(dateTime);
+          d_month = atoi(dateTime + 5);
+          d_day = atoi(dateTime + 8);
+          
+          char *comma = strchr(dateTime, ',');
+          if (comma) {
+              int h = atoi(comma + 1);
+              char *colon = strchr(comma + 1, ':');
+              int m = colon ? atoi(colon + 1) : 0;
+              int raw = h * 4 + m / 15;
+              sNum = (raw + 61) % 96;
+          }
       }
-      int commaIdx = dateTime.indexOf(',');
-      if (commaIdx == -1)
-        continue;
-      String timeStr = dateTime.substring(commaIdx + 1); // "HH:MM"
-      int colonIdx = timeStr.indexOf(':');
-      if (colonIdx == -1)
-        continue;
-      int h = timeStr.substring(0, colonIdx).toInt();
-      int m = timeStr.substring(colonIdx + 1).toInt();
-      int raw = h * 4 + m / 15;
-      sNum = (raw + 61) % 96;
     } else {
-      // CSV format: sampleNo,YYYY-MM-DD,... OR format:
-      // sampleNo,YYYY-MM-DD,HH:MM,...
-      int commaIdx = line.indexOf(',');
-      if (commaIdx == -1)
-        continue;
-      sNum = line.substring(0, commaIdx).toInt();
-      int comma2 = line.indexOf(',', commaIdx + 1);
-      if (comma2 != -1) {
-        String sDate = line.substring(commaIdx + 1, comma2);
-        if (sDate.length() >= 10) {
-          d_year = sDate.substring(0, 4).toInt();
-          d_month = sDate.substring(5, 7).toInt();
-          d_day = sDate.substring(8, 10).toInt();
-        }
+      // CSV format: sampleNo,YYYY-MM-DD,...
+      sNum = atoi(line_buf);
+      char *comma1 = strchr(line_buf, ',');
+      if (comma1) {
+          d_year = atoi(comma1 + 1);
+          d_month = atoi(comma1 + 6);
+          d_day = atoi(comma1 + 9);
       }
     }
 
@@ -891,11 +896,14 @@ void reconstructSentMasks(bool alreadyLocked) {
   char prevFile[32];
   char curFile[32];
 
-  int cur_dd = current_day, cur_mm = current_month, cur_yy = current_year;
-  int prev_dd = current_day, prev_mm = current_month, prev_yy = current_year;
+  // v5.79: Torn Time Read Fix
+  struct tm snapshot;
+  getTimeSnapshot(&snapshot);
+  int cur_dd = snapshot.tm_mday, cur_mm = snapshot.tm_mon + 1, cur_yy = snapshot.tm_year + 1900;
+  int prev_dd = cur_dd, prev_mm = cur_mm, prev_yy = cur_yy;
 
-  int h = (current_hour < 24) ? current_hour : 0;
-  int m = (current_min < 60) ? current_min : 0;
+  int h = snapshot.tm_hour;
+  int m = snapshot.tm_min;
   int sampleNo = h * 4 + m / 15;
   sampleNo = (sampleNo + 61) % 96;
 
@@ -1177,28 +1185,28 @@ int get_total_backlogs() {
     return diag_backlog_total;
   }
 
-  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
     return diag_backlog_total; // Return cached value on contention
   }
 
   int total = 0;
   const char *files[] = {"/unsent.txt", "/ftpunsent.txt"};
   for (int i = 0; i < 2; i++) {
-    if (SPIFFS.exists(files[i])) {
-      File f = SPIFFS.open(files[i], FILE_READ);
-      if (f) {
-        // v5.68 BUGFIX: Accurate UI Backlog Count
-        // Fast-forward past already transmitted JSON records so the LCD shows true remaining count
-        if (i == 0 && SPIFFS.exists("/unsent_pointer.txt")) {
-          File ptrFile = SPIFFS.open("/unsent_pointer.txt", FILE_READ);
-          if (ptrFile) {
-            long ptrVal = ptrFile.readString().toInt();
-            if (ptrVal > 0 && ptrVal < f.size()) {
-              f.seek(ptrVal);
-            }
-            ptrFile.close();
+    // v5.76: Atomic Open (R-02 fix)
+    File f = SPIFFS.open(files[i], FILE_READ);
+    if (f) {
+      // v5.68 BUGFIX: Accurate UI Backlog Count
+      if (i == 0) {
+        File ptrFile = SPIFFS.open("/unsent_pointer.txt", FILE_READ);
+        if (ptrFile) {
+          String pStr = ptrFile.readString();
+          long ptrVal = pStr.toInt();
+          if (ptrVal > 0 && ptrVal < (long)f.size()) {
+            f.seek(ptrVal);
           }
+          ptrFile.close();
         }
+      }
 
         // v5.67 UI FREEZE FIX: Switch from slow String allocation to raw buffer read
         char tbuf[128];
@@ -1212,7 +1220,6 @@ int get_total_backlogs() {
         f.close();
       }
     }
-  }
   xSemaphoreGive(fsMutex);
   diag_backlog_total = total;
   last_backlog_check = millis();

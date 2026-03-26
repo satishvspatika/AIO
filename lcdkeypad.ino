@@ -214,9 +214,14 @@ void refresh_sensor_data() {
   }
 
   // Live fields
-  if (cur_fld_no == FLD_TEMP) snprintf(ui_data[FLD_TEMP].bottomRow, 17, "%0.1f", temperature);
-  else if (cur_fld_no == FLD_HUMIDITY) snprintf(ui_data[FLD_HUMIDITY].bottomRow, 17, "%0.1f", humidity);
-  else if (cur_fld_no == FLD_INST_WS) snprintf(ui_data[FLD_INST_WS].bottomRow, 17, "%0.2f", cur_wind_speed);
+  // v5.76: Protected sensor read (Consistency Fix)
+  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+    if (cur_fld_no == FLD_TEMP) snprintf(ui_data[FLD_TEMP].bottomRow, 17, "%0.1f", temperature);
+    else if (cur_fld_no == FLD_HUMIDITY) snprintf(ui_data[FLD_HUMIDITY].bottomRow, 17, "%0.1f", humidity);
+    xSemaphoreGive(i2cMutex);
+  }
+  
+  if (cur_fld_no == FLD_INST_WS) snprintf(ui_data[FLD_INST_WS].bottomRow, 17, "%0.2f", cur_wind_speed);
   else if (cur_fld_no == FLD_AVG_WS) snprintf(ui_data[FLD_AVG_WS].bottomRow, 17, "%0.2f", cur_avg_wind_speed);
   else if (cur_fld_no == FLD_WIND_DIR) snprintf(ui_data[FLD_WIND_DIR].bottomRow, 17, "%03d", (int)windDir);
   else if (cur_fld_no == FLD_PRESSURE) snprintf(ui_data[FLD_PRESSURE].bottomRow, 17, "%0.1f", pressure);
@@ -269,7 +274,6 @@ void refresh_sensor_data() {
 void lcdkeypad(void *pvParameters) {
   esp_task_wdt_add(NULL);
   static int calib_mode = 0; // 0=Field, 1=Test
-  static int last_lcd_state = 0; 
   static char savedWakeupKey = NO_KEY;
   static int delete_confirm_state = 0; // v5.60: For two-step factory reset
 
@@ -581,8 +585,9 @@ void lcdkeypad(void *pvParameters) {
                 lcd.clear(); lcd.print("WIFI STARTING...");
                 xSemaphoreGive(i2cMutex);
               }
-              // Spawn the dedicated WebServer task gracefully
-              xTaskCreatePinnedToCore(webServer, "webServerTask", 8192, NULL, 1, &webServer_h, 1);
+              // v5.79: Hardened WiFi startup sequence
+              setCpuFrequencyMhz(160); // Set frequency BEFORE task starts on Core 0
+              xTaskCreatePinnedToCore(webServer, "webServerTask", 8192, NULL, 1, &webServer_h, 0); // Pin to Core 0
             } else {
               if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                 lcd.clear(); lcd.print("WIFI STOPPING...");

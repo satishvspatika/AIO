@@ -23,7 +23,7 @@ void webServer(void *pvParameters) {
 
   // Configure ESP32 as an Access Point dynamically with Station ID
   debugln("Configuring access point...");
-  setCpuFrequencyMhz(160); // WiFi needs minimum 160MHz
+  // Frequency set by task launcher in lcdkeypad.ino
   
   char ap_name[32];
   snprintf(ap_name, sizeof(ap_name), "SpatikaWeb");

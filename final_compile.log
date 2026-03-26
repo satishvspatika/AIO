@@ -1,10 +1,86 @@
 --- Building for 8MB Flash ESP32 (Default) ---
 --- Using partition file: partitions.csv ---
 WARNING: library LiquidCrystal I2C claims to run on avr architecture(s) and may be incompatible with your current board which runs on esp32 architecture(s).
-Sketch uses 1262451 bytes (87%) of program storage space. Maximum is 1441792 bytes.
-Global variables use 54876 bytes (16%) of dynamic memory, leaving 272804 bytes for local variables. Maximum is 327680 bytes.
+Sketch uses 1254463 bytes (70%) of program storage space. Maximum is 1769472 bytes.
+Global variables use 56108 bytes (17%) of dynamic memory, leaving 271572 bytes for local variables. Maximum is 327680 bytes.
 
---- Compilation Successful (v5.55 / 8mb) ---
+--- Compilation Successful (v5.69 / 8mb) ---
 Binary: /tmp/aio_build_8mb/AIO9_5.0.ino.bin
 
 To flash: ./quick_flash.sh [PORT] 8mb
+🔍 Checking if /dev/cu.usbserial-A50285BI is busy...
+fuser: [-cfu] file ...
+	-c	file is treated as mount point
+	-f	the report is only for the named files
+	-u	print username of pid in parenthesis
+🚀 Target Port: /dev/cu.usbserial-A50285BI | Flash: 8mb
+--- QUICK FLASH (App Only at 0x10000) | 8mb | Port: /dev/cu.usbserial-A50285BI ---
+esptool.py v4.7.0
+Serial port /dev/cu.usbserial-A50285BI
+Connecting....
+Chip is ESP32-D0WD-V3 (revision v3.1)
+Features: WiFi, BT, Dual Core, 240MHz, VRef calibration in efuse, Coding Scheme None
+Crystal is 40MHz
+MAC: 80:f3:da:8f:24:34
+Uploading stub...
+Running stub...
+Stub running...
+Changing baud rate to 921600
+Changed.
+Configuring flash size...
+Flash will be erased from 0x00010000 to 0x00142fff...
+Compressed 1255424 bytes to 781711...
+Writing at 0x00010000... (2 %)
+Writing at 0x0001a543... (4 %)
+Writing at 0x00027b0b... (6 %)
+Writing at 0x00030b35... (8 %)
+Writing at 0x00037c2f... (10 %)
+Writing at 0x0004b111... (12 %)
+Writing at 0x00050982... (14 %)
+Writing at 0x00056c31... (16 %)
+Writing at 0x0005d88f... (18 %)
+Writing at 0x00064862... (20 %)
+Writing at 0x0006b9fe... (22 %)
+Writing at 0x00071db9... (25 %)
+Writing at 0x000776d4... (27 %)
+Writing at 0x0007d5f9... (29 %)
+Writing at 0x000830c7... (31 %)
+Writing at 0x00088bc6... (33 %)
+Writing at 0x0008e467... (35 %)
+Writing at 0x00093bc2... (37 %)
+Writing at 0x00099256... (39 %)
+Writing at 0x0009e89b... (41 %)
+Writing at 0x000a403d... (43 %)
+Writing at 0x000a9a6d... (45 %)
+Writing at 0x000aed7c... (47 %)
+Writing at 0x000b4022... (50 %)
+Writing at 0x000b99b8... (52 %)
+Writing at 0x000bec8d... (54 %)
+Writing at 0x000c3fab... (56 %)
+Writing at 0x000c95b1... (58 %)
+Writing at 0x000cefd7... (60 %)
+Writing at 0x000d49d9... (62 %)
+Writing at 0x000da3f1... (64 %)
+Writing at 0x000df941... (66 %)
+Writing at 0x000e4f9e... (68 %)
+Writing at 0x000eaa44... (70 %)
+Writing at 0x000f0717... (72 %)
+Writing at 0x000f5f40... (75 %)
+Writing at 0x000fb89d... (77 %)
+Writing at 0x00101622... (79 %)
+Writing at 0x00107383... (81 %)
+Writing at 0x0010cc5a... (83 %)
+Writing at 0x00112f13... (85 %)
+Writing at 0x0011c8d8... (87 %)
+Writing at 0x0012269f... (89 %)
+Writing at 0x001279c7... (91 %)
+Writing at 0x0012d1d0... (93 %)
+Writing at 0x00132e45... (95 %)
+Writing at 0x0013863e... (97 %)
+Writing at 0x0013e50c... (100 %)
+Wrote 1255424 bytes (781711 compressed) at 0x00010000 in 10.2 seconds (effective 987.9 kbit/s)...
+Hash of data verified.
+
+Leaving...
+Hard resetting via RTS pin...
+--- Quick Flash Complete ---

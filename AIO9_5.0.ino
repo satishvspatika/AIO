@@ -403,6 +403,7 @@ int sd_card_ok = 0;
 int send_daily = 0;
 int cur_mode = 0;
 int cur_fld_no = 0;
+int last_lcd_state = 0; // v5.70 Final: Global UI state tracker
 volatile bool gprs_started = false;
 int badReads = 0;
 int prev_wind_count = 0;
@@ -597,6 +598,21 @@ void setup() {
     }
   }
   // --- GPS Location Recovery ---
+  // v5.82 Platinum: Post-ID Recovery for atomic State-Anchor temp files
+  if (strlen(station_name) > 0) {
+      char tmpRec[64], txtRec[64];
+      snprintf(tmpRec, sizeof(tmpRec), "/lastrecorded_%s.tmp", station_name);
+      snprintf(txtRec, sizeof(txtRec), "/lastrecorded_%s.txt", station_name);
+      if (!SPIFFS.exists(txtRec) && SPIFFS.exists(tmpRec)) {
+          SPIFFS.rename(tmpRec, txtRec);
+          debugln("[FS] Recovered stranded lastrecorded.tmp");
+      }
+  }
+  if (!SPIFFS.exists("/prevWindSpeed.txt") && SPIFFS.exists("/prevWS.tmp")) {
+      SPIFFS.rename("/prevWS.tmp", "/prevWindSpeed.txt");
+      debugln("[FS] Recovered stranded prevWS.tmp");
+  }
+
   loadGPS(); // v5.51: Ensure coordinates are available even after POR
 
   // --- OTA Failure Tracking (Change namespace) ---
@@ -1530,6 +1546,23 @@ void initialize_hw() {
         SPIFFS.rename("/signature.tmp", "/signature.txt");
         debugln("[FS] Recovered stranded signature.tmp");
     }
+
+    // v5.80: Trim Recovery (Adoption of stranded data after power-cut)
+    if (!SPIFFS.exists("/unsent.txt") && SPIFFS.exists("/trim.tmp")) {
+        SPIFFS.rename("/trim.tmp", "/unsent.txt");
+        debugln("[FS] Recovered stranded trim.tmp -> unsent.txt");
+    }
+    if (!SPIFFS.exists("/ftpunsent.txt") && SPIFFS.exists("/ftptrim.tmp")) {
+        SPIFFS.rename("/ftptrim.tmp", "/ftpunsent.txt");
+        debugln("[FS] Recovered stranded ftptrim.tmp -> ftpunsent.txt");
+    }
+    
+    // v5.80: Pointer Recovery
+    if (!SPIFFS.exists("/unsent_pointer.txt") && SPIFFS.exists("/ptr.tmp")) {
+        SPIFFS.rename("/ptr.tmp", "/unsent_pointer.txt");
+        debugln("[FS] Recovered stranded ptr.tmp -> unsent_pointer.txt");
+    }
+
   }
 
   SPI.begin(18, 19, 23, 5);
@@ -1636,7 +1669,7 @@ void loop() {
   }
 
   esp_task_wdt_reset(); // Pet the watchdog for the loopTask
-  delay(500);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
 }
 
 void print_reset_reason(RESET_REASON reason) {

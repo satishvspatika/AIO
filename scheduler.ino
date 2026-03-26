@@ -5,11 +5,13 @@ void scheduler(void *pvParameters) {
   // String temp, temp1; // Safer: removed usage
   // Replaced with local arrays where needed.
   bool curFileExists = false;
+  bool fs_locked = false; // v5.70: Mutex state tracker (C-01 Fix)
 
   //    li_bat,li_bat_val;
   // Battery Sense
   // li_bat ADC reads are handled fully inside get_calibrated_battery_voltage()
   li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
+  float hum_output = 0.0;                        // v5.79: Global function scope for goto safety
 
   if (!wifi_active) {
     int solar_raw;
@@ -39,99 +41,20 @@ void scheduler(void *pvParameters) {
 #if DEBUG == 1
   debugln();
   debugln();
-  // debug("*********** SPIFF FILES IN THE SYSTEM ***********");
   debugln();
-  File root = SPIFFS.open("/");
-  File file = root.openNextFile();
-  // while (file) {
-  //   debug("SPIFFS FILE: ");
-  //   debugln(file.name());
-  //   file = root.openNextFile();
-  // }
-  file.close();
-  root.close(); // v5.52 BUG-5 FIX: Close root handle to prevent leaks
-
-  vTaskDelay(50 / portTICK_PERIOD_MS);
-
-#if SYSTEM == 0
-  if (SPIFFS.exists(unsent_file)) {
-    debug("The FILE content of UNSENT file ");
-    debugln(unsent_file);
-    File file4 = SPIFFS.open(unsent_file, FILE_READ);
-    if (!file4) {
-      debugln("Failed to open unsent file for debug reading");
-    } else {
-      debug("File Size: ");
-      debugln(file4.size());
-      // debugln("Dump skipped");
-      file4.close();
+  // v5.76: Protected Startup SPIFFS Scan (Only in DEBUG)
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+    File root = SPIFFS.open("/");
+    File file = root.openNextFile();
+    while (file) {
+      debug("SPIFFS [INIT]: ");
+      debugln(file.name());
+      file.close();
+      file = root.openNextFile();
     }
-    debugln();
+    root.close(); 
+    xSemaphoreGive(fsMutex);
   }
-#endif
-
-#if (SYSTEM == 1 || SYSTEM == 2)
-  if (SPIFFS.exists(ftpunsent_file)) {
-    debug("The FILE content of FTP UNSENT file ");
-    debugln(ftpunsent_file);
-    File file4 = SPIFFS.open(ftpunsent_file, FILE_READ);
-    if (!file4) {
-      debugln("Failed to open ftpunsent file for debug reading");
-    } else {
-      debug("File Size: ");
-      debugln(file4.size());
-      // debugln("Dump skipped");
-      file4.close();
-    }
-    debugln();
-  }
-
-  if (SPIFFS.exists(fileName)) {
-    debug("The FILE content of formatted FTP UNSENT file ");
-    debugln(fileName);
-    File file4 = SPIFFS.open(fileName, FILE_READ);
-    if (!file4) {
-      debugln("Failed to open formatted FTP unsent file for debug reading");
-    } else {
-      debug("File Size: ");
-      debugln(file4.size());
-      // debugln("Dump skipped");
-      file4.close();
-    }
-    debugln();
-  }
-#endif
-
-  snprintf(temp_file, sizeof(temp_file), "/lastrecorded_%s.txt", station_name);
-  if (SPIFFS.exists(temp_file)) {
-    debug("The FILE content of LAST RECORDED file ");
-    debugln(temp_file);
-    File file4 = SPIFFS.open(temp_file, FILE_READ);
-    if (!file4) {
-      debugln("Failed to open last recorded file for debug reading");
-    } else {
-      // debugln("Dump skipped");
-      file4.close();
-    }
-    debugln();
-  }
-
-  vTaskDelay(50 / portTICK_PERIOD_MS);
-  snprintf(temp_file, sizeof(temp_file), "/closingdata_%s.txt", station_name);
-
-  if (SPIFFS.exists(temp_file)) {
-    debug("The FILE content of CLOSING DATA file ");
-    debugln(temp_file);
-    File file4 = SPIFFS.open(temp_file, FILE_READ);
-    if (!file4) {
-      debugln("Failed to open closing data file for debug reading");
-    } else {
-      // debugln("Dump skipped");
-      file4.close();
-    }
-    debugln();
-  }
-
 #endif
 
   //    while (!rtcReady) {
@@ -244,7 +167,7 @@ void scheduler(void *pvParameters) {
          is_fresh_boot_entry) && // Allow entry if fresh boot, to handle "Late
                                  // Boot" sleep logic
         timeSyncRequired == false &&
-        (httpInitiated == false)) {
+        (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false)) {
       
       schedulerBusy = true; // v5.65: Lock system awake during 15-min processing
       // last_processed_sample_idx = current_sample_idx; // v5.66: Moved to END of successful processing to allow retries on failure
@@ -521,11 +444,8 @@ void scheduler(void *pvParameters) {
                        : temp_read + TEMP_OFFSET_CORRECTION; // AG1
       check_hum = hum_read;
 
-      // CHANGE 2: Humidity Correction for high values
-      if (check_hum >= HUMIDITY_HIGH_THRESHOLD) {
-        float hum_correction = (random(25, 36) / 10.0); // Random 2.5 to 3.5
-        check_hum += hum_correction;
-      }
+      // v5.75: Humidity Jitter moved to PRODUCTION SNAPSHOT section (M-03 fix)
+      // to avoid inflating diagnostic anchors (last_valid_hum).
 
       if (check_temp < 0)
         check_temp = 0;
@@ -623,6 +543,9 @@ void scheduler(void *pvParameters) {
           debugf1("[RESCUE] WS corrected to %.2f (stuck/err)\n", cur_avg_wind_speed);
         } else {
           prev_15min_ws = cur_avg_wind_speed; // Update anchor if data is good
+          // v5.70 FIX: Reset stuck counter on success (H-03)
+          diag_ws_same_count = 0;
+          diag_ws_cv = false;
         }
 
         // 2. Wind Direction Rescue
@@ -652,6 +575,9 @@ void scheduler(void *pvParameters) {
         } else {
           last_valid_temp = check_temp; // Update golden anchor
           prev_15min_temp = check_temp; // Update stuck detection anchor
+          // v5.70 FIX: Reset stuck counter on success (H-03)
+          temp_same_count = 0;
+          diag_temp_cv = false;
         }
 
         // Humidity Rescue
@@ -665,6 +591,9 @@ void scheduler(void *pvParameters) {
         } else {
           last_valid_hum = check_hum; // Update golden anchor
           prev_15min_hum = check_hum; // Update stuck detection anchor
+          // v5.70 FIX: Reset stuck counters on success to allow recovery from rescue mode
+          hum_same_count = 0;
+          diag_hum_cv = false;
         }
       }
       // ─────────────────────────────────────────────────────────────────────
@@ -672,8 +601,17 @@ void scheduler(void *pvParameters) {
       // --- START OF PRODUCTION SNAPSHOT ---
       // These buffers are now PROTECTED. background tasks (tempHum) no longer
       // write here.
+      // v5.75: Apply Jitter just before printing/storing (M-03 fix)
+      hum_output = check_hum;
+      if (hum_output >= HUMIDITY_HIGH_THRESHOLD) {
+         hum_output += (random(25, 36) / 10.0);
+      }
+      if (hum_output > 99.9) hum_output = 99.9;
+      // v5.80: Removed check_hum = hum_output feedback to prevent systematic
+      // bias in gap-fill interpolation after saturation events.
+
       snprintf(inst_temp, sizeof(inst_temp), "%05.1f", check_temp);
-      snprintf(inst_hum, sizeof(inst_hum), "%05.1f", check_hum);
+      snprintf(inst_hum, sizeof(inst_hum), "%05.1f", hum_output);
       snprintf(avg_wind_speed, sizeof(avg_wind_speed), "%05.2f",
                cur_avg_wind_speed);
       snprintf(inst_wd, sizeof(inst_wd), "%03d", windDir);
@@ -726,10 +664,13 @@ void scheduler(void *pvParameters) {
 
       { // Save state
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          File fileTemp5 = SPIFFS.open("/prevWindSpeed.txt", FILE_WRITE);
-          if (fileTemp5) {
-            fileTemp5.print(cur_avg_wind_speed);
-            fileTemp5.close();
+          // LTS-14.2: Atomic Write Pattern (tmp -> rename)
+          File fTmp = SPIFFS.open("/prevWS.tmp", FILE_WRITE);
+          if (fTmp) {
+            fTmp.print(cur_avg_wind_speed);
+            fTmp.close();
+            SPIFFS.remove("/prevWindSpeed.txt");
+            SPIFFS.rename("/prevWS.tmp", "/prevWindSpeed.txt");
           }
           xSemaphoreGive(fsMutex);
         }
@@ -809,7 +750,11 @@ void scheduler(void *pvParameters) {
       // Usually, samples 0-60 (08:45-23:45) close on the NEXT morning.
       // But if we wake up late (after midnight 00:00), current_day IS already the close date.
       if (sampleNo <= MIDNIGHT_SAMPLE_NO) {
-        if (record_hr <= current_hour) {
+        // v5.70 FIX: Robust midnight wrap check. 
+        // If it's early morning (current_hour < 6) but a late-night record (record_hr >= 21)
+        // or if dates already match, proceed with next-date anchor.
+        // v5.71 FIX: Simplified midnight logic. Date is always anchored to NEXT day for sample 0-60.
+        if (sampleNo <= 60 || rf_cls_dd != cur_day) {
            next_date(&rf_cls_dd, &rf_cls_mm, &rf_cls_yy); 
         }
       }
@@ -840,6 +785,7 @@ void scheduler(void *pvParameters) {
           diag_ndm_count_prev = diag_ndm_count;
           diag_first_http_count_prev = diag_first_http_count;
           diag_net_data_count_prev = diag_net_data_count;
+          backfill_done = false; // v5.75: Allow mask reconstruction on new day (M-04 fix)
 
           // Capture mask
           diag_sent_mask_prev[0] = diag_sent_mask_cur[0];
@@ -891,6 +837,7 @@ void scheduler(void *pvParameters) {
           temp_same_count = 0;
           hum_same_count = 0;
           diag_ws_same_count = 0;
+          backfill_done = false; // v5.77: Allow rollover reconstruction (M-04 fix)
         } // End of destructive reset
 
 
@@ -898,13 +845,10 @@ void scheduler(void *pvParameters) {
       }
 
       // v7.82 Reconstruction: Recover sent mask from SPIFFS (Cold Boot or
-      // Recovery) Must happen AFTER rollover check to prevent recovered counts
+      // Recovery or Midnight) Must happen AFTER rollover check to prevent recovered counts
       // from being wiped. 
-      // Phase 12 Fix: Guard strictly with last_processed_sample_idx == -1 so
-      // normal midnight rollovers (which reset diag_pd_count to 0) do not
-      // unnecessarily trigger a full disk scan!
-      if (diag_pd_count == 0 && current_year > 2024 && last_processed_sample_idx == -1) {
-        reconstructSentMasks();
+      if (diag_pd_count == 0 && current_year > 2024) {
+        reconstructSentMasks(); // v5.70: Removed index guard to fix M-04
         fresh_boot_check_done = true;
       }
 
@@ -1004,7 +948,7 @@ void scheduler(void *pvParameters) {
           debugln("Duplicate sample detected (RF). Data already logged.");
           data_writing_initiated = 0;
           skip_primary_http = true; // No need to hit server with a duplicate
-          httpInitiated = true;     // v5.50: Block sleep
+          __atomic_store_n(&httpInitiated, true, __ATOMIC_RELEASE);     // v5.50: Block sleep
           goto TRIGGER_HTTP;
         }
 
@@ -1075,7 +1019,7 @@ void scheduler(void *pvParameters) {
                   "this interval.");
           data_writing_initiated = 0;
           skip_primary_http = true;
-          httpInitiated = true; // v5.50: Block sleep for GPRS task
+          __atomic_store_n(&httpInitiated, true, __ATOMIC_RELEASE); // v5.50: Block sleep for GPRS task
           goto TRIGGER_HTTP;
         }
 
@@ -1127,8 +1071,7 @@ void scheduler(void *pvParameters) {
           debugln("Duplicate sample detected (TWS-RF).");
           data_writing_initiated = 0;
           skip_primary_http = true;
-          httpInitiated =
-              true; // v5.50: Block sleep for GPRS task health/backlog check
+          __atomic_store_n(&httpInitiated, true, __ATOMIC_RELEASE); // v5.50: Block sleep for GPRS task health/backlog check
           goto TRIGGER_HTTP;
         }
 
@@ -1252,6 +1195,7 @@ void scheduler(void *pvParameters) {
           portEXIT_CRITICAL(&syncMux);
           goto TRIGGER_HTTP;
         }
+        fs_locked = true; // v5.71 FIX: Track lock state for global release (NEW-3)
 
         // TIER 1 DATA SANCTITY: Brownout Protection
         if (li_bat_val < 3.4f && li_bat_val > 0.5f) {
@@ -1260,6 +1204,7 @@ void scheduler(void *pvParameters) {
            data_writing_initiated = 0;
            schedulerBusy = false;
            xSemaphoreGive(fsMutex);
+           fs_locked = false; 
            portENTER_CRITICAL(&syncMux);
            sync_mode = eHttpStop;
            portEXIT_CRITICAL(&syncMux);
@@ -1279,10 +1224,12 @@ void scheduler(void *pvParameters) {
            
            while (f) {
                esp_task_wdt_reset();
+               vTaskDelay(10 / portTICK_PERIOD_MS); // v5.70: Yield during FS walk (H-01 fix)
                String fName = f.name();
                // Identify daily log files: e.g. TWS1931_20260324.txt
                if (fName.indexOf("_20") != -1 && fName.endsWith(".txt")) {
-                   if (oldest_file == "" || fName < oldest_file) {
+                   // v5.70 FIX H-05: Absolute protection for current active log
+                   if (fName != cur_file && (oldest_file == "" || fName < oldest_file)) {
                        oldest_file = fName;
                    }
                }
@@ -1298,11 +1245,13 @@ void scheduler(void *pvParameters) {
                debugln("[SPIFFS] FATAL: Could not locate old logs. System files dominating storage. Aborting write.");
                signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
                data_writing_initiated = 0;
-               schedulerBusy = false;                xSemaphoreGive(fsMutex);
-                portENTER_CRITICAL(&syncMux);
-                sync_mode = eHttpStop; 
-                portEXIT_CRITICAL(&syncMux);
-                goto TRIGGER_HTTP;
+               schedulerBusy = false;                
+               xSemaphoreGive(fsMutex); // Orphaned Give C-01 (Path A)
+               fs_locked = false;
+               portENTER_CRITICAL(&syncMux);
+               sync_mode = eHttpStop; 
+               portEXIT_CRITICAL(&syncMux);
+               goto TRIGGER_HTTP;
            }
            prune_attempts++;
         }
@@ -1329,11 +1278,20 @@ void scheduler(void *pvParameters) {
 
 #if SYSTEM == 0
           snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
+          // LTS-14.5: Size Cap Protection
+          if (SPIFFS.exists(unsent_file)) {
+            File f_cap = SPIFFS.open(unsent_file, FILE_READ);
+            if (f_cap && f_cap.size() > 150000) {
+              f_cap.close(); SPIFFS.remove(unsent_file);
+              debugln("[SPIFFS] unsent.txt > 150KB. Truncating.");
+            } else if (f_cap) f_cap.close();
+          }
           File unsent = SPIFFS.open(unsent_file, FILE_APPEND);
           if (!unsent) {
               debugln("[SCHED] FATAL GAP: Could not open unsent.txt for Gap Fill!");
               data_writing_initiated = 0; schedulerBusy = false; 
               xSemaphoreGive(fsMutex); 
+              fs_locked = false; // Fix CRITICAL: Prevent Double-Give at TRIGGER_HTTP
               portENTER_CRITICAL(&syncMux);
               sync_mode = eHttpStop;
               portEXIT_CRITICAL(&syncMux);
@@ -1343,11 +1301,20 @@ void scheduler(void *pvParameters) {
 
 #if (SYSTEM == 1 || SYSTEM == 2)
           snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
+          // LTS-14.5: Size Cap Protection
+          if (SPIFFS.exists(ftpunsent_file)) {
+            File f_cap = SPIFFS.open(ftpunsent_file, FILE_READ);
+            if (f_cap && f_cap.size() > 150000) {
+              f_cap.close(); SPIFFS.remove(ftpunsent_file);
+              debugln("[SPIFFS] ftpunsent.txt > 150KB. Truncating.");
+            } else if (f_cap) f_cap.close();
+          }
           File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
           if (!ftpunsent) {
               debugln("[SCHED] FATAL GAP: Could not open ftpunsent.txt for Gap Fill!");
               data_writing_initiated = 0; schedulerBusy = false; 
               xSemaphoreGive(fsMutex); 
+              fs_locked = false; // Fix CRITICAL: Prevent Double-Give at TRIGGER_HTTP
               portENTER_CRITICAL(&syncMux);
               sync_mode = eHttpStop;
               portEXIT_CRITICAL(&syncMux);
@@ -1361,6 +1328,9 @@ void scheduler(void *pvParameters) {
           // sampleNo including current sampleNo
           debugln("Gap filling for loop started... ");
           for (int q = last_sampleNo + 1; q <= sampleNo; q++) {
+            esp_task_wdt_reset();               // v5.73: Pet WDT on every gap iteration (C-03 fix)
+            vTaskDelay(1 / portTICK_PERIOD_MS); // v5.73: Yield on every iteration (C-03 fix)
+
             // diag_pd_count and diag_ndm_count incremented after file write
             // (line ~1294)
             temp_min += MINUTES_PER_SAMPLE;
@@ -1422,12 +1392,7 @@ void scheduler(void *pvParameters) {
                        inst_wd, signal_strength, bat_val);
 
 #endif
-              //                                                        len =
-              //                                                        strlen(append_text);
-              //                                                        append_text[len]
-              //                                                        =
               //                                                        '\0';
-
             } else { // Gap Filling with Linear Interpolation
               float target_number, min_val, max_val;
               char fill_inst_temp[7], fill_inst_hum[7], fill_avg_wind_speed[7],
@@ -1760,6 +1725,14 @@ void scheduler(void *pvParameters) {
         if (data_writing_initiated == 1 && skip_primary_http) {
 #if SYSTEM == 0
             debugln("Primary skipped mid-day. Queuing CURRENT record to unsent.txt...");
+            // LTS-14.5: Size Cap Protection
+            if (SPIFFS.exists(unsent_file)) {
+                File f_cap = SPIFFS.open(unsent_file, FILE_READ);
+                if (f_cap && f_cap.size() > 150000) {
+                    f_cap.close(); SPIFFS.remove(unsent_file);
+                    debugln("[SPIFFS] unsent.txt full. Truncating.");
+                } else if (f_cap) f_cap.close();
+            }
             File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
             if (mid_unsent) {
                 mid_unsent.print(append_text);
@@ -1768,6 +1741,14 @@ void scheduler(void *pvParameters) {
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
             debugln("Primary skipped mid-day. Queuing CURRENT record to ftpunsent.txt...");
+            // LTS-14.5: Size Cap Protection
+            if (SPIFFS.exists(ftpunsent_file)) {
+                File f_cap = SPIFFS.open(ftpunsent_file, FILE_READ);
+                if (f_cap && f_cap.size() > 150000) {
+                    f_cap.close(); SPIFFS.remove(ftpunsent_file);
+                    debugln("[SPIFFS] ftpunsent.txt full. Truncating.");
+                } else if (f_cap) f_cap.close();
+            }
             File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
             if (mid_ftp) {
                 mid_ftp.print(ftpappend_text);
@@ -1802,7 +1783,7 @@ void scheduler(void *pvParameters) {
         File file1;
         // Phase 12 Fix: Lock fsMutex for the ENTIRE duration of new file creation
         // to prevent VFS table shredding.
-        bool fs_locked = false;
+        fs_locked = false; // v5.71: Reset the OUTER variable before take
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
           fs_locked = true;
           file1 = SPIFFS.open(cur_file, FILE_APPEND);
@@ -1834,6 +1815,7 @@ void scheduler(void *pvParameters) {
           if (fs_locked) {
             if (file1) file1.close();
             xSemaphoreGive(fsMutex);
+            fs_locked = false; // Fix Path B: Reset flag before double-give at TRIGGER_HTTP
           }
           if (sd_card_ok && sd1) {
             sd1.close();
@@ -2364,6 +2346,9 @@ void scheduler(void *pvParameters) {
               // genuine missed records, we will chunk them during FTP
               // transfer
               for (int q = last_sampleNo + 1; q <= MAX_SAMPLE_NO; q++) {
+                esp_task_wdt_reset();               // v5.77: WDT Pet (C-03 part 2)
+                vTaskDelay(1 / portTICK_PERIOD_MS); // v5.77: Yield (C-03 part 2)
+                
                 if (diag_pd_count_prev < 96)
                   diag_pd_count_prev++;
                 if (q >= 50 && q <= 85)
@@ -2633,30 +2618,27 @@ void scheduler(void *pvParameters) {
         } // matches the brace for 'else' at line 1527
       }   // matches the brace for 'else' at line 1390
       
-      xSemaphoreGive(fsMutex); // Release after recording/gapfill
-      
-      //          len = strlen(append_text);
-      //          append_text[len] = '\0';
+      if (fs_locked) {
+        xSemaphoreGive(fsMutex); // v5.70 Final: Safe holistic release (C-01 fix)
+        fs_locked = false;
+      }
 #if SYSTEM == 0
-      strcpy(store_text, append_text); // COPY this so that it can beused for
-                                       // storing data if signal is not good.
+      strcpy(store_text, append_text); 
       debugln();
       debug("append_text->store_text : Used for storing in unsent file is: ");
       debugln(store_text);
-      //   sprintf(temp_file, "/lastrecorded_%s.txt", station_name);
-      //   File filelastrecord = SPIFFS.open(temp_file, FILE_WRITE);
-      //   filelastrecord.print(store_text);
-      //   filelastrecord.close();
-      snprintf(temp_file, sizeof(temp_file), "/lastrecorded_%s.txt",
-               station_name);
+
+      snprintf(temp_file, sizeof(temp_file), "/lastrecorded_%s.txt", station_name);
       { // Scope for filelastrecord
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-          File filelastrecord = SPIFFS.open(temp_file, FILE_WRITE);
-          if (!filelastrecord) {
-            debugln("Failed to open lastrecorded file for writing");
-          } else { // FIX #2 Safe write
-            filelastrecord.println(store_text); // v7.65: Force newline for clean extraction
-            filelastrecord.close();
+          char tmpPath[64];
+          snprintf(tmpPath, sizeof(tmpPath), "/lastrecorded_%s.tmp", station_name);
+          File fTmp = SPIFFS.open(tmpPath, FILE_WRITE);
+          if (fTmp) {
+            fTmp.println(store_text);
+            fTmp.close();
+            SPIFFS.remove(temp_file);
+            SPIFFS.rename(tmpPath, temp_file);
           }
           xSemaphoreGive(fsMutex);
         }
@@ -2667,26 +2649,22 @@ void scheduler(void *pvParameters) {
 #endif
 
 #if (SYSTEM == 1 || SYSTEM == 2)
-      strcpy(store_text,
-             append_text); // v7.66: Use CSV format for internal parsing logic
+      strcpy(store_text, append_text); 
       debugln();
       debug("append_text->store_text : Used for internal status: ");
       debugln(store_text);
 
-      //   sprintf(temp_file, "/lastrecorded_%s.txt", station_name);
-      //   File filelastrecord = SPIFFS.open(temp_file, FILE_WRITE);
-      //   filelastrecord.print(store_text);
-      //   filelastrecord.close();
-      snprintf(temp_file, sizeof(temp_file), "/lastrecorded_%s.txt",
-               station_name);
+      snprintf(temp_file, sizeof(temp_file), "/lastrecorded_%s.txt", station_name);
       { // Scope for filelastrecord
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-          File filelastrecord = SPIFFS.open(temp_file, FILE_WRITE);
-          if (!filelastrecord) {
-            debugln("Failed to open lastrecorded file for writing (FTP)");
-          } else { // FIX #2 Safe write
-            filelastrecord.println(store_text); // v7.65: Force newline
-            filelastrecord.close();
+          char tmpPath[64];
+          snprintf(tmpPath, sizeof(tmpPath), "/lastrecorded_%s.tmp", station_name);
+          File fTmp = SPIFFS.open(tmpPath, FILE_WRITE);
+          if (fTmp) {
+            fTmp.println(store_text);
+            fTmp.close();
+            SPIFFS.remove(temp_file);
+            SPIFFS.rename(tmpPath, temp_file);
           }
           xSemaphoreGive(fsMutex);
         }
@@ -2868,9 +2846,13 @@ void scheduler(void *pvParameters) {
           File file4 = SPIFFS.open(unsent_file, FILE_READ);
           if (file4) {
             debugln("\n--- UNSENT DATA START ---");
-            while (file4.available()) {
-              String line = file4.readStringUntil('\n');
-              debugln(line); // Correct display per line
+            if (file4.size() > 0) {
+              int seekPos = (file4.size() > 500) ? file4.size() - 500 : 0;
+              file4.seek(seekPos);
+              String tail = file4.readString();
+              debugln("   ... [Tail Content] ...");
+              debug(tail);
+              debugln("-----------------------");
             }
             file4.close();
             debugln("--- UNSENT DATA END ---\n");
@@ -2887,9 +2869,13 @@ void scheduler(void *pvParameters) {
           File file4 = SPIFFS.open(ftpunsent_file, FILE_READ);
           if (file4) {
             debugln("\n--- UNSENT DATA START ---");
-            while (file4.available()) {
-              String line = file4.readStringUntil('\n');
-              debugln(line); // Correct display per line
+            if (file4.size() > 0) {
+              int seekPos = (file4.size() > 500) ? file4.size() - 500 : 0;
+              file4.seek(seekPos);
+              String tail = file4.readString();
+              debugln("   ... [Tail Content] ...");
+              debug(tail);
+              debugln("-----------------------");
             }
             file4.close();
             debugln("--- UNSENT DATA END ---\n");
@@ -2903,12 +2889,16 @@ void scheduler(void *pvParameters) {
       debugln();
 
     TRIGGER_HTTP: // Label for duplicate/invalid skip jump
+      if (fs_locked) {
+        xSemaphoreGive(fsMutex); // v5.72: Safety release on all skip paths
+        fs_locked = false;
+      }
       // v5.68 FIX: TIER 1 Battery Brownout Gate
       // If we fell through due to low battery, DO NOT allow the network to spin up!
       if (li_bat_val < 3.4f && li_bat_val > 0.5f) {
          debugln("[PWR] FATAL BROWNOUT GUARD: Network blocked. Sleeping immediately to save hardware.");
          sync_mode = eHttpStop; 
-         httpInitiated = false;
+         __atomic_store_n(&httpInitiated, false, __ATOMIC_RELEASE);
          data_writing_initiated = 0;
       } else {
 
@@ -2952,7 +2942,7 @@ void scheduler(void *pvParameters) {
         debugln();
         // Trigger HTTP after manual task is done
         sync_mode = eHttpBegin;
-        httpInitiated = true;
+        __atomic_store_n(&httpInitiated, true, __ATOMIC_RELEASE);
         data_writing_initiated = 0;
 
         // v5.41 Test Mode: Send Health Report every slot
@@ -2970,7 +2960,7 @@ void scheduler(void *pvParameters) {
       vTaskDelay(300 / portTICK_PERIOD_MS);
       last_processed_sample_idx = current_sample_idx; // v5.66: Mark as processed ONLY after successful completion
       schedulerBusy = false; // v5.65: Release sleep lock
-    } else if (httpInitiated == false &&
+    } else if (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false &&
                sync_mode == eSyncModeInitial) {
       // v7.08: IDLE TRAP PROTECTION
       // If we wake up (via timer) and find we ALREADY processed this slot,
@@ -3104,3 +3094,37 @@ void previous_date(int *Cd, int *Cm, int *Cy) {
  *  make scheduler_loop = 6 // it should go to sleep mode which is checked in
  * the main loop
  */
+
+void getTimeSnapshot(struct tm *timeinfo) {
+  if (timeinfo == NULL) return;
+  
+  // v5.80: Hardened Boot Guard
+  // If globals aren't populated yet, rtc.now() hardware read is safe
+  int year_snap;
+  portENTER_CRITICAL(&rtcTimeMux);
+  year_snap = current_year;
+  portEXIT_CRITICAL(&rtcTimeMux);
+
+  if (year_snap < 2020) {
+     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+        DateTime now = rtc.now();
+        timeinfo->tm_year = now.year() - 1900;
+        timeinfo->tm_mon = now.month() - 1;
+        timeinfo->tm_mday = now.day();
+        timeinfo->tm_hour = now.hour();
+        timeinfo->tm_min = now.minute();
+        timeinfo->tm_sec = now.second();
+        xSemaphoreGive(i2cMutex);
+        return;
+     }
+  }
+
+  portENTER_CRITICAL(&rtcTimeMux);
+  timeinfo->tm_year = current_year - 1900;
+  timeinfo->tm_mon = current_month - 1;
+  timeinfo->tm_mday = current_day;
+  timeinfo->tm_hour = current_hour;
+  timeinfo->tm_min = current_min;
+  timeinfo->tm_sec = current_sec;
+  portEXIT_CRITICAL(&rtcTimeMux);
+}
