@@ -148,8 +148,11 @@ void rtcRead(void *pvParameters) {
 
     // Handle too many bad reads
     if (badReads >= 24) {
-      bool gprs_idle = ((sync_mode == eHttpStop || sync_mode == eSMSStop ||
-                         sync_mode == eExceptionHandled) &&
+      portENTER_CRITICAL(&syncMux);
+      int mode_snap = sync_mode;
+      portEXIT_CRITICAL(&syncMux);
+      bool gprs_idle = ((mode_snap == eHttpStop || mode_snap == eSMSStop ||
+                         mode_snap == eExceptionHandled) &&
                         !health_in_progress && !wifi_active);
       if (gprs_idle) {
         badReads = -1;
@@ -181,7 +184,9 @@ void resync_time() {
   debugln("[RTC] Resync Requested. Powering on GPRS...");
   debugln();
   health_in_progress = true; // Guard against sleep
+  portENTER_CRITICAL(&syncMux);
   sync_mode = eHttpTrigger;  // Mark busy
+  portEXIT_CRITICAL(&syncMux);
 
   signal_strength = 0;
   signal_lvl = 0;
@@ -208,7 +213,9 @@ void resync_time() {
     // are leaked permanently, blocking the sleep gate until reboot!
     health_in_progress = false;
     gprs_started = false;
+    portENTER_CRITICAL(&syncMux);
     sync_mode = eExceptionHandled;
+    portEXIT_CRITICAL(&syncMux);
     
     return;
   }
@@ -376,12 +383,16 @@ void parse_and_convert_clbs_response(const char *response, int year1,
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     gprs_started = false; // EX6 FIX: reset flag so next GPRS cycle powers modem
     health_in_progress = false; // Task COMPLETED
+    portENTER_CRITICAL(&syncMux);
     sync_mode = eExceptionHandled;
+    portEXIT_CRITICAL(&syncMux);
 
   } else {
     debugln("Failed to get the correct time");
     gprs_started = false;       // EX6 FIX: reset on failure path too
     health_in_progress = false; // Allow error recovery
+    portENTER_CRITICAL(&syncMux);
     sync_mode = eExceptionHandled;
+    portEXIT_CRITICAL(&syncMux);
   }
 }

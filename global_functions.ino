@@ -377,8 +377,12 @@ void saveGPS() {
     file.printf("%.6f,%.6f,%d,%d,%d", lati, longi, current_day, current_month,
                 current_year);
     file.close();
-    if (SPIFFS.exists("/gps_fix.txt")) SPIFFS.remove("/gps_fix.txt");
-    SPIFFS.rename("/gps_fix.tmp", "/gps_fix.txt");
+    if (SPIFFS.exists("/gps_fix.txt")) {
+        SPIFFS.remove("/gps_fix.txt");
+    }
+    if (SPIFFS.rename("/gps_fix.tmp", "/gps_fix.txt")) {
+        debugln("[PWR] GPS Fix persisted successfully.");
+    }
     gps_fix_dd = current_day;
     gps_fix_mm = current_month;
     gps_fix_yy = current_year;
@@ -395,6 +399,11 @@ void loadGPS() {
     debugln("[SPIFFS] Mutex Timeout: Skipping loadGPS");
     return;
   }
+  if (!SPIFFS.exists("/gps_fix.txt") && SPIFFS.exists("/gps_fix.tmp")) {
+    debugln("[GPS] txt missing but tmp found. Recovering...");
+    SPIFFS.rename("/gps_fix.tmp", "/gps_fix.txt");
+  }
+
   if (SPIFFS.exists("/gps_fix.txt")) {
     File file = SPIFFS.open("/gps_fix.txt", FILE_READ);
     if (file) {

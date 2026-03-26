@@ -142,12 +142,15 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
   // If the physical RTC battery died and it woke up in 1970, we MUST legally
   // update the current_day/year variables or else the rest of this waking cycle 
   // will create data filed under 1970 despite the physical RTC being fixed!
+  // v5.70: Use rtcTimeMux to prevent torn reads by the scheduler or other cores.
+  portENTER_CRITICAL(&rtcTimeMux);
   current_day = s_dd;
   current_month = s_mm;
   current_year = s_yy + 2000;
   current_hour = s_hh;
   current_min = s_mi;
   current_sec = s_ss;
+  portEXIT_CRITICAL(&rtcTimeMux);
 
   if (!force) {
     rtc_daily_sync_done = true;
@@ -165,30 +168,35 @@ void gprs(void *pvParameters) {
   for (;;) {
     esp_task_wdt_reset();
 
+    // v5.70: Atomic snapshot for thread-safe decision making
+    portENTER_CRITICAL(&syncMux);
+    int mode_snap = sync_mode;
+    portEXIT_CRITICAL(&syncMux);
+
     // Debug: Check sync_mode at loop start (Only on change)
     static int last_debug_sync_mode = -1;
-    if (sync_mode != eSyncModeInitial && sync_mode != last_debug_sync_mode) {
+    if (mode_snap != eSyncModeInitial && mode_snap != last_debug_sync_mode) {
       if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-        debugf2("[GPRS] State Change: sync_mode=%d gprs_mode=%d\n", sync_mode,
+        debugf2("[GPRS] State Change: sync_mode=%d gprs_mode=%d\n", mode_snap,
                 gprs_mode);
         xSemaphoreGive(serialMutex);
       }
-      last_debug_sync_mode = sync_mode;
-    } else if (sync_mode == eSyncModeInitial) {
+      last_debug_sync_mode = mode_snap;
+    } else if (mode_snap == eSyncModeInitial) {
       last_debug_sync_mode = eSyncModeInitial;
     }
 
     // --- MANUAL TRIGGERS (Keypad) ---
-    if (sync_mode == eSMSStart || sync_mode == eGPSStart ||
-        sync_mode == eStartupGPS || sync_mode == eHealthStart) {
-      target_fld = (sync_mode == eSMSStart) ? FLD_SEND_STATUS :
-                   (sync_mode == eGPSStart) ? FLD_SEND_GPS :
-                   (sync_mode == eHealthStart) ? FLD_SEND_HEALTH : FLD_SEND_GPS;
+    if (mode_snap == eSMSStart || mode_snap == eGPSStart ||
+        mode_snap == eStartupGPS || mode_snap == eHealthStart) {
+      target_fld = (mode_snap == eSMSStart) ? FLD_SEND_STATUS :
+                   (mode_snap == eGPSStart) ? FLD_SEND_GPS :
+                   (mode_snap == eHealthStart) ? FLD_SEND_HEALTH : FLD_SEND_GPS;
 
       // Clear the queued pending flag immediately to prevent double-execution
-      if (sync_mode == eSMSStart) pending_manual_status = false;
-      else if (sync_mode == eGPSStart) pending_manual_gps = false;
-      else if (sync_mode == eHealthStart) pending_manual_health = false;
+      if (mode_snap == eSMSStart) pending_manual_status = false;
+      else if (mode_snap == eGPSStart) pending_manual_gps = false;
+      else if (mode_snap == eHealthStart) pending_manual_health = false;
 
       if (gprs_mode == eGprsInitial) {
         debugln("[GPRS] Manual Trigger: Initiating Power On...");
@@ -202,14 +210,16 @@ void gprs(void *pvParameters) {
           debugln("[GPRS] Initialization failed. Aborting trigger.");
           strcpy(ui_data[target_fld].bottomRow, "NETWORK ERROR");
           vTaskDelay(3000 / portTICK_PERIOD_MS);
+          portENTER_CRITICAL(&syncMux);
           sync_mode = eSMSStop;
+          portEXIT_CRITICAL(&syncMux);
           continue; // Skip to next loop iteration
         }
       }
 
       if (gprs_mode == eGprsSignalOk) {
         strcpy(ui_data[target_fld].bottomRow, "CONNECTING...");
-        if (sync_mode == eSMSStart) {
+        if (mode_snap == eSMSStart) {
           debugln("[GPRS] Keypad Triggered SMS Status");
 
           // Re-verify network & APN for manual triggers (Ensures connection is live)
@@ -236,9 +246,12 @@ void gprs(void *pvParameters) {
           strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
           show_now = 1;
 
-          if (sync_mode == eSMSStart)
+          if (mode_snap == eSMSStart) {
+            portENTER_CRITICAL(&syncMux);
             sync_mode = eSMSStop;
-        } else if (sync_mode == eGPSStart) {
+            portEXIT_CRITICAL(&syncMux);
+          }
+        } else if (mode_snap == eGPSStart) {
           debugln("[GPRS] Keypad Triggered GPS Send");
 
           get_signal_strength();
@@ -248,9 +261,12 @@ void gprs(void *pvParameters) {
 
           strcpy(ui_data[target_fld].bottomRow, "SENDING...");
           get_lat_long_date_time(universalNumber);
-          if (sync_mode == eGPSStart)
+          if (mode_snap == eGPSStart) {
+            portENTER_CRITICAL(&syncMux);
             sync_mode = eSMSStop;
-        } else if (sync_mode == eStartupGPS || sync_mode == eHealthStart) {
+            portEXIT_CRITICAL(&syncMux);
+          }
+        } else if (mode_snap == eStartupGPS || mode_snap == eHealthStart) {
           debugln(
               "[GPRS] Startup/Station Change Triggered GPS & Health Report");
           if (signal_strength == 0) {
@@ -295,7 +311,9 @@ void gprs(void *pvParameters) {
 #else
           debugln("[Health] Startup send skipped (disabled).");
 #endif
+          portENTER_CRITICAL(&syncMux);
           sync_mode = eSMSStop;
+          portEXIT_CRITICAL(&syncMux);
           msg_sent = 1; // Mark block as handled so it doesn't print "SEND FAILED"
         }
 
@@ -344,9 +362,12 @@ void gprs(void *pvParameters) {
         memset(ui_data[target_fld].bottomRow, 0,
                sizeof(ui_data[target_fld].bottomRow));
         strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-        if (sync_mode == eSMSStart || sync_mode == eGPSStart ||
-            sync_mode == eStartupGPS || sync_mode == eHealthStart)
+        if (mode_snap == eSMSStart || mode_snap == eGPSStart ||
+            mode_snap == eStartupGPS || mode_snap == eHealthStart) {
+          portENTER_CRITICAL(&syncMux);
           sync_mode = eSMSStop;
+          portEXIT_CRITICAL(&syncMux);
+        }
       }
     }
 
@@ -448,7 +469,9 @@ void gprs(void *pvParameters) {
               send_unsent_data();
             }
 #endif
+            portENTER_CRITICAL(&syncMux);
             sync_mode = eHttpStop; // v5.51 FIX: Advance state to prevent infinite loop!
+            portEXIT_CRITICAL(&syncMux);
           }
 
 
@@ -657,20 +680,28 @@ void gprs(void *pvParameters) {
         debugln("[GPRS] 💡 Found queued manual Status/SMS request. Handling now...");
         pending_manual_status = false;
         target_fld = FLD_SEND_STATUS; // v5.50 must set target_fld for the eSMSStart runner
+        portENTER_CRITICAL(&syncMux);
         sync_mode = eSMSStart;       // Transition to SMS flow before stopping
+        portEXIT_CRITICAL(&syncMux);
       } else if (pending_manual_gps) {
         debugln("[GPRS] 💡 Found queued manual GPS request. Handling now...");
         pending_manual_gps = false;
         target_fld = FLD_SEND_GPS;
+        portENTER_CRITICAL(&syncMux);
         sync_mode = eGPSStart;
+        portEXIT_CRITICAL(&syncMux);
       } else if (pending_manual_health) {
         debugln("[GPRS] 💡 Found queued manual Health request. Handling now...");
         pending_manual_health = false;
         target_fld = FLD_SEND_HEALTH;
+        portENTER_CRITICAL(&syncMux);
         sync_mode = eHealthStart;
+        portEXIT_CRITICAL(&syncMux);
       } else {
         debugln("[GPRS] No queued commands. Allowing sleep.");
+        portENTER_CRITICAL(&syncMux);
         sync_mode = eHttpStop;
+        portEXIT_CRITICAL(&syncMux);
         httpInitiated = false;
       }
     }
@@ -1384,13 +1415,18 @@ fail_handling:
           strcpy(finalBuffer,
                  current_record); // strcpy handles null termination
         }
-        snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-        File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
-        if (file2) {
-          file2.print(finalBuffer);
-          file2.close();
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+          snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
+          File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
+          if (file2) {
+            file2.print(finalBuffer);
+            file2.close();
+          } else {
+            debugln("Failed to open unsent.txt for appending");
+          }
+          xSemaphoreGive(fsMutex);
         } else {
-          debugln("Failed to open unsent.txt for appending");
+          debugln("[GPRS] fsMutex Timeout: Could not append to unsent.txt");
         }
 #endif
 
@@ -1413,13 +1449,18 @@ fail_handling:
         }
         debugln("Record written into /ftpunsent.txt is as below : ");
         debugln(finalBuffer);
-        snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-        File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-        if (ftpfile2) {
-          ftpfile2.print(finalBuffer);
-          ftpfile2.close();
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+          snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
+          File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+          if (ftpfile2) {
+            ftpfile2.print(finalBuffer);
+            ftpfile2.close();
+          } else {
+            debugln("Failed to open ftpunsent.txt for appending (TWS)");
+          }
+          xSemaphoreGive(fsMutex);
         } else {
-          debugln("Failed to open ftpunsent.txt for appending (TWS)");
+          debugln("[GPRS] fsMutex Timeout: Could not append to ftpunsent.txt (TWS)");
         }
 #endif
 
@@ -1443,13 +1484,18 @@ fail_handling:
         }
         debugln("Record written into /ftpunsent.txt is as below : ");
         debugln(finalBuffer);
-        snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-        File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-        if (ftpfile2) {
-          ftpfile2.print(finalBuffer);
-          ftpfile2.close();
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+          snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
+          File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+          if (ftpfile2) {
+            ftpfile2.print(finalBuffer);
+            ftpfile2.close();
+          } else {
+            debugln("Failed to open ftpunsent.txt for appending (TWS-RF)");
+          }
+          xSemaphoreGive(fsMutex);
         } else {
-          debugln("Failed to open ftpunsent.txt for appending (TWS-RF)");
+          debugln("[GPRS] fsMutex Timeout: Could not append to ftpunsent.txt (TWS-RF)");
         }
 #endif
       } // closes if(data_mode == eCurrentData)
@@ -1654,8 +1700,10 @@ void send_http_data() {
         fileTemp2.print(signature);
         fileTemp2.close();
         
-        SPIFFS.remove("/signature.txt");
-        SPIFFS.rename("/signature.tmp", "/signature.txt");
+        if (SPIFFS.exists("/signature.txt")) SPIFFS.remove("/signature.txt");
+        if (SPIFFS.rename("/signature.tmp", "/signature.txt")) {
+            debugln("[PWR] Signature persisted successfully.");
+        }
       }
       xSemaphoreGive(fsMutex);
     }
@@ -1675,15 +1723,23 @@ void send_http_data() {
     /*
      * SENDING 8:30 as well as UNSENT DATA IF FILE EXISTS ...
      */
-    if (SPIFFS.exists(unsent_file)) {
-      File f = SPIFFS.open(unsent_file, FILE_READ);
-      size_t fsize = f.size();
-      f.close();
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      bool exists = SPIFFS.exists(unsent_file);
+      size_t fsize = 0;
+      if (exists) {
+          File f = SPIFFS.open(unsent_file, FILE_READ);
+          fsize = f.size();
+          f.close();
+      }
 
-      if (fsize == 0) {
+      if (exists && fsize == 0) {
         SPIFFS.remove(unsent_file);
         SPIFFS.remove("/unsent_pointer.txt");
+        xSemaphoreGive(fsMutex);
+      } else if (!exists) {
+        xSemaphoreGive(fsMutex);
       } else {
+        // Backlog exists, proceed with mutex held for initialization
         debugln();
         debugln("*********  Sending UNSENT data to main server... ***********");
         debugln();
@@ -1797,6 +1853,7 @@ void send_http_data() {
           if (success_count == 0) {
               debugln("[Power] Backlog line FAILED. Stopping to preserve battery.");
               // v5.65 P4 Fix: Save pointer even on failure to avoid resending successful lines
+              // v6.03: fsMutex is already held from the outer block
               File unsent_count_f = SPIFFS.open("/unsent_pointer.txt", FILE_WRITE);
               if (unsent_count_f) {
                   unsent_count_f.print(unsent_pointer_count);
@@ -1852,8 +1909,9 @@ void send_http_data() {
           SPIFFS.remove(unsent_file);
           SPIFFS.remove("/unsent_pointer.txt");
         }
+        xSemaphoreGive(fsMutex); // Final Release for SYSTEM 0 backlog
       }
-    } // if unsent file exists
+    } // if fsMutex Taken and unsent file exists
     else {
       debugln("No unsent file found ...");
     }
@@ -2190,11 +2248,14 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
           debug("Retrieved file is ");
           debugln(fileName);
           esp_task_wdt_reset();
-          send_ftp_file(fileName, true, true); // v5.66: alreadyLocked=true
+          // v7.70: DEADLOCK PREVENT - Release fsMutex before send_ftp_file call
+          // to allow function to follow the strict modemMutex->fsMutex hierarchy.
+          xSemaphoreGive(fsMutex); 
+          send_ftp_file(fileName, true, false); // Pass alreadyLocked=false
         } else {
           debugln("Daily FTP: Temp file not found. Skipping.");
+          xSemaphoreGive(fsMutex); // Final explicit drop on skip path
         }
-        xSemaphoreGive(fsMutex); // Final explicit drop of Daily FTP cycle lock
       } else {
         debugln("[FTP] Failed to retake fsMutex for Daily operation. Skipping.");
       }
@@ -2209,53 +2270,36 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
 } // end send_unsent_data
 
 void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
+  // v7.70+: ABBA DEADLOCK FIX — Strictly enforce hierarchy: modemMutex → fsMutex
+  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(20000)) != pdTRUE) {
+      debugln("[FTP] Mutex Timeout: modemMutex busy.");
+      return;
+  }
+
+  bool weLockedFS = false;
   if (!alreadyLocked) {
-    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      weLockedFS = true;
+    } else {
       debugln("[SPIFFS] Mutex Timeout: Skipping send_ftp_file");
+      xSemaphoreGive(modemMutex);
       return;
     }
   }
+
   String response;
   const char *response_char;
-  const char *charArray; // Added as per instruction
-  const char *resp;      // Added as per instruction
-  // Use a local module-safe path (removes leading slash for cellular module
-  // commands)
-  char *modulePath = (fileName[0] == '/') ? &fileName[1] : fileName;
-
+  const char *csqstr;
   char gprs_xmit_buf[300];
-  String rssiStr;
-  int rssiIndex, rssiEndIndex, retries, registration;
-  int handle_no;
-  const char *ftpCharArray;
-  char *csqstr;
-  int success;
-  int total_no_of_bytes;
-  int s = 0,
-      fileSize = 0; // Fixed shadowed and uninitialized local variables
-  // Phase 6 Final Polish: Removed dead unused `String content;` to prevent future shadowing.
+  int handle_no, fileSize = 0;
   String response1;
-  int result = -1;
 
-  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
-    debugln("[FTP] Error: Modem Mutex Timeout - deferring upload");
-    diag_modem_mutex_fails++;
-    if (!alreadyLocked)
-      xSemaphoreGive(fsMutex); // RELEASE FS MUTEX
-    return;
-  }
-
-  flushSerialSIT(); // Ensure UART buffer is clean before starting FTP
-                    // sequence
+  flushSerialSIT(); 
   debugln("Initializing A7672S for FTP...");
-  vTaskDelay(1000 / portTICK_PERIOD_MS); // Allow module to settle
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
 
   if (SPIFFS.exists(fileName)) {
     send_daily = 2;
-    
-    // v5.55: Smart FTP Mode Selection
-    // 1. If we have a previously successful mode, use it immediately.
-    // 2. Otherwise, use carrier-based heuristic.
     int initial_ftp_mode = 0; 
     if (preferred_ftp_mode != -1) {
        initial_ftp_mode = preferred_ftp_mode;
@@ -2268,367 +2312,154 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
     }
     
     ftp_login_flag = setup_ftp(initial_ftp_mode);
-
     if (ftp_login_flag == 1) {
-
       SerialSIT.println("ATE0");
-      response = waitForResponse("OK", 3000);
+      waitForResponse("OK", 3000);
       SerialSIT.println("AT+FSCD=C:/");
-      response = waitForResponse("OK", 10000);
-      debug("Response of AT+FSCD ");
-      debugln(response);
+      waitForResponse("OK", 10000);
 
-      snprintf(
-          gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSOPEN=\"C:/%s\",0\r\n",
-          modulePath); // 0 : if the file does not exist, it will be created
+      char *modulePath = (fileName[0] == '/') ? &fileName[1] : fileName;
+      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSOPEN=\"C:/%s\",0\r\n", modulePath);
       SerialSIT.println(gprs_xmit_buf);
       response = waitForResponse("+FSOPEN", 5000);
-      debug("Response is ");
-      debugln(response);
-      response_char = response.c_str();
-      vTaskDelay(200 / portTICK_PERIOD_MS);
-      csqstr = strstr(response_char, "+FSOPEN:");
+      csqstr = strstr(response.c_str(), "+FSOPEN:");
       if (csqstr == NULL) {
-        debugln("Error: +FSOPEN not found in response");
-        SerialSIT.println("AT+CFTPSLOGOUT");
-        waitForResponse("+CFTPSLOGOUT: 0", 9000);
-        SerialSIT.println("AT+CFTPSSTOP");
-        waitForResponse("OK", 3000);
-        xSemaphoreGive(modemMutex);
-        return;
+        debugln("Error: +FSOPEN not found");
+        goto ftp_cleanup;
       }
       sscanf(csqstr, "+FSOPEN: %d,", &handle_no);
 
       File file1 = SPIFFS.open(fileName, FILE_READ);
       if (!file1) {
-        debugln("Failed to open FTP file for reading — aborting transfer.");
-        SerialSIT.println("AT+CFTPSLOGOUT");
-        waitForResponse("+CFTPSLOGOUT: 0", 9000);
-        SerialSIT.println("AT+CFTPSSTOP");
-        waitForResponse("OK", 3000);
-        xSemaphoreGive(modemMutex);
-        return; // v7.67: Guard against null file dereference
+        debugln("Failed to open local file for FTP.");
+        goto ftp_cleanup;
       }
-      debug("File size of the file is ");
-      debugln(file1.size());
-
       fileSize = file1.size();
-      file1.seek(s);
-      // Phase 5: Removed content = file1.readString(); to prevent massive Heap Exhaustion
-      if (fileSize == 0) {
-        file1.close();
-        debugln("Nothing to FTP .. logging out ...");
-        SerialSIT.println("AT+CFTPSLOGOUT");
-        response = waitForResponse("+CFTPSLOGOUT: 0", 9000);
-        debug("Response of AT+CFTPSLOGOUT is ");
-        debugln(response);
-        vTaskDelay(200 / portTICK_PERIOD_MS);
-        SerialSIT.println("AT+CFTPSSTOP");
-        waitForResponse("OK", 3000);
-        vTaskDelay(200 / portTICK_PERIOD_MS);
-        SerialSIT.println("AT+FSLS");
-        response = waitForResponse("OK", 10000);
+      debugln("File size: " + String(fileSize));
 
-      } else {
-        snprintf(
-            gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSWRITE=%d,%d,30\r\n",
-            handle_no,
-            fileSize); // 0 : if the file does not exist, it will be created
+      if (fileSize > 0) {
+        snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSWRITE=%d,%d,30\r\n", handle_no, fileSize);
+        debugln("[FTP] Sending FSWRITE command...");
         vTaskDelay(200 / portTICK_PERIOD_MS);
         SerialSIT.println(gprs_xmit_buf);
-        response = waitForResponse("CONNECT", 5000);
-        
-        // Phase 5: Chunk stream direct from SPIFFS to UART, avoiding RAM crashes
-        char file_buf[256];
-        int bytes_streamed = 0;
-        while (file1.available()) {
-          int bytesRead = file1.read((uint8_t*)file_buf, 255);
-          SerialSIT.write((uint8_t*)file_buf, bytesRead);
-          bytes_streamed += bytesRead;
-          if (bytes_streamed % (16 * 1024) == 0) esp_task_wdt_reset(); // Phase 6 Review: Prevent 100KB Watchdog Trips
+        if (waitForResponse("CONNECT", 5000).indexOf("CONNECT") != -1) {
+          char file_buf[256];
+          int bytes_streamed = 0;
+          while (file1.available()) {
+            int bytesRead = file1.read((uint8_t*)file_buf, 255);
+            SerialSIT.write((uint8_t*)file_buf, bytesRead);
+            bytes_streamed += bytesRead;
+            if (bytes_streamed % (16 * 1024) == 0) esp_task_wdt_reset();
+          }
+          SerialSIT.println();
+          waitForResponse("+FSWRITE", 5000);
         }
-        // Send trailing newline just in case FSWRITE is expecting one
-        SerialSIT.println();
-        response = waitForResponse("+FSWRITE", 5000);
-        debug("Response of FSWRITE is ");
-        debugln(response);
         file1.close();
 
-        snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSCLOSE=%d",
-                 handle_no);
+        snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSCLOSE=%d", handle_no);
         SerialSIT.println(gprs_xmit_buf);
-        response = waitForResponse("OK", 5000); // Fixed: FSCLOSE returns OK
-        debug("Response of FSCLOSE is ");
-        debugln(response);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        waitForResponse("OK", 5000);
 
         int ftp_put_retries = 0;
-        const int MAX_FTP_PUT_RETRIES = 1;
         bool upload_success = false;
+        snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSPUTFILE=\"%s\",1", modulePath);
 
-        snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-                 "AT+CFTPSPUTFILE=\"%s\",1", modulePath); // v5.38 style: drive is implied by mode 1
-
-        while (ftp_put_retries <= MAX_FTP_PUT_RETRIES) {
+        while (ftp_put_retries <= 1) {
           esp_task_wdt_reset();
+          if (!verify_bearer_or_recover()) break;
 
-          // v5.50: Verify bearer before attempting PUT.
-          if (!verify_bearer_or_recover()) {
-            debugln("[FTP] Bearer lost before PUT. Recovery failed.");
-            break;
+          debugln("[FTP] Dispatching PUTFILE command...");
+          SerialSIT.println(gprs_xmit_buf);
+          response1 = "";
+          unsigned long put_start = millis();
+          while ((millis() - put_start) < 60000) {
+            esp_task_wdt_reset();
+            vTaskDelay(500 / portTICK_PERIOD_MS);
+            while (SerialSIT.available()) response1 += (char)SerialSIT.read();
+            if (response1.indexOf("+CFTPSPUTFILE:") != -1) break;
+            if (response1.indexOf("+CGEV: ME PDN DEACT 1") != -1) break;
           }
-
-          // POWER SAVER: If signal is extremely poor, don't attempt expensive
-          // PUT retry as it likely won't finish
-          if (signal_lvl < -100 && ftp_put_retries > 0) {
-            debugln("[FTP] Skip Retry: Signal too low for reliable PUT. Saving "
-                    "Power.");
-            break;
-          }
-
-          debug("About to send CFTPSPUTFILE ... Attempt: ");
-          debugln(ftp_put_retries + 1);
-
-          SerialSIT.println(gprs_xmit_buf); // FTP client context
-          // v5.45: Smart PUT monitor — poll every 500ms for success OR PS
-          // bearer loss (+CGEV: ME PDN DEACT 1). On 2G BSNL, +CREG:0/1 (CS
-          // domain events) are harmless for data. But +CGEV: ME PDN DEACT 1
-          // means the PS bearer (CID 1) itself died — bail immediately rather
-          // than waiting out the full 60s timeout.
-          {
-            response1 = "";
-            response1.reserve(2048); // v5.65 P4: Prevent heap fragmentation
-            unsigned long put_start = millis();
-            bool ps_bearer_lost = false;
-            while ((millis() - put_start) < 60000) {
-              esp_task_wdt_reset();
-              vTaskDelay(500 / portTICK_PERIOD_MS);
-          while (SerialSIT.available()) {
-                char cc = SerialSIT.read();
-                if (response1.length() < 2048)
-                  response1 += cc;
-              }
-              if (response1.indexOf("+CFTPSPUTFILE:") != -1)
-                break; // Done
-              if (response1.indexOf("+CGEV: ME PDN DEACT 1") != -1) {
-                debugln("[FTP] PS Bearer (CID1) lost mid-PUT. Bailing early.");
-                ps_bearer_lost = true;
-                break;
-              }
-            }
-            if (ps_bearer_lost)
-              response1 = ""; // Force retry path
-          }
-          debug("Response of AT+CFTPSPUTFILE ");
-          debugln(response1);
 
           if (response1.indexOf("+CFTPSPUTFILE: 0") != -1) {
             upload_success = true;
-            // v5.55: SAVE working mode for future iterations (Rule 48 Smart Persistence)
-            preferred_ftp_mode = (ftp_put_retries == 0) ? initial_ftp_mode : ((initial_ftp_mode == 1) ? 0 : 1);
-            debugln("[FTP] Smart Mode Saved: " + String(preferred_ftp_mode == 1 ? "Passive" : "Active"));
-            
+            preferred_ftp_mode = (ftp_put_retries == 0) ? initial_ftp_mode : (1 - initial_ftp_mode);
             if (isDailyFTP) strcpy(last_cmd_res, "Success: Daily FTP OK");
             else strcpy(last_cmd_res, "Success: Backlog FTP OK");
             break;
           } else {
-            debugln("FTP PUT failed. Checking recovery...");
-            if (ftp_put_retries < MAX_FTP_PUT_RETRIES) {
-              // v7.68: Mode-Switch Recovery.
-              // Attempt 1 used Active Mode (BSNL 2G). Error 9 = data channel timeout.
-              // Attempt 2 switches to Passive Mode (Airtel 4G/firewalled networks).
-              // This covers all carrier combinations without hardcoding.
-              int next_mode = (ftp_put_retries == 0) ? 1 : 0; // Flip mode on first failure
-              debugln("[FTP] PUT failed. Switching FTP mode and re-logging in (Attempt " +
-                      String(ftp_put_retries + 2) + ")...");
-              debug("[FTP] Switching to ");
-              debugln(next_mode == 1 ? "Passive Mode (Airtel)" : "Active Mode (BSNL)");
+            if (ftp_put_retries < 1) {
+              int next_mode = (ftp_put_retries == 0) ? (1 - initial_ftp_mode) : initial_ftp_mode;
               SerialSIT.println("AT+CFTPSLOGOUT");
               waitForResponse("+CFTPSLOGOUT: 0", 5000);
               vTaskDelay(2000 / portTICK_PERIOD_MS);
-
-              // Re-login with the opposite mode
-              send_daily = 2;
-              if (setup_ftp(next_mode) == 1) {
-                SerialSIT.println("AT+FSCD=C:/");
-                waitForResponse("OK", 5000);
-              } else {
-                debugln("[FTP] Login Recovery failed for both modes.");
-                break; // Both modes failed — give up
-              }
+              if (setup_ftp(next_mode) != 1) break;
+              SerialSIT.println("AT+FSCD=C:/");
+              waitForResponse("OK", 5000);
             }
             ftp_put_retries++;
           }
         }
 
         if (upload_success) {
-          // last_cmd_res already set in the loop
-          diag_consecutive_reg_fails =
-              0; // RESET counter on any successful data upload
-
-          // v7.70+: PR counter resets on successful FTP backlog too
+          diag_consecutive_reg_fails = 0;
           diag_http_present_fails = 0;
-          snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
-                   sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
-                   diag_http_present_fails, diag_http_cum_fails, get_total_backlogs());
-
-          markFileAsDelivered(fileName, true); // v5.48 Track recovered records
-
-          if (isDailyFTP) { // If Daily FTP is successful,
-                            // remove the dailyftp file.
-            // v5.52 BUG-6 FIX: Use fileName (local/captured) not global temp_file
-            // which may have been overwritten by another code path mid-flight.
-            SPIFFS.remove(fileName);
-            debug("Removed Daily FTP file: ");
-            debugln(fileName);
-          } else {
-            // COMMIT Queue Remainder on Success
+          markFileAsDelivered(fileName, true);
+          if (isDailyFTP) SPIFFS.remove(fileName);
+          else {
             SPIFFS.remove("/ftpunsent.txt");
-            if (SPIFFS.exists("/ftpremain.txt")) {
-              if (SPIFFS.rename("/ftpremain.txt", "/ftpunsent.txt")) {
-                debugln("[FTP] Chunk successful! ftpunsent.txt overwritten with "
-                        "remainder queue.");
-              } else {
-                debugln("[FTP] CRITICAL ERROR: Failed to rename ftpremain.txt "
-                        "to ftpunsent.txt. Backlog records may be orphaned.");
-              }
-            } else {
-              debugln("Cleared ftpunsent.txt permanently after full upload.");
-            }
+            if (SPIFFS.exists("/ftpremain.txt")) SPIFFS.rename("/ftpremain.txt", "/ftpunsent.txt");
           }
 
-          // Remove the *.kwd files. These are the ftp files
-          const char *pattern;
-          if (strstr(UNIT, "SPATIKA"))
-            pattern = ".swd";
-          else
-            pattern = ".kwd";
-
-          const String prefix = "/";
-          // v5.65 P4 Fix: Buffer filenames to prevent SPIFFS iterator corruption during deletion
-          std::vector<String> filesToDelete;
+          // Cleanup .swd/.kwd files
+          const char *pattern = strstr(UNIT, "SPATIKA") ? ".swd" : ".kwd";
           File rootDir = SPIFFS.open("/");
           if (rootDir) {
-            File f = rootDir.openNextFile();
-            while (f) {
-              String name = f.name();
-              if (name.endsWith(pattern)) {
-                filesToDelete.push_back(prefix + name);
-              }
-              f.close();
-              f = rootDir.openNextFile();
-            }
-            rootDir.close();
-            
-          // v5.66: Retake fsMutex for cleanup (Targeted operation) if not already held
-          bool localLock = false;
-          if (!alreadyLocked) {
-             localLock = (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE);
+             File f = rootDir.openNextFile();
+             while(f) {
+                String n = f.name();
+                if (n.endsWith(pattern)) { f.close(); SPIFFS.remove("/" + n); }
+                else f.close();
+                f = rootDir.openNextFile();
+             }
+             rootDir.close();
           }
-          
-          if (alreadyLocked || localLock) {
-            for (const String& fPath : filesToDelete) {
-              debugf1("Removing file: %s\n", fPath.c_str());
-              vTaskDelay(50 / portTICK_PERIOD_MS);
-              SPIFFS.remove(fPath);
-            }
-            if (localLock) {
-              xSemaphoreGive(fsMutex);
-            }
-          }
-        }
 
-          // Success Cleanup: Remove the temporary file from cellular module
-          // storage
-          snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSDEL=\"C:/%s\"",
-                   modulePath);
+          snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSDEL=\"C:/%s\"", modulePath);
           SerialSIT.println(gprs_xmit_buf);
           waitForResponse("OK", 5000);
         } else {
-          debugln("Did not succeed in FTP ..");
           strcpy(last_cmd_res, "Fail: FTP PUT Error");
-          // Failed: Clean up ONLY the temporary .swd/.kwd copies.
-          // DO NOT delete 'temp_file' or 'ftpunsent_file' (Source Data) so we
-          // can retry later.
-          if (SPIFFS.exists("/ftpremain.txt")) {
-            SPIFFS.remove(
-                "/ftpremain.txt"); // Discard remainder, preserve original queue
-            debugln("[FTP] Upload failed. Discarded remainder to protect "
-                    "original queue.");
-          }
-
-          // Remove the *.kwd / .swd files.
-          const char *pattern;
-          if (strstr(UNIT, "SPATIKA"))
-            pattern = ".swd";
-          else
-            pattern = ".kwd";
-
-          const String prefix = "/";
-
-          File root = SPIFFS.open("/");
-          if (root) {
-            File file = root.openNextFile();
-            while (file) {
-              String fileName1 = file.name();
-              if (fileName1.endsWith(pattern)) {
-                String prefixedFileName = prefix + fileName1;
-                // v7.91: Targeted cleanup. Only remove if it matches the active
-                // filename.
-                if (prefixedFileName == String(fileName)) {
-                  debugf("Removing file (failure cleanup): %s\n",
-                         prefixedFileName.c_str());
-                  vTaskDelay(100 / portTICK_PERIOD_MS);
-                  SPIFFS.remove(prefixedFileName);
-                }
-              }
-              file.close(); // v5.49 Build 5: FIX LEAK
-              file = root.openNextFile();
-            }
-            root.close();
-          }
+          if (SPIFFS.exists("/ftpremain.txt")) SPIFFS.remove("/ftpremain.txt");
         }
-
-        esp_task_wdt_reset();
-        SerialSIT.println("AT+CFTPSLOGOUT");
-        response = waitForResponse("+CFTPSLOGOUT: 0", 9000);
-        debug("Response of AT+CFTPSLOGOUT is ");
-        debugln(response);
-        vTaskDelay(200 / portTICK_PERIOD_MS);
-
-        // Clean up FTP service internally so it frees the IP stack for HTTP
-        SerialSIT.println("AT+CFTPSSTOP");
-        response = waitForResponse("OK", 3000);
-        debug("Response of AT+CFTPSSTOP is ");
-        debugln(response);
-        vTaskDelay(200 / portTICK_PERIOD_MS);
-
-        // NOTE: Modem FS file already deleted in the success cleanup path
-        // above. A second AT+FSDEL here is redundant and always returns
-        // ERROR. Suppressed to eliminate confusing noise in the log.
-
-        SerialSIT.println("AT+FSLS");
-        response = waitForResponse("OK", 10000);
+      } else {
+        file1.close();
       }
-    } else {
-      debugln("FTP Login unsucessful");
     }
-
-  } else {
-    debugln("NO FTP UNSENT FILES TO UPLOAD ");
   }
-  xSemaphoreGive(modemMutex); // v5.55: Release modem after FTP session
-  if (!alreadyLocked)
-    xSemaphoreGive(fsMutex);
+
+ftp_cleanup:
+  SerialSIT.println("AT+CFTPSLOGOUT");
+  waitForResponse("+CFTPSLOGOUT: 0", 5000);
+  SerialSIT.println("AT+CFTPSSTOP");
+  waitForResponse("OK", 3000);
+  
+  if (weLockedFS) xSemaphoreGive(fsMutex);
+  xSemaphoreGive(modemMutex);
 }
 
 // Function to copy a file from a source path to a destination path
 void copyFile(const char *sourcePath, const char *destPath) {
   debugf2("Copying file %s to %s\n", sourcePath, destPath);
 
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[FS] Mutex timeout inside copyFile");
+    return;
+  }
+
   File sourceFile = SPIFFS.open(sourcePath, "r");
   if (!sourceFile) {
     debugln("Failed to open source file for reading");
+    xSemaphoreGive(fsMutex);
     return;
   }
 
@@ -2636,19 +2467,20 @@ void copyFile(const char *sourcePath, const char *destPath) {
   if (!destFile) {
     debugln("Failed to open destination file for writing");
     sourceFile.close();
+    xSemaphoreGive(fsMutex);
     return;
   }
 
-  byte buffer[512]; // A buffer to hold data during the copy
+  byte buffer[512]; 
   size_t bytesRead;
 
-  // Read from source and write to destination
   while ((bytesRead = sourceFile.read(buffer, sizeof(buffer))) > 0) {
     destFile.write(buffer, bytesRead);
   }
 
   sourceFile.close();
   destFile.close();
+  xSemaphoreGive(fsMutex);
   debugln("File copied successfully!");
 }
 
@@ -5721,7 +5553,7 @@ bool send_health_report(bool useJitter) {
  */
 void power_cut_modem_shutdown() {
   debugln("[HEAL] Graceful 2 PM Maintenance Reboot Activated.");
-  sync_mode = 4; // Prevent stray UART tasks (eHttpStop equivalent)
+  sync_mode = eHttpStop; // Prevent stray UART tasks (eHttpStop equivalent)
   digitalWrite(26, LOW); // Cut modem VCC instantly
   vTaskDelay(3000 / portTICK_PERIOD_MS); // allow 3-second delay to settle heavy current draw
 }

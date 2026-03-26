@@ -207,7 +207,14 @@ void scheduler(void *pvParameters) {
     // At 10:45:02 (wakeup), we process the window ending at 10:45.
     // Index will be 90 (at 10:45). This labels the 10:30-10:45 window as 10:45.
     // This arrives at the server at 10:45:10, which is safely in the past.
-    int total_now_mins = current_hour * 60 + current_min;
+    // v5.70: Capture Atomic Time Snapshot to prevent torn reads across cores
+    int cur_hr, cur_min;
+    portENTER_CRITICAL(&rtcTimeMux);
+    cur_hr = current_hour;
+    cur_min = current_min;
+    portEXIT_CRITICAL(&rtcTimeMux);
+
+    int total_now_mins = cur_hr * 60 + cur_min;
     int slot_total_mins = (total_now_mins / 15) * 15;
     if (slot_total_mins < 0)
       slot_total_mins += 1440; // Wrap around midnight
@@ -223,7 +230,7 @@ void scheduler(void *pvParameters) {
         (current_sample_idx + (MIDNIGHT_SAMPLE_NO + 1)) % (MAX_SAMPLE_NO + 1);
 
     // Calculate how many minutes we are into the current 15-minute interval
-    minutes_into_interval = current_min % 15;
+    minutes_into_interval = cur_min % 15;
     is_valid_window = (minutes_into_interval <= 10);
 
     // Check for Fresh Boot entry override
@@ -242,11 +249,13 @@ void scheduler(void *pvParameters) {
 
       // PREVENT SLEEP: Flag active operation so loop() doesn't sleep if LCD
       // turns off
+      portENTER_CRITICAL(&syncMux);
       if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
           sync_mode != eStartupGPS && sync_mode != eHealthStart) {
         sync_mode = eHttpTrigger; // v5.48: Mark as Busy (System stays awake for
                                   // reporting)
       }
+      portEXIT_CRITICAL(&syncMux);
 
       // v6.88: FS Collision Guard - Wait if OTA is writing to SPIFFS
       if (ota_writing_active) {
@@ -777,43 +786,34 @@ void scheduler(void *pvParameters) {
             }
             */
 
-      temp_day = current_day;
-      temp_month = current_month;
-      temp_year = current_year;
-
-      if (r_h == 23 && current_hour == 0) {
-        // Rolled back past midnight, need previous day date for record
-        previous_date(&temp_day, &temp_month, &temp_year);
-      }
-
       record_min = r_m;
       record_hr = r_h;
 
       rf_cls_dd = current_day;
       rf_cls_mm = current_month;
-      rf_cls_yy = current_year; // NEW RTC
+      rf_cls_yy = current_year; 
 
       // Find current sampleNo
       sampleNo = record_hr * SAMPLES_PER_HOUR +
-                 record_min / MINUTES_PER_SAMPLE; // 10:15 ==> 10*4 + 30/15 = 42
+                 record_min / MINUTES_PER_SAMPLE; 
       sampleNo = (sampleNo + (MIDNIGHT_SAMPLE_NO + 1)) %
-                 (MAX_SAMPLE_NO + 1); // (42 + 61) % 96 = 7 (starting from
-                                      // sampleNo 0 for 8:45am sample)
+                 (MAX_SAMPLE_NO + 1); 
 
       debug("Current SampleNo is ");
       debug(sampleNo);
 
-      // Decide the rf_cls_dd depending on the sampleNo
-      if (sampleNo <= MIDNIGHT_SAMPLE_NO) { // sampleNo 61 and above corresponds
-                                            // to midnight 00:00 and after
-        next_date(&rf_cls_dd, &rf_cls_mm, &rf_cls_yy);
-        debugln();
-        debugln(
-            "Sample is less than or equal to 60"); // if sample if less than
-                                                   // 61, we need to calculate
-                                                   // the rf_close_date as the
-                                                   // next day
+      // v5.70: Robust Met-Day Closing Logic
+      // Usually, samples 0-60 (08:45-23:45) close on the NEXT morning.
+      // But if we wake up late (after midnight 00:00), current_day IS already the close date.
+      if (sampleNo <= MIDNIGHT_SAMPLE_NO) {
+        if (record_hr <= current_hour) {
+           next_date(&rf_cls_dd, &rf_cls_mm, &rf_cls_yy); 
+        }
       }
+
+      // v5.70 Midnight Rollover Fix: Finalize record date based on met-day anchor
+      temp_day = rf_cls_dd; temp_month = rf_cls_mm; temp_year = rf_cls_yy;
+      if (sampleNo <= MIDNIGHT_SAMPLE_NO) previous_date(&temp_day, &temp_month, &temp_year);
 
       debugln();
       debugf3("RF Close date from RTC = %04d-%02d-%02d  ", rf_cls_yy, rf_cls_mm,
@@ -1355,26 +1355,11 @@ void scheduler(void *pvParameters) {
               }
               temp_min = 0;
             }
-            temp_day = current_day;
-            temp_month = current_month;
-            temp_year = current_year;
+            // v5.70: Robust date anchor for mid-day gap fill
+            temp_day = rf_cls_dd; temp_month = rf_cls_mm; temp_year = rf_cls_yy;
+            if (q <= MIDNIGHT_SAMPLE_NO) previous_date(&temp_day, &temp_month, &temp_year);
 
-            debug("Appending record hour/min is ");
-            debug(temp_hr);
-            debug(":");
-            debugln(temp_min);
-
-            // This means that the gap is starting before midnight and the
-            // lastSample recorded is before midnight
-            if ((q <= MIDNIGHT_SAMPLE_NO) &&
-                (sampleNo >= (MIDNIGHT_SAMPLE_NO + 1))) {
-              previous_date(&temp_day, &temp_month, &temp_year);
-              debug("Gap started before midnight extending to next day, so "
-                    "calculating the previous day to store. Current record : ");
-              debug(temp_hr);
-              debug(" : ");
-              debugln(temp_min);
-            }
+            debugf("Appending record %02d:%02d (%02d-%02d-%04d)\n", temp_hr, temp_min, temp_day, temp_month, temp_year);
 
             if (q ==
                 sampleNo) { // The current sample will only get stored in
@@ -1706,7 +1691,7 @@ void scheduler(void *pvParameters) {
           // v7.70: Strict TWS FTP Format (57 bytes)
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
-                   stnId, current_year, current_month, current_day, record_hr,
+                   stnId, temp_year, temp_month, temp_day, record_hr,
                    record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                    signal_lvl, bat_val);
 #endif
@@ -1717,13 +1702,13 @@ void scheduler(void *pvParameters) {
           snprintf(
               append_text, sizeof(append_text),
               "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
-              sampleNo, current_year, current_month, current_day, record_hr,
+              sampleNo, temp_year, temp_month, temp_day, record_hr,
               record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
               signal_lvl, bat_val);
           // v7.70: Strict TWSRF FTP Format (63 bytes)
           snprintf(ftpappend_text, sizeof(ftpappend_text),
                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
-                   stnId, current_year, current_month, current_day, record_hr,
+                   stnId, temp_year, temp_month, temp_day, record_hr,
                    record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
                    inst_wd, signal_lvl, bat_val);
 #endif
@@ -1981,17 +1966,9 @@ void scheduler(void *pvParameters) {
               temp_min = 0;
             }
 
-            temp_day = current_day;
-            temp_month = current_month;
-            temp_year = current_year;
-
-            if ((i <= MIDNIGHT_SAMPLE_NO) &&
-                (sampleNo >= (MIDNIGHT_SAMPLE_NO +
-                              1))) { // This means that the gap is starting
-                                     // before midnight and the lastSample
-                                     // recorded is before midnight
-              previous_date(&temp_day, &temp_month, &temp_year);
-            }
+            // v5.70: Robust date anchor for late startup gap fill
+            temp_day = rf_cls_dd; temp_month = rf_cls_mm; temp_year = rf_cls_yy;
+            if (i <= MIDNIGHT_SAMPLE_NO) previous_date(&temp_day, &temp_month, &temp_year);
             // Filling the initial ones when device starts at mid - day and
             // SPIFFs file was not present.
 

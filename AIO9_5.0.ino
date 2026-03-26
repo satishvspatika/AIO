@@ -168,6 +168,7 @@ portMUX_TYPE timerMux1 = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE timerMux2 = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE windMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE rtcTimeMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE syncMux = portMUX_INITIALIZER_UNLOCKED;
 
 volatile char show_now = 0;
 TaskHandle_t bmeTask_h;
@@ -448,7 +449,7 @@ void setup() {
   // Reason 12 is triggered by 'DELETE DATA' or manually via ESP.restart().
   // v5.55 SELF-HEALING: Protect metrics during maintenance reboots.
   // If healer_reboot_in_progress is set, skip wiping counters even on Reason 12.
-  if ((rr == POWERON_RESET || rr == EXT_CPU_RESET || rr == 12) && !healer_reboot_in_progress) {
+  if ((rr == POWERON_RESET || rr == EXT_CPU_RESET) && !healer_reboot_in_progress) {
     debugf("[BOOT] Fresh Start (Reason %d). Initializing RTC variables.\n", (int)rr);
     // v5.60: Time-of-day dependent sensor anchor initialization
     int boot_hr = 10; // Default to mid-morning if RTC fails
@@ -478,7 +479,7 @@ void setup() {
 
     // v5.50 Bug#10 Fix: Reset diagnostic counters on DELETE DATA (SW_CPU_RESET)
     // so they don't carry stale values into fresh logs (explains netcount=42 issue)
-    if (rr == 12) {
+    if (false) { // v6.03: Reason 12 (SW Restart) no longer destructive to preserve continuity
       strcpy(diag_cdm_status, "PENDING");
       diag_pd_count = 0;
       diag_ndm_count = 0;
@@ -1519,6 +1520,16 @@ void initialize_hw() {
     }
   } else {
     debugln("[BOOT] SPIFFS: OK");
+    
+    // v6.03: Atomic Recovery - Restore stranded .tmp files from power-fail
+    if (!SPIFFS.exists("/gps_fix.txt") && SPIFFS.exists("/gps_fix.tmp")) {
+        SPIFFS.rename("/gps_fix.tmp", "/gps_fix.txt");
+        debugln("[FS] Recovered stranded gps_fix.tmp");
+    }
+    if (!SPIFFS.exists("/signature.txt") && SPIFFS.exists("/signature.tmp")) {
+        SPIFFS.rename("/signature.tmp", "/signature.txt");
+        debugln("[FS] Recovered stranded signature.tmp");
+    }
   }
 
   SPI.begin(18, 19, 23, 5);
@@ -1574,9 +1585,13 @@ void loop() {
   // WiFi is now manually triggered via the LCD menu.
   // We no longer aggressively auto-start the Access Point here on EXT0
   // wakeups.
+  bool safe_to_sleep_sync = false;
+  portENTER_CRITICAL(&syncMux);
+  safe_to_sleep_sync = (sync_mode == eHttpStop) || (sync_mode == eSMSStop) || (sync_mode == eExceptionHandled);
+  portEXIT_CRITICAL(&syncMux);
+
   if ((millis() > 5000) &&
-      ((sync_mode == eHttpStop) || (sync_mode == eSMSStop) ||
-       (sync_mode == eExceptionHandled)) &&
+      safe_to_sleep_sync &&
       (lcdkeypad_start == 0) && (wifi_active == false) &&
       (httpInitiated == false) && (health_in_progress == false) &&
       (schedulerBusy == false) && (gprs_started == false) &&
@@ -1601,10 +1616,17 @@ void loop() {
     // Double-check the system hasn't just woken up in the last microsecond
     vTaskDelay(50 / portTICK_PERIOD_MS);
     
-    // Phase 11 Fix: Re-evaluate the full gate, not just schedulerBusy,
-    // to catch any state changes during the 50ms yield.
-    if (schedulerBusy || gprs_started || health_in_progress || httpInitiated) {
-        debugln("[PWR] Race Prevented: System became active during sleep delay. Aborting.");
+    // Phase 11 Fix: Re-evaluate the FULL gate, not just schedulerBusy,
+    // to catch any state changes during the 50ms yield (e.g. OTA started).
+    bool race_sync_invalid = false;
+    portENTER_CRITICAL(&syncMux);
+    race_sync_invalid = (sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled);
+    portEXIT_CRITICAL(&syncMux);
+
+    if (schedulerBusy || gprs_started || health_in_progress || httpInitiated || 
+        force_reboot || force_ota || ota_writing_active || lcdkeypad_start || 
+        wifi_active || race_sync_invalid) {
+        debugln("[PWR] Race Prevented: System became active during sleep delay. Aborting sleep.");
         return; // Re-enter the loop
     }
 

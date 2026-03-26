@@ -45,6 +45,7 @@ if [ "$FLASH_SIZE" = "4mb" ]; then
 fi
 
 arduino-cli compile \
+    --clean \
     --fqbn "$FQBN" \
     --build-property "build.partitions=custom" \
     --build-property "build.custom_partitions=$(pwd)/$PARTITION_FILE" \

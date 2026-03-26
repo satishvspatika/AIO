@@ -71,33 +71,6 @@ enum HDC_Type { // Sensor type enum
 
 enum BME_Type { BME_UNKNOWN, BME_280 };
 
-extern HDC_Type hdcType;
-extern BME_Type bmeType;
-extern volatile bool health_in_progress;
-extern volatile bool
-    schedulerBusy; // v5.65: Prevents sleep during 15-min slot processing
-extern volatile bool
-    primary_data_delivered; // v5.51: Track session success for backlog gating
-extern volatile RTC_DATA_ATTR bool skip_primary_http; // v7.88: Skip live upload on duplicates
-extern volatile bool
-    force_ftp; // v5.68: Command piggyback — FTP_BACKLOG (unsent backlog)
-extern volatile bool force_ftp_daily; // v5.80: Command piggyback — FTP_DAILY
-                                      // (specific date file)
-extern char
-    ftp_daily_date[12]; // v5.80: Date string for FTP_DAILY e.g. "20260228"
-extern volatile bool force_reboot; // v5.68: Command piggyback
-extern volatile bool force_ota;    // v5.68: Command piggyback
-extern volatile bool
-    force_gps_refresh; // v7.59: Server-requested GPS re-acquire
-extern volatile bool
-    force_clear_ftp_queue; // v7.59: Server-requested FTP backlog clear
-extern volatile bool force_delete_data; // v7.94: Server-requested Factory Reset
-extern volatile bool ota_writing_active; // v6.88: Prevent FS collision
-extern int ota_fail_count;
-extern char ota_fail_reason[48];
-extern char ota_cmd_param[128];       // v75: Target binary name from dashboard
-extern RTC_DATA_ATTR int last_cmd_id;               // v7.92: Command ID for feedback
-extern RTC_DATA_ATTR char last_cmd_res[64];         // v7.92: Result message for feedback
 extern volatile bool ota_silent_mode; // Rule 43: Stop all log leakage
 extern volatile bool bearer_recovery_active;
 
@@ -321,24 +294,27 @@ extern int time_to_deepsleep;
 // Common
 extern char UNIT_VER[20], STATION_TYPE[10], NETWORK[10];
 extern char universalNumber[20];
-extern volatile bool timeSyncRequired;
-extern volatile bool httpInitiated;
-extern char *startptr;
-extern int send_status;
-extern bool valid_dt, valid_time;
-// SCHEDULER (GLOBAL) - v5.66: Moved to AIO9_5.0.ino
-extern volatile int sync_mode, gprs_mode, data_mode;
-extern int sampleNo;
-extern int rf_cls_dd, rf_cls_mm, rf_cls_yy; 
-extern int rf_cls_ram_dd, rf_cls_ram_mm, rf_cls_ram_yy;
-extern int time_to_sleep;
-
-extern float bat_val;
-
-extern char battery[10], solar_sense[10];
-extern int solar_conn;
-
-extern volatile bool schedulerBusy;
+// --- Process Control Flags (v5.66 ODR Pass) ---
+extern HDC_Type hdcType;
+extern BME_Type bmeType;
+extern volatile bool health_in_progress;
+extern volatile bool schedulerBusy; // Prevents sleep during 15-min slot processing
+extern volatile bool primary_data_delivered; 
+extern volatile RTC_DATA_ATTR bool skip_primary_http; 
+extern volatile bool force_ftp; 
+extern volatile bool force_ftp_daily;
+extern char ftp_daily_date[12];
+extern volatile bool force_reboot;
+extern volatile bool force_ota;
+extern volatile bool force_gps_refresh;
+extern volatile bool force_clear_ftp_queue;
+extern volatile bool force_delete_data;
+extern volatile bool ota_writing_active;
+extern int ota_fail_count;
+extern char ota_fail_reason[48];
+extern char ota_cmd_param[128];
+extern RTC_DATA_ATTR int last_cmd_id;
+extern RTC_DATA_ATTR char last_cmd_res[64];
 extern char cur_file[32], unsent_file[32], new_file[32], temp_file[50];
 extern char station_name[16];
 extern char chip_id[13]; 
@@ -590,11 +566,14 @@ void bmeTask(void *pvParameters);
 void windSpeed(void *pvParameters);
 void windDirection(void *pvParameters);
 // Task Handles (for stack monitoring and state tracking)
+// --- Core Task & Communication Handles ---
 extern TaskHandle_t scheduler_h, gprs_h, lcdkeypad_h, rtcRead_h;
 extern TaskHandle_t tempHum_h, bmeTask_h, windSpeed_h, windDirection_h;
-extern volatile bool ota_silent_mode;
-extern volatile bool bearer_recovery_active;
+extern TaskHandle_t webServer_h;
+extern volatile bool gprs_started;
+extern int badReads;
 extern int active_cid;
+extern portMUX_TYPE syncMux; // v5.70: Cross-core atomic protection for sync_mode
 
 void rtcRead(void *pvParameters);
 
