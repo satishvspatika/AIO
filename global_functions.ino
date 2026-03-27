@@ -1277,7 +1277,7 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
     return;
   }
 
-  debugf1("[SPIFFS] Pruning %s (%d bytes). Limit exceeded.\n", path, (int)current_size);
+  debugf2("[SPIFFS] Pruning %s (%d bytes). Limit exceeded.\n", path, (int)current_size);
 
   // Buffer recent half of max allowed limit
   size_t keep_size = limit / 2;
