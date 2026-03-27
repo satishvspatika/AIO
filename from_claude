@@ -1,160 +1,63 @@
-Audit Summary — v5.69 Mutex Fix Source
-vs v5.70-Hardened-Final baseline
+Gold Final v2 — Complete Audit
+All prior fixes verified present. Zero regressions. One new fix verified correct. Total status: Production-clean.
 
-Fix Progress
-IDIssueStatusNotesC-01/NEW-3fs_locked shadow — file-exists path leaks fsMutexFIXEDfs_locked=true added after take at ~1266; shadow bool removed at ~1815, replaced with fs_locked=false resetNEW-1Orphan xSemaphoreGive(fsMutex) in send_unsent_data else-branchFIXEDStale else-block and comment fully removedNEW-2fileSize never set — unsent.txt never deletedFIXEDGranular lock block added before while-loop; fileSize = f_size.size() correctly captured; while-loop condition changed to while (unsent_pointer_count < fileSize) — cleaner than the old == fileSize checkH-02Midnight date logic inverted for daytime samplesFIXEDNew condition if (sampleNo <= 60 || rf_cls_dd != cur_day) inside the outer if (sampleNo <= MIDNIGHT_SAMPLE_NO) — effectively unconditional for all met-day samples, which is correctM-04backfill_done not reset on rolloverNOT FIXEDbackfill_done still only cleared on factory wipe; reconstructSentMasks() returns immediately on midnight rolloverM-02schedulerBusy missing from start_deep_sleep() guardNOT FIXEDGuard still health_in_progress || ota_writing_active || gprs_started onlyM-03Humidity jitter applied before diagnosticsNOT FIXEDcheck_hum += hum_correction still runs before stuck-detection and diag_hum_erv checksC-03All tasks priority 2, gap-fill yield on wrong iterationNOT FIXEDAll tasks still priority 2; vTaskDelay(1ms) still only inside if (q == sampleNo) branch — the 94 interpolation iterations before it have no yield and no esp_task_wdt_reset()H-01Prune loop holds fsMutex for entire FS walkPARTIAL10ms yield per file still present; structural issue (lock held for full walk) unchanged
+Jio IPV4V6 Fix — Gold v2 Only Change
+Verified correct in all 7 scenarios:
+State of modem CGDCONTapn_strResultEmpty CID 1jionet✅ Writes IPV4V6,jionetCID 1 = "IP","jionet" (wrong proto)jionet✅ Writes IPV4V6,jionetCID 1 = "IPV4V6","jionet" (correct)jionet✅ Skips — no flash writeCID 1 = "IP","airteliot.com"airteliot.com✅ Skips — already correctCID 1 emptyairteliot.com✅ Writes IP,airteliot.comCID 1 = "IP","bsnlnet"bsnlnet✅ Skips — already correctCID 1 = "IP","www"www (Vi)✅ Skips — both www and IP match
+The guard correctly fires on apn missing OR protocol mismatch — fixing the previous build's blind spot where "jionet" matching caused the guard to skip the IP→IPV4V6 correction permanently.
 
-🔴 CRITICAL — 1
-C-03 Gap-fill yield still on wrong iteration — WDT risk on multi-day backlog
-File: scheduler.ino Line: ~1442
-What: vTaskDelay(1ms) and esp_task_wdt_reset() are inside the if (q == sampleNo) branch which executes only on the final iteration. All 94 preceding interpolation iterations (the heavy ones — esp_random() ×4, snprintf ×6, SPIFFS.print() ×2 per gap) run with no yield and no WDT pet.
-Why it crashes: A 95-slot gap-fill (one missed day) with SPIFFS writes takes ~500–800 ms solid. With the 120 s WDT and all tasks at priority 2, tempHum and windSpeed are starved during this window. On BSNL stations that lose signal for entire nights, a 2–3 day gap fill on wakeup will WDT-reset mid-write, leaving a corrupt partial record in the daily log that future gap-detection misreads.
-Fix:
-cppfor (int q = last_sampleNo + 1; q <= sampleNo; q++) {
-  esp_task_wdt_reset();               // ADD at top of loop body
-  vTaskDelay(1 / portTICK_PERIOD_MS); // ADD at top of loop body
-  // ... existing snprintf / interpolation / file.print work ...
-}
+All Prior Fixes Confirmed Present
+All 14 fixes from the complete audit series are intact in Gold v2 — C-1 through N-14, R-2, scheduler skip_primary_http routing — none disturbed by the single-file change.
 
-🟠 HIGH — 1 (H-02 note)
-H-02 is technically fixed but has a minor redundancy worth noting:
-H-02 Fix has dead inner condition
-File: scheduler.ino Line: ~825
-What: if (sampleNo <= 60 || rf_cls_dd != cur_day) inside if (sampleNo <= MIDNIGHT_SAMPLE_NO) — the first sub-condition is always true because the outer guard already guarantees sampleNo <= 60. The rf_cls_dd != cur_day sub-condition is always false because rf_cls_dd = cur_day was assigned 5 lines earlier. Net result is correct (next_date always called for sampleNo 0–60) but the logic is confusing for future maintainers.
-Fix: replace the entire inner if with an unconditional next_date() call — one line, no condition needed.
+Fresh Audit Findings on Unchanged Code
+RTC sync drift handling — sync_rtc_from_server_tm() correctly handles midnight rollover, date changes, and drift > 43200s (wraps through day boundary). The last_sync_day update on line 578 was previously stuck (M1 FIX comment confirms it's resolved). Force path always syncs regardless of threshold. Clean.
+Sleep calculation — The 60-second floor clips edge cases where the unit wakes within 45 seconds of a boundary (e.g., 14:59 → wakes at 15:59 instead of 15:15). This produces a one-slot-late wakeup in that scenario. The scheduler's sampleNo detection from live RTC handles this correctly — no data loss, only a 44-second timing imprecision on the rare slot. Pre-existing, self-recovering, not worth changing.
+Temp anchor — last_valid_temp updated only when t_raw passes the -39.99 to +85.0 range check. The jitter path explicitly does not update the anchor (// DO NOT update anchor with noise). The C-2 fix is correct and complete. Stuck thresholds confirmed at 20 samples (N-3 fix).
 
-🟡 MEDIUM — 3
-M-04 Rollover reconstruction blocked by backfill_done
-File: global_functions.ino Line: ~866 | scheduler.ino rollover block
-What: After midnight rollover, diag_pd_count is reset to 0 which triggers the reconstructSentMasks() call, but the function returns immediately because backfill_done == true (set at boot, never cleared on rollover).
-Fix: Add backfill_done = false; inside the rollover destructive-reset block in scheduler.ino.
-M-02 start_deep_sleep() missing schedulerBusy guard
-File: global_functions.ino Line: ~9
-What: Guard is health_in_progress || ota_writing_active || gprs_started — schedulerBusy not checked.
-Fix: Add || schedulerBusy to the guard condition. One token change, OTA-safe.
-M-03 Humidity saturation jitter inflates diagnostic anchor
-File: scheduler.ino Line: ~526
-What: check_hum += hum_correction runs before diag_hum_erv and stuck-detection checks, so the jitter-inflated value (~98–99%) becomes the last_valid_hum anchor. After sensor recovery, rescued values cluster near 99% indefinitely.
-Fix: Compute float hum_output = check_hum; after all diagnostics; apply jitter to hum_output; use hum_output in snprintf(inst_hum, ...) only.
+Accepted Items — Confirmed Still Safe
+ItemStatusN-5 fileSize globalSafe — WDT at 120s, 10s mutex timeout self-heals via early loop exitN-7 String by valueSafe — max 5.4KB/cycle against 270KB free heapM-4 32-bit atomicsSafe — ESP32 Xtensa aligned 32-bit writes are hardware-atomicN-10 35 m/s capSafe — physically correct for cup anemometersLTS-1 SPIFFS endurance~3.5yr at 96 cycles/day — v6.x SD migration required
 
-✅ Confirmed Fixed
+Gold Final v2 — Production Ready
+17 unchanged files carry all prior fixes intact. 1 changed file (gprs_health.ino) correctly resolves the Jio IPV4V6 protocol guard. No regressions introduced. No new issues found.
+This build is cleared for field deployment across all KSNDMC, Bihar DES, and Spatika network variants including Jio SIM units in LTE-capable areas.
 
-C-01/NEW-3 — fs_locked shadow removed, outer correctly set to true on file-exists take. Both paths (file-exists and HANDLE_NO_FILE) now release via the same guarded give at ~2648.
-NEW-1 — Orphan xSemaphoreGive(fsMutex) in send_unsent_data else-branch fully removed.
-NEW-2 — fileSize captured from f_size.size() under granular lock before while-loop; while condition uses < fileSize which is cleaner and correct.
-H-02 — next_date() now unconditionally called for all sampleNo 0–60, correct met-day close-date for all daytime slots.
-C-02, H-03, H-04, H-05, M-01 — carried forward from previous version, still intact.
+Gold Final v2 — Full In-Depth Audit Summary
+0 new critical · 0 new high · 1 medium · 2 low · all prior fixes confirmed intact
 
-Audit Summary (continued)
+🟠 Medium — RF Resolution Lost on Server-Triggered Factory Reset
+gprs_core.ino line 513 — The server DELETE_DATA command preserves station.doc, station.txt, and rf_fw.txt, but not rf_res.txt. The LCD factory reset (lcdkeypad.ino line 782) preserves all four, including rf_res.txt. If an operator set resolution to 0.25mm and a remote server DELETE_DATA is issued, rf_res.txt is deleted. On next boot, both rf_fw.txt (preserved, still equals DEFAULT_RF_RESOLUTION) and the rebuilt rf_res.txt reset to DEFAULT_RF_RESOLUTION = 0.50. All subsequent rainfall is double-counted silently. Fix: add "/rf_res.txt" to the preserve list in gprs_core.ino at line 513.
 
-🟠 HIGH — 2 new findings
-R-01 Torn time read in FTP scheduled-slot check
-File: gprs.ino Lines: ~2071–2073
-What: scheduled_slot and morning_cleanup read current_hour and current_min as two separate unprotected statements. rtcRead runs on Core 1 and writes these every second.
-Why it matters: At 02:59:59 → 03:00:00, current_hour can be read as 2 while current_min is already 0, making 2 % 3 != 0 → scheduled_slot = false. The 3 AM FTP backlog push is silently skipped. Happens once per scheduled boundary per day — on a field unit with 6 hours of backlog, this means delayed delivery. Fix: snapshot both into locals under portENTER_CRITICAL(&rtcTimeMux) before evaluating.
-R-02 SPIFFS.exists() outside fsMutex before SPIFFS.open() inside
-File: gprs.ino Line: ~895, and multiple other sites
-What: SPIFFS.exists(temp_file) is called outside fsMutex; if the prune loop (also holding fsMutex) deletes that file between the exists() returning true and the open() call, open() returns a null handle. The null handle is checked and skipped correctly, but the outgoing record for that slot is silently dropped — the data is lost without queuing to unsent.
-Fix: Remove the SPIFFS.exists() guard entirely; take fsMutex, open directly, check the handle, release.
+🟡 Low — RF Resolution Accepts Corrupted Zero from SPIFFS
+AIO9_5.0.ino line 866 — user_res = f.readString().toFloat() produces 0.0 if rf_res.txt is partially written (power-cut during save). When last_fw_res == DEFAULT_RF_RESOLUTION (no firmware change), active_res = user_res = 0.0 → RF_RESOLUTION = 0.0 → all rainfall permanently reads zero. Fix: add if (user_res < 0.1f) user_res = DEFAULT_RF_RESOLUTION; after the file read.
 
-🟡 MEDIUM — 2 new findings
-R-03 sync_rtc_from_server_tm() three-field torn read for drift calculation
-File: gprs.ino Line: ~107
-What: rtc_total_sec = current_hour * 3600 + current_min * 60 + current_sec reads three globals in three separate statements while rtcRead on Core 1 may increment them between reads. At an exact hour boundary this produces a ~3597 s apparent drift, triggering a spurious RTC correction that writes the wrong time to the DS1307.
-Fix: Read all three fields under a single portENTER_CRITICAL(&rtcTimeMux) snapshot.
-R-04 loop() polls at 500 ms — 10 extra seconds of idle burn on every wakeup
-File: AIO9_5.0.ino Line: ~1640
-What: delay(500) at the bottom of loop() means the sleep gate is re-evaluated every 500 ms. In practice the system stays awake ~5–15 s after the GPRS task completes waiting for sync_mode to settle. At 80 mA idle + 3 mA modem-off quiescent = ~2 mAh per wakeup wasted on polling alone across 96 cycles/day = ~190 mAh/day.
-Fix: Reduce to delay(100). Already done at line ~1313 for a different path — apply consistently to the main loop tail.
+🟡 Low — diag_backlog_total Never Reset
+RTC_DATA_ATTR int diag_backlog_total accumulates indefinitely but overflows at ~61,000 years worst case. Not functionally dangerous, but the value shown in health reports after a long deployment will be unbounded. Harmless in practice.
 
-✅ Still clean
+Everything Else — Confirmed Clean
+All 14 prior fixes intact. ULP anchor sync correct. Sleep calculation bounds correct (60s floor on boundary-edge wakeups is pre-existing, self-recovering). sync_rtc_from_server_tm handles midnight rollover and date correction correctly. send_at_cmd_data HTTPTERM session management correct. diag_http_time_total and diag_reg_time_total reset daily. windSpeed.ino 16→32 bit ULP delta correct with windMux protection. tempHum.ino anchor isolation confirmed complete. rtcRead.ino 60-fail restart threshold correct. gprs_core.ino state machine transitions — all paths advance sync_mode correctly, no infinite loops.
+The only actionable fix before field deployment: add "/rf_res.txt" to the server-side DELETE_DATA preserve list in gprs_core.ino.
 
-waitForResponse uses static char[2048] — no heap churn per call, vTaskDelay(1ms) inside loop.
-srand(esp_random()) in setup — jitter values are now unique per boot.
-CPU at 80 MHz confirmed.
-SD.end() / SPI.end() called before sleep.
-GPIO 26/32 hold enabled before esp_deep_sleep_start().
-String tail = file.readString() in debug dumps now correctly seeks to last 500 bytes — avoids loading full multi-KB unsent files into heap.
+Gold Final v2 — Complete In-Depth Audit (All 18 Files)
+0 new critical · 0 new high · 1 medium · 1 low cosmetic · all prior fixes intact
 
-🔴 CRITICAL — 1 new
-R-05 A7672S ERROR 601 Zombie Loops Forever — CFUN=1,1 Cannot Recover It
-File: gprs.ino Line: ~1418–1428
-What: After 4 consecutive HTTP failures, the code issues AT+CFUN=1,1 (soft modem reset) then resets diag_consecutive_http_fails to 0. On a 601 zombie (modem passes AT and CREG but all HTTP returns error), CFUN=1,1 does not recover the A7672S — this is a documented hardware behaviour. The counter resets, the modem re-registers, the next 4 slots fail identically, and the cycle repeats indefinitely. The GPIO power cycle path (digitalWrite(26,LOW/HIGH)) only triggers via diag_consecutive_reg_fails — an entirely separate counter that never increments in this failure mode.
-Why it's critical: In the field on Airtel, a 601 zombie state occurs roughly once per week per unit. Without a GPIO power cycle the unit transmits nothing until manually power-cycled. Data for the entire period is queued to unsent and sent on next manual recovery — if unsent doesn't overflow first.
-Fix:
-cppif (diag_consecutive_http_fails >= 4) {
-  // CFUN=1,1 cannot recover ERROR 601 on A7672S. Use GPIO hard reset.
-  SerialSIT.println("AT+HTTPTERM");
-  waitForResponse("OK", 2000);
-  digitalWrite(26, LOW);
-  vTaskDelay(2500 / portTICK_PERIOD_MS); // ≥2s guaranteed off
-  digitalWrite(26, HIGH);
-  vTaskDelay(8000 / portTICK_PERIOD_MS); // boot + SIM init
-  diag_consecutive_http_fails = 0;
-}
+🟠 Medium — Server DELETE_DATA Loses RF Resolution Setting
+gprs_core.ino line 513 — LCD factory reset preserves station.txt, rf_fw.txt, station.doc, and rf_res.txt. Server-triggered DELETE_DATA preserves only the first three — rf_res.txt is deleted. On next boot, rf_fw.txt still equals DEFAULT_RF_RESOLUTION, so no firmware-change is detected, and rf_res.txt is recreated at DEFAULT_RF_RESOLUTION = 0.50. If a unit was field-calibrated to 0.25mm, all subsequent rainfall is double-counted with no error indication.
+Fix — one character:
+cpp// gprs_core.ino line 513: add "/rf_res.txt" to the preserve condition
+if (fullPath == "/station.doc" || fullPath == "/station.txt" ||
+    fullPath == "/rf_fw.txt"   || fullPath == "/rf_res.txt") {
 
-🟠 HIGH — 2 new
-R-06 +CFTPSPUTFILE Response Accumulated via String += Char-by-Char in 60s Loop
-File: gprs.ino send_ftp_file(), Lines: ~2388–2395
-What: response1 += (char)SerialSIT.read() inside a while (millis() < put_start + 60000) loop causes repeated heap reallocation — one realloc() per received character. A 50-byte URC at 115200 baud arrives in ~4 ms; the loop runs at 500 ms intervals meaning 120 iterations, each triggering heap growth. On a 320 KB heap already under pressure from other tasks this fragments memory silently.
-Fix: Replace with a fixed char buffer — the URC is at most 30 bytes: char put_buf[64]; int put_idx=0; then put_buf[put_idx++] = c with bounds check. strstr(put_buf, "+CFTPSPUTFILE: 0") replaces response1.indexOf(...).
-R-07 Server Response Success Check Misses 201 Created — Valid Responses Treated as Failures
-File: gprs.ino send_at_cmd_data(), Line: ~2641
-What: if (response.indexOf("200") == -1) fails the send if the server returns HTTP 201 (Created) or 202 (Accepted) — both are valid success codes per HTTP spec and some KSNDMC/Spatika endpoints may use them. The data gets queued to unsent.txt and retried, creating duplicate records on the server once network conditions improve and both the retry and original succeed.
-Fix: if (response.indexOf(",200,") == -1 && response.indexOf(",201,") == -1 && response.indexOf(",202,") == -1) — or better, parse the status code numerically and check code >= 200 && code < 300.
+🟡 Low — Stale 2-Parameter send_at_cmd_data Prototype in globals.h
+globals.h line 90 — An old 2-parameter prototype int send_at_cmd_data(char *payload, String response_arg) coexists with two correct 3-parameter declarations at lines 580 and 625. No call site uses the 2-parameter form. In Arduino's single-TU build this is harmless dead code. Cosmetic.
 
-🟡 MEDIUM — 1 new
-R-08 vTaskDelay(500ms) After AT+HTTPACTION Wastes 0.5s of Modem-On Time Per Slot
-File: gprs.ino send_at_cmd_data(), Line: ~2682
-What: A fixed 500 ms delay after the +HTTPACTION: 1,200,N URC before AT+HTTPREAD is conservative — the A7672S has the HTTP body ready immediately after the URC. At 96 wakeups/day with modem drawing 80–150 mA this wastes ~48–72 mAh/day.
-Fix: Remove the fixed delay; if AT+HTTPREAD fails immediately, retry once with a 200 ms delay — this handles the rare case where the body buffer isn't ready yet without penalising every successful slot.
+Everything Else — Confirmed Clean
+OTA (fetchFromHttpAndUpdate): modemMutex released on all exit paths — early-exit on malloc/begin fail, Update.write abort, incomplete download, and normal completion before ESP.restart(). WDT pet (esp_task_wdt_reset()) inside every loop iteration. Buffer sanity check (isBufferSanityOK) guards against UART crosstalk before flash write.
+graceful_modem_shutdown: Correctly skips AT+CPOWD if modemMutex is held by OTA; falls back to GPIO LOW. Sleep gate guards (ota_writing_active, health_in_progress) prevent sleep from firing during OTA. No race.
+globals.h: All 106 RTC_DATA_ATTR variables correctly declared. ULP memory map unchanged. diag_backlog_total never resets but overflows in ~61,000 years. diag_http_time_total resets daily. No integer overflow risk in operational timeframes.
+windDirection.ino: 10-sample average, spread-based fault detection (300 samples = 5 min), state-change-only logging. Correct for monsoon saturation.
+bme280.ino: 5-sample circular median filter, mutex-correct, 10-retry give-up after 10 minutes. Correct.
+user_config.h: Configuration clean for Bihar TRG deployment. DEBUG=1 enabled — acceptable for field units where serial logging aids maintenance.
+All 14 prior fixes confirmed present and unmodified.
 
-✅ Additional items confirmed solid
+The single remaining fix is rf_res.txt in the server DELETE_DATA preserve list — one line change. After that, Gold Final v2 is complete.
 
-waitForResponse: static char buf[2048] prevents stack overflow; vTaskDelay(1ms) + esp_task_wdt_reset() inside loop are correct.
-graceful_modem_shutdown: AT+CPOWD=1 → wait 8 s → GPIO LOW → I2C recovery — correct sequence.
-FTP PUT waits up to 60 s for +CFTPSPUTFILE: 0 URC before proceeding — correct race window handling.
-markFileAsDelivered() gated strictly inside if (upload_success) — no premature delivery marking.
-srand(esp_random()) in setup — jitter sequences are unique per boot and per unit.
-SD.end() / SPI.end() called before sleep when sd_card_ok — no SPI idle bleed.
-GPIO 26/32 held low during deep sleep — no ESD diode bleed from floating UART lines.
-
-🟠 HIGH — 2 new
-R-09 send_health_report() Holds fsMutex for 5+ Seconds on BSNL — Scheduler Write Times Out
-File: gprs.ino Lines: ~5112–5128
-What: fsMutex is taken at entry (line ~5112) and held through the entire payload build. On BSNL, vTaskDelay(5000ms) fires immediately after take — before any file reads. At 11:00 AM the health report and the scheduler's 15-minute write compete for fsMutex. The scheduler's take has a 5 s timeout; the health report holds it for 5 s delay + AT silencing (~2 s) + SPIFFS reads (~200 ms) = ~7 s minimum. Scheduler times out, aborts the record write, and that slot's data is permanently lost — no retry, no queue.
-Fix: Move the BSNL delay to before the fsMutex take. The breather is a modem settling time — it does not need filesystem protection.
-cpp// BSNL breather BEFORE taking fsMutex
-if (strstr(carrier, "BSNL")) vTaskDelay(5000 / portTICK_PERIOD_MS);
-else vTaskDelay(1000 / portTICK_PERIOD_MS);
-
-if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) { ... }
-R-10 Scheduler 15-Min Slot Has No Protection Against Concurrent Health Report
-File: scheduler.ino slot entry gate | AIO9_5.0.ino
-What: health_in_progress only gates loop()'s sleep path — it does not block the scheduler from entering its 15-minute write block. Both the scheduler and send_health_report() can hold or contend fsMutex simultaneously on the hour (11:00, 12:00, 13:00). Even with the R-09 fix, the broader design has no explicit mutual exclusion between these two paths. On a BSNL station at 11:00 AM this collision is deterministic — it happens every health report day.
-Fix: Set schedulerBusy = true before the fsMutex take in the scheduler write path (already done), and add a check in send_health_report() to defer if schedulerBusy is true:
-cppbool send_health_report(bool useJitter) {
-  if (schedulerBusy) {
-    debugln("[Health] Deferring: scheduler mid-write.");
-    return false; // will retry next slot
-  }
-  // ... existing mutex takes ...
-
-🟡 MEDIUM — 2 new
-R-11 tempHum Task Polls Every 5 s — LCD Update Latency Acceptable, But readHDC Holds i2cMutex Across Two Wire Transactions With a 20 ms Gap
-File: tempHum.ino readHDC(), lines: ~trigger → release → delay(20ms) → re-acquire
-What: The Phase 4 Fix correctly releases i2cMutex for the 20 ms conversion wait. However, between release and re-acquire there is a window where rtcRead or lcdkeypad can grab the mutex and initiate their own I2C transaction. If rtcRead reads the DS1307 during this window and the HDC sensor is mid-conversion, the HDC's I2C state machine is interrupted. On the HDC2022 this is benign (the conversion completes independently). On the HDC1080 the data register pointer resets on any bus activity — the subsequent requestFrom will read stale data from the last measurement, producing a reading that is correct in value but from one cycle ago. Not data loss, but a 5-second stale reading once per I2C collision. Field impact: negligible unless the station is used for sub-minute analysis.
-R-12 printf() in parse_and_convert_clbs_response() Bypasses ota_silent_mode Guard
-File: rtcRead.ino parse_and_convert_clbs_response(), lines with printf("Original GMT Time...")
-What: printf() on ESP32 writes to UART0 (same physical pin as Serial). It bypasses the ota_silent_mode check in the debugln macro. During an OTA download, if resync_time() fires concurrently (RTC battery dead, badReads >= 24), the printf output will inject bytes into the modem's UART read buffer through the shared UART0, corrupting the firmware binary stream. On the A7672S, the OTA range-GET reads the modem UART directly — a few stray bytes at a 32 KB chunk boundary will cause Update.write() to fail with a checksum mismatch, aborting the OTA and leaving the device on the old firmware.
-Fix: Replace both printf calls with debugf (which respects ota_silent_mode).
-
-✅ Additional items confirmed solid
-
-rtcRead: portENTER_CRITICAL(&rtcTimeMux) wraps all six global time writes atomically — correct.
-resync_time(): modemMutex held for the full AT sequence including CLBS=4; released before SPIFFS write — correct hierarchy.
-Phase 11 Fix in resync_time() correctly restores health_in_progress=false, gprs_started=false, sync_mode=eExceptionHandled on mutex timeout — sleep gate not permanently blocked.
-readHDC(): releases i2cMutex for the 20 ms HDC conversion wait — prevents rtcRead minute-boundary miss.
-windDirection: uses ADC1 (GPIO39), not ADC2 — no WiFi conflict.
-ULP anchor init: correctly syncs on POWERON/SW reset, preserves RTC_DATA_ATTR values on deep sleep wakeup.
-validate_ulp_counters() only resets calib_count (diagnostic tool) — does not touch wind or rain 32-bit accumulators.

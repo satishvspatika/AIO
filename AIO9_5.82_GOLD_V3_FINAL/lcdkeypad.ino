@@ -709,11 +709,6 @@ void lcdkeypad(void *pvParameters) {
                 cur_mode = eEditOff;
               }
             } else if (rf_res_edit_state == 2) {
-              // Apply user's edited value before saving
-              float new_res = atof(input_buf);
-              if (new_res == 0.25f || new_res == 0.50f) {
-                RF_RESOLUTION = new_res;
-              }
               // v5.70: Protect resolution save with fsMutex
               if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
                 File f = SPIFFS.open("/rf_res.txt", FILE_WRITE);

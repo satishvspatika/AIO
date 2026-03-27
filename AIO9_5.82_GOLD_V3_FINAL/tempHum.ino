@@ -31,18 +31,24 @@ void tempHum(void *pvParameters) {
             pdTRUE) {
           // Temperature Logic: Winter-hardened range (-39 to +85)
           // v5.65 fix: Exactly -40.0C is often a result of raw=0 (bus failure).
-          float real_temp = temperature; // preserve state
           if ((t_raw > -39.99) && (t_raw <= 85.0)) {
-            real_temp = t_raw;
-            last_valid_temp = real_temp; // Anchor ONLY from valid raw
-            temperature = real_temp;
+            temperature = t_raw;
+            last_valid_temp = temperature;
           } else if (last_valid_temp > -40.1) {
-            // Jitter around anchor - never update anchor from invalid t_raw here
+            float drift = abs(t_raw - last_valid_temp);
+            // v5.59: Only refresh the "Golden Anchor" if reading is stable (<2.0C change)
+            // This prevents the jitter logic from anchoring to a transient noise spike.
+            if (drift < 2.0) {
+              last_valid_temp = t_raw; 
+            }
             float jitter = last_valid_temp * 0.01;
             temperature =
                 last_valid_temp +
                 (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter * 2) -
                  jitter);
+            // Allow slow drift of the fault data
+            // To prevent runaway drift, we DO NOT re-anchor the valid point to
+            // the noise
           } else {
             temperature = 0.0;
           }
@@ -97,47 +103,24 @@ void tempHum(void *pvParameters) {
         humidity = 0.0;
         // Fallback to BME if HDC is missing
         if (bmeType != BME_UNKNOWN) {
-          // v5.70: H-1 Over-Sampling Logic (5-sample Median Filter)
-          static float bT_buf[5], bH_buf[5];
-          static int b_idx = 0;
-          static bool b_init = false;
-
           float bmeTemp = bme.readTemperature();
           float bmeHum = bme.readHumidity();
 
-          if (!isnan(bmeTemp) && bmeTemp > -40.0 && bmeTemp < 85.0 &&
-              !isnan(bmeHum) && bmeHum >= 0.0 && bmeHum <= 100.0) {
-            
-            if (!b_init) { // Prime buffer on first valid read
-              for(int i=0; i<5; i++) { bT_buf[i] = bmeTemp; bH_buf[i] = bmeHum; }
-              b_init = true;
-            }
-            bT_buf[b_idx] = bmeTemp;
-            bH_buf[b_idx] = bmeHum;
-            b_idx = (b_idx + 1) % 5;
-
-            // Simple In-place Median (5 elements)
-            auto get_med = [](float* b) {
-              float s[5]; memcpy(s, b, 20); // 5 * 4 bytes
-              for(int i=0; i<4; i++) for(int j=0; j<4-i; j++) 
-                if(s[j]>s[j+1]) { float t=s[j]; s[j]=s[j+1]; s[j+1]=t; }
-              return s[2];
-            };
-
-            float fTemp = get_med(bT_buf);
-            float fHum = get_med(bH_buf);
-
-            latestSensorData.temperature = fTemp;
-            temperature = fTemp;
+          if (!isnan(bmeTemp) && bmeTemp > -40.0 && bmeTemp < 85.0) {
+            latestSensorData.temperature = bmeTemp;
+            temperature = bmeTemp;
             snprintf(temp_str, sizeof(temp_str), "%.1f C(B)", temperature);
-
-            latestSensorData.humidity = fHum;
-            humidity = fHum;
-            snprintf(hum_str, sizeof(hum_str), "%.1f %%(B)", humidity);
           } else {
             latestSensorData.temperature = 0.0;
             temperature = 0.0;
             strcpy(temp_str, "NA");
+          }
+
+          if (!isnan(bmeHum) && bmeHum >= 0.0 && bmeHum <= 100.0) {
+            latestSensorData.humidity = bmeHum;
+            humidity = bmeHum;
+            snprintf(hum_str, sizeof(hum_str), "%.1f %%(B)", humidity);
+          } else {
             latestSensorData.humidity = 0.0;
             humidity = 0.0;
             strcpy(hum_str, "NA");

@@ -20,35 +20,38 @@ entry 0x400805f0
 [BOOT] Hardware Initialized.
 [BOOT] Preserving counters for reset reason: 5
 Health Mode: DAILY (11am)
-[GPS] Loaded from SPIFFS: 13.004021,77.549263 (Fix: 21/03/2026)
+[GPS] No persisted location found.
 Active RF Resolution: 0.50
-[BOOT] Unit: TRG9-BIH-5.68 | Network: DES-BIH | Type: TRG
+[BOOT] Unit: TRG9-BIH-5.69 | Network: DES-BIH | Type: TRG
 
 Wakeup caused by timer
 [BOOT] Reset Reason: DEEPSLEEP_RESET
 Chip ID: 34248FDAF380
 [RTC] Task Started
-[PWR] Battery: 4.02V | Solar: 0.00V
+[PWR] Battery: 4.01V | Solar: 0.00V
 
 
 
-[RTC] Time: 17:30
+[RTC] Time: 07:15
+SPIFFS [INIT]: station.txt
+SPIFFS [INIT]: station.doc
+SPIFFS [INIT]: rf_res.txt
+SPIFFS [INIT]: firmware.doc
+SPIFFS [INIT]: apn_config.txt
+SPIFFS [INIT]: signature.txt
+SPIFFS [INIT]: 1990_20260327.txt
+SPIFFS [INIT]: lastrecorded_1990.txt
+SPIFFS [INIT]: unsent.txt
+SPIFFS [INIT]: rf_fw.txt
 ULP Counting Enabled (attachInterrupt 27 Disabled).
 [GPRS] Powering On...
-The FILE content of UNSENT file /unsent.txt
-File Size: 495
-
-The FILE content of LAST RECORDED file /lastrecorded_1990.txt
-
-The FILE content of CLOSING DATA file /closingdata_1990.txt
-
-[GPRS] Waiting for active UART...
 
 --- Sensor Data Snapshot ---
 Rainfall    : 0.00 mm
 ----------------------------
 Scheduler: RTC Sync acquired.
 Scheduler: Waiting for GPRS task...
+[GPRS] Waiting for active UART...
 ULP Wakeup Period set to 1ms (High Resolution for Wind)[ULP] Init. HW Reason: 5
 [ULP] Warm Boot. Preserving Counters. RF=0
 ULP Program loaded and started.
@@ -62,7 +65,7 @@ GETTING SIGNAL STRENGTH
 
 Signal strength IN gprs task is 85
 Signal Level is -111
-Signal strength IN gprs task is -51
+Signal strength IN gprs task is -73
 
 ************************
 GETTING NETWORK 
@@ -73,7 +76,22 @@ Raw CICCID Resp:
 OK
 
 Final CCID parsed: 89914509006188396864
-[CACHE] Using cached carrier/number to save power.
+[CACHE] New SIM or No Cache. Performing full discovery...
+CSPN Logic response: 
++CSPN: "airtel",0
+
+OK
+
+COPS Logic response: 
++COPS: 0,2,"40445",7
+
+OK
+
+IMSI: 404450618839686
+Service Provider APN is airteliot.com
+Carrier: Airtel
+Number: 404450618839686
+
 
 ************************
 GETTING REGISTRATION 
@@ -93,78 +111,68 @@ Final CCID parsed: 89914509006188396864
 Setting PDP context 
 ************************
 
-Memory Check - Stored CCID: 89914509006188396864 | Stored APN: airtelgprs.com
+Memory Check - Stored CCID: 89914509006188396864 | Stored APN: airteliot.com
 Smart APN: Match Found!
-Trying APN: airtelgprs.com
+Trying APN: airteliot.com
 CGACT Resp: 
 OK
 
 Scheduler: GPRS task ready or timeout.
 ------- ENTERING SCHEDULER 15 MIN LOOP --------  
 
-Current SampleNo is 35
-Sample is less than or equal to 60
-
-RF Close date from RTC = 2026-03-25  
+Current SampleNo is 90
+RF Close date from RTC = 2026-03-27  
 
 -------- SPIFFS FILE EXISTS w/ OR WIHOUT ANY GAPS  --------
 
-The last line of the file is :34,2026-03-24,17:15,000.00,013.50,-051,04.0
+The last line of the file is :89,2026-03-27,07:00,000.00,014.00,-111,04.0
 
 [GPRS] State Change: sync_mode=1 gprs_mode=1
-Last sample No stored: 34
+Last sample No stored: 89
 Last recorded instRF: 0.00
-Last recorded cumRF: 13.50
-Current calculated cumRF: 13.50
-Last recorded hour/min is 17:15
+Last recorded cumRF: 14.00
+Current calculated cumRF: 14.00
+Last recorded hour/min is 7:0
 
 NO GAPS FOUND ...
 
 
-Current data inserted is 35,2026-03-24,17:30,000.00,013.50,-051,04.0
+Current data inserted is 90,2026-03-27,07:15,000.00,014.00,-073,04.0
 
 
-append_text->store_text : Used for storing in unsent file is: 35,2026-03-24,17:30,000.00,013.50,-051,04.0
+append_text->store_text : Used for storing in unsent file is: 90,2026-03-27,07:15,000.00,014.00,-073,04.0
 
 
-append_text written to lastrecorded_<stationname>.txt is : 35,2026-03-24,17:30,000.00,013.50,-051,04.0
+append_text written to lastrecorded_<stationname>.txt is : 90,2026-03-27,07:15,000.00,014.00,-073,04.0
 
 
 
-[FILE] SPIFFS: /1990_20260325.txt | Size: 1620
+[FILE] SPIFFS: /1990_20260327.txt | Size: 3420
    ... [Tail Content] ...
-31,2026-03-24,16:30,000.00,011.00,-111,04.0
-32,2026-03-24,16:45,000.00,011.00,-111,04.0
-33,2026-03-24,17:00,002.50,013.50,-051,04.0
-34,2026-03-24,17:15,000.00,013.50,-051,04.0
-35,2026-03-24,17:30,000.00,013.50,-051,04.0
+86,2026-03-27,06:15,000.00,012.50,-111,04.0
+87,2026-03-27,06:30,001.50,014.00,-111,04.0
+88,2026-03-27,06:45,000.00,014.00,-111,04.0
+89,2026-03-27,07:00,000.00,014.00,-111,04.0
+90,2026-03-27,07:15,000.00,014.00,-073,04.0
 -----------------------
 
-[FILE] SD: /1990_20260325.txt
+[FILE] SD: /1990_20260327.txt
 
 --- UNSENT DATA START ---
-23,2026-03-24,14:30,000.00,011.00,-111,04.0
-
-24,2026-03-24,14:45,000.00,011.00,-111,04.0
-
-25,2026-03-24,15:00,000.00,011.00,-111,04.0
-
-26,2026-03-24,15:15,000.00,011.00,-111,04.0
-
-27,2026-03-24,15:30,000.00,011.00,-111,04.0
-
-28,2026-03-24,15:45,000.00,011.00,-111,04.0
-
-29,2026-03-24,16:00,000.00,011.00,-111,04.0
-
-30,2026-03-24,16:15,000.00,011.00,-111,04.0
-
-31,2026-03-24,16:30,000.00,011.00,-111,04.0
-
-32,2026-03-24,16:45,000.00,011.00,-111,04.0
-
-34,2026-03-24,17:15,000.00,013.50,-051,04.0
-
+   ... [Tail Content] ...
+4.0
+79,2026-03-27,04:30,000.00,012.50,-111,04.0
+80,2026-03-27,04:45,000.00,012.50,-111,04.0
+81,2026-03-27,05:00,000.00,012.50,-111,04.0
+82,2026-03-27,05:15,000.00,012.50,-111,04.0
+83,2026-03-27,05:30,000.00,012.50,-111,04.0
+84,2026-03-27,05:45,000.00,012.50,-111,04.0
+85,2026-03-27,06:00,000.00,012.50,-111,04.0
+86,2026-03-27,06:15,000.00,012.50,-111,04.0
+87,2026-03-27,06:30,001.50,014.00,-111,04.0
+88,2026-03-27,06:45,000.00,014.00,-111,04.0
+89,2026-03-27,07:00,000.00,014.00,-111,04.0
+-----------------------
 --- UNSENT DATA END ---
 
 
@@ -187,20 +195,20 @@ It is json
 
 *********  Sending Current data to main server... ***********
 
-SPIFF FILE EXISTS ..../1990_20260325.txt
+SPIFF FILE EXISTS ..../1990_20260327.txt
 
-Current Data to be sent is : 35,2026-03-24,17:30,000.00,013.50,-051,04.0
+Current Data to be sent is : 90,2026-03-27,07:15,000.00,014.00,-073,04.0
 
-http_data format is {"StnNo":"1990","DeviceTime":"2026-03-24 17:30:00","RainDP":"000.0","RainCuml":"013.5","BatVolt":"04.0","SigStr":"-051","ApiKey":"bmsk1234"}
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 07:15:00","RainDP":"000.0","RainCuml":"014.0","BatVolt":"04.0","SigStr":"-073","ApiKey":"bmsk1234"}
 
-Payload is {"StnNo":"1990","DeviceTime":"2026-03-24 17:30:00","RainDP":"000.0","RainCuml":"013.5","BatVolt":"04.0","SigStr":"-051","ApiKey":"bmsk1234"}
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 07:15:00","RainDP":"000.0","RainCuml":"014.0","BatVolt":"04.0","SigStr":"-073","ApiKey":"bmsk1234"}
 [HTTP] Using Fast v3.0 Handshake...
 Response of AT+HTTPACTION=1 is 
 OK
 
 +HTTPACTION: 1,200,56
 
-Response (P) of AT+HTTPREAD=0,290 is 
+Response (P) of AT+HTTPREAD=0,512 is 
 OK
 
 +HTTPREAD: 56
@@ -209,31 +217,32 @@ OK
 
 GPRS SEND : It is a Success
 [RTC-Sync] No 'tm' field in server response. Skipping.
-Saved APN Config: airtelgprs.com
+Saved APN Config: airteliot.com
+[PWR] Signature persisted successfully.
 
-**** Storing Last Logged Data as 2026-03-24,17:30
+**** Storing Last Logged Data as 2026-03-27,07:15
 
 *********  Sending UNSENT data to main server... ***********
 
-Current unsent_pointer_count is 360
-Line retrieved from unsent count SPIFFs file is 9
+Backlog session ready.
 [Backlog] Airtel/Jio: proactive bearer refresh before backlog.
+[RTC] Time: 07:16
 [Backlog] Session rebuilt and configured. Starting backlog sends.
 
 Record Number 1
 
-Current Data to be sent is : 31,2026-03-24,16:30,000.00,011.00,-111,04.0
-http_data format is {"StnNo":"1990","DeviceTime":"2026-03-24 16:30:00","RainDP":"000.0","RainCuml":"011.0","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+Current Data to be sent is : 49,2026-03-26,21:00,001.50,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-26 21:00:00","RainDP":"001.5","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
 
 [HTTP] Airtel/Jio backlog: using Robust direct.
-Payload is {"StnNo":"1990","DeviceTime":"2026-03-24 16:30:00","RainDP":"000.0","RainCuml":"011.0","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-26 21:00:00","RainDP":"001.5","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
 [HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
 Response of AT+HTTPACTION=1 is 
 OK
 
 +HTTPACTION: 1,200,56
 
-Response (P) of AT+HTTPREAD=0,290 is 
+Response (P) of AT+HTTPREAD=0,512 is 
 OK
 
 +HTTPREAD: 56
@@ -242,22 +251,21 @@ OK
 
 GPRS SEND : It is a Success
 [RTC-Sync] No 'tm' field in server response. Skipping.
-[RTC] Time: 17:31
 
 Record Number 2
 
-Current Data to be sent is : 32,2026-03-24,16:45,000.00,011.00,-111,04.0
-http_data format is {"StnNo":"1990","DeviceTime":"2026-03-24 16:45:00","RainDP":"000.0","RainCuml":"011.0","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+Current Data to be sent is : 50,2026-03-26,21:15,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-26 21:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
 
 [HTTP] Airtel/Jio backlog: using Robust direct.
-Payload is {"StnNo":"1990","DeviceTime":"2026-03-24 16:45:00","RainDP":"000.0","RainCuml":"011.0","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-26 21:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
 [HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
 Response of AT+HTTPACTION=1 is 
 OK
 
 +HTTPACTION: 1,200,56
 
-Response (P) of AT+HTTPREAD=0,290 is 
+Response (P) of AT+HTTPREAD=0,512 is 
 OK
 
 +HTTPREAD: 56
@@ -269,18 +277,18 @@ GPRS SEND : It is a Success
 
 Record Number 3
 
-Current Data to be sent is : 34,2026-03-24,17:15,000.00,013.50,-051,04.0
-http_data format is {"StnNo":"1990","DeviceTime":"2026-03-24 17:15:00","RainDP":"000.0","RainCuml":"013.5","BatVolt":"04.0","SigStr":"-051","ApiKey":"bmsk1234"}
+Current Data to be sent is : 51,2026-03-26,21:30,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-26 21:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
 
 [HTTP] Airtel/Jio backlog: using Robust direct.
-Payload is {"StnNo":"1990","DeviceTime":"2026-03-24 17:15:00","RainDP":"000.0","RainCuml":"013.5","BatVolt":"04.0","SigStr":"-051","ApiKey":"bmsk1234"}
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-26 21:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
 [HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
 Response of AT+HTTPACTION=1 is 
 OK
 
 +HTTPACTION: 1,200,56
 
-Response (P) of AT+HTTPREAD=0,290 is 
+Response (P) of AT+HTTPREAD=0,512 is 
 OK
 
 +HTTPREAD: 56
@@ -289,9 +297,284 @@ OK
 
 GPRS SEND : It is a Success
 [RTC-Sync] No 'tm' field in server response. Skipping.
-unsent_pointer_count is :495
-fileSize is :495
-Unsent data sent .. Going to remove the unsent file and pointer ...
+
+Record Number 4
+
+Current Data to be sent is : 52,2026-03-26,21:45,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-26 21:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-26 21:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 5
+
+Current Data to be sent is : 53,2026-03-26,22:00,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-26 22:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-26 22:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 6
+
+Current Data to be sent is : 54,2026-03-26,22:15,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-26 22:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-26 22:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 7
+
+Current Data to be sent is : 55,2026-03-26,22:30,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-26 22:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-26 22:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 8
+
+Current Data to be sent is : 56,2026-03-26,22:45,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-26 22:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-26 22:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 9
+
+Current Data to be sent is : 57,2026-03-26,23:00,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-26 23:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-26 23:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 10
+
+Current Data to be sent is : 58,2026-03-26,23:15,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-26 23:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-26 23:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+[RTC] Time: 07:17
+
+Record Number 11
+
+Current Data to be sent is : 59,2026-03-26,23:30,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-26 23:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-26 23:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 12
+
+Current Data to be sent is : 60,2026-03-26,23:45,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-26 23:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-26 23:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 13
+
+Current Data to be sent is : 61,2026-03-27,00:00,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 00:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 00:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 14
+
+Current Data to be sent is : 62,2026-03-27,00:15,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 00:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 00:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 15
+
+Current Data to be sent is : 63,2026-03-27,00:30,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 00:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 00:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+[Power] Backlog limit (15) reached.
 [GPRS] Skipping SMS check (hourly task).
 [GPRS] Cycle fully complete (including Commands).
 [GPRS] No queued commands. Allowing sleep.
@@ -300,8 +583,8 @@ Unsent data sent .. Going to remove the unsent file and pointer ...
 [GPRS] Session clean. Attempting graceful shutdown...
 [GPRS] Modem alive. Closing network session gracefully...
 [GPRS] Cutting physical VCC power (GPIO 26 -> LOW).
-[PWR] Sleep: CurTime=17:31:24
- Sleep=13:50 (min:sec)
+[PWR] Sleep: CurTime=7:17:39
+ Sleep=12:33 (min:sec)
 [PWR] Entering Deep Sleep
 ets Jul 29 2019 12:21:46
 
@@ -325,36 +608,204 @@ entry 0x400805f0
 [BOOT] Hardware Initialized.
 [BOOT] Preserving counters for reset reason: 5
 Health Mode: DAILY (11am)
-[GPS] Loaded from SPIFFS: 13.004021,77.549263 (Fix: 21/03/2026)
+[GPS] No persisted location found.
 Active RF Resolution: 0.50
-[BOOT] Unit: TRG9-BIH-5.68 | Network: DES-BIH | Type: TRG
+[BOOT] Unit: TRG9-BIH-5.69 | Network: DES-BIH | Type: TRG
 
 Wakeup caused by timer
 [BOOT] Reset Reason: DEEPSLEEP_RESET
 Chip ID: 34248FDAF380
 [RTC] Task Started
-[PWR] Battery: 4.02V | Solar: 0.00V
+[PWR] Battery: 4.00V | Solar: 0.00V
 
 
 
-[RTC] Time: 17:45
+[RTC] Time: 07:30
+SPIFFS [INIT]: station.txt
+SPIFFS [INIT]: station.doc
+SPIFFS [INIT]: rf_res.txt
+SPIFFS [INIT]: firmware.doc
+SPIFFS [INIT]: unsent.txt
+SPIFFS [INIT]: 1990_20260327.txt
+SPIFFS [INIT]: lastrecorded_1990.txt
+SPIFFS [INIT]: apn_config.txt
+SPIFFS [INIT]: signature.txt
+SPIFFS [INIT]: unsent_pointer.txt
+SPIFFS [INIT]: rf_fw.txt
 ULP Counting Enabled (attachInterrupt 27 Disabled).
 [GPRS] Powering On...
-The FILE content of LAST RECORDED file /lastrecorded_1990.txt
 
+--- Sensor Data Snapshot ---
+Rainfall    : 1.50 mm
+----------------------------
+Scheduler: RTC Sync acquired.
+Scheduler: Waiting for GPRS task...
 [GPRS] Waiting for active UART...
-The FILE content of CLOSING DATA file /closingdata_1990.txt
-
 ULP Wakeup Period set to 1ms (High Resolution for Wind)[ULP] Init. HW Reason: 5
-[ULP] Warm Boot. Preserving Counters. RF=0
+[ULP] Warm Boot. Preserving Counters. RF=3
 ULP Program loaded and started.
-[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=0, Rain=0
+[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=0, Rain=3
+[GPRS] Modem ready in 9 iterations!
+[GPRS] Polling for SIM (CPIN)...
+[GPRS] SIM Error detected during polling.
+[SIM] ERROR DETECTED (Timeout or CME).
+Scheduler: GPRS task ready or timeout.
+------- ENTERING SCHEDULER 15 MIN LOOP --------  
+
+Current SampleNo is 91
+RF Close date from RTC = 2026-03-27  
+
+-------- SPIFFS FILE EXISTS w/ OR WIHOUT ANY GAPS  --------
+
+The last line of the file is :90,2026-03-27,07:15,000.00,014.00,-073,04.0
+
+[GPRS] State Change: sync_mode=1 gprs_mode=2
+Last sample No stored: 90
+Last recorded instRF: 0.00
+Last recorded cumRF: 14.00
+Current calculated cumRF: 15.50
+Last recorded hour/min is 7:15
+
+NO GAPS FOUND ...
+
+
+Current data inserted is 91,2026-03-27,07:30,001.50,015.50,-111,04.0
+
+
+append_text->store_text : Used for storing in unsent file is: 91,2026-03-27,07:30,001.50,015.50,-111,04.0
+
+
+append_text written to lastrecorded_<stationname>.txt is : 91,2026-03-27,07:30,001.50,015.50,-111,04.0
+
+
+
+[FILE] SPIFFS: /1990_20260327.txt | Size: 3465
+   ... [Tail Content] ...
+87,2026-03-27,06:30,001.50,014.00,-111,04.0
+88,2026-03-27,06:45,000.00,014.00,-111,04.0
+89,2026-03-27,07:00,000.00,014.00,-111,04.0
+90,2026-03-27,07:15,000.00,014.00,-073,04.0
+91,2026-03-27,07:30,001.50,015.50,-111,04.0
+-----------------------
+
+[FILE] SD: /1990_20260327.txt
+
+--- UNSENT DATA START ---
+   ... [Tail Content] ...
+4.0
+79,2026-03-27,04:30,000.00,012.50,-111,04.0
+80,2026-03-27,04:45,000.00,012.50,-111,04.0
+81,2026-03-27,05:00,000.00,012.50,-111,04.0
+82,2026-03-27,05:15,000.00,012.50,-111,04.0
+83,2026-03-27,05:30,000.00,012.50,-111,04.0
+84,2026-03-27,05:45,000.00,012.50,-111,04.0
+85,2026-03-27,06:00,000.00,012.50,-111,04.0
+86,2026-03-27,06:15,000.00,012.50,-111,04.0
+87,2026-03-27,06:30,001.50,014.00,-111,04.0
+88,2026-03-27,06:45,000.00,014.00,-111,04.0
+89,2026-03-27,07:00,000.00,014.00,-111,04.0
+-----------------------
+--- UNSENT DATA END ---
+
+
+
+[GPRS] State Change: sync_mode=2 gprs_mode=2
+[GPRS] Signal too weak for HTTP/FTP. Storing data to backlog.
+************************Storing data in unsent file due to SIM issue/REG issue/Signal issue ************************
+unsent store_text is 91,2026-03-27,07:30,001.50,015.50,-111,04.0
+
+
+[STORE] Monthly cum fail counter reset (New Month detected).
+[STORE] HTTP miss counted. Present: 1 | CumMth: 1
+
+Current/Truncated data written store_text->finalStringBuffer to unsent file is 91,2026-03-27,07:30,001.50,015.50,-111,04.0
+
+
+The FILE content of UNSENT file /unsent.txt
+   ... [Tail Content] ...
+4.0
+80,2026-03-27,04:45,000.00,012.50,-111,04.0
+81,2026-03-27,05:00,000.00,012.50,-111,04.0
+82,2026-03-27,05:15,000.00,012.50,-111,04.0
+83,2026-03-27,05:30,000.00,012.50,-111,04.0
+84,2026-03-27,05:45,000.00,012.50,-111,04.0
+85,2026-03-27,06:00,000.00,012.50,-111,04.0
+86,2026-03-27,06:15,000.00,012.50,-111,04.0
+87,2026-03-27,06:30,001.50,014.00,-111,04.0
+88,2026-03-27,06:45,000.00,014.00,-111,04.0
+89,2026-03-27,07:00,000.00,014.00,-111,04.0
+91,2026-03-27,07:30,001.50,015.50,-111,04.0
+-----------------------
+
+[GPRS] Cycle fully complete (including Commands).
+[GPRS] No queued commands. Allowing sleep.
+[PWR] All tasks done. Entering Deep Sleep...
+[GPRS] State Change: sync_mode=4 gprs_mode=2
+[GPRS] Session clean. Attempting graceful shutdown...
+[GPRS] Modem alive. Closing network session gracefully...
+[GPRS] Cutting physical VCC power (GPIO 26 -> LOW).
+[PWR] Sleep: CurTime=7:30:40
+ Sleep=14:31 (min:sec)
+[PWR] Entering Deep Sleep
+ets Jul 29 2019 12:21:46
+
+rst:0x5 (DEEPSLEEP_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:1
+load:0x3fff0030,len:1344
+load:0x40078000,len:13964
+load:0x40080400,len:3600
+entry 0x400805f0
+
+
+[BOOT] HELLO! System starting... (Debug Enabled)
+[BOOT] RTC: OK
+[BOOT] SPIFFS: OK
+[BOOT] SD Card: FAILED (Not Inserted/Hardware)
+[BOOT] BME280: NOT FOUND
+[BOOT] HDC Sensor: NOT FOUND
+[BOOT] Rainfall Counter: OK
+[BOOT] Hardware Initialized.
+[BOOT] Preserving counters for reset reason: 5
+Health Mode: DAILY (11am)
+[GPS] No persisted location found.
+Active RF Resolution: 0.50
+[BOOT] Unit: TRG9-BIH-5.69 | Network: DES-BIH | Type: TRG
+
+Wakeup caused by timer
+[BOOT] Reset Reason: DEEPSLEEP_RESET
+Chip ID: 34248FDAF380
+[RTC] Task Started
+[PWR] Battery: 4.00V | Solar: 0.00V
+
+
+
+[RTC] Time: 07:45
+SPIFFS [INIT]: station.txt
+SPIFFS [INIT]: station.doc
+SPIFFS [INIT]: rf_res.txt
+SPIFFS [INIT]: firmware.doc
+SPIFFS [INIT]: apn_config.txt
+SPIFFS [INIT]: signature.txt
+SPIFFS [INIT]: unsent_pointer.txt
+SPIFFS [INIT]: 1990_20260327.txt
+SPIFFS [INIT]: lastrecorded_1990.txt
+SPIFFS [INIT]: unsent.txt
+SPIFFS [INIT]: rf_fw.txt
+ULP Counting Enabled (attachInterrupt 27 Disabled).
+[GPRS] Powering On...
 
 --- Sensor Data Snapshot ---
 Rainfall    : 0.00 mm
 ----------------------------
 Scheduler: RTC Sync acquired.
 Scheduler: Waiting for GPRS task...
+[GPRS] Waiting for active UART...
+ULP Wakeup Period set to 1ms (High Resolution for Wind)[ULP] Init. HW Reason: 5
+[ULP] Warm Boot. Preserving Counters. RF=3
+ULP Program loaded and started.
+[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=0, Rain=3
 [GPRS] Modem ready in 9 iterations!
 [GPRS] Polling for SIM (CPIN)...
 [GPRS] SIM ready in 1000 ms!
@@ -364,7 +815,585 @@ GETTING SIGNAL STRENGTH
 
 Signal strength IN gprs task is 85
 Signal Level is -111
-Signal strength IN gprs task is -51
+Signal strength IN gprs task is -75
+
+************************
+GETTING NETWORK 
+************************
+Raw CICCID Resp: 
++CCIOTOPTI: 1
+
++CGEV: EPS PDN ACT 1
+
++ICCID: 89914509006188396864
+
+OK
+
+Final CCID parsed: 89914509006188396864
+[CACHE] Using cached carrier/number to save power.
+
+************************
+GETTING REGISTRATION 
+************************
+[GPRS] Fast-Track: Modem already registered! Bypassing setup block.
+Registration Successful.
+Registration Successful.
+Raw CICCID Resp: 
++ICCID: 89914509006188396864
+
+OK
+
+Final CCID parsed: 89914509006188396864
+--- GPRS SETTING PDP ---
+
+************************
+Setting PDP context 
+************************
+
+Memory Check - Stored CCID: 89914509006188396864 | Stored APN: airteliot.com
+Smart APN: Match Found!
+Trying APN: airteliot.com
+CGACT Resp: 
+OK
+
+Scheduler: GPRS task ready or timeout.
+------- ENTERING SCHEDULER 15 MIN LOOP --------  
+
+Current SampleNo is 92
+RF Close date from RTC = 2026-03-27  
+
+-------- SPIFFS FILE EXISTS w/ OR WIHOUT ANY GAPS  --------
+
+The last line of the file is :91,2026-03-27,07:30,001.50,015.50,-111,04.0
+
+[GPRS] State Change: sync_mode=1 gprs_mode=1
+Last sample No stored: 91
+Last recorded instRF: 1.50
+Last recorded cumRF: 15.50
+Current calculated cumRF: 15.50
+Last recorded hour/min is 7:30
+
+NO GAPS FOUND ...
+
+
+Current data inserted is 92,2026-03-27,07:45,000.00,015.50,-075,04.0
+
+
+append_text->store_text : Used for storing in unsent file is: 92,2026-03-27,07:45,000.00,015.50,-075,04.0
+
+
+append_text written to lastrecorded_<stationname>.txt is : 92,2026-03-27,07:45,000.00,015.50,-075,04.0
+
+
+
+[FILE] SPIFFS: /1990_20260327.txt | Size: 3510
+   ... [Tail Content] ...
+88,2026-03-27,06:45,000.00,014.00,-111,04.0
+89,2026-03-27,07:00,000.00,014.00,-111,04.0
+90,2026-03-27,07:15,000.00,014.00,-073,04.0
+91,2026-03-27,07:30,001.50,015.50,-111,04.0
+92,2026-03-27,07:45,000.00,015.50,-075,04.0
+-----------------------
+
+[FILE] SD: /1990_20260327.txt
+
+--- UNSENT DATA START ---
+   ... [Tail Content] ...
+4.0
+80,2026-03-27,04:45,000.00,012.50,-111,04.0
+81,2026-03-27,05:00,000.00,012.50,-111,04.0
+82,2026-03-27,05:15,000.00,012.50,-111,04.0
+83,2026-03-27,05:30,000.00,012.50,-111,04.0
+84,2026-03-27,05:45,000.00,012.50,-111,04.0
+85,2026-03-27,06:00,000.00,012.50,-111,04.0
+86,2026-03-27,06:15,000.00,012.50,-111,04.0
+87,2026-03-27,06:30,001.50,014.00,-111,04.0
+88,2026-03-27,06:45,000.00,014.00,-111,04.0
+89,2026-03-27,07:00,000.00,014.00,-111,04.0
+91,2026-03-27,07:30,001.50,015.50,-111,04.0
+-----------------------
+--- UNSENT DATA END ---
+
+
+
+[GPRS] State Change: sync_mode=2 gprs_mode=1
+
+****************
+Starting Automated Data Flow
+****************
+[BATT] Proceeding with Spatika Upload regardless of battery voltage.
+[GPRS] Prepared URL: AT+HTTPPARA="URL","http://rtdasbmsk.spatika.net:8085/Home/UpdateTRGData"
+[GPRS] PDP context inactive. Activating for DNS/HTTP...
+[GPRS] Bearer status check: Re-initializing IP stack...
+[GPRS] Starting HTTP...
+HTTP POST REQUEST IS AT+HTTPPARA="URL","http://rtdasbmsk.spatika.net:8085/Home/UpdateTRGData"
+It is json
+
+*********  STARTING TO SEND HTTP ... ***********
+
+
+*********  Sending Current data to main server... ***********
+
+SPIFF FILE EXISTS ..../1990_20260327.txt
+
+Current Data to be sent is : 92,2026-03-27,07:45,000.00,015.50,-075,04.0
+
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 07:45:00","RainDP":"000.0","RainCuml":"015.5","BatVolt":"04.0","SigStr":"-075","ApiKey":"bmsk1234"}
+
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 07:45:00","RainDP":"000.0","RainCuml":"015.5","BatVolt":"04.0","SigStr":"-075","ApiKey":"bmsk1234"}
+[HTTP] Using Fast v3.0 Handshake...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+[PWR] Signature persisted successfully.
+
+**** Storing Last Logged Data as 2026-03-27,07:45
+
+*********  Sending UNSENT data to main server... ***********
+
+Backlog session ready.
+[Backlog] Airtel/Jio: proactive bearer refresh before backlog.
+[RTC] Time: 07:46
+[Backlog] Session rebuilt and configured. Starting backlog sends.
+
+Record Number 1
+
+Current Data to be sent is : 64,2026-03-27,00:45,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 00:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 00:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 2
+
+Current Data to be sent is : 65,2026-03-27,01:00,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 01:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 01:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 3
+
+Current Data to be sent is : 66,2026-03-27,01:15,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 01:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 01:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 4
+
+Current Data to be sent is : 67,2026-03-27,01:30,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 01:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 01:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 5
+
+Current Data to be sent is : 68,2026-03-27,01:45,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 01:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 01:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 6
+
+Current Data to be sent is : 69,2026-03-27,02:00,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 02:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 02:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 7
+
+Current Data to be sent is : 70,2026-03-27,02:15,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 02:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 02:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 8
+
+Current Data to be sent is : 71,2026-03-27,02:30,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 02:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 02:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 9
+
+Current Data to be sent is : 72,2026-03-27,02:45,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 02:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 02:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 10
+
+Current Data to be sent is : 73,2026-03-27,03:00,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 03:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 03:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+[RTC] Time: 07:47
+
+Record Number 11
+
+Current Data to be sent is : 74,2026-03-27,03:15,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 03:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 03:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 12
+
+Current Data to be sent is : 75,2026-03-27,03:30,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 03:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 03:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 13
+
+Current Data to be sent is : 76,2026-03-27,03:45,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 03:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 03:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 14
+
+Current Data to be sent is : 77,2026-03-27,04:00,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 04:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 04:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 15
+
+Current Data to be sent is : 78,2026-03-27,04:15,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 04:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 04:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+[Power] Backlog limit (15) reached.
+[GPRS] Skipping SMS check (hourly task).
+[GPRS] Cycle fully complete (including Commands).
+[GPRS] No queued commands. Allowing sleep.
+[PWR] All tasks done. Entering Deep Sleep...
+[GPRS] State Change: sync_mode=4 gprs_mode=1
+[GPRS] Session clean. Attempting graceful shutdown...
+[GPRS] Modem alive. Closing network session gracefully...
+[GPRS] Cutting physical VCC power (GPIO 26 -> LOW).
+[PWR] Sleep: CurTime=7:47:35
+ Sleep=12:35 (min:sec)
+[PWR] Entering Deep Sleep
+ets Jul 29 2019 12:21:46
+
+rst:0x5 (DEEPSLEEP_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:1
+load:0x3fff0030,len:1344
+load:0x40078000,len:13964
+load:0x40080400,len:3600
+entry 0x400805f0
+
+
+[BOOT] HELLO! System starting... (Debug Enabled)
+[BOOT] RTC: OK
+[BOOT] SPIFFS: OK
+[BOOT] SD Card: FAILED (Not Inserted/Hardware)
+[BOOT] BME280: NOT FOUND
+[BOOT] HDC Sensor: NOT FOUND
+[BOOT] Rainfall Counter: OK
+[BOOT] Hardware Initialized.
+[BOOT] Preserving counters for reset reason: 5
+Health Mode: DAILY (11am)
+[GPS] No persisted location found.
+Active RF Resolution: 0.50
+[BOOT] Unit: TRG9-BIH-5.69 | Network: DES-BIH | Type: TRG
+
+Wakeup caused by timer
+[BOOT] Reset Reason: DEEPSLEEP_RESET
+Chip ID: 34248FDAF380
+[RTC] Task Started
+[PWR] Battery: 4.00V | Solar: 0.00V
+
+
+
+[RTC] Time: 08:00
+SPIFFS [INIT]: station.txt
+SPIFFS [INIT]: station.doc
+SPIFFS [INIT]: rf_res.txt
+SPIFFS [INIT]: firmware.doc
+SPIFFS [INIT]: apn_config.txt
+SPIFFS [INIT]: unsent.txt
+SPIFFS [INIT]: 1990_20260327.txt
+SPIFFS [INIT]: lastrecorded_1990.txt
+SPIFFS [INIT]: signature.txt
+SPIFFS [INIT]: unsent_pointer.txt
+SPIFFS [INIT]: rf_fw.txt
+ULP Counting Enabled (attachInterrupt 27 Disabled).
+[GPRS] Powering On...
+[Rain] 🛡️ Ignoring Delta Surge: 65533 (Noise)
+
+--- Sensor Data Snapshot ---
+Rainfall    : 0.00 mm
+----------------------------
+Scheduler: RTC Sync acquired.
+Scheduler: Waiting for GPRS task...
+[GPRS] Waiting for active UART...
+ULP Wakeup Period set to 1ms (High Resolution for Wind)[ULP] Init. HW Reason: 5
+[ULP] Warm Boot. Preserving Counters. RF=0
+ULP Program loaded and started.
+[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=0, Rain=0
+[GPRS] Modem ready in 9 iterations!
+[GPRS] Polling for SIM (CPIN)...
+[GPRS] SIM ready in 1000 ms!
+************************
+GETTING SIGNAL STRENGTH 
+************************
+
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is -77
 
 ************************
 GETTING NETWORK 
@@ -395,54 +1424,70 @@ Final CCID parsed: 89914509006188396864
 Setting PDP context 
 ************************
 
-Memory Check - Stored CCID: 89914509006188396864 | Stored APN: airtelgprs.com
+Memory Check - Stored CCID: 89914509006188396864 | Stored APN: airteliot.com
 Smart APN: Match Found!
-Trying APN: airtelgprs.com
+Trying APN: airteliot.com
 CGACT Resp: 
 OK
 
 Scheduler: GPRS task ready or timeout.
 ------- ENTERING SCHEDULER 15 MIN LOOP --------  
 
-Current SampleNo is 36
-Sample is less than or equal to 60
-
-RF Close date from RTC = 2026-03-25  
-[GPRS] State Change: sync_mode=1 gprs_mode=1
+Current SampleNo is 93
+RF Close date from RTC = 2026-03-27  
 
 -------- SPIFFS FILE EXISTS w/ OR WIHOUT ANY GAPS  --------
 
-The last line of the file is :35,2026-03-24,17:30,000.00,013.50,-051,04.0
+The last line of the file is :92,2026-03-27,07:45,000.00,015.50,-075,04.0
 
-Last sample No stored: 35
+[GPRS] State Change: sync_mode=1 gprs_mode=1
+Last sample No stored: 92
 Last recorded instRF: 0.00
-Last recorded cumRF: 13.50
-Current calculated cumRF: 13.50
-Last recorded hour/min is 17:30
+Last recorded cumRF: 15.50
+Current calculated cumRF: 15.50
+Last recorded hour/min is 7:45
 
 NO GAPS FOUND ...
 
 
-Current data inserted is 36,2026-03-24,17:45,000.00,013.50,-051,04.0
+Current data inserted is 93,2026-03-27,08:00,000.00,015.50,-077,04.0
 
 
-append_text->store_text : Used for storing in unsent file is: 36,2026-03-24,17:45,000.00,013.50,-051,04.0
+append_text->store_text : Used for storing in unsent file is: 93,2026-03-27,08:00,000.00,015.50,-077,04.0
 
 
-append_text written to lastrecorded_<stationname>.txt is : 36,2026-03-24,17:45,000.00,013.50,-051,04.0
+append_text written to lastrecorded_<stationname>.txt is : 93,2026-03-27,08:00,000.00,015.50,-077,04.0
 
 
 
-[FILE] SPIFFS: /1990_20260325.txt | Size: 1665
+[FILE] SPIFFS: /1990_20260327.txt | Size: 3555
    ... [Tail Content] ...
-32,2026-03-24,16:45,000.00,011.00,-111,04.0
-33,2026-03-24,17:00,002.50,013.50,-051,04.0
-34,2026-03-24,17:15,000.00,013.50,-051,04.0
-35,2026-03-24,17:30,000.00,013.50,-051,04.0
-36,2026-03-24,17:45,000.00,013.50,-051,04.0
+89,2026-03-27,07:00,000.00,014.00,-111,04.0
+90,2026-03-27,07:15,000.00,014.00,-073,04.0
+91,2026-03-27,07:30,001.50,015.50,-111,04.0
+92,2026-03-27,07:45,000.00,015.50,-075,04.0
+93,2026-03-27,08:00,000.00,015.50,-077,04.0
 -----------------------
 
-[FILE] SD: /1990_20260325.txt
+[FILE] SD: /1990_20260327.txt
+
+--- UNSENT DATA START ---
+   ... [Tail Content] ...
+4.0
+80,2026-03-27,04:45,000.00,012.50,-111,04.0
+81,2026-03-27,05:00,000.00,012.50,-111,04.0
+82,2026-03-27,05:15,000.00,012.50,-111,04.0
+83,2026-03-27,05:30,000.00,012.50,-111,04.0
+84,2026-03-27,05:45,000.00,012.50,-111,04.0
+85,2026-03-27,06:00,000.00,012.50,-111,04.0
+86,2026-03-27,06:15,000.00,012.50,-111,04.0
+87,2026-03-27,06:30,001.50,014.00,-111,04.0
+88,2026-03-27,06:45,000.00,014.00,-111,04.0
+89,2026-03-27,07:00,000.00,014.00,-111,04.0
+91,2026-03-27,07:30,001.50,015.50,-111,04.0
+-----------------------
+--- UNSENT DATA END ---
+
 
 
 [GPRS] State Change: sync_mode=2 gprs_mode=1
@@ -463,20 +1508,53 @@ It is json
 
 *********  Sending Current data to main server... ***********
 
-SPIFF FILE EXISTS ..../1990_20260325.txt
+SPIFF FILE EXISTS ..../1990_20260327.txt
 
-Current Data to be sent is : 36,2026-03-24,17:45,000.00,013.50,-051,04.0
+Current Data to be sent is : 93,2026-03-27,08:00,000.00,015.50,-077,04.0
 
-http_data format is {"StnNo":"1990","DeviceTime":"2026-03-24 17:45:00","RainDP":"000.0","RainCuml":"013.5","BatVolt":"04.0","SigStr":"-051","ApiKey":"bmsk1234"}
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 08:00:00","RainDP":"000.0","RainCuml":"015.5","BatVolt":"04.0","SigStr":"-077","ApiKey":"bmsk1234"}
 
-Payload is {"StnNo":"1990","DeviceTime":"2026-03-24 17:45:00","RainDP":"000.0","RainCuml":"013.5","BatVolt":"04.0","SigStr":"-051","ApiKey":"bmsk1234"}
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 08:00:00","RainDP":"000.0","RainCuml":"015.5","BatVolt":"04.0","SigStr":"-077","ApiKey":"bmsk1234"}
 [HTTP] Using Fast v3.0 Handshake...
 Response of AT+HTTPACTION=1 is 
 OK
 
 +HTTPACTION: 1,200,56
 
-Response (P) of AT+HTTPREAD=0,290 is 
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+[PWR] Signature persisted successfully.
+
+**** Storing Last Logged Data as 2026-03-27,08:00
+
+*********  Sending UNSENT data to main server... ***********
+
+Backlog session ready.
+[Backlog] Airtel/Jio: proactive bearer refresh before backlog.
+[RTC] Time: 08:01
+[Backlog] Session rebuilt and configured. Starting backlog sends.
+
+Record Number 1
+
+Current Data to be sent is : 79,2026-03-27,04:30,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 04:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 04:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
 OK
 
 +HTTPREAD: 56
@@ -486,7 +1564,723 @@ OK
 GPRS SEND : It is a Success
 [RTC-Sync] No 'tm' field in server response. Skipping.
 
-**** Storing Last Logged Data as 2026-03-24,17:45
+Record Number 2
+
+Current Data to be sent is : 80,2026-03-27,04:45,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 04:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 04:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 3
+
+Current Data to be sent is : 81,2026-03-27,05:00,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 05:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 05:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 4
+
+Current Data to be sent is : 82,2026-03-27,05:15,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 05:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 05:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 5
+
+Current Data to be sent is : 83,2026-03-27,05:30,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 05:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 05:30:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 6
+
+Current Data to be sent is : 84,2026-03-27,05:45,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 05:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 05:45:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 7
+
+Current Data to be sent is : 85,2026-03-27,06:00,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 06:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 06:00:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 8
+
+Current Data to be sent is : 86,2026-03-27,06:15,000.00,012.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 06:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 06:15:00","RainDP":"000.0","RainCuml":"012.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 9
+
+Current Data to be sent is : 87,2026-03-27,06:30,001.50,014.00,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 06:30:00","RainDP":"001.5","RainCuml":"014.0","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 06:30:00","RainDP":"001.5","RainCuml":"014.0","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 10
+
+Current Data to be sent is : 88,2026-03-27,06:45,000.00,014.00,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 06:45:00","RainDP":"000.0","RainCuml":"014.0","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 06:45:00","RainDP":"000.0","RainCuml":"014.0","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 11
+
+Current Data to be sent is : 89,2026-03-27,07:00,000.00,014.00,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 07:00:00","RainDP":"000.0","RainCuml":"014.0","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 07:00:00","RainDP":"000.0","RainCuml":"014.0","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+[RTC] Time: 08:02
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+
+Record Number 12
+
+Current Data to be sent is : 91,2026-03-27,07:30,001.50,015.50,-111,04.0
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 07:30:00","RainDP":"001.5","RainCuml":"015.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+
+[HTTP] Airtel/Jio backlog: using Robust direct.
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 07:30:00","RainDP":"001.5","RainCuml":"015.5","BatVolt":"04.0","SigStr":"-111","ApiKey":"bmsk1234"}
+[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+Unsent data sent .. Going to remove the unsent file and pointer ...
+
+[GPRS] Checking SMS...
+
+Removed READ/SENT messages (UNREAD preserved)
+[GPRS] Cycle fully complete (including Commands).
+[GPRS] No queued commands. Allowing sleep.
+[PWR] All tasks done. Entering Deep Sleep...
+[GPRS] State Change: sync_mode=4 gprs_mode=1
+[GPRS] Session clean. Attempting graceful shutdown...
+[GPRS] Modem alive. Closing network session gracefully...
+[GPRS] Cutting physical VCC power (GPIO 26 -> LOW).
+[PWR] Sleep: CurTime=8:2:20
+ Sleep=12:52 (min:sec)
+[PWR] Entering Deep Sleep
+ets Jul 29 2019 12:21:46
+
+rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:1
+load:0x3fff0030,len:1344
+load:0x40078000,len:13964
+load:0x40080400,len:3600
+entry 0x400805f0
+
+
+[BOOT] HELLO! System starting... (Debug Enabled)
+[BOOT] RTC: OK
+[BOOT] SPIFFS: OK
+[BOOT] SD Card: FAILED (Not Inserted/Hardware)
+[BOOT] BME280: NOT FOUND
+[BOOT] HDC Sensor: NOT FOUND
+[BOOT] Rainfall Counter: OK
+[BOOT] Hardware Initialized.
+[BOOT] Fresh Start (Reason 1). Initializing RTC variables.
+Health Mode: DAILY (11am)
+[GPS] No persisted location found.
+Active RF Resolution: 0.50
+[BOOT] Unit: TRG9-BIH-5.69 | Network: DES-BIH | Type: TRG
+
+Wakeup was not caused by deep sleep: 0
+[BOOT] Reset Reason: POWERON_RESET
+Chip ID: 34248FDAF380
+[RTC] Task Started
+[PWR] Battery: 4.00V | Solar: 0.00V
+
+
+
+[RTC] Time: 08:14
+SPIFFS [INIT]: station.txt
+SPIFFS [INIT]: station.doc
+SPIFFS [INIT]: rf_res.txt
+SPIFFS [INIT]: firmware.doc
+SPIFFS [INIT]: apn_config.txt
+SPIFFS [INIT]: 1990_20260327.txt
+SPIFFS [INIT]: lastrecorded_1990.txt
+SPIFFS [INIT]: signature.txt
+SPIFFS [INIT]: rf_fw.txt
+[GPRS] Powering On...
+ULP Counting Enabled (attachInterrupt 27 Disabled).
+[Rain] 🛡️ Ignoring Delta Surge: 18035 (Noise)
+
+--- Sensor Data Snapshot ---
+Rainfall    : 0.00 mm
+----------------------------
+Scheduler: RTC Sync acquired.
+Scheduler: Waiting for GPRS task...
+[GPRS] Waiting for active UART...
+ULP Wakeup Period set to 1ms (High Resolution for Wind)[ULP] Init. HW Reason: 1
+[ULP] Hard Power-On. Wiping ULP counters.
+ULP Program loaded and started.
+[BOOT] ULP Anchors Synced: Wind=0, Rain=0
+[GPRS] Modem ready in 9 iterations!
+[GPRS] Polling for SIM (CPIN)...
+[GPRS] SIM ready in 1000 ms!
+************************
+GETTING SIGNAL STRENGTH 
+************************
+
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+[RTC] Time: 08:15
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is -77
+
+************************
+GETTING NETWORK 
+************************
+Raw CICCID Resp: 
++ICCID: 89914509006188396864
+
+OK
+
+Final CCID parsed: 89914509006188396864
+[CACHE] New SIM or No Cache. Performing full discovery...
+CSPN Logic response: 
++CSPN: "airtel",0
+
+OK
+
+COPS Logic response: 
++COPS: 0
+
+OK
+
+IMSI: 404450618839686
+Service Provider APN is airteliot.com
+Carrier: Airtel
+Number: 404450618839686
+
+
+************************
+GETTING REGISTRATION 
+************************
+[GPRS] Fast-Track: Modem already registered! Bypassing setup block.
+Registration Successful.
+Registration Successful.
+Raw CICCID Resp: 
++ICCID: 89914509006188396864
+
+OK
+
+Final CCID parsed: 89914509006188396864
+--- GPRS SETTING PDP ---
+
+************************
+Setting PDP context 
+************************
+
+Memory Check - Stored CCID: 89914509006188396864 | Stored APN: airteliot.com
+Smart APN: Match Found!
+Trying APN: airteliot.com
+CGACT Resp: 
+OK
+
+Scheduler: GPRS task ready or timeout.
+Fresh boot detected. Skipping primary upload for sensor stabilization (queueing to Backlog).
+------- ENTERING SCHEDULER 15 MIN LOOP --------  
+
+Current SampleNo is 93
+RF Close date from RTC = 2026-03-27  
+[SCHED] 🗓 Day Change Detected. Performing Rollover...
+[SCHED] First rollover after boot/flash. Skipping destructive reset to preserve SPIFFS recovery.
+[SCHED] Rollover Complete.
+[GoldenData] Starting Sent Mask Reconstruction from SPIFFS...
+[GPRS] State Change: sync_mode=1 gprs_mode=1
+[GoldenData] Reconstruction Complete (Sent-Accurate).
+
+-------- SPIFFS FILE EXISTS w/ OR WIHOUT ANY GAPS  --------
+
+The last line of the file is :93,2026-03-27,08:00,000.00,015.50,-077,04.0
+
+Last sample No stored: 93
+Duplicate sample detected (RF). Data already logged.
+Skipped data writing. Checking if GPRS needs to send unsent data then Sleep.
+[SCHED] Between intervals. Modem will remain OFF.
+[GPRS] State Change: sync_mode=4 gprs_mode=1
+[GPRS] Cycle fully complete (including Commands).
+[GPRS] No queued commands. Allowing sleep.
+[PWR] All tasks done. Entering Deep Sleep...
+
+--- Sensor Data Snapshot ---
+Rainfall    : 0.00 mm
+----------------------------
+Scheduler: RTC Sync acquired.
+Scheduler: Waiting for GPRS task...
+Scheduler: GPRS task ready or timeout.
+------- ENTERING SCHEDULER 15 MIN LOOP --------  
+
+Current SampleNo is 94
+RF Close date from RTC = 2026-03-27  
+
+-------- SPIFFS FILE EXISTS w/ OR WIHOUT ANY GAPS  --------
+
+The last line of the file is :93,2026-03-27,08:00,000.00,015.50,-077,04.0
+
+[GPRS] State Change: sync_mode=1 gprs_mode=1
+[GPRS] Session clean. Attempting graceful shutdown...
+[GPRS] Modem alive. Closing network session gracefully...
+Last sample No stored: 93
+Last recorded instRF: 0.00
+Last recorded cumRF: 15.50
+Current calculated cumRF: 15.50
+Last recorded hour/min is 8:0
+
+NO GAPS FOUND ...
+
+
+Current data inserted is 94,2026-03-27,08:15,000.00,015.50,-077,04.0
+
+
+append_text->store_text : Used for storing in unsent file is: 94,2026-03-27,08:15,000.00,015.50,-077,04.0
+
+
+append_text written to lastrecorded_<stationname>.txt is : 94,2026-03-27,08:15,000.00,015.50,-077,04.0
+
+
+
+[FILE] SPIFFS: /1990_20260327.txt | Size: 3600
+   ... [Tail Content] ...
+90,2026-03-27,07:15,000.00,014.00,-073,04.0
+91,2026-03-27,07:30,001.50,015.50,-111,04.0
+92,2026-03-27,07:45,000.00,015.50,-075,04.0
+93,2026-03-27,08:00,000.00,015.50,-077,04.0
+94,2026-03-27,08:15,000.00,015.50,-077,04.0
+-----------------------
+
+[FILE] SD: /1990_20260327.txt
+
+
+[GPRS] State Change: sync_mode=2 gprs_mode=1
+
+****************
+Starting Automated Data Flow
+****************
+[BATT] Proceeding with Spatika Upload regardless of battery voltage.
+[GPRS] Cutting physical VCC power (GPIO 26 -> LOW).
+[GPRS] Prepared URL: AT+HTTPPARA="URL","http://rtdasbmsk.spatika.net:8085/Home/UpdateTRGData"
+[GPRS] PDP context inactive. Activating for DNS/HTTP...
+[PWR] Sleep: CurTime=8:15:29
+ Sleep=14:44 (min:sec)
+[PWR] Entering Deep Sleep
+ets Jul 29 2019 12:21:46
+
+rst:0x5 (DEEPSLEEP_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:1
+load:0x3fff0030,len:1344
+load:0x40078000,len:13964
+load:0x40080400,len:3600
+entry 0x400805f0
+
+
+[BOOT] HELLO! System starting... (Debug Enabled)
+[BOOT] RTC: OK
+[BOOT] SPIFFS: OK
+[BOOT] SD Card: FAILED (Not Inserted/Hardware)
+[BOOT] BME280: NOT FOUND
+[BOOT] HDC Sensor: NOT FOUND
+[BOOT] Rainfall Counter: OK
+[BOOT] Hardware Initialized.
+[BOOT] Preserving counters for reset reason: 5
+Health Mode: DAILY (11am)
+[GPS] No persisted location found.
+Active RF Resolution: 0.50
+[BOOT] Unit: TRG9-BIH-5.69 | Network: DES-BIH | Type: TRG
+
+Wakeup caused by timer
+[BOOT] Reset Reason: DEEPSLEEP_RESET
+Chip ID: 34248FDAF380
+[RTC] Task Started
+[PWR] Battery: 4.00V | Solar: 0.00V
+
+
+
+[RTC] Time: 08:30
+SPIFFS [INIT]: station.txt
+SPIFFS [INIT]: station.doc
+SPIFFS [INIT]: rf_res.txt
+SPIFFS [INIT]: firmware.doc
+SPIFFS [INIT]: apn_config.txt
+SPIFFS [INIT]: signature.txt
+SPIFFS [INIT]: 1990_20260327.txt
+SPIFFS [INIT]: lastrecorded_1990.txt
+SPIFFS [INIT]: rf_fw.txt
+ULP Counting Enabled (attachInterrupt 27 Disabled).
+[GPRS] Powering On...
+
+--- Sensor Data Snapshot ---
+Rainfall    : 1.50 mm
+----------------------------
+Scheduler: RTC Sync acquired.
+Scheduler: Waiting for GPRS task...
+[GPRS] Waiting for active UART...
+ULP Wakeup Period set to 1ms (High Resolution for Wind)[ULP] Init. HW Reason: 5
+[ULP] Warm Boot. Preserving Counters. RF=3
+ULP Program loaded and started.
+[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=0, Rain=3
+[GPRS] Modem ready in 9 iterations!
+[GPRS] Polling for SIM (CPIN)...
+[GPRS] SIM ready in 1000 ms!
+************************
+GETTING SIGNAL STRENGTH 
+************************
+
+Signal strength IN gprs task is 85
+Signal Level is -111
+Signal strength IN gprs task is -75
+
+************************
+GETTING NETWORK 
+************************
+Raw CICCID Resp: 
++ICCID: 89914509006188396864
+
+OK
+
+Final CCID parsed: 89914509006188396864
+[CACHE] Using cached carrier/number to save power.
+
+************************
+GETTING REGISTRATION 
+************************
+[GPRS] Fast-Track: Modem already registered! Bypassing setup block.
+Registration Successful.
+Registration Successful.
+Raw CICCID Resp: 
++ICCID: 89914509006188396864
+
+OK
+
+Final CCID parsed: 89914509006188396864
+--- GPRS SETTING PDP ---
+
+************************
+Setting PDP context 
+************************
+
+Memory Check - Stored CCID: 89914509006188396864 | Stored APN: airteliot.com
+Smart APN: Match Found!
+Trying APN: airteliot.com
+CGACT Resp: 
+OK
+
+Scheduler: GPRS task ready or timeout.
+------- ENTERING SCHEDULER 15 MIN LOOP --------  
+
+Current SampleNo is 95
+RF Close date from RTC = 2026-03-27  
+
+-------- SPIFFS FILE EXISTS w/ OR WIHOUT ANY GAPS  --------
+
+The last line of the file is :94,2026-03-27,08:15,000.00,015.50,-077,04.0
+
+[GPRS] State Change: sync_mode=1 gprs_mode=1
+Last sample No stored: 94
+Last recorded instRF: 0.00
+Last recorded cumRF: 15.50
+Current calculated cumRF: 17.00
+Last recorded hour/min is 8:15
+
+NO GAPS FOUND ...
+
+
+Current data inserted is 95,2026-03-27,08:30,001.50,017.00,-075,04.0
+
+
+append_text->store_text : Used for storing in unsent file is: 95,2026-03-27,08:30,001.50,017.00,-075,04.0
+
+
+append_text written to lastrecorded_<stationname>.txt is : 95,2026-03-27,08:30,001.50,017.00,-075,04.0
+
+[SCHED] 08:30 AM Cycle Complete. Rollover pending at 08:45...
+
+
+[FILE] SPIFFS: /1990_20260327.txt | Size: 3645
+   ... [Tail Content] ...
+91,2026-03-27,07:30,001.50,015.50,-111,04.0
+92,2026-03-27,07:45,000.00,015.50,-075,04.0
+93,2026-03-27,08:00,000.00,015.50,-077,04.0
+94,2026-03-27,08:15,000.00,015.50,-077,04.0
+95,2026-03-27,08:30,001.50,017.00,-075,04.0
+-----------------------
+
+[FILE] SD: /1990_20260327.txt
+
+
+[GPRS] State Change: sync_mode=2 gprs_mode=1
+
+****************
+Starting Automated Data Flow
+****************
+[BATT] Proceeding with Spatika Upload regardless of battery voltage.
+[GPRS] Prepared URL: AT+HTTPPARA="URL","http://rtdasbmsk.spatika.net:8085/Home/UpdateTRGData"
+[GPRS] PDP context inactive. Activating for DNS/HTTP...
+[GPRS] Bearer status check: Re-initializing IP stack...
+[GPRS] Starting HTTP...
+HTTP POST REQUEST IS AT+HTTPPARA="URL","http://rtdasbmsk.spatika.net:8085/Home/UpdateTRGData"
+It is json
+
+*********  STARTING TO SEND HTTP ... ***********
+
+
+*********  Sending Current data to main server... ***********
+
+SPIFF FILE EXISTS ..../1990_20260327.txt
+
+Current Data to be sent is : 95,2026-03-27,08:30,001.50,017.00,-075,04.0
+
+http_data format is {"StnNo":"1990","DeviceTime":"2026-03-27 08:30:00","RainDP":"001.5","RainCuml":"017.0","BatVolt":"04.0","SigStr":"-075","ApiKey":"bmsk1234"}
+
+Payload is {"StnNo":"1990","DeviceTime":"2026-03-27 08:30:00","RainDP":"001.5","RainCuml":"017.0","BatVolt":"04.0","SigStr":"-075","ApiKey":"bmsk1234"}
+[HTTP] Using Fast v3.0 Handshake...
+Response of AT+HTTPACTION=1 is 
+OK
+
++HTTPACTION: 1,200,56
+
+Response (P) of AT+HTTPREAD=0,512 is 
+OK
+
++HTTPREAD: 56
+"{'status':'success','Message':'Successfully inserted'}"
++HTTPREAD: 0
+
+GPRS SEND : It is a Success
+[RTC-Sync] No 'tm' field in server response. Skipping.
+Saved APN Config: airteliot.com
+[PWR] Signature persisted successfully.
+
+**** Storing Last Logged Data as 2026-03-27,08:30
 No unsent file found ...
 [GPRS] Skipping SMS check (hourly task).
 [GPRS] Cycle fully complete (including Commands).
@@ -495,8 +2289,8 @@ No unsent file found ...
 [GPRS] State Change: sync_mode=4 gprs_mode=1
 [GPRS] Session clean. Attempting graceful shutdown...
 [GPRS] Modem alive. Closing network session gracefully...
-[RTC] Time: 17:46
+[RTC] Time: 08:31
 [GPRS] Cutting physical VCC power (GPIO 26 -> LOW).
-[PWR] Sleep: CurTime=17:46:2
- Sleep=14:12 (min:sec)
+[PWR] Sleep: CurTime=8:31:6
+ Sleep=14:6 (min:sec)
 [PWR] Entering Deep Sleep

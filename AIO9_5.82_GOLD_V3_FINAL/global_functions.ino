@@ -52,14 +52,12 @@ void start_deep_sleep() {
   
   // TIER 3: SLEEP TIMER EARLY-WAKE DRIFT
   // Eliminate up to 90 seconds of RTOS polling staleness by reading the hardware directly.
-  int live_min = current_min;
   int live_sec = current_sec; // fallback
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
       DateTime now = rtc.now();
       
       portENTER_CRITICAL(&rtcTimeMux);
-      live_min = now.minute();
-      current_min = live_min; // Update globals for accurate calc
+      current_min = now.minute(); // Update globals for accurate calc
       portEXIT_CRITICAL(&rtcTimeMux);
       
       live_sec = now.second();
@@ -72,8 +70,6 @@ void start_deep_sleep() {
       // Hardware Hold: Capture the LOW state for the duration of the sleep
       gpio_hold_en(GPIO_NUM_32);
       gpio_hold_en(GPIO_NUM_26); // Modem was cut in graceful_modem_shutdown()
-      gpio_hold_en(GPIO_NUM_16); // v5.70: Fix H-02 ESD diode bleed through UART pins
-      gpio_hold_en(GPIO_NUM_17);
       gpio_deep_sleep_hold_en();
       
       // Phase 7 Fix: Don't intentionally leak the mutex into deep sleep.
@@ -83,23 +79,21 @@ void start_deep_sleep() {
       digitalWrite(32, LOW);       // Fallback cut if mutex totally hung
       gpio_hold_en(GPIO_NUM_32);
       gpio_hold_en(GPIO_NUM_26);
-      gpio_hold_en(GPIO_NUM_16);
-      gpio_hold_en(GPIO_NUM_17);
       gpio_deep_sleep_hold_en();
   }
 
   // Calculate time to sleep to target the NEXT exact 15-minute boundary
   // We calculate in SECONDS for precision using the live hardware read
-  int next_boundary_min = ((live_min / 15) + 1) * 15;
+  int next_boundary_min = ((current_min / 15) + 1) * 15;
   int sleep_seconds;
 
   // Handle hour rollover (e.g., 59 minutes -> next hour at 0 minutes)
   // v7.89: Reverted to +30s offset for maximum stability.
   if (next_boundary_min >= 60) {
-    sleep_seconds = (60 - live_min) * 60 - live_sec + 15; // v5.65 fix: reduced offset to 15s
+    sleep_seconds = (60 - current_min) * 60 - live_sec + 15; // v5.65 fix: reduced offset to 15s
   } else {
     sleep_seconds =
-        (next_boundary_min * 60) - (live_min * 60 + live_sec) + 15; // v5.65 fix
+        (next_boundary_min * 60) - (current_min * 60 + live_sec) + 15; // v5.65 fix
   }
 
   // Safety bounds: 1 minute minimum, 20 minutes maximum
@@ -384,7 +378,6 @@ void recoverI2CBus(bool alreadyLocked) {
     xSemaphoreGive(i2cMutex);
   }
 }
-
 
 /**
  * Persists current coordinates and timestamp (v5.49) to SPIFFS
@@ -1245,72 +1238,4 @@ float get_calibrated_battery_voltage() {
   uint32_t voltage_mv = esp_adc_cal_raw_to_voltage(adc1_get_raw(ADC1_CHANNEL_5), &adc_chars);
   // Apply our custom voltage divider ratio: 840K / 620K
   return ((float)voltage_mv / 1000.0) * (840.0 / 620.0);
-}
-
-void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
-  if (!alreadyLocked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
-    debugln("[SPIFFS] pruneFile Mutex Timeout: skipping.");
-    return;
-  }
-
-  // v5.70 Hardened: [R-1 Recovery] If original is missing but tmp exists, recover it.
-  if (!SPIFFS.exists(path) && SPIFFS.exists("/trim.tmp")) {
-      debugf1("[SPIFFS] pruneFile: path %s missing, recovering from /trim.tmp\n", path);
-      SPIFFS.rename("/trim.tmp", path);
-  }
-
-  if (!SPIFFS.exists(path)) {
-    if (!alreadyLocked) xSemaphoreGive(fsMutex);
-    return;
-  }
-
-  File f = SPIFFS.open(path, FILE_READ);
-  if (!f) {
-    if (!alreadyLocked) xSemaphoreGive(fsMutex);
-    return;
-  }
-
-  size_t current_size = f.size();
-  if (current_size < limit) {
-    f.close();
-    if (!alreadyLocked) xSemaphoreGive(fsMutex);
-    return;
-  }
-
-  debugf1("[SPIFFS] Pruning %s (%d bytes). Limit exceeded.\n", path, (int)current_size);
-
-  // Buffer recent half of max allowed limit
-  size_t keep_size = limit / 2;
-  if (current_size > keep_size) {
-    f.seek(current_size - keep_size);
-  } else {
-    f.seek(0);
-  }
-  f.readStringUntil('\n');
-
-  File tmp = SPIFFS.open("/trim.tmp", FILE_WRITE);
-  if (tmp) {
-    uint8_t buf[512];
-    while (f.available()) {
-      int n = f.read(buf, sizeof(buf));
-      tmp.write(buf, n);
-      esp_task_wdt_reset();
-    }
-    tmp.close();
-    f.close();
-    SPIFFS.remove(path);
-    if (!SPIFFS.rename("/trim.tmp", path)) {
-      debugf1("[SPIFFS] ERROR: Rename failed for %s. Retrying...\n", path);
-      vTaskDelay(100 / portTICK_PERIOD_MS);
-      if (!SPIFFS.rename("/trim.tmp", path)) {
-          debugf1("[SPIFFS] FATAL: Rename failed for %s. Data remains in /trim.tmp\n", path);
-      }
-    }
-  } else {
-    f.close();
-    debugf1("[SPIFFS] Clear: %s to recover space.\n", path);
-    SPIFFS.remove(path);
-  }
-
-  if (!alreadyLocked) xSemaphoreGive(fsMutex);
 }

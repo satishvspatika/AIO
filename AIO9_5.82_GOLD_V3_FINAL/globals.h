@@ -97,7 +97,6 @@ void convert_gmt_to_ist(struct tm *gmt_time);
 void sync_rtc_from_server_tm(const char *body, bool is_ntp);
 void reset_all_diagnostics();
 void recoverI2CBus(bool alreadyLocked = false);
-void pruneFile(const char *path, size_t limit, bool alreadyLocked = false);
 
 /************************************************************************************************/
 #include "user_config.h"
@@ -151,8 +150,8 @@ extern float RF_RESOLUTION;
 #define TEMP_OFFSET_CORRECTION 2.1
 #define HUMIDITY_HIGH_THRESHOLD 96.0
 #define HUMIDITY_SATURATION_THRESHOLD 99.0
-#define TEMP_SAME_COUNT_THRESHOLD 20
-#define HUM_SAME_COUNT_THRESHOLD 20
+#define TEMP_SAME_COUNT_THRESHOLD 7
+#define HUM_SAME_COUNT_THRESHOLD 7
 #define TEMP_JITTER_MIN 0.1
 #define TEMP_JITTER_MAX 0.3
 #define HUM_JITTER_MIN 0.7
@@ -216,11 +215,31 @@ extern int cur_file_found;
     if (!ota_silent_mode && !bearer_recovery_active)                           \
       Serial.print(__VA_ARGS__);                                               \
   } while (0)
-#define debugf1(...) debugf(__VA_ARGS__)
-#define debugf2(...) debugf(__VA_ARGS__)
-#define debugf3(...) debugf(__VA_ARGS__)
-#define debugf4(...) debugf(__VA_ARGS__)
-#define debugf5(...) debugf(__VA_ARGS__)
+#define debugf1(a, x)                                                          \
+  do {                                                                         \
+    if (!ota_silent_mode && !bearer_recovery_active)                           \
+      Serial.printf(a, x);                                                     \
+  } while (0)
+#define debugf2(a, x, y)                                                       \
+  do {                                                                         \
+    if (!ota_silent_mode && !bearer_recovery_active)                           \
+      Serial.printf(a, x, y);                                                  \
+  } while (0)
+#define debugf3(a, x, y, z)                                                    \
+  do {                                                                         \
+    if (!ota_silent_mode && !bearer_recovery_active)                           \
+      Serial.printf(a, x, y, z);                                               \
+  } while (0)
+#define debugf4(a, x, y, z, p)                                                 \
+  do {                                                                         \
+    if (!ota_silent_mode && !bearer_recovery_active)                           \
+      Serial.printf(a, x, y, z, p);                                            \
+  } while (0)
+#define debugf5(a, x, y, z, p, q)                                              \
+  do {                                                                         \
+    if (!ota_silent_mode && !bearer_recovery_active)                           \
+      Serial.printf(a, x, y, z, p, q);                                         \
+  } while (0)
 #define debugf(a, ...)                                                         \
   do {                                                                         \
     if (!ota_silent_mode && !bearer_recovery_active)                           \
@@ -272,8 +291,7 @@ extern volatile bool wifi_active;
 extern unsigned long last_wifi_activity_time;
 extern float temp_crf, temp_instrf, temp_bat, temp_temp, temp_hum, temp_avg_ws;
 extern int temp_sampleNo, temp_day, temp_month, temp_year, temp_hr, temp_min, temp_sig;
-// v5.70: Use __atomic_store_n/__atomic_load_n for data_writing_initiated
-extern volatile int data_writing_initiated; 
+extern volatile int data_writing_initiated;
 extern int time_to_deepsleep;
 // Common
 extern char UNIT_VER[20], STATION_TYPE[10], NETWORK[10];
@@ -577,7 +595,7 @@ void previous_date(int *Cd, int *Cm, int *Cy);
 void get_p_file_info(char *pfn, int *pdd, int *pmm, int *pyy);
 void get_c_file_info(char *cfn, int *cdd, int *cmm, int *cyy);
 void getTimeSnapshot(struct tm *timeinfo); // v5.79: Hardened Time Sync
-int send_at_cmd_data(char *payload, String response_arg, bool robust);
+int send_at_cmd_data(char *payload, String response_arg);
 void send_http_data();
 bool send_health_report(bool useJitter = true);
 void send_unsent_data();
@@ -593,7 +611,7 @@ void loadGPS();
 
 
 // MODEM / GPRS
-String waitForResponse(const char *expected, unsigned long timeout);
+String waitForResponse(String expectedResponse, int timeout);
 void disableWDT();
 void saveYearToSPIFFS(int year);
 void configure_sensors_for_awake();

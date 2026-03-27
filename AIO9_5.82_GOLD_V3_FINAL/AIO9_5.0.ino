@@ -1515,8 +1515,6 @@ void initialize_hw() {
   // SELF-HEALING: Release GPIO holds from deep sleep
   gpio_hold_dis(GPIO_NUM_26);
   gpio_hold_dis(GPIO_NUM_32);
-  gpio_hold_dis(GPIO_NUM_16); // v5.83: Restore UART from ESD Hold
-  gpio_hold_dis(GPIO_NUM_17); // v5.83: Restore UART from ESD Hold
 
   bool spiffs_mounted = false;
   for (int i = 0; i < 3; i++) {
@@ -1630,8 +1628,6 @@ void loop() {
       (lcdkeypad_start == 0) && (wifi_active == false) &&
       (httpInitiated == false) && (health_in_progress == false) &&
       (schedulerBusy == false) && (gprs_started == false) &&
-      (pending_manual_status == false) && (pending_manual_gps == false) &&
-      (pending_manual_health == false) &&
       (force_reboot == false) && (force_ota == false) &&
       (ota_writing_active == false)) {
 
@@ -1662,8 +1658,7 @@ void loop() {
 
     if (schedulerBusy || gprs_started || health_in_progress || httpInitiated || 
         force_reboot || force_ota || ota_writing_active || lcdkeypad_start || 
-        wifi_active || race_sync_invalid || 
-        pending_manual_status || pending_manual_gps || pending_manual_health) {
+        wifi_active || race_sync_invalid) {
         debugln("[PWR] Race Prevented: System became active during sleep delay. Aborting sleep.");
         return; // Re-enter the loop
     }

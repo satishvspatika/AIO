@@ -470,7 +470,7 @@ void scheduler(void *pvParameters) {
 
       if (abs(check_temp - prev_15min_temp) < 0.01) {
         temp_same_count++;
-        if (temp_same_count >= TEMP_SAME_COUNT_THRESHOLD)
+        if (temp_same_count >= 20)
           diag_temp_cv = true;
       } else {
         temp_same_count = 0;
@@ -494,7 +494,7 @@ void scheduler(void *pvParameters) {
 
       if (abs(check_hum - prev_15min_hum) < 0.01) {
         hum_same_count++;
-        if (hum_same_count >= HUM_SAME_COUNT_THRESHOLD)
+        if (hum_same_count >= 20)
           diag_hum_cv = true;
       } else {
         hum_same_count = 0;
@@ -670,11 +670,7 @@ void scheduler(void *pvParameters) {
             fTmp.print(cur_avg_wind_speed);
             fTmp.close();
             SPIFFS.remove("/prevWindSpeed.txt");
-            if (!SPIFFS.rename("/prevWS.tmp", "/prevWindSpeed.txt")) {
-                debugln("[SPIFFS] WARN: prevWS rename failed. Retrying...");
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                SPIFFS.rename("/prevWS.tmp", "/prevWindSpeed.txt");
-            }
+            SPIFFS.rename("/prevWS.tmp", "/prevWindSpeed.txt");
           }
           xSemaphoreGive(fsMutex);
         }
@@ -683,7 +679,7 @@ void scheduler(void *pvParameters) {
       // --- SENSOR SNAPSHOT END ---
 
       // Calculate minutes into interval
-      mins_into = cur_min % 15;
+      mins_into = current_min % 15;
 
       // Check Fresh Boot Scenario (PowerOn Reset, not Deep Sleep)
       // We unconditionally SKIP logging on any fresh boot because we lack the
@@ -751,9 +747,16 @@ void scheduler(void *pvParameters) {
       debug(sampleNo);
 
       // v5.70: Robust Met-Day Closing Logic
-      // Roadmap Part 11: unconditional anchor — no extra inner conditions.
+      // Usually, samples 0-60 (08:45-23:45) close on the NEXT morning.
+      // But if we wake up late (after midnight 00:00), current_day IS already the close date.
       if (sampleNo <= MIDNIGHT_SAMPLE_NO) {
-          next_date(&rf_cls_dd, &rf_cls_mm, &rf_cls_yy); 
+        // v5.70 FIX: Robust midnight wrap check. 
+        // If it's early morning (current_hour < 6) but a late-night record (record_hr >= 21)
+        // or if dates already match, proceed with next-date anchor.
+        // v5.71 FIX: Simplified midnight logic. Date is always anchored to NEXT day for sample 0-60.
+        if (sampleNo <= 60 || rf_cls_dd != cur_day) {
+           next_date(&rf_cls_dd, &rf_cls_mm, &rf_cls_yy); 
+        }
       }
 
       // v5.70 Midnight Rollover Fix: Finalize record date based on met-day anchor
@@ -1269,7 +1272,7 @@ void scheduler(void *pvParameters) {
           }
         }
 
-        if ((sampleNo - last_sampleNo > 1) || skip_primary_http) { // GAPS or Skip-to-Backlog (Fresh Boot)
+        if (sampleNo - last_sampleNo > 1) { // THERE ARE GAPS IN THE SPIFFs FILE
 
 #if FILLGAP == 1
 
@@ -1277,7 +1280,11 @@ void scheduler(void *pvParameters) {
           snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
           // LTS-14.5: Size Cap Protection
           if (SPIFFS.exists(unsent_file)) {
-            pruneFile(unsent_file, (300 * record_length), true);
+            File f_cap = SPIFFS.open(unsent_file, FILE_READ);
+            if (f_cap && f_cap.size() > 150000) {
+              f_cap.close(); SPIFFS.remove(unsent_file);
+              debugln("[SPIFFS] unsent.txt > 150KB. Truncating.");
+            } else if (f_cap) f_cap.close();
           }
           File unsent = SPIFFS.open(unsent_file, FILE_APPEND);
           if (!unsent) {
@@ -1296,11 +1303,16 @@ void scheduler(void *pvParameters) {
           snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
           // LTS-14.5: Size Cap Protection
           if (SPIFFS.exists(ftpunsent_file)) {
-            pruneFile(ftpunsent_file, (300 * record_length), true);
+            File f_cap = SPIFFS.open(ftpunsent_file, FILE_READ);
+            if (f_cap && f_cap.size() > 150000) {
+              f_cap.close(); SPIFFS.remove(ftpunsent_file);
+              debugln("[SPIFFS] ftpunsent.txt > 150KB. Truncating.");
+            } else if (f_cap) f_cap.close();
           }
           File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
           if (!ftpunsent) {
               debugln("[SCHED] FATAL GAP: Could not open ftpunsent.txt for Gap Fill!");
+              data_writing_initiated = 0; schedulerBusy = false; 
               xSemaphoreGive(fsMutex); 
               fs_locked = false; // Fix CRITICAL: Prevent Double-Give at TRIGGER_HTTP
               portENTER_CRITICAL(&syncMux);
@@ -1609,7 +1621,7 @@ void scheduler(void *pvParameters) {
             if (q >= 49 && q <= 85) // v5.57 Fix: sample 49 = 21:00 (9 PM) was excluded. Range is 49-85 inclusive.
               diag_ndm_count++; // 9 PM to 6 AM
 #if FILLGAP == 1
-            if (q < sampleNo || skip_primary_http) { // Only append GAPS (or current if primary is blocked) to unsent
+            if (q < sampleNo) { // Only append GAPS (not current) to unsent
               debug("APPENDED TEXT to unsent.txt is : ");
               debugln(append_text);
 #if SYSTEM == 0
@@ -1714,7 +1726,13 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 0
             debugln("Primary skipped mid-day. Queuing CURRENT record to unsent.txt...");
             // LTS-14.5: Size Cap Protection
-            pruneFile(unsent_file, (300 * record_length), true);
+            if (SPIFFS.exists(unsent_file)) {
+                File f_cap = SPIFFS.open(unsent_file, FILE_READ);
+                if (f_cap && f_cap.size() > 150000) {
+                    f_cap.close(); SPIFFS.remove(unsent_file);
+                    debugln("[SPIFFS] unsent.txt full. Truncating.");
+                } else if (f_cap) f_cap.close();
+            }
             File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
             if (mid_unsent) {
                 mid_unsent.print(append_text);
@@ -1725,7 +1743,11 @@ void scheduler(void *pvParameters) {
             debugln("Primary skipped mid-day. Queuing CURRENT record to ftpunsent.txt...");
             // LTS-14.5: Size Cap Protection
             if (SPIFFS.exists(ftpunsent_file)) {
-                pruneFile(ftpunsent_file, (300 * record_length), true);
+                File f_cap = SPIFFS.open(ftpunsent_file, FILE_READ);
+                if (f_cap && f_cap.size() > 150000) {
+                    f_cap.close(); SPIFFS.remove(ftpunsent_file);
+                    debugln("[SPIFFS] ftpunsent.txt full. Truncating.");
+                } else if (f_cap) f_cap.close();
             }
             File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
             if (mid_ftp) {
@@ -2073,24 +2095,6 @@ void scheduler(void *pvParameters) {
             }
             if (sd_card_ok && sd1)
               sd1.print(append_text);
-
-            // N-13 Fix: Queue current record to backlog when skip_primary_http=true
-            // (HANDLE_NO_FILE path — daily file did not exist this boot)
-            if (skip_primary_http && data_writing_initiated == 1) {
-              debugln("[SCHED] Fresh boot, no prior file. Queuing current record to backlog.");
-#if SYSTEM == 0
-              pruneFile(unsent_file, (300 * record_length), true);
-              File uf = SPIFFS.open(unsent_file, FILE_APPEND);
-              if (uf) { uf.print(append_text); uf.close(); }
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2)
-              if (SPIFFS.exists(ftpunsent_file)) {
-                pruneFile(ftpunsent_file, (300 * record_length), true);
-              }
-              File fuf = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-              if (fuf) { fuf.print(ftpappend_text); fuf.close(); }
-#endif
-            }
 
             debugln(append_text);
           } else {
@@ -2634,7 +2638,7 @@ void scheduler(void *pvParameters) {
             fTmp.println(store_text);
             fTmp.close();
             SPIFFS.remove(temp_file);
-            if (!SPIFFS.rename(tmpPath, temp_file)) { debugf("[SPIFFS] WARN: %s rename failed. Retrying...\n", temp_file); vTaskDelay(50 / portTICK_PERIOD_MS); SPIFFS.rename(tmpPath, temp_file); }
+            SPIFFS.rename(tmpPath, temp_file);
           }
           xSemaphoreGive(fsMutex);
         }
@@ -2660,7 +2664,7 @@ void scheduler(void *pvParameters) {
             fTmp.println(store_text);
             fTmp.close();
             SPIFFS.remove(temp_file);
-            if (!SPIFFS.rename(tmpPath, temp_file)) { debugf("[SPIFFS] WARN: %s rename failed. Retrying...\n", temp_file); vTaskDelay(50 / portTICK_PERIOD_MS); SPIFFS.rename(tmpPath, temp_file); }
+            SPIFFS.rename(tmpPath, temp_file);
           }
           xSemaphoreGive(fsMutex);
         }

@@ -55,27 +55,9 @@ void bmeTask(void *pvParameters) {
         // Trigger measurement (Forced Mode)
         bme.takeForcedMeasurement();
 
-        float pres_raw = bme.readPressure(); // Read pressure in Pascals
+        float pres_pa = bme.readPressure(); // Read pressure in Pascals
 
-        if (!isnan(pres_raw) && pres_raw > 30000.0) { // Valid range > 300 hPa
-          // v5.70: H-1 Pressure Over-Sampling (5-sample Median Filter)
-          static float p_buf[5];
-          static int p_idx = 0;
-          static bool p_init = false;
-
-          if (!p_init) { 
-            for(int i=0; i<5; i++) p_buf[i] = pres_raw;
-            p_init = true;
-          }
-          p_buf[p_idx] = pres_raw;
-          p_idx = (p_idx + 1) % 5;
-
-          // Inline Median Sort
-          float s[5]; memcpy(s, p_buf, 20);
-          for(int i=0; i<4; i++) for(int j=0; j<4-i; j++) 
-            if(s[j]>s[j+1]) { float t=s[j]; s[j]=s[j+1]; s[j+1]=t; }
-          float pres_pa = s[2];
-
+        if (!isnan(pres_pa) && pres_pa > 30000.0) { // Valid range > 300 hPa
           pressure = pres_pa / 100.0; // Raw Station Pressure in hPa
 
           // Calculate Sea Level Pressure using configurable station altitude
@@ -84,6 +66,7 @@ void bmeTask(void *pvParameters) {
           sea_level_pressure = pressure / pow(factor, 5.255);
 
           // UI String: Show Station Pressure and Sea Level Pressure
+          // Example: "906.52 | 1016.24"
           snprintf(pres_str, sizeof(pres_str), "%.2f|%.2f", pressure,
                    sea_level_pressure);
         }

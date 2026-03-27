@@ -683,7 +683,7 @@ void scheduler(void *pvParameters) {
       // --- SENSOR SNAPSHOT END ---
 
       // Calculate minutes into interval
-      mins_into = cur_min % 15;
+      mins_into = current_min % 15;
 
       // Check Fresh Boot Scenario (PowerOn Reset, not Deep Sleep)
       // We unconditionally SKIP logging on any fresh boot because we lack the
