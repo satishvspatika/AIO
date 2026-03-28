@@ -973,7 +973,11 @@ void lcdkeypad(void *pvParameters) {
                    portENTER_CRITICAL(&syncMux);
                    if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || 
                        sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
+#if ENABLE_HEALTH_REPORT == 1
                       sync_mode = eStartupGPS;
+#else
+                      sync_mode = eHttpStop; // Savings: Skip GPS acquisition when health is disabled
+#endif
                       portEXIT_CRITICAL(&syncMux);
                       strcpy(ui_data[FLD_SEND_GPS].bottomRow, "ACQUIRING GPS..");
                    } else {

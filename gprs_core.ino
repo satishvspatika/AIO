@@ -233,12 +233,23 @@ void gprs(void *pvParameters) {
     if (gprs_mode == eGprsInitial) {
       vTaskDelay(100 / portTICK_PERIOD_MS);
       if (gprs_started == false) {
+        // v5.85: B-3 - Survival Mode Modem Bypass
+        if (low_bat_mode_active && low_bat_skip_count > 0) {
+            debugln("[PWR] Survival Mode: Skipping modem power-on this slot.");
+            portENTER_CRITICAL(&syncMux);
+            sync_mode = eHttpStop; // Advance state to allow sleep
+            portEXIT_CRITICAL(&syncMux);
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+            continue; // Skip start_gprs()
+        }
+
         if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
           debugln("[GPRS] Powering On...");
           signal_strength = -111;
           signal_lvl = -111; 
           strcpy(reg_status, "NA");
           gprs_pdp_ready = false; // Reset PDP state
+          gprs_started = true;
           start_gprs();
           xSemaphoreGive(modemMutex);
         }

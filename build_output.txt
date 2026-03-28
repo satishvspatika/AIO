@@ -1,51 +1,10 @@
+--- Building for 8MB Flash ESP32 (Default) ---
+--- Using partition file: partitions.csv ---
 WARNING: library LiquidCrystal I2C claims to run on avr architecture(s) and may be incompatible with your current board which runs on esp32 architecture(s).
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:311:23: error: 'DEFAULT_RF_RESOLUTION' was not declared in this scope
-  311 | float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
-      |                       ^~~~~~~~~~~~~~~~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino: In function 'void setup()':
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:723:21: error: 'DEFAULT_RF_RESOLUTION' was not declared in this scope
-  723 |       last_fw_res = DEFAULT_RF_RESOLUTION; // Safe fallback prevents false
-      |                     ^~~~~~~~~~~~~~~~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:727:19: error: 'DEFAULT_RF_RESOLUTION' was not declared in this scope
-  727 |     last_fw_res = DEFAULT_RF_RESOLUTION;
-      |                   ^~~~~~~~~~~~~~~~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:741:18: error: 'DEFAULT_RF_RESOLUTION' was not declared in this scope
-  741 |       user_res = DEFAULT_RF_RESOLUTION;
-      |                  ^~~~~~~~~~~~~~~~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:744:16: error: 'DEFAULT_RF_RESOLUTION' was not declared in this scope
-  744 |     user_res = DEFAULT_RF_RESOLUTION;
-      |                ^~~~~~~~~~~~~~~~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:753:12: error: 'DEFAULT_RF_RESOLUTION' was not declared in this scope
-  753 |   if (fabs(DEFAULT_RF_RESOLUTION - last_fw_res) > 0.01) {
-      |            ^~~~~~~~~~~~~~~~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void gprs(void*)':
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:362:15: error: 'TEST_HEALTH_EVERY_SLOT' was not declared in this scope; did you mean 'TEST_HEALTH_DEFAULT'?
-  362 |           if (TEST_HEALTH_EVERY_SLOT == 1) {
-      |               ^~~~~~~~~~~~~~~~~~~~~~
-      |               TEST_HEALTH_DEFAULT
-Multiple libraries were found for "WiFi.h"
-  Used: /Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi
-  Not used: /Users/satishkripavasan/Documents/Arduino/libraries/WiFiEspAT
+Sketch uses 1255191 bytes (70%) of program storage space. Maximum is 1769472 bytes.
+Global variables use 56092 bytes (17%) of dynamic memory, leaving 271588 bytes for local variables. Maximum is 327680 bytes.
 
-[92mUsed library[0m            [92mVersion[0m [90mPath[0m
-[93mKeypad[0m                  3.1.1   [90m/Users/satishkripavasan/Documents/Arduino/libraries/Keypad-master[0m
-[93mLiquidCrystal I2C[0m       1.1.2   [90m/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C[0m
-[93mWire[0m                    3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Wire[0m
-[93mPreferences[0m             3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Preferences[0m
-[93mRTClib[0m                  2.1.4   [90m/Users/satishkripavasan/Documents/Arduino/libraries/RTClib[0m
-[93mAdafruit BusIO[0m          1.17.4  [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_BusIO[0m
-[93mSD[0m                      3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SD[0m
-[93mFS[0m                      3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/FS[0m
-[93mSPI[0m                     3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SPI[0m
-[93mSPIFFS[0m                  3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SPIFFS[0m
-[93mUpdate[0m                  3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Update[0m
-[93mWiFi[0m                    3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi[0m
-[93mNetworking[0m              3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Network[0m
-[93mHULP[0m                    2.0.1   [90m/Users/satishkripavasan/Documents/Arduino/libraries/HULP-master[0m
-[93mAdafruit BME280 Library[0m 2.3.0   [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_BME280_Library[0m
-[93mAdafruit Unified Sensor[0m 1.1.15  [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_Unified_Sensor[0m
-[93mESPmDNS[0m                 3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/ESPmDNS[0m
+--- Compilation Successful (v5.72 / 8mb) ---
+Binary: /tmp/aio_build_8mb/AIO9_5.0.ino.bin
 
-[92mUsed platform[0m [92mVersion[0m [90mPath[0m
-[93mesp32:esp32[0m   3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6[0m
-Error during build: exit status 1
+To flash: ./quick_flash.sh [PORT] 8mb

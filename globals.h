@@ -276,7 +276,7 @@ extern int temp_sampleNo, temp_day, temp_month, temp_year, temp_hr, temp_min, te
 extern volatile int data_writing_initiated; 
 extern int time_to_deepsleep;
 // Common
-extern char UNIT_VER[20], STATION_TYPE[10], NETWORK[10];
+extern char UNIT_VER[20], STATION_TYPE[10], NETWORK[15];
 extern char universalNumber[20];
 // --- Process Control Flags (v5.66 ODR Pass) ---
 extern HDC_Type hdcType;
@@ -367,6 +367,11 @@ extern RTC_DATA_ATTR bool diag_rtc_battery_ok;
 extern RTC_DATA_ATTR int diag_consecutive_reg_fails;
 extern RTC_DATA_ATTR int diag_stored_apn_fails;
 extern RTC_DATA_ATTR int diag_consecutive_sim_fails;
+extern RTC_DATA_ATTR int last_successful_cnmp;
+extern RTC_DATA_ATTR bool last_http_ok;
+extern RTC_DATA_ATTR int gprs_2g_slots_count;
+extern RTC_DATA_ATTR int low_bat_skip_count;
+extern RTC_DATA_ATTR bool low_bat_mode_active;
 
 // Golden Summary Diagnostic Flags (v5.43)
 extern RTC_DATA_ATTR int diag_ws_same_count;

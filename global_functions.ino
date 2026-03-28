@@ -8,8 +8,11 @@
 void start_deep_sleep() {
   // v5.70: Deep Sleep Guard (Issue 3) - Abort sleep if critical tasks are mid-flight
   // v5.75: Added schedulerBusy to guard (M-02 fix)
-  if (health_in_progress || ota_writing_active || gprs_started || schedulerBusy) {
-    debugln("[PWR] Critical Activity (Health/OTA/Modem/Scheduler) in progress. Deferring sleep.");
+  // v5.72 Hardened: Ensure NO communication or state machine is active before cutting power.
+  if (health_in_progress || ota_writing_active || gprs_started || schedulerBusy || 
+      (sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled && sync_mode != eSyncModeInitial) || 
+      httpInitiated) {
+    debugln("[PWR] Communication or Activity in progress. Deferring sleep.");
     return;
   }
 
@@ -147,6 +150,20 @@ void start_deep_sleep() {
   if (sd_card_ok) {
     SD.end();
     SPI.end();
+  }
+
+  // Phase 9 Fix: FINAL ATOMIC GUARD. Re-check for any activity that started during shutdown.
+  // This catches the exact race where scheduler started on Core 1 while Core 0 was closing modem.
+  portENTER_CRITICAL(&syncMux);
+  bool race_sync_invalid = (sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled && sync_mode != eSyncModeInitial);
+  portEXIT_CRITICAL(&syncMux);
+  
+  if (schedulerBusy || gprs_started || httpInitiated || race_sync_invalid || health_in_progress) {
+      debugln("[PWR] 🚨 CRITICAL RACE: Activity detected at last millisecond! Aborting sleep.");
+      // Since we already cut power to modem and I2C, we MUST reboot to restore hardware state.
+      // This is rare but ensures no data is lost during the 15:45 window.
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+      ESP.restart(); 
   }
 
   Serial.flush();

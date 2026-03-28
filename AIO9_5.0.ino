@@ -90,8 +90,8 @@ int delay_val = 10000; // Default delay before starting GPRS(Moved from globals.
 
 // v5.66: System & Power Variables (Moved from globals.h)
 char UNIT_VER[20] = ""; 
+char NETWORK[15] = ""; 
 char STATION_TYPE[10] = "";
-char NETWORK[10] = "";
 char universalNumber[20] = "";
 char battery[10] = "0.0";
 char solar_sense[10] = "0.0";
@@ -117,7 +117,7 @@ char sample_cum_rf[10], sample_inst_rf[10], sample_temp[10], sample_hum[10],
     sample_avgWS[10], sample_WD[10], sample_bat[10], ftpsample_avgWS[10],
     ftpsample_cum_rf[10];
 char ht_data[80] = ""; 
-char apn_str[20] = "";
+RTC_DATA_ATTR char apn_str[20] = "";
 
 char reg_status[16] = "";
 char *reg_status_ptr = NULL;
@@ -314,6 +314,11 @@ RTC_DATA_ATTR bool signature_valid = false;
 RTC_DATA_ATTR bool pending_manual_status = false;
 RTC_DATA_ATTR bool pending_manual_gps = false;
 RTC_DATA_ATTR bool pending_manual_health = false;
+RTC_DATA_ATTR int last_successful_cnmp = 2; // v5.84: 2=Auto, 13=GSM, 38=LTE
+RTC_DATA_ATTR bool last_http_ok = false;    // v5.84: Skip IP check if last slot worked
+RTC_DATA_ATTR int gprs_2g_slots_count = 0; // v5.84: Self-recovering 'Peeking' for LTE
+RTC_DATA_ATTR int low_bat_skip_count = 0;   // v5.85: P6 - counts skipped slots
+RTC_DATA_ATTR bool low_bat_mode_active = false; // v5.85: Tracking flag
 // --- End RTC Definitions ---
 
 // --- UI & Server Configurations (v5.65 ODR Fix) ---
@@ -412,9 +417,12 @@ char pres_str[20] = "NA";
 
 void setup() {
 
+  // v5.85: P8 - Serial production guard (saved ~1.5mA)
+#if DEBUG == 1
   Serial.begin(115200);
+#endif
   delay(1000);
-  Serial.println("\n\n[BOOT] HELLO! System starting... (Debug Enabled)");
+  debugln("\n\n[BOOT] HELLO! System starting... (Debug Enabled)");
 
   // Seed the random number generator using internal RNG for better jitter
   srand(esp_random());
@@ -1465,7 +1473,9 @@ void initialize_hw() {
     solar_val = (solar / 4096.0) * 3.6 * 7.2;
   }
 
+#if DEBUG == 1
   Serial.begin(115200);
+#endif
   // v7.06: CRITICAL! Expand UART RX buffer to 16KB so that incoming AT+HTTPREAD
   // data does not drop bytes when Update.write() blocks the CPU during flash
   // erase operations.
@@ -1621,11 +1631,23 @@ void loop() {
   // We no longer aggressively auto-start the Access Point here on EXT0
   // wakeups.
   bool safe_to_sleep_sync = false;
+  
+  int snap_min, snap_sec;
+  portENTER_CRITICAL(&rtcTimeMux);
+  snap_min = current_min;
+  snap_sec = current_sec;
+  portEXIT_CRITICAL(&rtcTimeMux);
+
+  int seconds_to_next_15 = (15 - (snap_min % 15)) * 60 - snap_sec;
+  bool too_close_to_slot = (seconds_to_next_15 < 45); 
+
   portENTER_CRITICAL(&syncMux);
-  safe_to_sleep_sync = (sync_mode == eHttpStop) || (sync_mode == eSMSStop) || (sync_mode == eExceptionHandled);
+  safe_to_sleep_sync = ((sync_mode == eHttpStop) || (sync_mode == eSMSStop) || (sync_mode == eExceptionHandled)) && !too_close_to_slot;
   portEXIT_CRITICAL(&syncMux);
 
-  if ((millis() > 5000) &&
+  // v5.85: P7 - Dynamic Sleep Optimization (5s -> 2s for timer wakeups)
+  uint32_t min_awake_ms = (wakeup_reason_is == ext0) ? 5000 : 2000;
+  if ((millis() > min_awake_ms) &&
       safe_to_sleep_sync &&
       (lcdkeypad_start == 0) && (wifi_active == false) &&
       (httpInitiated == false) && (health_in_progress == false) &&
@@ -1674,7 +1696,7 @@ void loop() {
   }
 
   esp_task_wdt_reset(); // Pet the watchdog for the loopTask
-  vTaskDelay(100 / portTICK_PERIOD_MS);
+  vTaskDelay(500 / portTICK_PERIOD_MS); // v5.85: P5 - loop polling 100ms -> 500ms
 }
 
 void print_reset_reason(RESET_REASON reason) {

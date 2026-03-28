@@ -22,7 +22,7 @@ void save_apn_config(String apn, String ccid) {
 }
 
 bool load_apn_config(String current_ccid, char *target_apn, size_t max_len) {
-  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) != pdTRUE) { // v5.72: Increased for heavy daily logs
     debugln("APN Load Failed: fsMutex Locked");
     return false;
   }
@@ -632,11 +632,6 @@ void start_gprs() {
     strcpy(diag_reg_fail_type, "SIM_ERR");
 
     // v5.50: Threshold raised from 6 (1.5h) to 13 (3h15m).
-    // We now wait until at least one 3-hourly FTP scheduled window has
-    // definitively passed without recovery before forcing a hard reset.
-    // ESP.restart() is a FULL software reset: re-runs setup(), toggles modem
-    // power, reloads all tasks. RTC_DATA_ATTR variables (backlog counts, etc.)
-    // ARE preserved across this reset since it is not a hard power cycle.
     if (diag_consecutive_sim_fails >= 13) {
       debugf1("[SIM] PERSISTENT ERROR for %d consecutive slots (~3h15m). "
               "Final resort: ESP32 SOFTWARE RESTART...\n",
@@ -648,11 +643,25 @@ void start_gprs() {
     gprs_mode = eGprsSignalForStoringOnly;
   } else {
     diag_consecutive_sim_fails = 0;
+    
+    // v5.85: P2 - Signal Fast-Track (Only on healthy known networks)
+    if (last_http_ok && signal_lvl > -98 && strlen(carrier) > 0) {
+        SerialSIT.println("AT+CSQ");
+        String r = waitForResponse("+CSQ", 1000);
+        int idx = r.indexOf("+CSQ: ");
+        if (idx != -1) {
+            int raw = r.substring(idx + 6).toInt();
+            if (raw > 0 && raw < 32) {
+                signal_strength = -113 + 2 * raw;
+                signal_lvl = signal_strength;
+                debugf("[GPRS] Fast-Track CSQ: %d dBm (carrier: %s)\n", signal_lvl, carrier);
+                goto skip_full_init;
+            }
+        }
+    }
+
     get_signal_strength();
     // [v5.63] Low-Signal Fail-Fast:
-    // If signal is weaker than -98 dBm, don't bother with the long registration
-    // dance. Marginal signals often fail during HTTP POST, wasting ~45s of
-    // active battery.
     if (signal_lvl <= -98) {
       debugln("[GPRS] Signal too weak (" + String(signal_lvl) +
               " dBm). Failing fast to save power.");
@@ -661,6 +670,7 @@ void start_gprs() {
 
     if (gprs_mode != eGprsSignalForStoringOnly) {
       get_network();
+skip_full_init:
       get_registration();
       if (gprs_mode != eGprsSignalForStoringOnly) {
         get_a7672s();

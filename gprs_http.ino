@@ -326,6 +326,7 @@ void prepare_data_and_send() {
   if (success_count == 1) {
     diag_consecutive_http_fails = 0; // v5.49 Build 5: Reset fail streaks
     diag_consecutive_reg_fails = 0;
+    last_http_ok = true; // v5.84: Success recorded
     
     // v7.70+: PR counter resets on ANY successful HTTP/FTP (Current or Backlog)
     diag_http_present_fails = 0;
@@ -394,6 +395,8 @@ void prepare_data_and_send() {
         debugln("[HTTP] TCP Zombie (706/714) detected. Executing Hard Bearer Nuke...");
         xSemaphoreGive(serialMutex);
       }
+      
+      dns_fallback_active = false; // v5.72: Clear fallback cache to force fresh DNS next slot
       
       // Mandatory Nuke Protocol
       SerialSIT.println("AT+CIPSHUT");
@@ -466,6 +469,7 @@ void prepare_data_and_send() {
       if (success_count == 1) {
         diag_consecutive_reg_fails = 0;
         diag_consecutive_http_fails = 0;
+        last_http_ok = true; // v5.84: Success on retry
 
         // v7.70+: Reset present fails on successful backlog retry too
         diag_http_present_fails = 0;
@@ -494,6 +498,16 @@ void prepare_data_and_send() {
 
 fail_handling:
     if (success_count == 0) { // Complete failure
+      last_http_ok = false; // v5.84: Failure recorded - force full check next slot
+      
+      // v5.72: Force DNS re-resolution if the failure was a TCP zombie code
+      if (strstr(diag_http_fail_reason, "706") != nullptr ||
+          strstr(diag_http_fail_reason, "713") != nullptr ||
+          strstr(diag_http_fail_reason, "714") != nullptr) {
+          dns_fallback_active = false; 
+          debugln("[DNS] Cleared fallback cache due to TCP zombie failure code.");
+      }
+
       diag_consecutive_http_fails++;
       diag_daily_http_fails++;
       if (data_mode == eCurrentData) {
@@ -604,21 +618,9 @@ fail_handling:
 
 #if SYSTEM == 1
         // 001881;2025-11-07,20:30;000.0;000.0;00.00;000;-083;04.2
-        // 55+2 = 57 is the record length
-        size_t textLength =
-            strlen(ftpappend_text); // Get the length of the C-style string
-        debugln();
-        debug("Text length is ");
-        debugln(textLength);
-        if (textLength > 57) {
-          debugln("WARNING: Text length exceeds maximum allowed characters. "
-                  "Truncating...");
-          strncpy(finalBuffer, ftpappend_text, 57);
-          finalBuffer[57] = '\0'; // Manually null-terminate
-        } else {
-          strcpy(finalBuffer,
-                 ftpappend_text); // strcpy handles null termination
-        }
+        // v5.72: Removed hardcoded 57-byte truncation. Using full buffer for reliability.
+        strcpy(finalBuffer, ftpappend_text); 
+
         debugln("Record written into /ftpunsent.txt is as below : ");
         debugln(finalBuffer);
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
@@ -638,22 +640,9 @@ fail_handling:
 
 #if SYSTEM == 2
         // 001881;2024-05-21,08:45;000.0;000.0;000.0;00.00;000;-111;04.2
-        // 61+2 is the record_length
-        size_t textLength =
-            strlen(ftpappend_text); // Get the length of the C-style string
-        debugln();
-        debug("Text length is ");
-        debugln(textLength);
+        // v5.72: Removed hardcoded 63-byte truncation. Full buffer required for 9-field TWSRF record.
+        strcpy(finalBuffer, ftpappend_text);
 
-        if (textLength > 63) {
-          debugln("WARNING: Text length exceeds maximum allowed characters. "
-                  "Truncating...");
-          strncpy(finalBuffer, ftpappend_text, 63);
-          finalBuffer[63] = '\0'; // Manually null-terminate
-        } else {
-          strcpy(finalBuffer,
-                 ftpappend_text); // strcpy handles null termination
-        }
         debugln("Record written into /ftpunsent.txt is as below : ");
         debugln(finalBuffer);
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
@@ -729,12 +718,16 @@ void send_http_data() {
   }
 
   // v5.70-Hardened (N-5): CGPADDR non-zero IP check 
-  // CGACT=1/OK only confirms context is active; it does not guarantee assigned IP.
-  SerialSIT.print("AT+CGPADDR="); SerialSIT.println(active_cid);
-  String ip_resp = waitForResponse("OK", 3000);
-  if (ip_resp.indexOf("0.0.0.0") != -1 || ip_resp.indexOf("+CGPADDR") == -1) {
-      debugln("[GPRS] Ghost PDP (0.0.0.0). Triggering recovery...");
-      verify_bearer_or_recover();
+  // v5.84: Only check CGPADDR when last slot failed — saves 3-4s per healthy slot
+  if (!last_http_ok) {
+      SerialSIT.print("AT+CGPADDR="); SerialSIT.println(active_cid);
+      String ip_resp = waitForResponse("OK", 3000);
+      if (ip_resp.indexOf("0.0.0.0") != -1 || ip_resp.indexOf("+CGPADDR") == -1) {
+          debugln("[GPRS] Ghost PDP (0.0.0.0). Triggering recovery...");
+          verify_bearer_or_recover();
+      }
+  } else {
+      debugln("[GPRS] last_http_ok=true. Skipping CGPADDR check.");
   }
 
   // v5.55: SMART DNS FALLBACK (Fast-Track)
@@ -974,7 +967,7 @@ void send_http_data() {
           waitForResponse("SHUT OK", 3000);
           SerialSIT.println("AT+CGACT=0,1");
           waitForResponse("OK", 2000);
-          vTaskDelay(3000 / portTICK_PERIOD_MS);  // carrier breather
+          vTaskDelay((isLTE ? 800 : 5000) / portTICK_PERIOD_MS);  // v5.85: Carrier breather
           verify_bearer_or_recover();             // rebuilds APN + IP
           SerialSIT.println("AT+CGEREP=0");
           waitForResponse("OK", 1000);
@@ -1091,7 +1084,7 @@ void send_http_data() {
 
           // Tower breather: only needed after a real HTTP attempt, not for skipped records
           if (success_count != 2) { // 2 = skip sentinel (P2 fix v5.65)
-            vTaskDelay(3000 / portTICK_PERIOD_MS); // Tower breather (3s)
+            vTaskDelay((isLTE ? 300 : 3000) / portTICK_PERIOD_MS); // v5.85: P11 Carrier-aware breather
           }
 
         } // while loop
@@ -1243,9 +1236,8 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
   debugf5("[FTP-Gate] unsent=%d cur_time=%02d:%02d sched=%s cleanup=%s\n",
           unsent_cnt, snap_hr, snap_mi,
           scheduled_slot ? "YES" : "NO", morning_cleanup ? "YES" : "NO");
-  bool should_push = (unsent_cnt >= 2) ||  // Threshold: fire immediately if >=2 records
-                     (unsent_cnt > 0 && (scheduled_slot || morning_cleanup));
-
+  bool should_push = (unsent_cnt > 0); // v5.72: Fire immediately for any pending record to avoid stale backlogs
+  
   if (signal_lvl > -95 && (should_push || force_ftp) &&
       SPIFFS.exists(ftpunsent_file)) {
     // v7.54: BSNL Carrier Congestion Breather
@@ -1374,11 +1366,16 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
                           // to avoid accidental backlog clears if sampleNo 7 is reached via reboot.
       if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
         if (current_hour == 9 && current_min > 30 && current_min < 45) {
-          // Cleanup at start of 09:30 AM cycle
+          // v5.72: Guarded Cleanup - Only wipe if the backlog is already empty.
+          // Prevents silent deletion of undrained records from overnight outages.
           snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-          SPIFFS.remove(ftpunsent_file);
-          debug("Cleaned up unsent file at start of new Daily FTP (09:30): ");
-          debugln(ftpunsent_file);
+          int remaining = countStored(ftpunsent_file);
+          if (remaining == 0) {
+            SPIFFS.remove(ftpunsent_file);
+            debugln("[FTP] Daily transition: Backlog already empty, cleanup SUCCESS.");
+          } else {
+            debugf("[FTP] Daily transition: %d undrained records in backlog - PRESERVING for drain.\n", remaining);
+          }
         }
         debugln();
         debug("***DAILY FTP file name is ");
@@ -1594,6 +1591,25 @@ int send_at_cmd_data(char *payload, String response_arg, bool robust) {
     // drift>90s)
     sync_rtc_from_server_tm(payload_ptr, false);
 
+    // v5.85: P9 - Proactive DNS Caching (Only on healthy known networks)
+    bool is_domain = false;
+    const char *srv = httpSet[http_no].serverName;
+    for (int i = 0; srv[i] != '\0'; i++) {
+        if (isalpha(srv[i])) { is_domain = true; break; }
+    }
+
+    if (!dns_fallback_active && is_domain) {
+        // Successful domain resolution! Cache the IP for next slot.
+        const char* domain = httpSet[http_no].serverName;
+        const char* ip = httpSet[http_no].IP;
+        if (domain && ip && strlen(ip) > 5) {
+             strncpy(cached_server_domain, domain, sizeof(cached_server_domain)-1);
+             strncpy(cached_server_ip, ip, sizeof(cached_server_ip)-1);
+             dns_fallback_active = true; // Use IP next slot
+             debugf("[DNS] Proactive cache: %s -> %s\n", domain, ip);
+        }
+    }
+
     // v5.49 Build 5: STRICT DATE VERIFICATION for HTTP Success Tracking
     if (temp_sampleNo >= 0 && temp_sampleNo <= MAX_SAMPLE_NO) {
       // Calculate 'NOW' meteorological close date
@@ -1740,35 +1756,48 @@ void store_current_unsent_data() {
     String cleanFtp = "";
 
     // BUG-C4 fix v5.65: Re-derive FTP string from lastrecorded CSV to prevent stale global consumption
-    // EXCEPTION: For SYSTEM == 2, the CSV string possesses a 6-character rain width, which ruins 
-    // the 5-character FTP layout requirement. ftpappend_text is inherently safe and correctly padded.
-#if SYSTEM != 2
+#if SYSTEM == 1
+    // v5.72: Re-derive TWS record from lastrecorded CSV to avoid stale global data
     if (strlen(finalStringBuffer) > 20) {
         String csv = String(finalStringBuffer);
         csv.trim();
         int firstComma = csv.indexOf(',');
         if (firstComma != -1) {
             String derived_stn = String(ftp_station);
-            bool isAllDigits = true;
-            for (int i = 0; i < derived_stn.length(); i++) {
-                if (!isdigit(derived_stn[i])) { isAllDigits = false; break; }
-            }
-            if (derived_stn.length() == 4 && isAllDigits) {
-                derived_stn = "00" + derived_stn;
-            }
-            cleanFtp = derived_stn + ";" + csv.substring(firstComma + 1);
-            // The CSV has a comma between date and time which MUST remain in FTP too.
-            // Replace only the commas from the second comma onwards.
-            int firstCommaAfterSemi = cleanFtp.indexOf(',', cleanFtp.indexOf(';') + 1);
-            if (firstCommaAfterSemi != -1) {
-                int secondCommaAfterSemi = cleanFtp.indexOf(',', firstCommaAfterSemi + 1);
-                if (secondCommaAfterSemi != -1) {
-                    for (int i = secondCommaAfterSemi; i < (int)cleanFtp.length(); i++) {
-                        if (cleanFtp[i] == ',') cleanFtp[i] = ';';
-                    }
-                }
-            }
-            debugln("[FTP-Store] Re-derived record from lastrecorded CSV.");
+            if (derived_stn.length() == 4 && isDigitStr(derived_stn.c_str())) derived_stn = "00" + derived_stn;
+            String rest = csv.substring(firstComma + 1);
+            int dtComma = rest.indexOf(','); 
+            int fieldStart = rest.indexOf(',', dtComma + 1) + 1; 
+            String dtPart = rest.substring(0, fieldStart - 1);
+            String fields = rest.substring(fieldStart); 
+            fields.replace(',', ';');
+            cleanFtp = derived_stn + ";" + dtPart + ";" + fields;
+            debugln("[FTP-Store] SYSTEM 1: Re-derived TWS record from lastrecorded.");
+        }
+    }
+#elif SYSTEM == 2
+    // v5.72: Re-derive TWSRF record from lastrecorded CSV to avoid stale global data
+    if (strlen(finalStringBuffer) > 20) {
+        String csv = String(finalStringBuffer);
+        csv.trim();
+        int firstComma = csv.indexOf(',');
+        if (firstComma != -1) {
+            String derived_stn = String(ftp_station);
+            if (derived_stn.length() == 4 && isDigitStr(derived_stn.c_str())) derived_stn = "00" + derived_stn;
+            String rest = csv.substring(firstComma + 1);
+            int dtComma = rest.indexOf(',');           
+            int fieldStart = rest.indexOf(',', dtComma + 1) + 1; 
+            String dtPart = rest.substring(0, fieldStart - 1);   
+            String fields = rest.substring(fieldStart);          
+            int c1 = fields.indexOf(',');
+            String cumRfStr = fields.substring(0, c1);
+            float cumRfVal = cumRfStr.toFloat();
+            char paddedCumRf[8];
+            snprintf(paddedCumRf, sizeof(paddedCumRf), "%05.2f", cumRfVal);
+            String remaining = fields.substring(c1 + 1);
+            remaining.replace(',', ';');
+            cleanFtp = derived_stn + ";" + dtPart + ";" + String(paddedCumRf) + ";" + remaining;
+            debugln("[FTP-Store] SYSTEM 2: Re-derived TWSRF record from lastrecorded.");
         }
     }
 #endif

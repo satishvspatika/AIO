@@ -403,25 +403,46 @@ void scheduler(void *pvParameters) {
       }
       debugln("Scheduler: RTC Sync acquired.");
 
+      // v5.85: P6 - Low Battery Survival Mode (3.4V threshold)
+      if (li_bat_val > 0.5f && li_bat_val < 3.4f) {
+          low_bat_mode_active = true;
+          low_bat_skip_count++;
+          if (low_bat_skip_count < 4) {
+              debugln("[PWR] Survival Mode (3.4V): Storing locally, skipping modem.");
+              skip_primary_http = true;
+              signal_lvl = -111; // v5.85: Explicit MISSING_DATA marker
+          } else {
+              low_bat_skip_count = 0; // Every 4th slot: allow modem
+              debugln("[PWR] Survival Mode window: Allowing periodic modem attempt.");
+          }
+      } else {
+          low_bat_mode_active = false;
+          low_bat_skip_count = 0;
+      }
+
       // DATA SNAPSHOT PREPARED BELOW AFTER GPRS WAIT
 
       // Wait for GPRS to be ready (Signal/Reg check complete)
       // This ensures we have signal strength and known status before recording
       debugln("Scheduler: Waiting for GPRS task...");
       wait_gprs_timeout = 0;
-      while (((gprs_mode == eGprsInitial) || (gprs_mode == eGprsSignalOk && !gprs_pdp_ready)) &&
-             wait_gprs_timeout < 180) { // Reduced from 900s (15m) to 180s (3m)
+      if (!skip_primary_http) {
+          while (((gprs_mode == eGprsInitial) || (gprs_mode == eGprsSignalOk && !gprs_pdp_ready)) &&
+                 wait_gprs_timeout < 180) { // Reduced from 900s (15m) to 180s (3m)
 
-        // Poll for UI Request (EXT0) every 100ms
-        for (int i = 0; i < 10; i++) {
-          if (digitalRead(27) == LOW) {
-            wakeup_reason_is = ext0; // Trigger LCD task
+            // Poll for UI Request (EXT0) every 100ms
+            for (int i = 0; i < 10; i++) {
+              if (digitalRead(27) == LOW) {
+                wakeup_reason_is = ext0; // Trigger LCD task
+              }
+              vTaskDelay(100 / portTICK_PERIOD_MS);
+            }
+
+            wait_gprs_timeout++;
+            esp_task_wdt_reset();
           }
-          vTaskDelay(100 / portTICK_PERIOD_MS);
-        }
-
-        wait_gprs_timeout++;
-        esp_task_wdt_reset();
+      } else {
+          debugln("[SCHED] skip_primary_http active. Fast-tracking to sensor write.");
       }
       debugln("Scheduler: GPRS task ready or timeout.");
 
@@ -1849,38 +1870,31 @@ void scheduler(void *pvParameters) {
           debugln(append_text);
 
 #if FILLGAP == 1
-          // Check if previous day's file exists before treating this as a gap
+          // v5.72: Queue Sample 00 to backlog ONLY if the previous day was missing (Gap Fill)
+          // or if the mission-critical primary HTTP is being skipped this slot (Issue R-NEW-2 Fix)
           int pd = rf_cls_dd, pm = rf_cls_mm, py = rf_cls_yy;
           previous_date(&pd, &pm, &py);
           char prev_day_file[32];
           snprintf(prev_day_file, sizeof(prev_day_file), "/%s_%04d%02d%02d.txt",
                    station_name, py, pm, pd);
 
-          if (SPIFFS.exists(prev_day_file)) {
-            debugln("Previous day file exists. Normal rollover. NOT appending "
-                    "to unsent.");
-          } else {
-            // Only append to unsent if previous day is MISSING (true gap)
-            debugln("Previous day file MISSING. Appending 8:45AM data to "
-                    "unsent (gap fill).");
+          bool prev_exists = SPIFFS.exists(prev_day_file);
+          if (!prev_exists || skip_primary_http) {
+            debugln("Gap detected or primary skipped. Appending 8:45AM data to backlog.");
+            // Phase 12-B: Mutex is already held by HANDLE_NO_FILE (Line 1761). 
+            // Do NOT take it again (avoids R-NEW-1 Deadlock).
 #if SYSTEM == 0
             snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
             File unsent = SPIFFS.open(unsent_file, FILE_APPEND);
-            if (unsent) {
-              unsent.print(append_text);
-              unsent.close();
-              debugln("Appended to unsent.txt");
-            }
+            if (unsent) { unsent.print(append_text); unsent.close(); }
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
             snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
             File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-            if (ftpunsent) {
-              ftpunsent.print(ftpappend_text);
-              ftpunsent.close();
-              debugln("Appended to ftpunsent.txt");
-            }
+            if (ftpunsent) { ftpunsent.print(ftpappend_text); ftpunsent.close(); }
 #endif
+          } else {
+            debugln("Previous day exists. Normal rollover. Skipping redundant 8:45 backlog.");
           }
 #endif
 

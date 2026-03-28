@@ -19,7 +19,7 @@ void get_signal_strength() {
   int invalid_signal_count = 0;
   // rssi 0 = -113dBm. Continuous -113 is essentially no signal.
   while ((signal_lvl == -111) &&
-         (retries < 120)) { // 120 loops @ 500ms = 60s max timeout
+         (retries < 30)) { // v5.72: Margin increased to 30 (15s) for cold boots/SIM scrubs (Claude Review)
     esp_task_wdt_reset();
     SerialSIT.println("AT+CSQ");
     response = waitForResponse("+CSQ ", 1000);
@@ -242,6 +242,7 @@ void get_registration() {
   // - Hard cap: 24 retries total (~2.5 min max). No more 50-cycle waste.
   bool isBSNL = (strstr(carrier, "BSNL") != nullptr);
   int no_of_retries = 24; // v5.45.6: Hard cap at 24 for all carriers
+  int initial_cnmp = last_successful_cnmp; // v5.85: Elevated to function scope
   registration = 0;
   retries = 0;
   bool is_registered = false;
@@ -289,18 +290,24 @@ void get_registration() {
       }
     }
 
-#if FORCE_2G_ONLY == 1
-    if (isBSNL) {
-      debugln("[GPRS] FORCE_2G_ONLY flag active & BSNL SIM. Setting CNMP=13.");
-      SerialSIT.println("AT+CNMP=13"); // GSM Only
-    } else {
-      debugln("[GPRS] FORCE_2G_ONLY flag bypassed: Detected 4G-M2M SIM.");
-      SerialSIT.println("AT+CNMP=2");  // Automatic Mode (LTE/GSM)
+    // v5.84: Adaptive Network Mode — Start with whatever mode succeeded last slot.
+    // Default is Auto (2). RESCAN RULE: If on 2G for >96 slots (once daily), try Auto again.
+    if (last_successful_cnmp == 13) gprs_2g_slots_count++;
+    else gprs_2g_slots_count = 0;
+
+    initial_cnmp = last_successful_cnmp;
+    if (gprs_2g_slots_count > 96 || (initial_cnmp != 13 && initial_cnmp != 38)) {
+        initial_cnmp = 2; // Force rescan or safe default
+        if (gprs_2g_slots_count > 96) gprs_2g_slots_count = 0;
     }
-#else
-    SerialSIT.println("AT+CNMP=2");     // Automatic Mode (LTE/GSM)
-#endif
+
+    char cnmp_cmd[20];
+    snprintf(cnmp_cmd, sizeof(cnmp_cmd), "AT+CNMP=%d", initial_cnmp);
+    SerialSIT.println(cnmp_cmd);
+    debugf("[GPRS] Adaptive Mode: %s (LastSucc:%d SlotsOn2G:%d)\n", cnmp_cmd, last_successful_cnmp, gprs_2g_slots_count);
+
     waitForResponse("OK", 1000);
+    vTaskDelay(500 / portTICK_PERIOD_MS); // v5.72: Radio settle delay after mode change (Issue 5)
     SerialSIT.println("AT+CMNB=3"); // LTE then GSM
     waitForResponse("OK", 1000);
     SerialSIT.println("AT+CGATT=1"); // Force GPRS Attachment
@@ -401,8 +408,26 @@ void get_registration() {
 
     // --- SUCCESS CHECK ---
     if (r2 == 1 || r2 == 5) {
+      if (!isBSNL) {
+          // v5.72: Airtel/Jio - verify if 4G is also available before locking to 2G (Issue 3)
+          SerialSIT.println("AT+CEREG?");
+          String resp4x = waitForResponse("+CEREG:", 1000);
+          int c4x = resp4x.indexOf(",");
+          if (c4x != -1) {
+              int r4x = resp4x.substring(c4x + 1).toInt();
+              if (r4x == 1 || r4x == 5) {
+                  is_registered = true;
+                  isLTE = true;
+                  last_successful_cnmp = 2; // 4G available, keep Auto
+                  strcpy(reg_status, "LTE:Home:OK");
+                  debugln("[GPRS] CREG(2G) but CEREG also registered. Preferring LTE.");
+                  break;
+              }
+          }
+      }
       is_registered = true;
       isLTE = false;
+      last_successful_cnmp = 13; // v5.84: Mark GSM success
       strcpy(reg_status, (r2 == 1) ? "GSM:Home:OK" : "GSM:Roam:OK");
       debugln("[GPRS] Registered via CREG! (2G:" + String(r2) + ")");
       break;
@@ -410,6 +435,7 @@ void get_registration() {
     if (r4 == 1 || r4 == 5) {
       is_registered = true;
       isLTE = true;
+      last_successful_cnmp = 2; // v5.84: Mark Auto/LTE success (CNMP=2 is safer for future 2G fallback)
       strcpy(reg_status, (r4 == 1) ? "LTE:Home:OK" : "LTE:Roam:OK");
       debugln("[GPRS] Registered via CEREG! (4G:" + String(r4) + ")");
       break;
@@ -446,24 +472,28 @@ void get_registration() {
     // --- TIERED RECOVERY (fires every 5 retries) ---
     if (retries > 0 && retries % 5 == 0) {
       if (retries == 5) {
-        // Tier 1 @ iter 5: RADIO-OFF SIM SCRUB + Clear Forbidden PLMNs
-        debugln("[GPRS] Tier1 @ iter5: Radio-Off SIM Scrub...");
-        SerialSIT.println("AT+CFUN=0");
-        waitForResponse("OK", 5000);
-        SerialSIT.println(
-            "AT+CRSM=214,28539,0,0,12,\"FFFFFFFFFFFFFFFFFFFFFFFF\"");
-        waitForResponse("OK", 2000);
-        SerialSIT.println("AT+CFUN=1");
-        waitForResponse("OK", 5000);
+        // v5.84 Tier 1 @ iter 5: Toggle Mode if stalled.
+        if (initial_cnmp != 13) {
+            debugln("[GPRS] Tier1 @ iter5: Auto mode stalled. Fallback to GSM-only (CNMP=13)...");
+            SerialSIT.println("AT+CNMP=13");
+        } else {
+            debugln("[GPRS] Tier1 @ iter5: GSM-only stalled. Peeking Auto (CNMP=2)...");
+            SerialSIT.println("AT+CNMP=2");
+        }
+        waitForResponse("OK", 1000);
         SerialSIT.println("AT+COPS=0");
-        waitForResponse("OK", 5000);
+        waitForResponse("OK", 3000);
         SerialSIT.println("AT+CGATT=1");
         waitForResponse("OK", 3000);
       } else if (retries == 10) {
-        // Tier 2 @ iter 10: Force GSM-only (diagnostic step)
-        debugln("[GPRS] Tier2 @ iter10: Testing GSM-Only Mode (AT+CNMP=13)...");
-        SerialSIT.println("AT+CNMP=13");
+        // v5.84 Tier 2 @ iter 10: Full Radio Reset & SIM Scrub
+        debugln("[GPRS] Tier2 @ iter10: Radio-Off SIM Scrub...");
+        SerialSIT.println("AT+CFUN=0");
+        waitForResponse("OK", 5000);
+        SerialSIT.println("AT+CRSM=214,28539,0,0,12,\"FFFFFFFFFFFFFFFFFFFFFFFF\"");
         waitForResponse("OK", 2000);
+        SerialSIT.println("AT+CFUN=1");
+        waitForResponse("OK", 5000);
         SerialSIT.println("AT+COPS=0");
         waitForResponse("OK", 5000);
         SerialSIT.println("AT+CGATT=1");
@@ -478,16 +508,11 @@ void get_registration() {
         SerialSIT.println("AT+CGATT=1");
         waitForResponse("OK", 3000);
       } else if (retries == 20) {
-        // Tier 4 @ iter 20: Restore Auto-Mode + COPS auto (carrier-agnostic)
-        // NOTE: We do NOT hard-code 40445 (Airtel) here — BSNL would break.
-        debugln(
-            "[GPRS] Tier4 @ iter20: Restoring Auto-Mode (CNMP=2, COPS=0)...");
+        // Tier 4 @ iter 20: Restore Auto-Mode + COPS auto
+        debugln("[GPRS] Tier4 @ iter20: Restoring Auto-Mode (CNMP=2, COPS=0)...");
         SerialSIT.println("AT+CNMP=2"); // Auto (LTE+GSM)
         waitForResponse("OK", 1000);
-        SerialSIT.println("AT+CMNB=3"); // LTE then GSM
-        waitForResponse("OK", 1000);
-        SerialSIT.println(
-            "AT+COPS=0"); // Auto operator — works for ALL carriers
+        SerialSIT.println("AT+COPS=0"); // Auto operator
         waitForResponse("OK", 10000);
         SerialSIT.println("AT+CGATT=1");
         waitForResponse("OK", 3000);
@@ -505,9 +530,10 @@ void get_registration() {
     debugf("Reg Search [BSNL:%d]... Status:%d Iter:#%d/%d\n", isBSNL,
            registration, retries + 1, no_of_retries);
 
-    // v5.45.6: ADAPTIVE WAIT: Poll CGREG every 1s for up to 5s.
+    // v5.84: ADAPTIVE WAIT: Poll CGREG every 1s for up to 3/5s.
     // Exits immediately on GPRS/3G registration — no wasted blind sleep.
-    for (int w = 0; w < 5 && !is_registered; w++) {
+    int poll_count = isBSNL ? 3 : 5; // BSNL: 3s; Airtel: 5s
+    for (int w = 0; w < poll_count && !is_registered; w++) {
       vTaskDelay(1000 / portTICK_PERIOD_MS);
       esp_task_wdt_reset();
       flushSerialSIT();
@@ -520,8 +546,8 @@ void get_registration() {
           int qreg = qr.substring(qc + 1).toInt();
           if (qreg == 1 || qreg == 5) {
             debugln("[GPRS] CGREG registered during adaptive wait!");
-            isLTE =
-                !isBSNL; // For BSNL it's GPRS/3G. For others it's LTE bearer.
+            isLTE = !isBSNL; 
+            last_successful_cnmp = isLTE ? 2 : 13; // v5.84
             strcpy(reg_status, (qreg == 1) ? "GPRS:Home:OK" : "GPRS:Roam:OK");
             is_registered = true;
           } else {
@@ -607,7 +633,7 @@ void get_a7672s() {
   if (load_apn_config(ccid, stored_apn, sizeof(stored_apn))) {
       strncpy(apn_str, stored_apn, sizeof(apn_str) - 1);
       if (try_activate_apn(apn_str)) {
-          vTaskDelay(3000 / portTICK_PERIOD_MS); // v5.63: Carrier Breather after success
+          vTaskDelay((isLTE ? 500 : 3000) / portTICK_PERIOD_MS); // v5.85: Carrier-aware breather
           gprs_pdp_ready = true;
           return;
       }
@@ -633,7 +659,7 @@ void get_a7672s() {
       debugln("APN: Trying carrier-matched APN first -> " + String(primary_apn));
       if (try_activate_apn(primary_apn)) {
           save_apn_config(primary_apn, ccid);
-          vTaskDelay(3000 / portTICK_PERIOD_MS);
+          vTaskDelay((isLTE ? 500 : 3000) / portTICK_PERIOD_MS);
           gprs_pdp_ready = true;
           return;
       }
@@ -645,7 +671,7 @@ void get_a7672s() {
       if (try_activate_apn(fallback_apns[i])) {
           strcpy(apn_str, fallback_apns[i]);
           save_apn_config(fallback_apns[i], ccid);
-          vTaskDelay(3000 / portTICK_PERIOD_MS);
+          vTaskDelay((isLTE ? 500 : 3000) / portTICK_PERIOD_MS);
           gprs_pdp_ready = true;
           return;
       }
@@ -662,7 +688,7 @@ void get_a7672s() {
 
   if (try_activate_apn(apn_str)) {
     save_apn_config(apn_str, ccid);
-    vTaskDelay(3000 / portTICK_PERIOD_MS); 
+    vTaskDelay((isLTE ? 500 : 3000) / portTICK_PERIOD_MS); 
     gprs_pdp_ready = true;
     return;
   }
@@ -1055,6 +1081,7 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
 // Proposed Rule 45: The Header-Health Check
 // Checks if the buffer contains "Modem-speak" or invalid ESP32 entry points
 bool send_health_report(bool useJitter) {
+#if ENABLE_HEALTH_REPORT == 1
   // v5.74: Concurrency Guard - Defer if scheduler is mid-write to prevent fsMutex timeout
   if (schedulerBusy) {
     debugln("[Health] Deferring: scheduler mid-write.");
@@ -1535,6 +1562,11 @@ bool send_health_report(bool useJitter) {
   if (success) {
     strcpy(diag_crash_task, "NONE"); // v5.59: Clear after delivery
   }
+  return success;
+#else
+  debugln("[Health] Reporting Disabled (v5.72 Hardened).");
+  return true;
+#endif
 }
 
 /*
