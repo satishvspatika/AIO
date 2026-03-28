@@ -841,9 +841,15 @@ void subtractUnsentFromMask(const char *uFile) {
 
     if (sNum >= 0 && sNum <= 95) {
       // Calculate 'NOW' meteorological close date
-      int cur_dd = current_day, cur_mm = current_month, cur_yy = current_year;
-      int curr_h = (current_hour < 24) ? current_hour : 0;
-      int curr_m = (current_min < 60) ? current_min : 0;
+      int cur_dd, cur_mm, cur_yy, curr_h, curr_m;
+      portENTER_CRITICAL(&rtcTimeMux);
+      cur_dd = current_day;
+      cur_mm = current_month;
+      cur_yy = current_year;
+      curr_h = (current_hour < 24) ? current_hour : 0;
+      curr_m = (current_min < 60) ? current_min : 0;
+      portEXIT_CRITICAL(&rtcTimeMux);
+
       int curr_sNum = (curr_h * 4 + curr_m / 15 + 61) % 96;
       if (curr_sNum <= 60) {
         next_date(&cur_dd, &cur_mm, &cur_yy);
@@ -1185,10 +1191,10 @@ void reset_all_diagnostics() {
   debugln("[SYS] Diagnostics cleaned.");
 }
 
-int get_total_backlogs() {
+int get_total_backlogs(bool force = false) {
   static unsigned long last_backlog_check = 0;
   // If we checked in the last 10 seconds, return the cached value
-  if (last_backlog_check > 0 && (millis() - last_backlog_check < 10000)) {
+  if (!force && last_backlog_check > 0 && (millis() - last_backlog_check < 10000)) {
     return diag_backlog_total;
   }
 

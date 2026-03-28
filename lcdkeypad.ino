@@ -250,7 +250,7 @@ void refresh_sensor_data() {
     static int bl_cur = 0;
     if (millis() - last_bl > 2000) {
       last_bl = millis();
-      bl_cur = get_total_backlogs();
+      bl_cur = get_total_backlogs(false);
     }
     snprintf(ui_data[FLD_HTTP_FAILS].bottomRow, 17, "P:%-2d C:%-4d B:%-4d", 
              diag_http_present_fails, diag_http_cum_fails, bl_cur);

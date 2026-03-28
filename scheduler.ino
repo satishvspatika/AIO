@@ -13,7 +13,7 @@ void scheduler(void *pvParameters) {
   li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
   float hum_output = 0.0;                        // v5.79: Global function scope for goto safety
 
-  if (!wifi_active) {
+  if (!wifi_active && !gprs_started) {
     int solar_raw;
     if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw) == ESP_OK) {
       solar = solar_raw;
@@ -1253,67 +1253,21 @@ void scheduler(void *pvParameters) {
            prune_attempts++;
         }
 
-        // Filling the SPIFF file and SD card file with missing data. Only
-        // updating unsent file if FILLGAP is 1
-
-        File file2 = SPIFFS.open(
-            cur_file, FILE_APPEND); // this is rf_close date IN spiffs
-        if (!file2) {
-          debugln("Failed to open SPIFFS file for appending");
-        } // #TRUEFIX
-        File sd2;
-        if (sd_card_ok) {
-          sd2 = SD.open(cur_file, FILE_APPEND);
-          if (!sd2) {
-            debugln("Failed to open SD file for appending");
-          }
-        }
-
-        if ((sampleNo - last_sampleNo > 1) || skip_primary_http) { // GAPS or Skip-to-Backlog (Fresh Boot)
-
+        // v5.70 (N-10): Mutex Pulsing Strategy - Outer file handles removed.
+        // We will open/write/close/give inside the loop to prevent 5-second starvation.
+        if (fs_locked) { xSemaphoreGive(fsMutex); fs_locked = false; }
+        
+        if ((sampleNo - last_sampleNo > 1) || skip_primary_http) { 
 #if FILLGAP == 1
-
 #if SYSTEM == 0
           snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-          // LTS-14.5: Size Cap Protection
-          if (SPIFFS.exists(unsent_file)) {
-            pruneFile(unsent_file, (300 * record_length), true);
-          }
-          File unsent = SPIFFS.open(unsent_file, FILE_APPEND);
-          if (!unsent) {
-              debugln("[SCHED] FATAL GAP: Could not open unsent.txt for Gap Fill!");
-              data_writing_initiated = 0; schedulerBusy = false; 
-              xSemaphoreGive(fsMutex); 
-              fs_locked = false; // Fix CRITICAL: Prevent Double-Give at TRIGGER_HTTP
-              portENTER_CRITICAL(&syncMux);
-              sync_mode = eHttpStop;
-              portEXIT_CRITICAL(&syncMux);
-              goto TRIGGER_HTTP;
-          }
+          if (SPIFFS.exists(unsent_file)) { pruneFile(unsent_file, (300 * record_length), false); }
 #endif
-
 #if (SYSTEM == 1 || SYSTEM == 2)
           snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-          // LTS-14.5: Size Cap Protection
-          if (SPIFFS.exists(ftpunsent_file)) {
-            pruneFile(ftpunsent_file, (300 * record_length), true);
-          }
-          File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-          if (!ftpunsent) {
-              debugln("[SCHED] FATAL GAP: Could not open ftpunsent.txt for Gap Fill!");
-              xSemaphoreGive(fsMutex); 
-              fs_locked = false; // Fix CRITICAL: Prevent Double-Give at TRIGGER_HTTP
-              portENTER_CRITICAL(&syncMux);
-              sync_mode = eHttpStop;
-              portEXIT_CRITICAL(&syncMux);
-              goto TRIGGER_HTTP;
-          }
+          if (SPIFFS.exists(ftpunsent_file)) { pruneFile(ftpunsent_file, (300 * record_length), false); }
 #endif
-
 #endif
-
-          // Fill the gaps starting from last_recorded sampleNo+1 to current
-          // sampleNo including current sampleNo
           debugln("Gap filling for loop started... ");
           for (int q = last_sampleNo + 1; q <= sampleNo; q++) {
             esp_task_wdt_reset();               // v5.73: Pet WDT on every gap iteration (C-03 fix)
@@ -1600,40 +1554,53 @@ void scheduler(void *pvParameters) {
 
             debugln(q);
 
-            file2.print(append_text);
-            if (sd_card_ok && sd2) {
-              sd2.print(append_text);
+            // v5.70 (N-10): Pulsed Write (Take -> Open -> Write -> Close -> Give)
+            if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+  #if SYSTEM == 0
+                File file2_p = SPIFFS.open(cur_file, FILE_APPEND);
+                if (file2_p) { file2_p.print(append_text); file2_p.close(); }
+  #endif
+  #if SYSTEM == 1
+                File file2_p = SPIFFS.open(cur_file, FILE_APPEND);
+                if (file2_p) { file2_p.print(append_text); file2_p.close(); }
+  #endif
+  #if SYSTEM == 2
+                File file2_p = SPIFFS.open(cur_file, FILE_APPEND);
+                if (file2_p) { file2_p.print(append_text); file2_p.close(); }
+  #endif
+
+  #if FILLGAP == 1
+  #if SYSTEM == 0
+                if (q < sampleNo || skip_primary_http) {
+                    File uns_p = SPIFFS.open("/unsent.txt", FILE_APPEND);
+                    if (uns_p) { uns_p.print(append_text); uns_p.close(); }
+                }
+  #endif
+  #if (SYSTEM == 1 || SYSTEM == 2)
+                if (q < sampleNo || skip_primary_http) {
+                    File funs_p = SPIFFS.open("/ftpunsent.txt", FILE_APPEND);
+                    if (funs_p) { funs_p.print(ftpappend_text); funs_p.close(); }
+                }
+  #endif
+  #endif
+                xSemaphoreGive(fsMutex);
             }
+
+            if (sd_card_ok) {
+                File sd2_p = SD.open(cur_file, FILE_APPEND);
+                if (sd2_p) { sd2_p.print(append_text); sd2_p.close(); }
+            }
+
             if (diag_pd_count < 96)
-              diag_pd_count++;
-            if (q >= 49 && q <= 85) // v5.57 Fix: sample 49 = 21:00 (9 PM) was excluded. Range is 49-85 inclusive.
-              diag_ndm_count++; // 9 PM to 6 AM
-#if FILLGAP == 1
-            if (q < sampleNo || skip_primary_http) { // Only append GAPS (or current if primary is blocked) to unsent
-              debug("APPENDED TEXT to unsent.txt is : ");
-              debugln(append_text);
-#if SYSTEM == 0
-              if (unsent)
-                unsent.print(append_text);
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2)
-              if (ftpunsent)
-                ftpunsent.print(ftpappend_text);
-#endif
-            }
-#endif
+                diag_pd_count++;
+            if (q >= 49 && q <= 85)
+                diag_ndm_count++; // 9 PM to 6 AM
           } // End of q loop
 
-#if FILLGAP == 1
-#if SYSTEM == 0
-          if (unsent)
-            unsent.close();
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2)
-          if (ftpunsent)
-            ftpunsent.close();
-#endif
-#endif
+          // Re-acquire lock for the logic downstream
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+              fs_locked = true;
+          }
 
         } else { // **********************  THERE ARE NO GAPS
                  // ************************
@@ -1687,10 +1654,17 @@ void scheduler(void *pvParameters) {
           //                                            append_text[len] =
           //                                            '\0';
 
-          if (file2)
-            file2.print(append_text);
-          if (sd_card_ok && sd2)
-            sd2.print(append_text);
+          // v5.70 (N-10): Pulsed Write for NO GAPS path
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+              File file2_p = SPIFFS.open(cur_file, FILE_APPEND);
+              if (file2_p) { file2_p.print(append_text); file2_p.close(); }
+              xSemaphoreGive(fsMutex);
+          }
+
+          if (sd_card_ok) {
+              File sd2_p = SD.open(cur_file, FILE_APPEND);
+              if (sd2_p) { sd2_p.print(append_text); sd2_p.close(); }
+          }
 
           if (diag_pd_count < 96)
             diag_pd_count++;
@@ -1702,9 +1676,8 @@ void scheduler(void *pvParameters) {
           debugln(append_text);
         }
 
-        file2.close();
-        if (sd_card_ok && sd2)
-          sd2.close();
+        // Pulse logic removed the need for holistic file2.close() here.
+        // xSemaphoreGive handled at TRIGGER_HTTP
 
         // 🚨 CRITICAL FIX: The mid-day sequence assumes gprs.ino handles unsent.txt
         // for the *current* record (sampleNo). But if skip_primary_http is true 
@@ -1713,24 +1686,26 @@ void scheduler(void *pvParameters) {
         if (data_writing_initiated == 1 && skip_primary_http) {
 #if SYSTEM == 0
             debugln("Primary skipped mid-day. Queuing CURRENT record to unsent.txt...");
-            // LTS-14.5: Size Cap Protection
-            pruneFile(unsent_file, (300 * record_length), true);
-            File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
-            if (mid_unsent) {
-                mid_unsent.print(append_text);
-                mid_unsent.close();
+            pruneFile(unsent_file, (300 * record_length), fs_locked);
+            if (!fs_locked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
+                if (mid_unsent) { mid_unsent.print(append_text); mid_unsent.close(); }
+                xSemaphoreGive(fsMutex);
+            } else if (fs_locked) {
+                File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
+                if (mid_unsent) { mid_unsent.print(append_text); mid_unsent.close(); }
             }
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
             debugln("Primary skipped mid-day. Queuing CURRENT record to ftpunsent.txt...");
-            // LTS-14.5: Size Cap Protection
-            if (SPIFFS.exists(ftpunsent_file)) {
-                pruneFile(ftpunsent_file, (300 * record_length), true);
-            }
-            File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-            if (mid_ftp) {
-                mid_ftp.print(ftpappend_text);
-                mid_ftp.close();
+            pruneFile(ftpunsent_file, (300 * record_length), fs_locked);
+            if (!fs_locked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+                if (mid_ftp) { mid_ftp.print(ftpappend_text); mid_ftp.close(); }
+                xSemaphoreGive(fsMutex);
+            } else if (fs_locked) {
+                File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+                if (mid_ftp) { mid_ftp.print(ftpappend_text); mid_ftp.close(); }
             }
 #endif
         }
@@ -2308,34 +2283,10 @@ void scheduler(void *pvParameters) {
                 }
               }
 
-              // File file3 = SPIFFS.open(temp_file,FILE_APPEND); // this is
-              // rf_close date IN spiffs File sd3 =
-              // SD.open(temp_file,FILE_APPEND); // sd-card
-              File file3 = SPIFFS.open(
-                  temp_file, FILE_APPEND); // this is rf_close date IN spiffs
-              if (!file3) {
-                debugln(
-                    "Failed to open previous day SPIFFS file for appending");
-              } // #TRUEFIX
-              File sd3;
-              if (sd_card_ok) {
-                sd3 = SD.open(temp_file, FILE_APPEND); // sd-card
-              }
-              if (sd_card_ok && !sd3) {
-                debugln("Failed to open previous day SD file for appending");
-              } // #TRUEFIX
-
 #if FILLGAP == 1
-#if SYSTEM == 0
-              snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-              File unsent3 = SPIFFS.open(unsent_file, FILE_APPEND);
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2)
-              snprintf(ftpunsent_file, sizeof(ftpunsent_file),
-                       "/ftpunsent.txt");
-              File ftpunsent3 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-#endif
-#endif
+              // v5.70 (N-10): Pulsing Strategy for Loop 2 (Rollover)
+              // Releasing outer lock to allow pulses
+              if (fs_locked) { xSemaphoreGive(fsMutex); fs_locked = false; }
 
               // Fill the gaps starting from last_recorded sampleNo+1 to
               // current sampleNo including current sampleNo Generate ALL
@@ -2567,47 +2518,42 @@ void scheduler(void *pvParameters) {
                 //                                                              =
                 //                                                              '\0';
 
-#if FILLGAP == 1
-#if SYSTEM == 0
-                if (unsent3)
-                  unsent3.print(append_text);
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2)
-                if (ftpunsent3)
-                  ftpunsent3.print(ftpappend_text); // AG2
-#endif
-#endif
-                file3.print(append_text);
-                if (sd_card_ok && sd3) {
-                  sd3.print(append_text);
+                // v5.70 (N-10): Pulsed Write (Take -> Open -> Write -> Close -> Give)
+                if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                    File file3_p = SPIFFS.open(temp_file, FILE_APPEND);
+                    if (file3_p) { file3_p.print(append_text); file3_p.close(); }
+
+  #if FILLGAP == 1
+  #if SYSTEM == 0
+                    File uns_p = SPIFFS.open("/unsent.txt", FILE_APPEND);
+                    if (uns_p) { uns_p.print(append_text); uns_p.close(); }
+  #endif
+  #if (SYSTEM == 1 || SYSTEM == 2)
+                    File funs_p = SPIFFS.open("/ftpunsent.txt", FILE_APPEND);
+                    if (funs_p) { funs_p.print(ftpappend_text); funs_p.close(); }
+  #endif
+  #endif
+                    xSemaphoreGive(fsMutex);
+                }
+
+                if (sd_card_ok) {
+                    File sd3_p = SD.open(temp_file, FILE_APPEND);
+                    if (sd3_p) { sd3_p.print(append_text); sd3_p.close(); }
                 }
 
               } // end for q (gap filling)
 
-#if FILLGAP == 1
-#if SYSTEM == 0
-              if (unsent3)
-                unsent3.close(); // 2024 iter6
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2)
-              if (ftpunsent3)
-                ftpunsent3.close();
-#endif
-#endif
-
-              // Ensure physical commit to flash before closing to fix Ghost
-              // Gap bug
-              file3.flush();
-              file3.close();
-              if (sd_card_ok && sd3) {
-                sd3.flush();
-                sd3.close();
+              // Re-acquire lock for the logic downstream
+              if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                  fs_locked = true;
               }
             } // previous rf_close_date file if exists (temp_file if exists)
             // Fill data to current day rf close date file also from 8:45am to
             // current sample number TRG8-3.0.5g
 
           } // loop through 7 days
+
+#endif
 
 #endif
 

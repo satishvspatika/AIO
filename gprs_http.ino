@@ -331,7 +331,7 @@ void prepare_data_and_send() {
     diag_http_present_fails = 0;
     snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
              sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
-             diag_http_present_fails, diag_http_cum_fails, get_total_backlogs());
+             diag_http_present_fails, diag_http_cum_fails, get_total_backlogs(false));
 
     if (data_mode == eCurrentData) {
       diag_first_http_count++;
@@ -471,7 +471,7 @@ void prepare_data_and_send() {
         diag_http_present_fails = 0;
         snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
                  sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
-                 diag_http_present_fails, diag_http_cum_fails, get_total_backlogs());
+                 diag_http_present_fails, diag_http_cum_fails, get_total_backlogs(false));
 
         if (data_mode == eCurrentData) {
           // Success tracking centralized in send_at_cmd_data loop below
@@ -507,7 +507,7 @@ fail_handling:
         diag_http_cum_fails++;
         snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
                  sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
-                 diag_http_present_fails, diag_http_cum_fails, get_total_backlogs());
+                 diag_http_present_fails, diag_http_cum_fails, get_total_backlogs(false));
       }
       debugf1("[RECOVERY] Consec HTTP Fails: %d", diag_consecutive_http_fails);
       debugf1(" | Present: %d", diag_http_present_fails);
@@ -728,6 +728,15 @@ void send_http_data() {
     waitForResponse("OK", 10000);
   }
 
+  // v5.70-Hardened (N-5): CGPADDR non-zero IP check 
+  // CGACT=1/OK only confirms context is active; it does not guarantee assigned IP.
+  SerialSIT.print("AT+CGPADDR="); SerialSIT.println(active_cid);
+  String ip_resp = waitForResponse("OK", 3000);
+  if (ip_resp.indexOf("0.0.0.0") != -1 || ip_resp.indexOf("+CGPADDR") == -1) {
+      debugln("[GPRS] Ghost PDP (0.0.0.0). Triggering recovery...");
+      verify_bearer_or_recover();
+  }
+
   // v5.55: SMART DNS FALLBACK (Fast-Track)
   // v5.55 SELF-HEALING: Every 10 successful sends, or if we just recovered from a fail streak,
   // try DNS again to see if the network has healed.
@@ -803,8 +812,10 @@ void send_http_data() {
   }
   // snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), ...); // Prepared in prepare_data_and_send()
   
-  // v5.63: Removed AT+HTTPTERM and AT+CGEREP=0 here (interferes with Airtel stack)
-  // v3.0 logic: HTTPINIT directly!
+  // v5.63: Removed proactive AT+HTTPTERM here (prior to HTTPINIT) because it 
+  // creates a race condition on Airtel stacks if done while the session is
+  // internally cleaning up. v3.0 logic: Proactive HTTPINIT directly!
+  // (Deliberate Roadmap Exception N-8: TERM is handled in retry block at line 814)
   vTaskDelay(50 / portTICK_PERIOD_MS); 
   flushSerialSIT();
   
@@ -1802,7 +1813,7 @@ void store_current_unsent_data() {
   diag_http_cum_fails++;
   snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
            sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
-           diag_http_present_fails, diag_http_cum_fails, get_total_backlogs());
+           diag_http_present_fails, diag_http_cum_fails, get_total_backlogs(false));
   debugf1("[STORE] HTTP miss counted. Present: %d", diag_http_present_fails);
   debugf1(" | CumMth: %d\n", diag_http_cum_fails);
 

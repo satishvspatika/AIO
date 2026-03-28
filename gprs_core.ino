@@ -259,15 +259,23 @@ void gprs(void *pvParameters) {
           }
           __atomic_store_n(&httpInitiated, true, __ATOMIC_RELEASE); // v5.65 P4: Mark cycle as started for responsive cleanup block
 
+          // v5.70 (N-6): Snapshot time globals under rtcTimeMux for health/cdm scheduling
+          int snap_hour, snap_min, snap_day;
+          portENTER_CRITICAL(&rtcTimeMux);
+          snap_hour = current_hour;
+          snap_min = current_min;
+          snap_day = current_day;
+          portEXIT_CRITICAL(&rtcTimeMux);
+
           // v5.48 Daily Health Triggering (11:00 AM Primary)
           bool is_health_time = false;
 #if ENABLE_HEALTH_REPORT == 1
           if (test_health_every_slot == 1) {
             is_health_time = true; // Every 15 mins
           } else if (test_health_every_slot == 0) {
-            if (current_hour == 11 && health_last_sent_day != current_day) {
+            if (snap_hour == 11 && health_last_sent_day != snap_day) {
               is_health_time = true; // Daily 11 AM
-            } else if (current_hour == 12 && current_min < 20 && health_last_sent_day != current_day) {
+            } else if (snap_hour == 12 && snap_min < 20 && health_last_sent_day != snap_day) {
               is_health_time = true; // v5.66: Graceful fallback for 11AM BSNL network congestion
             }
           }
@@ -277,7 +285,7 @@ void gprs(void *pvParameters) {
           // v5.66: CDM True-Failure Fallback Check
           // If the Morning closing data (08:30) and Health windows (11:00-12:20) both pass
           // without success, the closing window is permanently missed for this day.
-          if (strcmp(diag_cdm_status, "PENDING") == 0 && current_hour >= 13 && health_last_sent_day != current_day) {
+          if (strcmp(diag_cdm_status, "PENDING") == 0 && snap_hour >= 13 && health_last_sent_day != snap_day) {
             strcpy(diag_cdm_status, "FAIL");
             debugln("[Health] CDM window entirely missed today. Flagging FAIL.");
           }

@@ -1264,7 +1264,7 @@ bool send_health_report(bool useJitter) {
       calib_report,    // calibration info
       diag_ndm_count, diag_pd_count,
       diag_http_present_fails, diag_http_cum_fails,
-      get_total_backlogs(),
+      get_total_backlogs(true),
       diag_modem_mutex_fails,
       ota_fail_count, ota_fail_reason,
       feedback); // v7.92
