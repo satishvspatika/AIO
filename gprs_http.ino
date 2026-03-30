@@ -327,6 +327,7 @@ void prepare_data_and_send() {
     diag_consecutive_http_fails = 0; // v5.49 Build 5: Reset fail streaks
     diag_consecutive_reg_fails = 0;
     last_http_ok = true; // v5.84: Success recorded
+    last_http_ok_slot = sampleNo; // v5.72: Store successful slot for bearer age check (fixed from temp_sampleNo)
     
     // v7.70+: PR counter resets on ANY successful HTTP/FTP (Current or Backlog)
     diag_http_present_fails = 0;
@@ -470,6 +471,7 @@ void prepare_data_and_send() {
         diag_consecutive_reg_fails = 0;
         diag_consecutive_http_fails = 0;
         last_http_ok = true; // v5.84: Success on retry
+        last_http_ok_slot = sampleNo; // v5.72: Keep bearer age fresh (fixed from temp_sampleNo)
 
         // v7.70+: Reset present fails on successful backlog retry too
         diag_http_present_fails = 0;
@@ -605,14 +607,17 @@ fail_handling:
 
         // SYSTEM 0 BACKLOG APPEND handled above in unified TWS pattern v7.70
 #if SYSTEM == 0
-        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-          snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-          File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
-          if (file2) {
-            file2.print(current_record); // Fixed: current_record is the buffer
-            file2.close();
+        if (last_unsent_sampleNo != sampleNo) { // v5.72 Hardened: Dedup guard for TRG fallback write
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+            snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
+            File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
+            if (file2) {
+              file2.print(current_record); // Fixed: current_record is the buffer
+              file2.close();
+            }
+            xSemaphoreGive(fsMutex);
           }
-          xSemaphoreGive(fsMutex);
+          last_unsent_sampleNo = sampleNo;
         }
 #endif
 
@@ -719,7 +724,8 @@ void send_http_data() {
 
   // v5.70-Hardened (N-5): CGPADDR non-zero IP check 
   // v5.84: Only check CGPADDR when last slot failed — saves 3-4s per healthy slot
-  if (!last_http_ok) {
+  // v5.72: Force CGPADDR if more than 2 slots (30 mins) since last success to detect dead bearer
+  if (!last_http_ok || (abs(sampleNo - last_http_ok_slot) > 2)) {
       SerialSIT.print("AT+CGPADDR="); SerialSIT.println(active_cid);
       String ip_resp = waitForResponse("OK", 3000);
       if (ip_resp.indexOf("0.0.0.0") != -1 || ip_resp.indexOf("+CGPADDR") == -1) {
@@ -727,7 +733,7 @@ void send_http_data() {
           verify_bearer_or_recover();
       }
   } else {
-      debugln("[GPRS] last_http_ok=true. Skipping CGPADDR check.");
+      debugln("[GPRS] last_http_ok=true. Skipping CGPADDR check (age < 2 slots).");
   }
 
   // v5.55: SMART DNS FALLBACK (Fast-Track)
@@ -1196,16 +1202,25 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
   // better).
   // v5.51: Power-Saving FTP Gating logic
   snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
+  int unsent_cnt = 0;
 
-  // v5.52 RELIABILITY: Recover orphaned remainders from failed previous renames
-  if (!SPIFFS.exists(ftpunsent_file) && SPIFFS.exists("/ftpremain.txt")) {
-    debugln("[Healer] Orphaned ftpremain.txt found. Recovering to ftpunsent.txt");
-    SPIFFS.rename("/ftpremain.txt", "/ftpunsent.txt");
+  // v5.85: M-02 Hardening - Wrap orphan recovery and countStored in fsMutex
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+    // v5.52 RELIABILITY: Recover orphaned remainders from failed previous renames
+    if (!SPIFFS.exists(ftpunsent_file) && SPIFFS.exists("/ftpremain.txt")) {
+      debugln("[Healer] Orphaned ftpremain.txt found. Recovering to ftpunsent.txt");
+      SPIFFS.rename("/ftpremain.txt", "/ftpunsent.txt");
+    }
+    unsent_cnt = countStored(ftpunsent_file);
+    xSemaphoreGive(fsMutex);
+  } else {
+    // If mutex take fails, we must still respect the cached count to avoid infinite loop
+    debugln("[Healer] fsMutex timeout in orphan recovery. Skipping for this cycle.");
   }
 
   // v5.52 FIX: Ensure signal_lvl isn't 0 if polling failed (prevents false triggers/0000 in logs)
   if (signal_lvl == 0) signal_lvl = SIGNAL_STRENGTH_MISSING_DATA;
-  int unsent_cnt = countStored(ftpunsent_file);
+
 
   // v7.63 FIX: Use current_hour/current_min (actual RTC wakeup time) instead
   // of record_hr/record_min (data record timestamp) for scheduled-slot checks.
@@ -1270,24 +1285,31 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
                 " dBm).");
       } else {
         bool fs_locked_unsent = false;
-        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-           fs_locked_unsent = true;
+        // v13.4: Skip full re-registration if HTTP just succeeded (bearer is fresh)
+        bool bearer_fresh = (millis() - last_activity_time) < 90000;
+        if (!bearer_fresh) {
+            debugln("[FTP] Bearer stale. Re-registering...");
+            get_registration();
+        } else {
+            debugln("[FTP] Bearer fresh (HTTP<90s ago). Skipping re-registration.");
         }
+        if (bearer_fresh || gprs_mode == eGprsSignalOk) {
+          if (!bearer_fresh) {
+            debugln("[FTP] Registration OK. Verifying IP (PDP Context)...");
+            get_a7672s(); // Only needed if we re-registered
+          }
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+             fs_locked_unsent = true;
+          }
 
-        // Re-verify registration status to prevent "Ghost Logins" on dropped
-        // links
-        get_registration();
-        if (gprs_mode == eGprsSignalOk) {
-          debugln("[FTP] Registration OK. Verifying IP (PDP Context)...");
-          get_a7672s(); // Ensure IP is assigned and context is ready
-          
           if (!fs_locked_unsent) {
              debugln("[FTP] Mutex Timeout: Cannot proceed with SPIFFS chunking.");
              return;
           }
 
-          // v6.45: Increased stabilization delay for better login success
-          debugln("[FTP] Assigned IP. Waiting 5s for tower stabilization...");
+          // v6.45: Brief settle before FTP to avoid socket conflicts
+          debugln(bearer_fresh ? "[FTP] Bearer fresh. Brief 5s settle before FTP..." 
+                               : "[FTP] Assigned IP. Waiting 5s for tower stabilization...");
           vTaskDelay(5000 / portTICK_PERIOD_MS);
           esp_task_wdt_reset();
 
@@ -1694,146 +1716,121 @@ int send_at_cmd_data(char *payload, String response_arg, bool robust) {
 }
 
 void store_current_unsent_data() {
-  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
-    debugln("[SPIFFS] Mutex Timeout: Skipping store_current_unsent_data");
-    return;
-  }
   char finalStringBuffer[160] = {0};
   char last_rec_file[50];
   snprintf(last_rec_file, sizeof(last_rec_file), "/lastrecorded_%s.txt",
            station_name);
 
-  File f = SPIFFS.open(last_rec_file, FILE_READ);
-  if (f) {
-      size_t readLen =
-          f.readBytes(finalStringBuffer, sizeof(finalStringBuffer) - 1);
-      finalStringBuffer[readLen] = '\0';
-      f.close();
+  // v5.72 Hardened: Mutex Pulse Pattern (M-1)
+  // Take lock briefly only to capture the source data
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+    File f = SPIFFS.open(last_rec_file, FILE_READ);
+    if (f) {
+        size_t readLen =
+            f.readBytes(finalStringBuffer, sizeof(finalStringBuffer) - 1);
+        finalStringBuffer[readLen] = '\0';
+        f.close();
+    }
+    xSemaphoreGive(fsMutex);
+  } else {
+    debugln("[SPIFFS] Mutex Timeout on read. Aborting store.");
+    return;
   }
+
+  // Heavy String operations happen here without holding the FS lock
+  String cleanFtp = "";
+  String cleanData = "";
+
+#if SYSTEM == 0
+  cleanData = String(finalStringBuffer);
+  cleanData.trim();
+  // v5.72 Restore: Fallback if lastrecorded is corrupted or missing
+  if (cleanData.length() < 20) {
+      cleanData = String(append_text);
+      cleanData.trim();
+  }
+#else
+  // v5.72: Re-derive FTP string from CSV without holding lock
+  if (strlen(finalStringBuffer) > 20) {
+      String csv = String(finalStringBuffer);
+      csv.trim();
+      int firstComma = csv.indexOf(',');
+      if (firstComma != -1) {
+          String derived_stn = String(ftp_station);
+          if (derived_stn.length() == 4 && isDigitStr(derived_stn.c_str())) derived_stn = "00" + derived_stn;
+          String rest = csv.substring(firstComma + 1);
+          int dtComma = rest.indexOf(','); 
+          int fieldStart = rest.indexOf(',', dtComma + 1) + 1; 
+          String dtPart = rest.substring(0, fieldStart - 1);
+          String fields = rest.substring(fieldStart); 
+
+          // v5.72 Restore: SYSTEM 2 specific cumulative RF padding (05.2f)
+#if SYSTEM == 2
+          int c1 = fields.indexOf(',');
+          if (c1 != -1) {
+              String cumRfStr = fields.substring(0, c1);
+              float cumRfVal = cumRfStr.toFloat();
+              char paddedCumRf[8];
+              snprintf(paddedCumRf, sizeof(paddedCumRf), "%05.2f", cumRfVal);
+              String remaining = fields.substring(c1 + 1);
+              remaining.replace(',', ';');
+              cleanFtp = derived_stn + ";" + dtPart + ";" + String(paddedCumRf) + ";" + remaining;
+          }
+#else
+          fields.replace(',', ';');
+          cleanFtp = derived_stn + ";" + dtPart + ";" + fields;
+#endif
+      }
+  }
+  // v5.72 Restore: Fallback if derivation failed or lastrecorded is missing
+  if (cleanFtp.length() < 30) {
+      cleanFtp = String(ftpappend_text);
+      cleanFtp.trim();
+  }
+#endif
 
 #if SYSTEM == 0
   snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-  // v5.70: H-5 Optimized Pruning logic
-  pruneFile(unsent_file, (300 * record_length), true); 
-
-  // v5.52 ENH-6: Warning if SPIFFS is >90% full
-  if (SPIFFS.usedBytes() > SPIFFS.totalBytes() * 0.90) {
-    debugln("[SPIFFS] WARNING: >90% full. unsent.txt write may fail.");
-  }
-
-  File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
-  if (file2) {
-    String cleanData = String(finalStringBuffer);
-    cleanData.trim();
-    if (cleanData.length() > 0) {
-      file2.println(cleanData); // v5.56: Trimmed write prevents double-newline gaps
+  if (last_unsent_sampleNo != sampleNo) { // v5.72: Dedup guard
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      pruneFile(unsent_file, (300 * record_length), true); 
+      File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
+      if (file2) {
+        if (cleanData.length() > 0) {
+          file2.println(cleanData); // v5.56: Trimmed write prevents double-newline gaps
+          if (diag_backlog_total < 999999)
+            diag_backlog_total++; // v5.65 P3: Increment total backlog counter for health report
+        }
+        file2.close();
+        last_unsent_sampleNo = sampleNo;
+      }
+      xSemaphoreGive(fsMutex);
     }
-    file2.close();
-  } else {
-    debugln("Failed to open unsent.txt for appending (store_current)");
   }
-  debug("************************");
-  debug("Storing data in unsent file due to SIM issue/REG issue/Signal "
-        "issue ");
-  debugln("************************");
-  debug("unsent store_text is ");
-  debugln(finalStringBuffer);
 #endif
 
 #if (SYSTEM == 1 || SYSTEM == 2)
   snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-
-  // v5.70: H-5 Optimized Pruning logic
-  pruneFile(ftpunsent_file, (300 * record_length), true);
-
-  // v5.52 ENH-6: Warning if SPIFFS is >90% full
-  if (SPIFFS.usedBytes() > SPIFFS.totalBytes() * 0.90) {
-    debugln("[SPIFFS] WARNING: >90% full. ftpunsent.txt write may fail.");
-  }
-
-  File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-  if (ftpfile2) {
-    String cleanFtp = "";
-
-    // BUG-C4 fix v5.65: Re-derive FTP string from lastrecorded CSV to prevent stale global consumption
-#if SYSTEM == 1
-    // v5.72: Re-derive TWS record from lastrecorded CSV to avoid stale global data
-    if (strlen(finalStringBuffer) > 20) {
-        String csv = String(finalStringBuffer);
-        csv.trim();
-        int firstComma = csv.indexOf(',');
-        if (firstComma != -1) {
-            String derived_stn = String(ftp_station);
-            if (derived_stn.length() == 4 && isDigitStr(derived_stn.c_str())) derived_stn = "00" + derived_stn;
-            String rest = csv.substring(firstComma + 1);
-            int dtComma = rest.indexOf(','); 
-            int fieldStart = rest.indexOf(',', dtComma + 1) + 1; 
-            String dtPart = rest.substring(0, fieldStart - 1);
-            String fields = rest.substring(fieldStart); 
-            fields.replace(',', ';');
-            cleanFtp = derived_stn + ";" + dtPart + ";" + fields;
-            debugln("[FTP-Store] SYSTEM 1: Re-derived TWS record from lastrecorded.");
+  if (last_unsent_sampleNo != sampleNo) { // v5.72: Dedup guard
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      pruneFile(ftpunsent_file, (300 * record_length), true); 
+      File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+      if (ftpfile2) {
+        if (cleanFtp.length() > 0) {
+          ftpfile2.println(cleanFtp);
+          if (diag_backlog_total < 999999)
+            diag_backlog_total++;
         }
-    }
-#elif SYSTEM == 2
-    // v5.72: Re-derive TWSRF record from lastrecorded CSV to avoid stale global data
-    if (strlen(finalStringBuffer) > 20) {
-        String csv = String(finalStringBuffer);
-        csv.trim();
-        int firstComma = csv.indexOf(',');
-        if (firstComma != -1) {
-            String derived_stn = String(ftp_station);
-            if (derived_stn.length() == 4 && isDigitStr(derived_stn.c_str())) derived_stn = "00" + derived_stn;
-            String rest = csv.substring(firstComma + 1);
-            int dtComma = rest.indexOf(',');           
-            int fieldStart = rest.indexOf(',', dtComma + 1) + 1; 
-            String dtPart = rest.substring(0, fieldStart - 1);   
-            String fields = rest.substring(fieldStart);          
-            int c1 = fields.indexOf(',');
-            String cumRfStr = fields.substring(0, c1);
-            float cumRfVal = cumRfStr.toFloat();
-            char paddedCumRf[8];
-            snprintf(paddedCumRf, sizeof(paddedCumRf), "%05.2f", cumRfVal);
-            String remaining = fields.substring(c1 + 1);
-            remaining.replace(',', ';');
-            cleanFtp = derived_stn + ";" + dtPart + ";" + String(paddedCumRf) + ";" + remaining;
-            debugln("[FTP-Store] SYSTEM 2: Re-derived TWSRF record from lastrecorded.");
-        }
-    }
-#endif
-
-    if (cleanFtp.length() < 50) {
-        cleanFtp = String(ftpappend_text);
-        cleanFtp.trim();
-        if (cleanFtp.length() < 50) {
-            debugln("[FTP-Store] WARNING: Both lastrecorded and ftpappend_text are invalid. Skipping.");
-            ftpfile2.close();
-            return;
-        }
-    }
-
-    if (cleanFtp.length() >= 50) {
-      if (ftpfile2.println(cleanFtp)) { 
-          diag_backlog_total++; // v5.65 P3: Increment total backlog counter for health report
+        ftpfile2.close();
+        last_unsent_sampleNo = sampleNo;
       }
+      xSemaphoreGive(fsMutex);
     }
-    ftpfile2.close();
-  } else {
-    debugln("Failed to open ftpunsent.txt for appending (store_current)");
   }
-  debug("************************");
-  debug("Storing data in FTP unsent file due to SIM issue/REG issue/Signal "
-        "issue ");
-  debugln("************************");
-  debug("ftpunsent is ");
-  debugln(ftpappend_text);
 #endif
 
-  // v5.50: Update HTTP fail counters even when bypassing send_http_data()
-  // This covers SIM errors, signal failures, and any reason HTTP was not attempted.
-  // PR (present) increments every slot missed; CUM increments permanently (monthly reset).
-  // PR is reset to 0 only upon a successful HTTP POST (in send_http_data()).
-  if (current_month >0 && diag_cum_fail_reset_month != current_month) {
+  // v5.50: Update HTTP fail counters
+  if (current_month > 0 && diag_cum_fail_reset_month != current_month) {
     diag_http_cum_fails = 0;
     diag_cum_fail_reset_month = current_month;
     debugln("[STORE] Monthly cum fail counter reset (New Month detected).");
@@ -1843,65 +1840,48 @@ void store_current_unsent_data() {
   snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
            sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
            diag_http_present_fails, diag_http_cum_fails, get_total_backlogs(false));
-  debugf1("[STORE] HTTP miss counted. Present: %d", diag_http_present_fails);
-  debugf1(" | CumMth: %d\n", diag_http_cum_fails);
-
-  debugln();
-  debug("Current/Truncated data written store_text->finalStringBuffer to "
-        "unsent file is ");
-  debugln(finalStringBuffer);
 
 #if DEBUG == 1
+  // v5.72 Core Hardening: Protect debug reads with Mutex Pulse
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
 #if SYSTEM == 0
-  snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-  if (SPIFFS.exists(unsent_file)) {
-    debug("The FILE content of UNSENT file ");
-    debugln(unsent_file);
-    File file4 = SPIFFS.open(
-        unsent_file,
-        FILE_READ); // Open for reading and appending (writing at end of
-                    // file). The file is created if it does not exist.
-    if (file4.size() > 0) {
-      int seekPos = (file4.size() > 500) ? file4.size() - 500 : 0;
-      file4.seek(seekPos);
-      String tail = file4.readString();
-      debugln("   ... [Tail Content] ...");
-      debug(tail);
-      debugln("-----------------------");
+    if (SPIFFS.exists("/unsent.txt")) {
+      File file4 = SPIFFS.open("/unsent.txt", FILE_READ);
+      if (file4) {
+        if (file4.size() > 0) {
+          int seekPos = (file4.size() > 500) ? file4.size() - 500 : 0;
+          file4.seek(seekPos);
+          String tail = file4.readString();
+          debugln("   ... [Tail Unsent] ...");
+          debug(tail);
+        }
+        file4.close();
+      }
     }
-    file4.close();
-    debugln();
-  }
 #endif
-
 #if (SYSTEM == 1 || SYSTEM == 2)
-  snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-  if (SPIFFS.exists(ftpunsent_file)) {
-    debug("The FILE content of FTP UNSENT file ");
-    debugln(ftpunsent_file);
-    File ftpfile4 = SPIFFS.open(
-        ftpunsent_file,
-        FILE_READ); // Open for reading and appending (writing at end of
-                    // file). The file is created if it does not exist.
-    if (ftpfile4.size() > 0) {
-      int seekPos = (ftpfile4.size() > 500) ? ftpfile4.size() - 500 : 0;
-      ftpfile4.seek(seekPos);
-      String tail = ftpfile4.readString();
-      debugln("   ... [Tail Content] ...");
-      debug(tail);
-      debugln("-----------------------");
+    if (SPIFFS.exists("/ftpunsent.txt")) {
+      File ftpfile4 = SPIFFS.open("/ftpunsent.txt", FILE_READ);
+      if (ftpfile4) {
+        if (ftpfile4.size() > 0) {
+          int seekPos = (ftpfile4.size() > 500) ? ftpfile4.size() - 500 : 0;
+          ftpfile4.seek(seekPos);
+          String tail = ftpfile4.readString();
+          debugln("   ... [Tail FTP Unsent] ...");
+          debug(tail);
+        }
+        ftpfile4.close();
+      }
     }
-    ftpfile4.close();
-    debugln();
-  }
 #endif
-
+    xSemaphoreGive(fsMutex);
+  }
 #endif
 
   sync_mode = eHttpStop;
   vTaskDelay(300 / portTICK_PERIOD_MS);
-  xSemaphoreGive(fsMutex); // v5.66: Fix missing mutex release
 }
+
 
 /*
  *  SIM Network Registration and Setup

@@ -796,6 +796,7 @@ void scheduler(void *pvParameters) {
           debugln(
               "[SCHED] First rollover after boot/flash. Skipping destructive "
               "reset to preserve SPIFFS recovery.");
+          backfill_done = false; // R-NEW-1: Always reset - needed regardless of isFirstRollover
         } else {
           // Capture Snapshots for TODAY's report (which represents yesterday's
           // totals)
@@ -855,11 +856,21 @@ void scheduler(void *pvParameters) {
           temp_same_count = 0;
           hum_same_count = 0;
           diag_ws_same_count = 0;
-          backfill_done = false; // v5.77: Allow rollover reconstruction (M-04 fix)
+          debugln("[SCHED] Rollover Complete.");
+          
+          // [LTS-3] v5.72 Hardened: DailyFTP Staging Cleanup - M-NEW-1 Fix (Protect with Mutex)
+          int pd = rf_cls_dd, pm = rf_cls_mm, py = rf_cls_yy;
+          previous_date(&pd, &pm, &py);
+          char yesterday_ftp[50];
+          snprintf(yesterday_ftp, sizeof(yesterday_ftp), "/dailyftp_%04d%02d%02d.txt", py, pm, pd);
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            if (SPIFFS.exists(yesterday_ftp)) {
+              SPIFFS.remove(yesterday_ftp);
+              debugln("[LTS] Yesterday's DailyFTP staging file pruned.");
+            }
+            xSemaphoreGive(fsMutex);
+          }
         } // End of destructive reset
-
-
-        debugln("[SCHED] Rollover Complete.");
       }
 
       // v7.82 Reconstruction: Recover sent mask from SPIFFS (Cold Boot or
@@ -1598,9 +1609,10 @@ void scheduler(void *pvParameters) {
                 }
   #endif
   #if (SYSTEM == 1 || SYSTEM == 2)
-                if (q < sampleNo || skip_primary_http) {
+                if (q < sampleNo && q != last_unsent_sampleNo) { // v13.3: dedup guard
                     File funs_p = SPIFFS.open("/ftpunsent.txt", FILE_APPEND);
                     if (funs_p) { funs_p.print(ftpappend_text); funs_p.close(); }
+                    last_unsent_sampleNo = q; // Mark as written
                 }
   #endif
   #endif
@@ -1707,26 +1719,38 @@ void scheduler(void *pvParameters) {
         if (data_writing_initiated == 1 && skip_primary_http) {
 #if SYSTEM == 0
             debugln("Primary skipped mid-day. Queuing CURRENT record to unsent.txt...");
-            pruneFile(unsent_file, (300 * record_length), fs_locked);
-            if (!fs_locked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-                File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
-                if (mid_unsent) { mid_unsent.print(append_text); mid_unsent.close(); }
-                xSemaphoreGive(fsMutex);
-            } else if (fs_locked) {
-                File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
-                if (mid_unsent) { mid_unsent.print(append_text); mid_unsent.close(); }
+            if (last_unsent_sampleNo != sampleNo) { // v5.72: Dedup guard
+                pruneFile(unsent_file, (300 * record_length), fs_locked);
+                if (!fs_locked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                    File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
+                    if (mid_unsent) { mid_unsent.print(append_text); mid_unsent.close(); }
+                    xSemaphoreGive(fsMutex);
+                    last_unsent_sampleNo = sampleNo;
+                } else if (fs_locked) {
+                    File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
+                    if (mid_unsent) { mid_unsent.print(append_text); mid_unsent.close(); }
+                    last_unsent_sampleNo = sampleNo;
+                }
+            } else {
+                debugln("[SCHED] Record already in unsent.txt. Skipping duplicate append.");
             }
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
             debugln("Primary skipped mid-day. Queuing CURRENT record to ftpunsent.txt...");
-            pruneFile(ftpunsent_file, (300 * record_length), fs_locked);
-            if (!fs_locked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-                File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-                if (mid_ftp) { mid_ftp.print(ftpappend_text); mid_ftp.close(); }
-                xSemaphoreGive(fsMutex);
-            } else if (fs_locked) {
-                File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-                if (mid_ftp) { mid_ftp.print(ftpappend_text); mid_ftp.close(); }
+            if (last_unsent_sampleNo != sampleNo) { // v5.72: Dedup guard
+                pruneFile(ftpunsent_file, (300 * record_length), fs_locked);
+                if (!fs_locked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                    File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+                    if (mid_ftp) { mid_ftp.print(ftpappend_text); mid_ftp.close(); }
+                    xSemaphoreGive(fsMutex);
+                    last_unsent_sampleNo = sampleNo;
+                } else if (fs_locked) {
+                    File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+                    if (mid_ftp) { mid_ftp.print(ftpappend_text); mid_ftp.close(); }
+                    last_unsent_sampleNo = sampleNo;
+                }
+            } else {
+                debugln("[SCHED] Record already in ftpunsent.txt. Skipping duplicate append.");
             }
 #endif
         }
@@ -1880,19 +1904,24 @@ void scheduler(void *pvParameters) {
 
           bool prev_exists = SPIFFS.exists(prev_day_file);
           if (!prev_exists || skip_primary_http) {
-            debugln("Gap detected or primary skipped. Appending 8:45AM data to backlog.");
-            // Phase 12-B: Mutex is already held by HANDLE_NO_FILE (Line 1761). 
-            // Do NOT take it again (avoids R-NEW-1 Deadlock).
-#if SYSTEM == 0
-            snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-            File unsent = SPIFFS.open(unsent_file, FILE_APPEND);
-            if (unsent) { unsent.print(append_text); unsent.close(); }
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2)
-            snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-            File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-            if (ftpunsent) { ftpunsent.print(ftpappend_text); ftpunsent.close(); }
-#endif
+            if (last_unsent_sampleNo != sampleNo) { // v5.72: Dedup guard
+              debugln("Gap detected or primary skipped. Appending 8:45AM data to backlog.");
+              // Phase 12-B: Mutex is already held by HANDLE_NO_FILE (Line 1761). 
+              // Do NOT take it again (avoids R-NEW-1 Deadlock).
+  #if SYSTEM == 0
+              snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
+              File unsent = SPIFFS.open(unsent_file, FILE_APPEND);
+              if (unsent) { unsent.print(append_text); unsent.close(); }
+  #endif
+  #if (SYSTEM == 1 || SYSTEM == 2)
+              snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
+              File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+              if (ftpunsent) { ftpunsent.print(ftpappend_text); ftpunsent.close(); }
+  #endif
+              last_unsent_sampleNo = sampleNo;
+            } else {
+              debugln("[SCHED] Rollover record already in backlog. Skipping duplicate.");
+            }
           } else {
             debugln("Previous day exists. Normal rollover. Skipping redundant 8:45 backlog.");
           }
@@ -1915,6 +1944,7 @@ void scheduler(void *pvParameters) {
                   "Signal Level = -111");
 
           for (int i = 0; i < sampleNo; i++) {
+            esp_task_wdt_reset(); // v5.72 Hardened: Pet the watchdog during long gap-fills (M-3)
             // Standard time calculation (used for formatting)
             temp_min = 45 + (i * 15);
             temp_hr = 8 + (temp_min / 60);
@@ -2066,19 +2096,24 @@ void scheduler(void *pvParameters) {
             // N-13 Fix: Queue current record to backlog when skip_primary_http=true
             // (HANDLE_NO_FILE path — daily file did not exist this boot)
             if (skip_primary_http && data_writing_initiated == 1) {
-              debugln("[SCHED] Fresh boot, no prior file. Queuing current record to backlog.");
+              if (last_unsent_sampleNo != sampleNo) { // v5.72: Dedup guard
+                debugln("[SCHED] Fresh boot, no prior file. Queuing current record to backlog.");
 #if SYSTEM == 0
-              pruneFile(unsent_file, (300 * record_length), true);
-              File uf = SPIFFS.open(unsent_file, FILE_APPEND);
-              if (uf) { uf.print(append_text); uf.close(); }
+                pruneFile(unsent_file, (300 * record_length), true);
+                File uf = SPIFFS.open(unsent_file, FILE_APPEND);
+                if (uf) { uf.print(append_text); uf.close(); }
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
-              if (SPIFFS.exists(ftpunsent_file)) {
-                pruneFile(ftpunsent_file, (300 * record_length), true);
-              }
-              File fuf = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-              if (fuf) { fuf.print(ftpappend_text); fuf.close(); }
+                if (SPIFFS.exists(ftpunsent_file)) {
+                  pruneFile(ftpunsent_file, (300 * record_length), true);
+                }
+                File fuf = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+                if (fuf) { fuf.print(ftpappend_text); fuf.close(); }
 #endif
+                last_unsent_sampleNo = sampleNo;
+              } else {
+                debugln("[SCHED] Fresh boot rollover already in backlog. Skipping duplicate.");
+              }
             }
 
             debugln(append_text);
@@ -2587,14 +2622,26 @@ void scheduler(void *pvParameters) {
       snprintf(temp_file, sizeof(temp_file), "/lastrecorded_%s.txt", station_name);
       { // Scope for filelastrecord
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-          char tmpPath[64];
-          snprintf(tmpPath, sizeof(tmpPath), "/lastrecorded_%s.tmp", station_name);
-          File fTmp = SPIFFS.open(tmpPath, FILE_WRITE);
-          if (fTmp) {
-            fTmp.println(store_text);
-            fTmp.close();
-            SPIFFS.remove(temp_file);
-            if (!SPIFFS.rename(tmpPath, temp_file)) { debugf("[SPIFFS] WARN: %s rename failed. Retrying...\n", temp_file); vTaskDelay(50 / portTICK_PERIOD_MS); SPIFFS.rename(tmpPath, temp_file); }
+          bool skipWrite = false;
+          File fCheck = SPIFFS.open(temp_file, FILE_READ);
+          if (fCheck) {
+            char chkBuf[200] = {0};
+            fCheck.readBytes(chkBuf, sizeof(chkBuf) - 1);
+            fCheck.close();
+            // v5.72 Hardened: Direct stack comparison (no heap alloc)
+            if (strncmp(chkBuf, store_text, strlen(store_text)) == 0) skipWrite = true;
+          }
+
+          if (!skipWrite) {
+            char tmpPath[64];
+            snprintf(tmpPath, sizeof(tmpPath), "/lastrecorded_%s.tmp", station_name);
+            File fTmp = SPIFFS.open(tmpPath, FILE_WRITE);
+            if (fTmp) {
+              fTmp.println(store_text);
+              fTmp.close();
+              SPIFFS.remove(temp_file);
+              if (!SPIFFS.rename(tmpPath, temp_file)) { debugf("[SPIFFS] WARN: %s rename failed. Retrying...\n", temp_file); vTaskDelay(50 / portTICK_PERIOD_MS); SPIFFS.rename(tmpPath, temp_file); }
+            }
           }
           xSemaphoreGive(fsMutex);
         }
@@ -2613,14 +2660,26 @@ void scheduler(void *pvParameters) {
       snprintf(temp_file, sizeof(temp_file), "/lastrecorded_%s.txt", station_name);
       { // Scope for filelastrecord
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-          char tmpPath[64];
-          snprintf(tmpPath, sizeof(tmpPath), "/lastrecorded_%s.tmp", station_name);
-          File fTmp = SPIFFS.open(tmpPath, FILE_WRITE);
-          if (fTmp) {
-            fTmp.println(store_text);
-            fTmp.close();
-            SPIFFS.remove(temp_file);
-            if (!SPIFFS.rename(tmpPath, temp_file)) { debugf("[SPIFFS] WARN: %s rename failed. Retrying...\n", temp_file); vTaskDelay(50 / portTICK_PERIOD_MS); SPIFFS.rename(tmpPath, temp_file); }
+          bool skipWrite = false;
+          File fCheck = SPIFFS.open(temp_file, FILE_READ);
+          if (fCheck) {
+            char chkBuf[200] = {0};
+            fCheck.readBytes(chkBuf, sizeof(chkBuf) - 1);
+            fCheck.close();
+            // v5.72 Hardened: Direct stack comparison (no heap alloc)
+            if (strncmp(chkBuf, store_text, strlen(store_text)) == 0) skipWrite = true;
+          }
+
+          if (!skipWrite) {
+            char tmpPath[64];
+            snprintf(tmpPath, sizeof(tmpPath), "/lastrecorded_%s.tmp", station_name);
+            File fTmp = SPIFFS.open(tmpPath, FILE_WRITE);
+            if (fTmp) {
+              fTmp.println(store_text);
+              fTmp.close();
+              SPIFFS.remove(temp_file);
+              if (!SPIFFS.rename(tmpPath, temp_file)) { debugf("[SPIFFS] WARN: %s rename failed. Retrying...\n", temp_file); vTaskDelay(50 / portTICK_PERIOD_MS); SPIFFS.rename(tmpPath, temp_file); }
+            }
           }
           xSemaphoreGive(fsMutex);
         }

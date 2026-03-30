@@ -661,20 +661,12 @@ void start_gprs() {
     }
 
     get_signal_strength();
-    // [v5.63] Low-Signal Fail-Fast:
-    if (signal_lvl <= -98) {
-      debugln("[GPRS] Signal too weak (" + String(signal_lvl) +
-              " dBm). Failing fast to save power.");
-      gprs_mode = eGprsSignalForStoringOnly;
-    }
 
-    if (gprs_mode != eGprsSignalForStoringOnly) {
-      get_network();
+    get_network();
 skip_full_init:
-      get_registration();
-      if (gprs_mode != eGprsSignalForStoringOnly) {
-        get_a7672s();
-      }
+    get_registration();
+    if (gprs_mode != eGprsSignalForStoringOnly) {
+      get_a7672s();
     }
   }
 }
@@ -730,8 +722,10 @@ void graceful_modem_shutdown() {
   // Perform an immediate silent bus recovery to ensure RTC/Sensors remain accessible.
   recoverI2CBus();
   
+  portENTER_CRITICAL(&syncMux);
   gprs_started = false;
   gprs_mode = eGprsSleepMode; // Prevent Ghost Restart during sleep entry
+  portEXIT_CRITICAL(&syncMux);
 }
 
 void send_sms() {
@@ -783,6 +777,7 @@ String waitForResponse(const char *expected, unsigned long timeout) {
   while ((millis() - startTime) < timeout) {
     vTaskDelay(1 / portTICK_PERIOD_MS);
     esp_task_wdt_reset(); // Keep watchdog happy during long AT command waits
+    last_activity_time = millis(); // v5.85: Refresh safety heartbeat on every poll iteration
 
     while (SerialSIT.available()) {
       char c = SerialSIT.read();

@@ -12,6 +12,7 @@ void gprs(void *pvParameters) {
 
   for (;;) {
     esp_task_wdt_reset();
+    last_activity_time = millis(); // Refresh safety heartbeat every loop iteration
 
     // v5.70: Atomic snapshot for thread-safe decision making
     portENTER_CRITICAL(&syncMux);
@@ -238,6 +239,7 @@ void gprs(void *pvParameters) {
             debugln("[PWR] Survival Mode: Skipping modem power-on this slot.");
             portENTER_CRITICAL(&syncMux);
             sync_mode = eHttpStop; // Advance state to allow sleep
+            gprs_started = false;
             portEXIT_CRITICAL(&syncMux);
             vTaskDelay(100 / portTICK_PERIOD_MS);
             continue; // Skip start_gprs()
@@ -249,7 +251,9 @@ void gprs(void *pvParameters) {
           signal_lvl = -111; 
           strcpy(reg_status, "NA");
           gprs_pdp_ready = false; // Reset PDP state
+          portENTER_CRITICAL(&syncMux);
           gprs_started = true;
+          portEXIT_CRITICAL(&syncMux);
           start_gprs();
           xSemaphoreGive(modemMutex);
         }
@@ -350,6 +354,7 @@ void gprs(void *pvParameters) {
 #endif
             portENTER_CRITICAL(&syncMux);
             sync_mode = eHttpStop; // v5.51 FIX: Advance state to prevent infinite loop!
+            gprs_started = false;
             portEXIT_CRITICAL(&syncMux);
           }
 
@@ -588,9 +593,17 @@ void gprs(void *pvParameters) {
         debugln("[GPRS] No queued commands. Allowing sleep.");
         portENTER_CRITICAL(&syncMux);
         sync_mode = eHttpStop;
+        gprs_started = false;
         portEXIT_CRITICAL(&syncMux);
         __atomic_store_n(&httpInitiated, false, __ATOMIC_RELEASE);
       }
+    } else if (sync_mode == eHttpStop) {
+        // v5.85: GPRS Zombie Fix. 
+        // If the scheduler skipped transmission (weak signal/battery) but didn't set httpInitiated,
+        // the GPRS task must still release its lock to allow sleep.
+        portENTER_CRITICAL(&syncMux);
+        gprs_started = false;
+        portEXIT_CRITICAL(&syncMux);
     }
 
     esp_task_wdt_reset();

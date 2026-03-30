@@ -191,8 +191,16 @@ void resync_time() {
   signal_strength = 0;
   signal_lvl = 0;
   strcpy(reg_status, "NA");
+  
+  // H-NEW-1: Wrapped in critical section to prevent sleep gate race
+  portENTER_CRITICAL(&syncMux);
   gprs_started = true;
+  portEXIT_CRITICAL(&syncMux);
+
+  // M-NEW-3: Pet WDT before and after the 15s blocking take
+  esp_task_wdt_reset();
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
+    esp_task_wdt_reset();
     start_gprs();
     esp_task_wdt_reset();
     SerialSIT.println("ATE0");
@@ -212,8 +220,8 @@ void resync_time() {
     // Without this, health_in_progress=true and sync_mode=eHttpTrigger
     // are leaked permanently, blocking the sleep gate until reboot!
     health_in_progress = false;
-    gprs_started = false;
     portENTER_CRITICAL(&syncMux);
+    gprs_started = false;
     sync_mode = eExceptionHandled;
     portEXIT_CRITICAL(&syncMux);
     
@@ -381,17 +389,17 @@ void parse_and_convert_clbs_response(const char *response, int year1,
       xSemaphoreGive(serialMutex);
     }
     vTaskDelay(1000 / portTICK_PERIOD_MS);
-    gprs_started = false; // EX6 FIX: reset flag so next GPRS cycle powers modem
     health_in_progress = false; // Task COMPLETED
     portENTER_CRITICAL(&syncMux);
+    gprs_started = false;       // Hardened: only the wrapped version remains
     sync_mode = eExceptionHandled;
     portEXIT_CRITICAL(&syncMux);
 
   } else {
     debugln("Failed to get the correct time");
-    gprs_started = false;       // EX6 FIX: reset on failure path too
     health_in_progress = false; // Allow error recovery
     portENTER_CRITICAL(&syncMux);
+    gprs_started = false;       // Hardened: wrapped in syncMux
     sync_mode = eExceptionHandled;
     portEXIT_CRITICAL(&syncMux);
   }

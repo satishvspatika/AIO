@@ -71,8 +71,8 @@ enum HDC_Type { // Sensor type enum
 
 enum BME_Type { BME_UNKNOWN, BME_280 };
 
-extern volatile bool ota_silent_mode; // Rule 43: Stop all log leakage
 extern volatile bool bearer_recovery_active;
+extern volatile uint32_t last_activity_time; // v5.85: Safety Heartbeat Timer
 
 // SAFETY BUFFER: Reserve 512 bytes at the start of RTC Memory to prevent
 // ULP Program Code (loaded at offset 0) from overwriting C variables.
@@ -271,6 +271,7 @@ extern bool webServerStarted;
 extern volatile bool wifi_active;
 extern unsigned long last_wifi_activity_time;
 extern float temp_crf, temp_instrf, temp_bat, temp_temp, temp_hum, temp_avg_ws;
+extern int sampleNo; // v5.72: Global slot counter for bearer age checks
 extern int temp_sampleNo, temp_day, temp_month, temp_year, temp_hr, temp_min, temp_sig;
 // v5.70: Use __atomic_store_n/__atomic_load_n for data_writing_initiated
 extern volatile int data_writing_initiated; 
@@ -369,9 +370,12 @@ extern RTC_DATA_ATTR int diag_stored_apn_fails;
 extern RTC_DATA_ATTR int diag_consecutive_sim_fails;
 extern RTC_DATA_ATTR int last_successful_cnmp;
 extern RTC_DATA_ATTR bool last_http_ok;
+extern RTC_DATA_ATTR int last_http_ok_slot; // v5.72: Stale bearer detection
+extern RTC_DATA_ATTR int last_unsent_sampleNo; // v5.72: Dedup guard for unsent.txt
 extern RTC_DATA_ATTR int gprs_2g_slots_count;
 extern RTC_DATA_ATTR int low_bat_skip_count;
 extern RTC_DATA_ATTR bool low_bat_mode_active;
+extern RTC_DATA_ATTR bool backfill_done; // v5.72 Hardened: Architecture fix for Health TX reporting
 
 // Golden Summary Diagnostic Flags (v5.43)
 extern RTC_DATA_ATTR int diag_ws_same_count;

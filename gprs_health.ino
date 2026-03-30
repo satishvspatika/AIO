@@ -19,8 +19,9 @@ void get_signal_strength() {
   int invalid_signal_count = 0;
   // rssi 0 = -113dBm. Continuous -113 is essentially no signal.
   while ((signal_lvl == -111) &&
-         (retries < 30)) { // v5.72: Margin increased to 30 (15s) for cold boots/SIM scrubs (Claude Review)
+         (retries < 60)) { // v5.85: Restored v5.67 patience
     esp_task_wdt_reset();
+    last_activity_time = millis(); // v5.85: Pet the safety heartbeat during long signal search
     SerialSIT.println("AT+CSQ");
     response = waitForResponse("+CSQ ", 1000);
     rssiIndex = response.indexOf("+CSQ: ");
@@ -45,11 +46,11 @@ void get_signal_strength() {
       break;
     } else {
       invalid_signal_count++;
-      // v5.65 P1: If we see "No Signal" (-113 or 85) for 30s (60 polls), move to
-      // registration. This avoids locking on a temporary -113 during warm-up.
-      if (invalid_signal_count > 60) {
-        debugln("[GPRS] Signal search timeout (30s). Moving to Registration.");
-        signal_lvl = signal_strength;
+      // v5.85 Hardened: Signal Dead-Zone Fast-Fail. 
+      // Matched to v5.67 EXACT: 60 iterations (~60-90s) for deep-scan tolerance.
+      if (invalid_signal_count >= 60) {
+        debugln("[GPRS] Dead signal zone detected. Skipping long-poll wait.");
+        signal_lvl = signal_strength; // Use the last-seen -113/85
         break;
       }
     }
@@ -241,7 +242,7 @@ void get_registration() {
   // - BSNL: 2G/3G only. Uses CREG + CGREG (no LTE). 24 retries max.
   // - Hard cap: 24 retries total (~2.5 min max). No more 50-cycle waste.
   bool isBSNL = (strstr(carrier, "BSNL") != nullptr);
-  int no_of_retries = 24; // v5.45.6: Hard cap at 24 for all carriers
+  int no_of_retries = 24; // M-NEW-4: Standardized at 24 (v5.67 level) for higher data success rates
   int initial_cnmp = last_successful_cnmp; // v5.85: Elevated to function scope
   registration = 0;
   retries = 0;
@@ -257,7 +258,7 @@ void get_registration() {
   // saves 4-5 seconds of redundant AT commands.
   SerialSIT.println("AT+CGREG?");
   String cgregResp = waitForResponse("+CGREG:", 1000);
-  if (cgregResp.indexOf(",1") != -1 || cgregResp.indexOf(",5") != -1) {
+  if (!isBSNL && (cgregResp.indexOf(",1") != -1 || cgregResp.indexOf(",5") != -1)) {
     debugln(
         "[GPRS] Fast-Track: Modem already registered! Bypassing setup block.");
     is_registered = true;
@@ -268,7 +269,9 @@ void get_registration() {
     // v5.60 SURE-SHOT REGISTRATION:
     SerialSIT.println("AT+CFUN=1"); // Full functionality
     waitForResponse("OK", 1000);
-    SerialSIT.println("AT+CGDCONT=8,\"IP\",\"\""); // Kill side-channel profile
+    SerialSIT.println("AT+CGDCONT=8,\"IP\",\"\""); // Kill CID 8 side-channel
+    waitForResponse("OK", 1000);
+    SerialSIT.println("AT+CGDCONT=9,\"IP\",\"\""); // Kill CID 9 side-channel (Claude Recommendation)
     waitForResponse("OK", 1000);
 
     // v5.70 Hardened: [N-12] Read-Before-Write guard to prevent Modem Flash Wear
@@ -329,6 +332,7 @@ void get_registration() {
 
   while (!is_registered && (retries < no_of_retries)) {
     esp_task_wdt_reset();
+    last_activity_time = millis(); // v5.85: Pet the safety heartbeat during long registration cycles
 
     // UI Feedback: Show progress on LCD
     snprintf(reg_status, 16, "TRY #%d...", retries + 1);
@@ -472,16 +476,29 @@ void get_registration() {
     // --- TIERED RECOVERY (fires every 5 retries) ---
     if (retries > 0 && retries % 5 == 0) {
       if (retries == 5) {
-        // v5.84 Tier 1 @ iter 5: Toggle Mode if stalled.
-        if (initial_cnmp != 13) {
-            debugln("[GPRS] Tier1 @ iter5: Auto mode stalled. Fallback to GSM-only (CNMP=13)...");
-            SerialSIT.println("AT+CNMP=13");
+        if (isBSNL) {
+            // v5.85 BSNL Strategy: Lock to GSM-only (CNMP=13) and Re-scan.
+            // BSNL 4G (Mode 38) is virtually non-existent; hunting for it wastes battery/time.
+            if (initial_cnmp != 13) {
+                debugln("[GPRS] BSNL Tier1 @ iter5: Locking to GSM-only (CNMP=13)...");
+                SerialSIT.println("AT+CNMP=13");
+            } else {
+                debugln("[GPRS] BSNL Tier1 @ iter5: Already in GSM-only. Forcing fresh scan (COPS=0)...");
+                SerialSIT.println("AT+COPS=0");
+            }
         } else {
-            debugln("[GPRS] Tier1 @ iter5: GSM-only stalled. Peeking Auto (CNMP=2)...");
-            SerialSIT.println("AT+CNMP=2");
+            // v5.84 Airtel/Jio Strategy: Toggle Mode if stalled.
+            if (initial_cnmp != 13) {
+                debugln("[GPRS] Tier1 @ iter5: Auto mode stalled. Fallback to GSM-only (CNMP=13)...");
+                SerialSIT.println("AT+CNMP=13");
+            } else {
+                debugln("[GPRS] Tier1 @ iter5: GSM-only stalled. Peeking Auto (CNMP=2)...");
+                SerialSIT.println("AT+CNMP=2");
+            }
         }
         waitForResponse("OK", 1000);
-        SerialSIT.println("AT+COPS=0");
+        if (isBSNL) SerialSIT.println("AT+COPS=0"); // Ensure BSNL probes for a fresh 2G cell
+        else SerialSIT.println("AT+COPS=0");
         waitForResponse("OK", 3000);
         SerialSIT.println("AT+CGATT=1");
         waitForResponse("OK", 3000);
@@ -499,21 +516,31 @@ void get_registration() {
         SerialSIT.println("AT+CGATT=1");
         waitForResponse("OK", 3000);
       } else if (retries == 15) {
-        // Tier 3 @ iter 15: Force LTE-Only mode
-        debugln("[GPRS] Tier3 @ iter15: Testing LTE-Only Mode (AT+CNMP=38)...");
-        SerialSIT.println("AT+CNMP=38");
-        waitForResponse("OK", 2000);
-        SerialSIT.println("AT+COPS=0");
-        waitForResponse("OK", 5000);
-        SerialSIT.println("AT+CGATT=1");
-        waitForResponse("OK", 3000);
-      } else if (retries == 20) {
-        // Tier 4 @ iter 20: Restore Auto-Mode + COPS auto
-        debugln("[GPRS] Tier4 @ iter20: Restoring Auto-Mode (CNMP=2, COPS=0)...");
+        if (isBSNL) {
+            // v5.85 BSNL-Aware Tier 3: Instead of wasting time on LTE-Only (CNMP=38),
+            // we perform another fresh Operator probe while staying in GSM-only.
+            debugln("[GPRS] BSNL Tier3 @ iter15: Skipping LTE probe. Performing fresh COPS scan (GSM-only)...");
+            SerialSIT.println("AT+COPS=0");
+            waitForResponse("OK", 5000);
+            SerialSIT.println("AT+CGATT=1");
+            waitForResponse("OK", 3000);
+        } else {
+            // v5.84 Airtel/Jio Tier 3: Force LTE-Only mode
+            debugln("[GPRS] Tier3 @ iter15: Testing LTE-Only Mode (AT+CNMP=38)...");
+            SerialSIT.println("AT+CNMP=38");
+            waitForResponse("OK", 2000);
+            SerialSIT.println("AT+COPS=0");
+            waitForResponse("OK", 5000);
+            SerialSIT.println("AT+CGATT=1");
+            waitForResponse("OK", 3000);
+        }
+      } else if (retries == 23) {
+        // Tier 4 @ iter 23 (Final Attempt): Restore Auto-Mode + COPS auto
+        debugln("[GPRS] Tier4 @ iter23: Restoring Auto-Mode (CNMP=2, COPS=0) for final retry...");
         SerialSIT.println("AT+CNMP=2"); // Auto (LTE+GSM)
         waitForResponse("OK", 1000);
         SerialSIT.println("AT+COPS=0"); // Auto operator
-        waitForResponse("OK", 10000);
+        waitForResponse("OK", 5000);   // Reduced from 10s to stay in window
         SerialSIT.println("AT+CGATT=1");
         waitForResponse("OK", 3000);
       }
@@ -530,9 +557,9 @@ void get_registration() {
     debugf("Reg Search [BSNL:%d]... Status:%d Iter:#%d/%d\n", isBSNL,
            registration, retries + 1, no_of_retries);
 
-    // v5.84: ADAPTIVE WAIT: Poll CGREG every 1s for up to 3/5s.
-    // Exits immediately on GPRS/3G registration — no wasted blind sleep.
-    int poll_count = isBSNL ? 3 : 5; // BSNL: 3s; Airtel: 5s
+    // v5.84: ADAPTIVE WAIT: Poll CGREG every 1s for up to 2s.
+    // M-NEW-4: Capped at 2s max for all carriers to save window time.
+    int poll_count = 2; 
     for (int w = 0; w < poll_count && !is_registered; w++) {
       vTaskDelay(1000 / portTICK_PERIOD_MS);
       esp_task_wdt_reset();
@@ -588,7 +615,6 @@ void get_registration() {
       diag_reg_worst = time_taken;
     gprs_mode = eGprsSignalOk;
     debugln("Registration Successful.");
-    debugln("Registration Successful.");
   } else {
     diag_gprs_fails++;
     diag_consecutive_reg_fails++;
@@ -616,8 +642,11 @@ void get_registration() {
 
 void get_a7672s() {
   String response;
-  char ccid[25];
-  get_ccid().toCharArray(ccid, 25);
+  // v5.72 Hardened: Use cached ICCID to avoid redundant UART traffic. 
+  // Safety: If cache is empty (rare), populate it once now.
+  if (strlen(cached_iccid) < 10) {
+      get_ccid().toCharArray(cached_iccid, 25);
+  }
   char stored_apn[50];
 
   debugln("--- GPRS SETTING PDP ---");
@@ -630,11 +659,24 @@ void get_a7672s() {
   active_cid = 0;
   // v5.63: Native v3.0 style activation.
   // No status queries, fire and move on.
-  if (load_apn_config(ccid, stored_apn, sizeof(stored_apn))) {
+  if (load_apn_config(cached_iccid, stored_apn, sizeof(stored_apn))) {
       strncpy(apn_str, stored_apn, sizeof(apn_str) - 1);
       if (try_activate_apn(apn_str)) {
           vTaskDelay((isLTE ? 500 : 3000) / portTICK_PERIOD_MS); // v5.85: Carrier-aware breather
           gprs_pdp_ready = true;
+          
+          // CID State Anchor
+          SerialSIT.println("AT+CGDCONT?");
+          String final_cont = waitForResponse("OK", 3000);
+          String target_apn_quoted = "\"" + String(apn_str) + "\"";
+          if (final_cont.indexOf(target_apn_quoted) == -1 && final_cont.indexOf(apn_str) == -1) {
+              char cg_buf[100];
+              snprintf(cg_buf, sizeof(cg_buf), "AT+CGDCONT=1,\"IP\",\"%s\"", apn_str);
+              SerialSIT.println(cg_buf);
+              waitForResponse("OK", 3000);
+              SerialSIT.println("AT+CGACT=1,1");
+              waitForResponse("OK", 5000);
+          }
           return;
       }
   }
@@ -658,9 +700,22 @@ void get_a7672s() {
   if (strlen(primary_apn) > 0) {
       debugln("APN: Trying carrier-matched APN first -> " + String(primary_apn));
       if (try_activate_apn(primary_apn)) {
-          save_apn_config(primary_apn, ccid);
+          save_apn_config(primary_apn, cached_iccid);
           vTaskDelay((isLTE ? 500 : 3000) / portTICK_PERIOD_MS);
           gprs_pdp_ready = true;
+          
+          // CID State Anchor
+          SerialSIT.println("AT+CGDCONT?");
+          String final_cont = waitForResponse("OK", 3000);
+          String target_apn_quoted = "\"" + String(primary_apn) + "\"";
+          if (final_cont.indexOf(target_apn_quoted) == -1 && final_cont.indexOf(primary_apn) == -1) {
+              char cg_buf[100];
+              snprintf(cg_buf, sizeof(cg_buf), "AT+CGDCONT=1,\"IP\",\"%s\"", primary_apn);
+              SerialSIT.println(cg_buf);
+              waitForResponse("OK", 3000);
+              SerialSIT.println("AT+CGACT=1,1");
+              waitForResponse("OK", 5000);
+          }
           return;
       }
   }
@@ -670,9 +725,22 @@ void get_a7672s() {
       if (strcmp(fallback_apns[i], primary_apn) == 0) continue; // already tried
       if (try_activate_apn(fallback_apns[i])) {
           strcpy(apn_str, fallback_apns[i]);
-          save_apn_config(fallback_apns[i], ccid);
+          save_apn_config(fallback_apns[i], cached_iccid);
           vTaskDelay((isLTE ? 500 : 3000) / portTICK_PERIOD_MS);
           gprs_pdp_ready = true;
+          
+          // CID State Anchor
+          SerialSIT.println("AT+CGDCONT?");
+          String final_cont = waitForResponse("OK", 3000);
+          String target_apn_quoted = "\"" + String(fallback_apns[i]) + "\"";
+          if (final_cont.indexOf(target_apn_quoted) == -1 && final_cont.indexOf(fallback_apns[i]) == -1) {
+              char cg_buf[100];
+              snprintf(cg_buf, sizeof(cg_buf), "AT+CGDCONT=1,\"IP\",\"%s\"", fallback_apns[i]);
+              SerialSIT.println(cg_buf);
+              waitForResponse("OK", 3000);
+              SerialSIT.println("AT+CGACT=1,1");
+              waitForResponse("OK", 5000);
+          }
           return;
       }
   }
@@ -687,9 +755,25 @@ void get_a7672s() {
   vTaskDelay(2000 / portTICK_PERIOD_MS);
 
   if (try_activate_apn(apn_str)) {
-    save_apn_config(apn_str, ccid);
+    save_apn_config(apn_str, cached_iccid);
     vTaskDelay((isLTE ? 500 : 3000) / portTICK_PERIOD_MS); 
     gprs_pdp_ready = true;
+    
+    // v5.72 Hardened: CID State Anchor
+    // Overcomes "Phantom IP" where the modem reports a valid IP on CID 1 
+    // but it belongs to a stale APN context from a previous failed search iteration.
+    SerialSIT.println("AT+CGDCONT?");
+    String final_cont = waitForResponse("OK", 3000);
+    String target_apn_quoted = "\"" + String(apn_str) + "\"";
+    if (final_cont.indexOf(target_apn_quoted) == -1 && final_cont.indexOf(apn_str) == -1) {
+        debugln("[APN] CID Contamination detected. Forcing State Anchor...");
+        char cg_buf[100];
+        snprintf(cg_buf, sizeof(cg_buf), "AT+CGDCONT=1,\"IP\",\"%s\"", apn_str);
+        SerialSIT.println(cg_buf);
+        waitForResponse("OK", 3000);
+        SerialSIT.println("AT+CGACT=1,1");
+        waitForResponse("OK", 5000);
+    }
     return;
   }
 

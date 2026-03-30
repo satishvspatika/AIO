@@ -9,10 +9,16 @@ void start_deep_sleep() {
   // v5.70: Deep Sleep Guard (Issue 3) - Abort sleep if critical tasks are mid-flight
   // v5.75: Added schedulerBusy to guard (M-02 fix)
   // v5.72 Hardened: Ensure NO communication or state machine is active before cutting power.
-  if (health_in_progress || ota_writing_active || gprs_started || schedulerBusy || 
+  if (health_in_progress || ota_writing_active || schedulerBusy || 
       (sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled && sync_mode != eSyncModeInitial) || 
       httpInitiated) {
     debugln("[PWR] Communication or Activity in progress. Deferring sleep.");
+    return;
+  }
+  
+  // v5.85: Final gprs_started check. If we are NOT in eHttpStop but gprs is active, defer.
+  if (gprs_started && sync_mode != eHttpStop) {
+    debugln("[PWR] Modem starting or searching. Deferring sleep.");
     return;
   }
 
@@ -934,10 +940,10 @@ void reconstructSentMasks(bool alreadyLocked) {
 
   int h = snapshot.tm_hour;
   int m = snapshot.tm_min;
-  int sampleNo = h * 4 + m / 15;
-  sampleNo = (sampleNo + 61) % 96;
+  int calcSlot = h * 4 + m / 15;
+  calcSlot = (calcSlot + 61) % 96;
 
-  if (sampleNo <= 60) {
+  if (calcSlot <= 60) {
     // Time is 08:45 AM or later:
     // Current close date is Tomorrow. Previous close date is Today.
     next_date(&cur_dd, &cur_mm, &cur_yy);
@@ -1324,7 +1330,11 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
     SPIFFS.remove(path);
     if (!SPIFFS.rename("/trim.tmp", path)) {
       debugf1("[SPIFFS] ERROR: Rename failed for %s. Retrying...\n", path);
+      // M-NEW-5: Mutex Pulse - Release before delay to avoid blocking GPS/Sensor writes
+      if (!alreadyLocked) xSemaphoreGive(fsMutex);
       vTaskDelay(100 / portTICK_PERIOD_MS);
+      if (!alreadyLocked) xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000));
+
       if (!SPIFFS.rename("/trim.tmp", path)) {
           debugf1("[SPIFFS] FATAL: Rename failed for %s. Data remains in /trim.tmp\n", path);
       }

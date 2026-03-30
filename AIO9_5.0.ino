@@ -58,6 +58,7 @@ char ota_fail_reason[48] = "NONE";
 volatile bool health_in_progress = false;
 TaskHandle_t lcdkeypad_h; // UI
 TaskHandle_t tempHum_h;
+volatile uint32_t last_activity_time = 0; // v5.85: Safety Heartbeat Timer
 
 // v5.66: Core System State (Moved from globals.h)
 volatile int sync_mode = eSyncModeInitial;
@@ -245,6 +246,8 @@ RTC_DATA_ATTR int diag_daily_http_fails = 0;
 RTC_DATA_ATTR int diag_http_present_fails = 0;
 RTC_DATA_ATTR int diag_http_cum_fails = 0;
 RTC_DATA_ATTR int diag_cum_fail_reset_month = -1;
+RTC_DATA_ATTR int last_http_ok_slot = -1; // v5.72: Track slot of last successful HTTP
+RTC_DATA_ATTR int last_unsent_sampleNo = -1; // v5.72: Dedup guard for unsent.txt
 RTC_DATA_ATTR int diag_rejected_count = 0;
 RTC_DATA_ATTR bool diag_sensor_fault_sent_today = false;
 RTC_DATA_ATTR char diag_crash_task[16] = "NONE";
@@ -946,7 +949,7 @@ void setup() {
     debug(NETWORK);
     debug(" | Type: ");
     debugln(STATION_TYPE);
-    http_no = 6; // 6(KSNDMC SERVER)
+    http_no = 6; // 6 (KSNDMC TWS)
   } else if ((strstr(UNIT, "KSNDMC_ADDON") && (SYSTEM == 2))) {
     strcpy(universalNumber, "9980945474");
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TWSRF9-DMC-%s", FIRMWARE_VERSION);
@@ -958,7 +961,7 @@ void setup() {
     debug(NETWORK);
     debug(" | Type: ");
     debugln(STATION_TYPE);
-    http_no = 7; // 7(KSNDMC SERVER)
+    http_no = 7; // 7 (KSNDMC ADDON)
   } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 0))) {
     strcpy(universalNumber, "9980945474"); //"9980945474"); // Universal number
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG9-GEN-%s", FIRMWARE_VERSION);
@@ -970,7 +973,7 @@ void setup() {
     debug(NETWORK);
     debug(" | Type: ");
     debugln(STATION_TYPE);
-    http_no = 6; // 8(SPATIKA SERVER)
+    http_no = 6; // 6 (SPATIKA GEN TRG - index 6 confirmed)
   } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 1))) {
     strcpy(universalNumber, "9980945474");
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-GEN-%s", FIRMWARE_VERSION);
@@ -982,7 +985,7 @@ void setup() {
     debug(NETWORK);
     debug(" | Type: ");
     debugln(STATION_TYPE);
-    http_no = 8; // Spatika Server for TWS
+    http_no = 8; // 8 (SPATIKA TWS)
   } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 2))) { // EMPRII
     strcpy(universalNumber, "9980945474"); //"9980945474"); // Universal number
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TWSRF9-GEN-%s", FIRMWARE_VERSION);
@@ -994,7 +997,7 @@ void setup() {
     debug(NETWORK);
     debug(" | Type: ");
     debugln(STATION_TYPE);
-    http_no = 10; // 10 (SPATIKA SERVER)
+    http_no = 10; // 10 (SPATIKA GEN TWS-RF)
   } else {
     debugln("!!! FATAL: ********** NO UNIT/SYSTEM MATCH FOUND **********");
     debugln("!!! Check UNIT and SYSTEM defines in globals.h!");
@@ -1575,6 +1578,25 @@ void initialize_hw() {
         debugln("[FS] Recovered stranded ptr.tmp -> unsent_pointer.txt");
     }
 
+    // v5.85: [Emergency Purge] - Clear orphan KWD files if they pile up at boot (Crash Recovery)
+    int kwd_count = 0;
+    File rootDir = SPIFFS.open("/");
+    if (rootDir) {
+        File f = rootDir.openNextFile();
+        while(f) {
+            String n = String(f.name());
+            if (n.endsWith(".kwd") || n.endsWith(".swd")) {
+                kwd_count++;
+                if (kwd_count > 3) {
+                   f.close();
+                   SPIFFS.remove("/" + n);
+                   debugln("[FS] Emergency Boot Purge: " + n);
+                } else f.close();
+            } else f.close();
+            f = rootDir.openNextFile();
+        }
+        rootDir.close();
+    }
   }
 
   SPI.begin(18, 19, 23, 5);
@@ -1616,6 +1638,7 @@ void initialize_hw() {
 #endif
 
   debugln("[BOOT] Hardware Initialized.");
+  last_activity_time = millis(); // v5.85: Trigger safety heartbeat starting now
 }
 
 void loop() {
@@ -1651,7 +1674,7 @@ void loop() {
       safe_to_sleep_sync &&
       (lcdkeypad_start == 0) && (wifi_active == false) &&
       (httpInitiated == false) && (health_in_progress == false) &&
-      (schedulerBusy == false) && (gprs_started == false) &&
+      (schedulerBusy == false) && (gprs_started == false || sync_mode == eHttpStop) &&
       (pending_manual_status == false) && (pending_manual_gps == false) &&
       (pending_manual_health == false) &&
       (force_reboot == false) && (force_ota == false) &&
@@ -1680,14 +1703,32 @@ void loop() {
     bool race_sync_invalid = false;
     portENTER_CRITICAL(&syncMux);
     race_sync_invalid = (sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled);
+    // v5.85: Force sync to persist through the final critical millisecond
+    if (!race_sync_invalid && (gprs_started || schedulerBusy || httpInitiated)) race_sync_invalid = true;
     portEXIT_CRITICAL(&syncMux);
 
-    if (schedulerBusy || gprs_started || health_in_progress || httpInitiated || 
+    if (schedulerBusy || (gprs_started && sync_mode != eHttpStop) || health_in_progress || httpInitiated || 
         force_reboot || force_ota || ota_writing_active || lcdkeypad_start || 
         wifi_active || race_sync_invalid || 
         pending_manual_status || pending_manual_gps || pending_manual_health) {
-        debugln("[PWR] Race Prevented: System became active during sleep delay. Aborting sleep.");
-        return; // Re-enter the loop
+        
+        // v5.85: Final Safety Valve — Forced Duty Cycle Cap to protect battery.
+        bool awake_cap_reached = (millis() > 270000); // 4.5 minutes absolute max
+        bool idle_cap_reached = (millis() - last_activity_time > 180000); // 3 mins idle
+        if (lcdkeypad_start == 0 && (awake_cap_reached || idle_cap_reached) && !too_close_to_slot) {
+            debugln("[PWR] SAFETY VALVE: Duty-Cycle Cap or Idle Timeout reached. Forcing Sleep...");
+            // Force-reset all blockers
+            portENTER_CRITICAL(&syncMux);
+            gprs_started = false;
+            sync_mode = eHttpStop;
+            schedulerBusy = false;
+            httpInitiated = false;
+            health_in_progress = false;
+            portEXIT_CRITICAL(&syncMux);
+        } else {
+            debugln("[PWR] Race Prevented: System became active during sleep delay. Aborting sleep.");
+            return; // Re-enter the loop
+        }
     }
 
     debugln("[PWR] All tasks done. Entering Deep Sleep...");
