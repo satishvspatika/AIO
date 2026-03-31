@@ -108,13 +108,40 @@ void gprs(void *pvParameters) {
         } else if (mode_snap == eGPSStart) {
           debugln("[GPRS] Keypad Triggered GPS Send");
 
-          get_signal_strength();
-          get_network();
-          get_registration();
-          get_a7672s();
+          // v5.74 FIX: Skip redundant re-init if modem is already registered.
+          // Calling get_signal_strength/network/registration again when already
+          // on-network takes 2-4 mins on BSNL 2G, freezing LCD at "SENDING...".
+          // Only re-verify if signal_strength is unknown/stale.
+          if (signal_strength <= -110) {
+            strcpy(ui_data[target_fld].bottomRow, "SEEK SIGNAL...  ");
+            show_now = 1;
+            get_signal_strength();
+            get_network();
+            get_registration();
+            get_a7672s();
+          }
 
-          strcpy(ui_data[target_fld].bottomRow, "SENDING...");
+          strcpy(ui_data[target_fld].bottomRow, "GETTING GPS...  ");
+          show_now = 1;
+          vTaskDelay(500 / portTICK_PERIOD_MS); // Let LCD render before blocking call
           get_lat_long_date_time(universalNumber);
+
+          // v5.74 FIX: Show explicit GPS result on LCD immediately after send
+          // Previously fell through to unified block with msg_sent==0 → "SEND FAILED"
+          // even when the SMS was actually delivered (BSNL 2G slow +CMGS confirmation).
+          if (msg_sent) {
+            // Show coordinates as confirmation
+            snprintf(ui_data[target_fld].bottomRow, 17, "%0.3f,%0.3f", lati, longi);
+          } else {
+            strcpy(ui_data[target_fld].bottomRow, "SMS SEND FAILED ");
+          }
+          show_now = 1;
+          vTaskDelay(4000 / portTICK_PERIOD_MS);
+          strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+          show_now = 1;
+          // msg_sent already reflects actual result — unified block will NOT override
+          // (it is guarded by target_fld == FLD_SEND_GPS which we handle above)
+
           if (mode_snap == eGPSStart) {
             portENTER_CRITICAL(&syncMux);
             sync_mode = eSMSStop;

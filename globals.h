@@ -71,6 +71,7 @@ enum HDC_Type { // Sensor type enum
 
 enum BME_Type { BME_UNKNOWN, BME_280 };
 
+extern volatile bool ota_silent_mode;         // Rule 43: OTA/debug silence flag (used by debug macros)
 extern volatile bool bearer_recovery_active;
 extern volatile uint32_t last_activity_time; // v5.85: Safety Heartbeat Timer
 
@@ -87,7 +88,7 @@ void graceful_modem_shutdown();
 void start_deep_sleep();
 void flushSerialSIT();
 bool verify_bearer_or_recover();
-int send_at_cmd_data(char *payload, String response_arg);
+int send_at_cmd_data(char *payload, String response_arg, bool robust);
 void get_signal_strength();
 void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
                        bool *hasUnresolvedNDM);
@@ -191,7 +192,6 @@ extern SemaphoreHandle_t serialMutex;
 extern SemaphoreHandle_t modemMutex;
 extern SemaphoreHandle_t fsMutex;
 extern volatile bool gprs_pdp_ready;
-extern volatile bool gprs_started;
 extern RTC_DS1307 rtc;
 
 extern portMUX_TYPE timerMux0;
@@ -199,6 +199,8 @@ extern portMUX_TYPE timerMux1;
 extern portMUX_TYPE timerMux2;
 extern portMUX_TYPE windMux;
 extern portMUX_TYPE rtcTimeMux;
+extern portMUX_TYPE syncMux;
+extern portMUX_TYPE sensorDataMux;
 
 // Keypad timing
 extern unsigned long last_key_time;
@@ -271,7 +273,8 @@ extern bool webServerStarted;
 extern volatile bool wifi_active;
 extern unsigned long last_wifi_activity_time;
 extern float temp_crf, temp_instrf, temp_bat, temp_temp, temp_hum, temp_avg_ws;
-extern int sampleNo; // v5.72: Global slot counter for bearer age checks
+extern volatile bool wd_ok;         // v5.74: WD sensor health flag (written by Core 1, read by Core 0)
+extern volatile int sampleNo; // v5.72: Global slot counter for bearer age checks
 extern int temp_sampleNo, temp_day, temp_month, temp_year, temp_hr, temp_min, temp_sig;
 // v5.70: Use __atomic_store_n/__atomic_load_n for data_writing_initiated
 extern volatile int data_writing_initiated; 
@@ -295,6 +298,7 @@ extern volatile bool force_gps_refresh;
 extern volatile bool force_clear_ftp_queue;
 extern volatile bool force_delete_data;
 extern volatile bool ota_writing_active;
+extern bool http_ready;            // v5.42: Tracks HTTPINIT success; defined in gprs_core.ino
 extern int ota_fail_count;
 extern char ota_fail_reason[48];
 extern char ota_cmd_param[128];
@@ -310,12 +314,13 @@ extern int ftp_login_flag;
 extern int calib_header_drawn;
 // GPRS
 extern int http_no, msg_sent;
-extern int rssiIndex, rssiEndIndex, retries, registration;
-extern int unsent_count, success_count;
-extern int s, fileSize;
+extern int rssiIndex, rssiEndIndex, registration;
+extern volatile int retries;               // cross-task: written by GPRS, read by scheduler
+extern volatile int unsent_count, success_count; // cross-task shared counters
+extern volatile int s, fileSize;           // cross-task file-size helpers
 extern int delay_val; // Delay before starting GPRS
-extern int signal_strength;
-extern int signal_lvl;
+extern volatile int signal_strength;       // cross-task: GPRS writes, scheduler reads
+extern volatile int signal_lvl;            // cross-task: GPRS writes, scheduler reads
 extern int sd_card_ok;
 extern int send_daily;
 extern float solar_val, solar;
@@ -450,7 +455,6 @@ extern RTC_DATA_ATTR int health_last_sent_day;
 extern RTC_DATA_ATTR bool diag_fw_just_updated;
 extern RTC_DATA_ATTR bool rtc_daily_sync_done;
 
-extern volatile bool gprs_started;
 extern int badReads;
 
 // ULP Memory Map (Manual offsets to ensure hardware reachability)
@@ -505,9 +509,9 @@ extern float avg_cumRF, new_current_cumRF, new_current_instRF;
 
 // T/H , WS and WD
 extern int prev_wind_count;
-extern float temperature, humidity, windSpCount, cur_wind_speed, pressure;
+extern volatile float temperature, humidity, windSpCount, cur_wind_speed, pressure;
 extern float cur_avg_wind_speed;
-extern int windDir;
+extern volatile int windDir;               // written by windDirection task, read by scheduler
 extern float sea_level_pressure;
 extern char inst_hum[10], avg_wind_speed[10], inst_wd[10];
 extern char pres_str[20];
@@ -631,7 +635,7 @@ void store_current_unsent_data();
 void get_gps_coordinates();
 void prepare_data_and_send();
 void power_cut_modem_shutdown();
-int send_at_cmd_data(char *payload, String response_arg, bool robust);
+// (prototype above at line 90)
 
 // GPRS Helpers (gprs_helpers.ino)
 String get_ccid();

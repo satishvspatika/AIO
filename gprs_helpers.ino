@@ -717,6 +717,12 @@ void graceful_modem_shutdown() {
   debugln("[GPRS] Cutting physical VCC power (GPIO 26 -> LOW).");
   digitalWrite(26, LOW);
   
+  // v5.74 Fix C: Clear stale HTTP session flag BEFORE cutting modem power.
+  // Without this, http_ready stays true across deep sleep. On the next wakeup
+  // send_at_cmd_data() skips its !http_ready fast-fail and fires AT+HTTPDATA
+  // into a powered-off modem, causing a guaranteed TIMEOUT on every first attempt.
+  http_ready = false;
+
   // v5.65 P4 Fix: I2C Spike Recovery
   // Modem power-down can cause spikes on the shared I2C bus (SDA/SCL).
   // Perform an immediate silent bus recovery to ensure RTC/Sensors remain accessible.

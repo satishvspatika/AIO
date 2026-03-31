@@ -127,24 +127,40 @@ void tempHum(void *pvParameters) {
             float fTemp = get_med(bT_buf);
             float fHum = get_med(bH_buf);
 
+            portENTER_CRITICAL(&sensorDataMux);
             latestSensorData.temperature = fTemp;
+            portEXIT_CRITICAL(&sensorDataMux);
+            
             temperature = fTemp;
             snprintf(temp_str, sizeof(temp_str), "%.1f C(B)", temperature);
 
+            portENTER_CRITICAL(&sensorDataMux);
             latestSensorData.humidity = fHum;
+            portEXIT_CRITICAL(&sensorDataMux);
+            
             humidity = fHum;
             snprintf(hum_str, sizeof(hum_str), "%.1f %%(B)", humidity);
           } else {
+            portENTER_CRITICAL(&sensorDataMux);
             latestSensorData.temperature = 0.0;
+            portEXIT_CRITICAL(&sensorDataMux);
+            
             temperature = 0.0;
             strcpy(temp_str, "NA");
+            
+            portENTER_CRITICAL(&sensorDataMux);
             latestSensorData.humidity = 0.0;
+            portEXIT_CRITICAL(&sensorDataMux);
+            
             humidity = 0.0;
             strcpy(hum_str, "NA");
           }
         } else {
+          portENTER_CRITICAL(&sensorDataMux);
           latestSensorData.temperature = 0.0;
           latestSensorData.humidity = 0.0;
+          portEXIT_CRITICAL(&sensorDataMux);
+          
           strcpy(temp_str, "NA");
           strcpy(hum_str, "NA");
         }

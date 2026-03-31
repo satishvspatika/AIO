@@ -1132,9 +1132,10 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
   response = waitForResponse(">", 15000);
   if (response.indexOf(">") != -1) {
     debugln(" Received!");
+    flushSerialSIT(); // v5.74: Clear residual CLBS/ATE0 URCs before streaming SMS payload
     SerialSIT.print(status_response); 
     debug("Waiting for +CMGS confirmation...");
-    response = waitForResponse("+CMGS:", 15000);
+    response = waitForResponse("+CMGS:", 35000); // v5.74 FIX: 35s to match status SMS (was 15s — too short for BSNL 2G)
     debugln(" Done.");
     debug("Response of AT+CMGS is ");
     debugln(response);

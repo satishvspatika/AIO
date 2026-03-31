@@ -358,8 +358,11 @@ void scheduler(void *pvParameters) {
         }
       }
       // total_wind_pulses_32 is updated every 1s by windSpeed task
+      // v5.74 Fix C-1: Wrap in windMux to ensure atomic 32-bit load (prevent torn read)
+      portENTER_CRITICAL(&windMux);
       captured_wind = total_wind_pulses_32 - last_sched_wind_pulses_32;
       last_sched_wind_pulses_32 = total_wind_pulses_32;
+      portEXIT_CRITICAL(&windMux);
       totalWindPulses = (float)captured_wind;
       prev_wind_count = 0; // Reset instantaneous tracker to prevent spikes
 
@@ -836,6 +839,7 @@ void scheduler(void *pvParameters) {
           diag_sent_mask_cur[0] = 0;
           diag_sent_mask_cur[1] = 0;
           diag_sent_mask_cur[2] = 0;
+          last_unsent_sampleNo = -1; // v5.73 Fix: Reset cross-day dedup guard on rollover
 
           new_current_cumRF = 0;
           total_rf_pulses_32 = 0;
@@ -2974,6 +2978,11 @@ void scheduler(void *pvParameters) {
       
       vTaskDelay(300 / portTICK_PERIOD_MS);
       last_processed_sample_idx = current_sample_idx; // v5.66: Mark as processed ONLY after successful completion
+
+      // R-5 Fix: Scheduler stack high-water mark monitoring (moved inside 15-min gate)
+      debugf1("[SCHED] Stack HWM: %d bytes free\n", 
+              uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
+              
       schedulerBusy = false; // v5.65: Release sleep lock
     } else if (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false &&
                sync_mode == eSyncModeInitial) {

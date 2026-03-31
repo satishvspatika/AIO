@@ -30,7 +30,7 @@
 int wired = 1; // Integrated is 1 or Standalone LCD module is 0
 const int chipSelect = SS;
 bool ws_ok = true;
-bool wd_ok = true; // WD sensor wired on all KSNDMC_TWS field units
+volatile bool wd_ok = true; // WD sensor wired on all KSNDMC_TWS field units
 
 TaskHandle_t scheduler_h;
 TaskHandle_t gprs_h; // http,sms,ftp,dota
@@ -64,7 +64,7 @@ volatile uint32_t last_activity_time = 0; // v5.85: Safety Heartbeat Timer
 volatile int sync_mode = eSyncModeInitial;
 volatile int gprs_mode = eGprsInitial;
 volatile int data_mode = eCurrentData;
-int sampleNo = 0;
+volatile int sampleNo = 0;
 int rf_cls_dd = 0, rf_cls_mm = 0, rf_cls_yy = 0;
 int rf_cls_ram_dd = 0, rf_cls_ram_mm = 0, rf_cls_ram_yy = 0;
 int time_to_sleep = 0;
@@ -84,9 +84,10 @@ char ftpdaily_file[50] = "";
 
 // v5.66: GPRS Counters (Moved from globals.h)
 int http_no = 0, msg_sent = 0;
-int rssiIndex = 0, rssiEndIndex = 0, retries = 0, registration = 0;
-int unsent_count = 0, success_count = 0;
-int s = 0, fileSize = 0;
+int rssiIndex = 0, rssiEndIndex = 0, registration = 0;
+volatile int retries = 0;               // cross-task: written by GPRS, read by scheduler
+volatile int unsent_count = 0, success_count = 0; // cross-task shared counters
+volatile int s = 0, fileSize = 0;       // cross-task file-size helpers
 int delay_val = 10000; // Default delay before starting GPRS(Moved from globals.h)
 
 // v5.66: System & Power Variables (Moved from globals.h)
@@ -133,9 +134,9 @@ int rf_res_edit_state = 0;
 char cum_rf[10], inst_rf[10], inst_temp[10], avg_cum_rf[10];
 char ftpcum_rf[10];
 float avg_cumRF = 0, new_current_cumRF = 0, new_current_instRF = 0;
-float temperature = 0, humidity = 0, windSpCount = 0, cur_wind_speed = 0, pressure = 0;
+volatile float temperature = 0, humidity = 0, windSpCount = 0, cur_wind_speed = 0, pressure = 0;
 float cur_avg_wind_speed = 0;
-int windDir = 0;
+volatile int windDir = 0;               // written by windDirection task, read by scheduler
 float sea_level_pressure = 0;
 char inst_hum[10], avg_wind_speed[10], inst_wd[10];
 int pcb_clear_state = 0;
@@ -170,6 +171,7 @@ portMUX_TYPE timerMux2 = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE windMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE rtcTimeMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE syncMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE sensorDataMux = portMUX_INITIALIZER_UNLOCKED;
 
 volatile char show_now = 0;
 TaskHandle_t bmeTask_h;
@@ -288,6 +290,8 @@ RTC_DATA_ATTR char cached_server_domain[64] = "";
 RTC_DATA_ATTR bool dns_fallback_active = false;
 RTC_DATA_ATTR int preferred_ftp_mode = -1;
 RTC_DATA_ATTR bool healer_reboot_in_progress = false;
+RTC_DATA_ATTR char diag_crash_task_rtc[16] = ""; // v5.74: Task name that triggered last stack overflow
+RTC_DATA_ATTR int diag_crash_count = 0;           // v5.74: Consecutive crashes of the same task
 
 RTC_DATA_ATTR int health_last_sent_hour = -1;
 RTC_DATA_ATTR int health_last_sent_day = -1;
@@ -405,8 +409,8 @@ int solar_conn = 0;
 int calib_header_drawn = 0;
 int unsent_counter = 0;
 int http_code = -1;
-int signal_strength = SIGNAL_STRENGTH_NO_DATA;
-int signal_lvl = SIGNAL_STRENGTH_NO_DATA;
+volatile int signal_strength = SIGNAL_STRENGTH_NO_DATA; // cross-task: GPRS writes, scheduler reads
+volatile int signal_lvl = SIGNAL_STRENGTH_NO_DATA;      // cross-task: GPRS writes, scheduler reads
 int sd_card_ok = 0;
 int send_daily = 0;
 int cur_mode = 0;
@@ -1280,13 +1284,41 @@ void setup() {
   gprs_mode = eGprsInitial;
   sync_mode = eSyncModeInitial;
 
-  // Task creation and spawning
+  // v5.74 Fix A: Crash-loop prevention guard.
+  // If the same task caused a stack overflow 3+ consecutive times (persisted in RTC RAM),
+  // skip recreating it this boot to break the reboot loop.
+  // The counter resets to 0 on a POWERON_RESET (fresh power cycle).
+  bool skip_gprs_task      = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "gprsTask",      15) == 0);
+  bool skip_scheduler_task = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "schedulerTask", 15) == 0);
+  bool skip_rtc_task       = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "rtcReadTask",   15) == 0);
+  bool skip_lcd_task       = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "lcdkeypadTask", 15) == 0);
+  bool skip_temphum_task   = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "tempHumTask",   15) == 0);
+  bool skip_ws_task        = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "windSpeedTask", 15) == 0);
+  bool skip_wd_task        = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "windDirectio",  15) == 0); // truncated to 15 chars
+
+  if (diag_crash_count >= 3) {
+    debugf("[BOOT] ⚠️ CRASH LOOP GUARD: Task '%s' crashed %d times. Skipping task.\n",
+           diag_crash_task_rtc, diag_crash_count);
+  }
+
   xTaskCreatePinnedToCore(rtcRead, "rtcReadTask", 8192, NULL, 2, &rtcRead_h,
                           1); // Core 1
-  xTaskCreatePinnedToCore(scheduler, "schedulerTask", 14336, NULL, 2,
-                          &scheduler_h, 1); // Core 1 (Phase 10: Dropped from P3 to P2 to prevent starvation)
-  xTaskCreatePinnedToCore(gprs, "gprsTask", 16384, NULL, 2, &gprs_h,
-                          0); // Core 0
+  if (!skip_scheduler_task) {
+    xTaskCreatePinnedToCore(scheduler, "schedulerTask", 14336, NULL, 2,
+                            &scheduler_h, 1);
+  } else {
+    scheduler_h = NULL;
+    debugln("[BOOT] schedulerTask SKIPPED (crash-loop guard).");
+  }
+  if (!skip_gprs_task) {
+    xTaskCreatePinnedToCore(gprs, "gprsTask", 16384, NULL, 2, &gprs_h,
+                            0); // Core 0
+  } else {
+    gprs_h = NULL;
+    debugln("[BOOT] gprsTask SKIPPED (crash-loop guard). Data-store-only mode.");
+    // Advance sync state so sleep logic doesn't wait for GPRS forever
+    sync_mode = eHttpStop;
+  }
 
   //    #if DEBUG == 1
   //        xTaskCreatePinnedToCore(stackMonitor, "StackMonitor", 2048, NULL,
@@ -1296,12 +1328,13 @@ void setup() {
 #if (SYSTEM == 1) || (SYSTEM == 2)
   // #7: Smart Task Creation - Only spawn tasks if sensors were found in
   // initialize_hw
-  if (hdcType != HDC_UNKNOWN || bmeType != BME_UNKNOWN) {
+  if ((hdcType != HDC_UNKNOWN || bmeType != BME_UNKNOWN) && !skip_temphum_task) {
     xTaskCreatePinnedToCore(tempHum, "tempHumTask", 4096, NULL, 2, &tempHum_h,
                             1); // Core 1
   } else {
     tempHum_h = NULL;
-    debugln("[BOOT] No T/H sensor (HDC or BME). tempHumTask NOT created.");
+    if (skip_temphum_task) debugln("[BOOT] tempHumTask SKIPPED (crash-loop guard).");
+    else debugln("[BOOT] No T/H sensor (HDC or BME). tempHumTask NOT created.");
   }
 
   // v5.50: Only spawn bmeTask if Pressure is enabled AND this is a TWS-AP
@@ -1321,23 +1354,32 @@ void setup() {
     }
   }
 
-  xTaskCreatePinnedToCore(windSpeed, "windSpeedTask", 4096, NULL, 2,
-                          &windSpeed_h,
-                          1); // Core 1
-  xTaskCreatePinnedToCore(windDirection, "windDirectionTask", 4096, NULL, 2,
-                          &windDirection_h, 1); // Core 1
+  if (!skip_ws_task) {
+    xTaskCreatePinnedToCore(windSpeed, "windSpeedTask", 4096, NULL, 2,
+                            &windSpeed_h, 1); // Core 1
+  } else {
+    windSpeed_h = NULL;
+    debugln("[BOOT] windSpeedTask SKIPPED (crash-loop guard).");
+  }
+  if (!skip_wd_task) {
+    xTaskCreatePinnedToCore(windDirection, "windDirectionTask", 4096, NULL, 2,
+                            &windDirection_h, 1); // Core 1
+  } else {
+    windDirection_h = NULL;
+    debugln("[BOOT] windDirectionTask SKIPPED (crash-loop guard).");
+  }
 #endif
 
-  if (wired == 1) {
-    // v5.57: Stack increased 4096→6144 (+2KB). lcdkeypad handles full menu
-    // navigation, snprintf formatting, and SPIFFS reads. Total stack budget
-    // for worst-case SYSTEM 1/2 is ~61KB vs ~220KB free heap — well within limits.
+  if (wired == 1 && !skip_lcd_task) {
     xTaskCreatePinnedToCore(lcdkeypad, "lcdkeypadTask", 6144, NULL, 2,
                             &lcdkeypad_h, 0); // Core 0
     if (wakeup_reason_is != timer) {
-      digitalWrite(32, HIGH); // Power on LCD only if NOT a background wakeup
+      digitalWrite(32, HIGH);
       delay(100);
     }
+  } else if (wired == 1) {
+    lcdkeypad_h = NULL;
+    debugln("[BOOT] lcdkeypadTask SKIPPED (crash-loop guard).");
   }
 
   //    }
@@ -1666,6 +1708,7 @@ void loop() {
 
   portENTER_CRITICAL(&syncMux);
   safe_to_sleep_sync = ((sync_mode == eHttpStop) || (sync_mode == eSMSStop) || (sync_mode == eExceptionHandled)) && !too_close_to_slot;
+  bool snap_schedulerBusy = schedulerBusy; // v5.74 Fix #2: snapshot inside syncMux for atomicity
   portEXIT_CRITICAL(&syncMux);
 
   // v5.85: P7 - Dynamic Sleep Optimization (5s -> 2s for timer wakeups)
@@ -1673,8 +1716,8 @@ void loop() {
   if ((millis() > min_awake_ms) &&
       safe_to_sleep_sync &&
       (lcdkeypad_start == 0) && (wifi_active == false) &&
-      (httpInitiated == false) && (health_in_progress == false) &&
-      (schedulerBusy == false) && (gprs_started == false || sync_mode == eHttpStop) &&
+      (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false) && (health_in_progress == false) &&
+      (snap_schedulerBusy == false) && (gprs_started == false || sync_mode == eHttpStop) &&
       (pending_manual_status == false) && (pending_manual_gps == false) &&
       (pending_manual_health == false) &&
       (force_reboot == false) && (force_ota == false) &&
@@ -1704,10 +1747,10 @@ void loop() {
     portENTER_CRITICAL(&syncMux);
     race_sync_invalid = (sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled);
     // v5.85: Force sync to persist through the final critical millisecond
-    if (!race_sync_invalid && (gprs_started || schedulerBusy || httpInitiated)) race_sync_invalid = true;
+    if (!race_sync_invalid && (gprs_started || schedulerBusy || __atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE))) race_sync_invalid = true;
     portEXIT_CRITICAL(&syncMux);
 
-    if (schedulerBusy || (gprs_started && sync_mode != eHttpStop) || health_in_progress || httpInitiated || 
+    if (snap_schedulerBusy || (gprs_started && sync_mode != eHttpStop) || health_in_progress || __atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) || 
         force_reboot || force_ota || ota_writing_active || lcdkeypad_start || 
         wifi_active || race_sync_invalid || 
         pending_manual_status || pending_manual_gps || pending_manual_health) {
@@ -1725,6 +1768,7 @@ void loop() {
             httpInitiated = false;
             health_in_progress = false;
             portEXIT_CRITICAL(&syncMux);
+            http_ready = false; // v5.74: Clear stale HTTP session flag — modem will power-cycle on next wakeup
         } else {
             debugln("[PWR] Race Prevented: System became active during sleep delay. Aborting sleep.");
             return; // Re-enter the loop
@@ -1820,7 +1864,6 @@ void ULP_COUNTING(uint32_t us) {
   } else {
     debug("[ULP] Warm Boot. Preserving Counters. RF=");
     debugln(rf_count.val);
-
     // Validate counters to detect memory corruption
     validate_ulp_counters();
   }
@@ -1981,6 +2024,15 @@ void ULP_COUNTING(uint32_t us) {
 // v5.59: Stack Overflow Hook to persistent RTC RAM
 extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
   if (pcTaskName) {
+    // v5.74 Fix #16: Count consecutive crashes of the same task.
+    // After 3 crashes, stop recreating it to break the reboot loop.
+    if (strncmp(diag_crash_task_rtc, pcTaskName, 15) == 0) {
+      diag_crash_count++;
+    } else {
+      diag_crash_count = 1;
+      strncpy(diag_crash_task_rtc, pcTaskName, 15);
+      diag_crash_task_rtc[15] = '\0';
+    }
     strncpy(diag_crash_task, pcTaskName, 15);
     diag_crash_task[15] = '\0';
   }

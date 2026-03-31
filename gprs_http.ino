@@ -68,7 +68,11 @@ void prepare_data_and_send() {
               s = file1.size();
               s = (s > record_length) ? s - record_length : 0;
               file1.seek(s);
-              content = file1.readString(); // Read the rest of the file
+              // R-3 Fix: Prevent Stream.cpp heap fragmentation from readString() resizing
+              char content_buf[256];
+              int bytes_read = file1.readBytes(content_buf, sizeof(content_buf) - 1);
+              content_buf[bytes_read] = '\0';
+              content = String(content_buf); // One single correctly-sized allocation
               file1.close();
           } else {
               debugln("Failed to open temp_file for reading");
@@ -1031,12 +1035,7 @@ void send_http_data() {
 
           vTaskDelay(100 / portTICK_PERIOD_MS); // iter10
 
-          backlog_processed_count++;
-          debugln();
-          debug("Record Number ");
-          debugln(backlog_processed_count);
-          
-          content.trim(); 
+          content.trim();
           if (content.length() < 10) {
             debugln("Skipping blank/invalid line in unsent backlog.");
             // v5.82 Platinum: Advance pointer even for skipped corrupt/blank lines
@@ -1050,8 +1049,10 @@ void send_http_data() {
                 }
                 xSemaphoreGive(fsMutex);
             }
-            continue; 
+            continue; // Does NOT increment backlog_processed_count (v5.74 Fix #23)
           }
+
+          backlog_processed_count++; // v5.74 Fix #23: Only count real HTTP attempts toward the 15-cap
           
           charArray = content.c_str();
 
@@ -1251,7 +1252,7 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
   debugf5("[FTP-Gate] unsent=%d cur_time=%02d:%02d sched=%s cleanup=%s\n",
           unsent_cnt, snap_hr, snap_mi,
           scheduled_slot ? "YES" : "NO", morning_cleanup ? "YES" : "NO");
-  bool should_push = (unsent_cnt > 0); // v5.72: Fire immediately for any pending record to avoid stale backlogs
+  bool should_push = (unsent_cnt > 2); // v5.74: Require >2 records before triggering FTP backlog push
   
   if (signal_lvl > -95 && (should_push || force_ftp) &&
       SPIFFS.exists(ftpunsent_file)) {

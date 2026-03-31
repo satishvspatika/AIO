@@ -11,7 +11,7 @@ void start_deep_sleep() {
   // v5.72 Hardened: Ensure NO communication or state machine is active before cutting power.
   if (health_in_progress || ota_writing_active || schedulerBusy || 
       (sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled && sync_mode != eSyncModeInitial) || 
-      httpInitiated) {
+      __atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE)) {
     debugln("[PWR] Communication or Activity in progress. Deferring sleep.");
     return;
   }
@@ -1266,8 +1266,8 @@ float get_calibrated_battery_voltage() {
   static esp_adc_cal_characteristics_t adc_chars;
   static bool initialized = false;
   if (!initialized) {
-    // Characterize ADC at 11dB attenuation for 3.3V range
-    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &adc_chars);
+    // Characterize ADC at 11dB attenuation — must match adc1_config_channel_atten() in initialize_hw()
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars);
     initialized = true;
   }
   // ADC1_CHANNEL_5 corresponds to GPIO 33
@@ -1329,12 +1329,8 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
     f.close();
     SPIFFS.remove(path);
     if (!SPIFFS.rename("/trim.tmp", path)) {
-      debugf1("[SPIFFS] ERROR: Rename failed for %s. Retrying...\n", path);
-      // M-NEW-5: Mutex Pulse - Release before delay to avoid blocking GPS/Sensor writes
-      if (!alreadyLocked) xSemaphoreGive(fsMutex);
-      vTaskDelay(100 / portTICK_PERIOD_MS);
-      if (!alreadyLocked) xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000));
-
+      // R-2 Fix: Removed dangerous give/delay/take mutex pulse.
+      // Retrying directly while maintaining the continuous fsMutex lock.
       if (!SPIFFS.rename("/trim.tmp", path)) {
           debugf1("[SPIFFS] FATAL: Rename failed for %s. Data remains in /trim.tmp\n", path);
       }
