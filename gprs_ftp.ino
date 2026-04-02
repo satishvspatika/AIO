@@ -266,7 +266,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
             if (ftp_put_retries < 1 && !cid9_bounced) {
               // v5.75: BSNL NAT Shield — Force PASSIVE mode on retry if BSNL detected (CGNAT Safe)
               int retry_mode = (strstr(carrier, "BSNL")) ? 1 : (1 - initial_ftp_mode);
-              debugf2("[FTP] PUT failed. Re-staging and retrying in mode (%d)...\n", retry_mode);
+              debugf1("[FTP] PUT failed. Re-staging and retrying in mode (%d)...\n", retry_mode);
               verify_bearer_or_recover();
               SerialSIT.println("AT+CFTPSLOGOUT");
               waitForResponse("+CFTPSLOGOUT: 0", 3000);
