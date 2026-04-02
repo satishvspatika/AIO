@@ -164,7 +164,11 @@ void start_deep_sleep() {
   bool race_sync_invalid = (sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled && sync_mode != eSyncModeInitial);
   portEXIT_CRITICAL(&syncMux);
   
-  if (schedulerBusy || gprs_started || httpInitiated || race_sync_invalid || health_in_progress) {
+  // v5.76.2: Final-millisecond Mutex Audit
+  bool modemMutexTaken = (uxSemaphoreGetCount(modemMutex) == 0);
+  bool fsMutexTaken = (uxSemaphoreGetCount(fsMutex) == 0);
+
+  if (schedulerBusy || gprs_started || httpInitiated || race_sync_invalid || health_in_progress || modemMutexTaken || fsMutexTaken) {
       debugln("[PWR] 🚨 CRITICAL RACE: Activity detected at last millisecond! Aborting sleep.");
       // Since we already cut power to modem and I2C, we MUST reboot to restore hardware state.
       // This is rare but ensures no data is lost during the 15:45 window.
@@ -280,13 +284,19 @@ void copyFilesFromSPIFFSToSD(const char *dirname) {
 }
 
 void removeFilesFromSPIFFS(const char *dirname) {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[SPIFFS] Mutex Timeout: removeFilesFromSPIFFS aborted.");
+    return;
+  }
   File root = SPIFFS.open(dirname);
   if (!root) {
     debugln("Failed to open directory");
+    xSemaphoreGive(fsMutex); 
     return;
   }
   if (!root.isDirectory()) {
     debugln("Not a directory");
+    xSemaphoreGive(fsMutex);
     return;
   }
 
@@ -302,12 +312,18 @@ void removeFilesFromSPIFFS(const char *dirname) {
     file.close(); // v5.49 Build 5: FIX LEAK
     file = root.openNextFile();
   }
+  xSemaphoreGive(fsMutex);
 }
 
 void delete_multiple_files(const char *station) {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[SPIFFS] Mutex Timeout: delete_multiple_files aborted.");
+    return;
+  }
   File root = SPIFFS.open("/");
   if (!root) {
     debugln("Failed to open directory for deletion scan");
+    xSemaphoreGive(fsMutex);
     return;
   }
   
@@ -333,6 +349,7 @@ void delete_multiple_files(const char *station) {
     debugf1("[SPIFFS] Deleting matching file: %s\n", toDelete[i].c_str());
     SPIFFS.remove(toDelete[i]);
   }
+  xSemaphoreGive(fsMutex);
 }
 
 void get_chip_id() {
@@ -1315,7 +1332,14 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
   } else {
     f.seek(0);
   }
-  f.readStringUntil('\n');
+  
+  // v5.75 FIX: [M-05] Heap fragment stall prevention
+  // Discard partial line via rapid char drain instead of bloated string allocation
+  // (f.readStringUntil('\n') allocates on exactly the code path where we are already choked)
+  char c;
+  while (f.available() && (c = f.read()) != '\n') {
+      // drain partial line into the void
+  }
 
   File tmp = SPIFFS.open("/trim.tmp", FILE_WRITE);
   if (tmp) {
@@ -1328,12 +1352,13 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
     tmp.close();
     f.close();
     SPIFFS.remove(path);
+    
+    // v5.75 FIX: [M-02] SPIFFS Metadata Delay
+    // On worn partitions, an immediate rename can fail. Give the VFS 50ms to breathe.
+    esp_task_wdt_reset();
+    vTaskDelay(50 / portTICK_PERIOD_MS);
     if (!SPIFFS.rename("/trim.tmp", path)) {
-      // R-2 Fix: Removed dangerous give/delay/take mutex pulse.
-      // Retrying directly while maintaining the continuous fsMutex lock.
-      if (!SPIFFS.rename("/trim.tmp", path)) {
-          debugf1("[SPIFFS] FATAL: Rename failed for %s. Data remains in /trim.tmp\n", path);
-      }
+      debugf1("[SPIFFS] FATAL: Final rename failed for %s.\n", path);
     }
   } else {
     f.close();

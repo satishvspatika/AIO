@@ -156,10 +156,14 @@ void tempHum(void *pvParameters) {
             strcpy(hum_str, "NA");
           }
         } else {
+          // TOTAL SENSOR ABSENCE: Enforce 0.0 and NA
           portENTER_CRITICAL(&sensorDataMux);
           latestSensorData.temperature = 0.0;
           latestSensorData.humidity = 0.0;
           portEXIT_CRITICAL(&sensorDataMux);
+          
+          temperature = 0.0;
+          humidity = 0.0;
           
           strcpy(temp_str, "NA");
           strcpy(hum_str, "NA");

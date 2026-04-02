@@ -3,14 +3,14 @@
 
 // =========================================================================
 // PHASE 10 FIRMWARE MUTEX HIERARCHY (ABBA DEADLOCK PREVENTION):
-// To prevent permanent RTOS dual-core lockups, NEVER acquire semaphores 
+// To prevent permanent RTOS dual-core lockups, NEVER acquire semaphores
 // in reverse order. ALWAYS follow this strict acquisition sequence:
-// 
+//
 // 1. modemMutex (Highest level - Network/UART ops)
 // 2. fsMutex    (Mid level - SPIFFS/VFS ops)
 // 3. i2cMutex   (Lowest level - Local hardware/LCD/RTC ops)
 //
-// Example: If a task holds fsMutex, it CANNOT grab modemMutex. It must 
+// Example: If a task holds fsMutex, it CANNOT grab modemMutex. It must
 // drop fsMutex entirely, grab modemMutex, and then re-grab fsMutex.
 // =========================================================================
 
@@ -58,7 +58,8 @@ float get_calibrated_battery_voltage();
 #include <time.h>
 
 // v5.66: Proper RTC attribute definition for ESP32.
-// Do NOT define it as empty; otherwise linker will move variables out of RTC RAM.
+// Do NOT define it as empty; otherwise linker will move variables out of RTC
+// RAM.
 #ifndef RTC_DATA_ATTR
 #define RTC_DATA_ATTR __attribute__((section(".rtc.data")))
 #endif
@@ -71,7 +72,8 @@ enum HDC_Type { // Sensor type enum
 
 enum BME_Type { BME_UNKNOWN, BME_280 };
 
-extern volatile bool ota_silent_mode;         // Rule 43: OTA/debug silence flag (used by debug macros)
+extern volatile bool
+    ota_silent_mode; // Rule 43: OTA/debug silence flag (used by debug macros)
 extern volatile bool bearer_recovery_active;
 extern volatile uint32_t last_activity_time; // v5.85: Safety Heartbeat Timer
 
@@ -103,7 +105,8 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked = false);
 /************************************************************************************************/
 #include "user_config.h"
 
-extern char UNIT[15];        // (Initialized secretly in .ino via UNIT_CFG to avoid ODR issues)
+extern char
+    UNIT[15]; // (Initialized secretly in .ino via UNIT_CFG to avoid ODR issues)
 extern int test_health_every_slot;
 extern float RF_RESOLUTION;
 
@@ -128,10 +131,10 @@ extern float RF_RESOLUTION;
 // 2*pi*r (pulses per revolution = 4 and r = 0.07m)
 #define WS_CALIBRATION_FACTOR 0.4398229715026
 
-// Record length constants for different systems
-#define RECORD_LENGTH_RF 45    // SYSTEM == 0
-#define RECORD_LENGTH_TWS 53   // SYSTEM == 1 (Standardized without rainfall)
-#define RECORD_LENGTH_TWSRF 60 // SYSTEM == 2
+// Record length constants for different systems (Audit-Hardened v5.75)
+#define RECORD_LENGTH_RF 46    // SYSTEM == 0 (NN,YYYY-MM-DD,HH:MM,II.II,CC.CC,SSSY,BB.BB\r\n)
+#define RECORD_LENGTH_TWS 53   // SYSTEM == 1 (NN,YYYY-MM-DD,HH:MM,TT.T,HHH.H,WW.W,DDD,SSSY,BB.BB\r\n)
+#define RECORD_LENGTH_TWSRF 60 // SYSTEM == 2 (NN,YYYY-MM-DD,HH:MM,RR.RR,TT.T,HHH.H,WW.W,DDD,SSSY,BB.BB\r\n)
 
 // Sample number constants
 #define MAX_SAMPLE_NO 95
@@ -152,8 +155,8 @@ extern float RF_RESOLUTION;
 #define TEMP_OFFSET_CORRECTION 2.1
 #define HUMIDITY_HIGH_THRESHOLD 96.0
 #define HUMIDITY_SATURATION_THRESHOLD 99.0
-#define TEMP_SAME_COUNT_THRESHOLD 20
-#define HUM_SAME_COUNT_THRESHOLD 20
+#define TEMP_SAME_COUNT_THRESHOLD 15
+#define HUM_SAME_COUNT_THRESHOLD 15
 #define TEMP_JITTER_MIN 0.1
 #define TEMP_JITTER_MAX 0.3
 #define HUM_JITTER_MIN 0.7
@@ -178,7 +181,7 @@ extern float RF_RESOLUTION;
 // Station altitude for Sea Level Pressure correction
 // Only relevant for KSNDMC_TWS-AP (BME280 pressure sensor enabled)
 // Loaded from /station_alt.txt on SPIFFS. Default 0.0 = no correction applied
-extern float station_altitude_m; 
+extern float station_altitude_m;
 #define SEALEVEL_CALC_FACTOR 44330.769
 
 // Fill signal strength constants
@@ -260,7 +263,7 @@ enum {
   eGprsSignalOk,
   eGprsSignalForStoringOnly,
   eGprsSleepMode
-};                                    // gprs_mode
+};                                                // gprs_mode
 enum { eCurrentData, eClosingData, eUnsentData }; // for http
 
 enum { eEditOff, eEditOn };                   // lcdkeypad
@@ -273,11 +276,14 @@ extern bool webServerStarted;
 extern volatile bool wifi_active;
 extern unsigned long last_wifi_activity_time;
 extern float temp_crf, temp_instrf, temp_bat, temp_temp, temp_hum, temp_avg_ws;
-extern volatile bool wd_ok;         // v5.74: WD sensor health flag (written by Core 1, read by Core 0)
-extern volatile int sampleNo; // v5.72: Global slot counter for bearer age checks
-extern int temp_sampleNo, temp_day, temp_month, temp_year, temp_hr, temp_min, temp_sig;
+extern volatile bool
+    wd_ok; // v5.74: WD sensor health flag (written by Core 1, read by Core 0)
+extern volatile int
+    sampleNo; // v5.72: Global slot counter for bearer age checks
+extern int temp_sampleNo, temp_day, temp_month, temp_year, temp_hr, temp_min,
+    temp_sig;
 // v5.70: Use __atomic_store_n/__atomic_load_n for data_writing_initiated
-extern volatile int data_writing_initiated; 
+extern volatile int data_writing_initiated;
 extern int time_to_deepsleep;
 // Common
 extern char UNIT_VER[20], STATION_TYPE[10], NETWORK[15];
@@ -286,10 +292,11 @@ extern char universalNumber[20];
 extern HDC_Type hdcType;
 extern BME_Type bmeType;
 extern volatile bool health_in_progress;
-extern volatile bool schedulerBusy; // Prevents sleep during 15-min slot processing
-extern volatile bool primary_data_delivered; 
-extern volatile RTC_DATA_ATTR bool skip_primary_http; 
-extern volatile bool force_ftp; 
+extern volatile bool
+    schedulerBusy; // Prevents sleep during 15-min slot processing
+extern volatile bool primary_data_delivered;
+extern volatile RTC_DATA_ATTR bool skip_primary_http;
+extern volatile bool force_ftp;
 extern volatile bool force_ftp_daily;
 extern char ftp_daily_date[12];
 extern volatile bool force_reboot;
@@ -298,7 +305,9 @@ extern volatile bool force_gps_refresh;
 extern volatile bool force_clear_ftp_queue;
 extern volatile bool force_delete_data;
 extern volatile bool ota_writing_active;
-extern bool http_ready;            // v5.42: Tracks HTTPINIT success; defined in gprs_core.ino
+extern char hw_tag; // v5.75: Passive hardware/VFS health tag
+extern bool
+    http_ready; // v5.42: Tracks HTTPINIT success; defined in gprs_core.ino
 extern int ota_fail_count;
 extern char ota_fail_reason[48];
 extern char ota_cmd_param[128];
@@ -306,7 +315,7 @@ extern RTC_DATA_ATTR int last_cmd_id;
 extern RTC_DATA_ATTR char last_cmd_res[64];
 extern char cur_file[32], unsent_file[32], new_file[32], temp_file[50];
 extern char station_name[16];
-extern char chip_id[13]; 
+extern char chip_id[13];
 extern char calib_state[5], calib_text[40], calib_content[16];
 extern char ftpunsent_file[50];
 extern char ftpdaily_file[50];
@@ -315,12 +324,12 @@ extern int calib_header_drawn;
 // GPRS
 extern int http_no, msg_sent;
 extern int rssiIndex, rssiEndIndex, registration;
-extern volatile int retries;               // cross-task: written by GPRS, read by scheduler
+extern volatile int retries; // cross-task: written by GPRS, read by scheduler
 extern volatile int unsent_count, success_count; // cross-task shared counters
-extern volatile int s, fileSize;           // cross-task file-size helpers
-extern int delay_val; // Delay before starting GPRS
-extern volatile int signal_strength;       // cross-task: GPRS writes, scheduler reads
-extern volatile int signal_lvl;            // cross-task: GPRS writes, scheduler reads
+extern volatile int s, fileSize;                 // cross-task file-size helpers
+extern int delay_val;                            // Delay before starting GPRS
+extern volatile int signal_strength; // cross-task: GPRS writes, scheduler reads
+extern volatile int signal_lvl;      // cross-task: GPRS writes, scheduler reads
 extern int sd_card_ok;
 extern int send_daily;
 extern float solar_val, solar;
@@ -334,22 +343,23 @@ extern char httpPostRequest[256], httpContent[12];
 extern char append_text[160], store_text[160], ftpappend_text[160];
 extern int cur_mode;
 extern int cur_fld_no;
-extern int last_lcd_state; // v5.70: Fix mysterious visibility issue in lcdkeypad.ino
+extern int
+    last_lcd_state; // v5.70: Fix mysterious visibility issue in lcdkeypad.ino
 extern char ftp_station[16];
 extern size_t len;
 extern char last_logged[16];
-extern char http_data[350]; 
-extern char sample_cum_rf[10], sample_inst_rf[10], sample_temp[10], sample_hum[10],
-    sample_avgWS[10], sample_WD[10], sample_bat[10], ftpsample_avgWS[10],
-    ftpsample_cum_rf[10];
+extern char http_data[350];
+extern char sample_cum_rf[10], sample_inst_rf[10], sample_temp[10],
+    sample_hum[10], sample_avgWS[10], sample_WD[10], sample_bat[10],
+    ftpsample_avgWS[10], ftpsample_cum_rf[10];
 extern char ht_data[80]; // AG1
-extern char apn_str[20];
+extern char apn_str[32]; // v5.75: Expanded from 20 to 32 (M-03 fix)
 extern char reg_status[16];
 extern char *reg_status_ptr;
 extern char reg_val[3];
 extern char rssi_resp[10];
 extern uint8_t rssi_val;
-extern RTC_DATA_ATTR char carrier[20];
+extern RTC_DATA_ATTR char carrier[32]; // v5.75: Expanded from 20 to 32 (M-03 fix)
 extern RTC_DATA_ATTR char sim_number[20];
 extern RTC_DATA_ATTR char cached_iccid[25];
 extern RTC_DATA_ATTR bool isLTE;
@@ -376,11 +386,13 @@ extern RTC_DATA_ATTR int diag_consecutive_sim_fails;
 extern RTC_DATA_ATTR int last_successful_cnmp;
 extern RTC_DATA_ATTR bool last_http_ok;
 extern RTC_DATA_ATTR int last_http_ok_slot; // v5.72: Stale bearer detection
-extern RTC_DATA_ATTR int last_unsent_sampleNo; // v5.72: Dedup guard for unsent.txt
+extern RTC_DATA_ATTR int
+    last_unsent_sampleNo; // v5.72: Dedup guard for unsent.txt
 extern RTC_DATA_ATTR int gprs_2g_slots_count;
 extern RTC_DATA_ATTR int low_bat_skip_count;
 extern RTC_DATA_ATTR bool low_bat_mode_active;
-extern RTC_DATA_ATTR bool backfill_done; // v5.72 Hardened: Architecture fix for Health TX reporting
+extern RTC_DATA_ATTR bool
+    backfill_done; // v5.72 Hardened: Architecture fix for Health TX reporting
 
 // Golden Summary Diagnostic Flags (v5.43)
 extern RTC_DATA_ATTR int diag_ws_same_count;
@@ -484,8 +496,10 @@ extern int ULP_WAKEUP_TC; // ulp runs every 1ms (High Resolution for Wind)
   (*(volatile ulp_var_t *)&RTC_SLOW_MEM[U_WIND_PREV_STATE])
 #define calib_count (*(volatile ulp_var_t *)&RTC_SLOW_MEM[U_CALIB_COUNT])
 #define calib_mode_flag (*(volatile ulp_var_t *)&RTC_SLOW_MEM[U_CALIB_MODE])
-#define wind_debounced_state (*(volatile ulp_var_t *)&RTC_SLOW_MEM[U_WIND_DEBOUNCED_STATE])
-#define wind_debounce_cnt (*(volatile ulp_var_t *)&RTC_SLOW_MEM[U_WIND_DEBOUNCE_CNT])
+#define wind_debounced_state                                                   \
+  (*(volatile ulp_var_t *)&RTC_SLOW_MEM[U_WIND_DEBOUNCED_STATE])
+#define wind_debounce_cnt                                                      \
+  (*(volatile ulp_var_t *)&RTC_SLOW_MEM[U_WIND_DEBOUNCE_CNT])
 
 extern RTC_DATA_ATTR int current_year, current_month, current_day, current_hour,
     current_min, current_sec, previous_min, record_hr, record_min,
@@ -497,7 +511,7 @@ extern RTC_DATA_ATTR bool fresh_boot_check_done;
 extern RTC_DATA_ATTR bool apn_saved_this_sim;
 extern RTC_DATA_ATTR float last_valid_temp;
 extern RTC_DATA_ATTR float last_valid_hum;
-extern RTC_DATA_ATTR int last_valid_wd;        // v5.59: WD Rescue Anchor
+extern RTC_DATA_ATTR int last_valid_wd;      // v5.59: WD Rescue Anchor
 extern RTC_DATA_ATTR float rtc_daily_cum_rf; // v5.59: RF Golden Anchor
 
 // RF
@@ -509,9 +523,10 @@ extern float avg_cumRF, new_current_cumRF, new_current_instRF;
 
 // T/H , WS and WD
 extern int prev_wind_count;
-extern volatile float temperature, humidity, windSpCount, cur_wind_speed, pressure;
+extern volatile float temperature, humidity, windSpCount, cur_wind_speed,
+    pressure;
 extern float cur_avg_wind_speed;
-extern volatile int windDir;               // written by windDirection task, read by scheduler
+extern volatile int windDir; // written by windDirection task, read by scheduler
 extern float sea_level_pressure;
 extern char inst_hum[10], avg_wind_speed[10], inst_wd[10];
 extern char pres_str[20];
@@ -540,8 +555,8 @@ extern volatile int lcdkeypad_start;
 extern int wired;
 extern int temp_count_rf, calib_count_rf, calib_flag;
 
-extern char rf_str[10], calib_rf[10], temp_str[16], hum_str[16], windSpeedInst_str[16],
-    prevWindSpeedAvg_str[7], windDir_str[16];
+extern char rf_str[10], calib_rf[10], temp_str[16], hum_str[16],
+    windSpeedInst_str[16], prevWindSpeedAvg_str[7], windDir_str[16];
 extern char date_now[11];
 extern char time_now[6];
 
@@ -571,7 +586,8 @@ extern TaskHandle_t webServer_h;
 extern volatile bool gprs_started;
 extern int badReads;
 extern int active_cid;
-extern portMUX_TYPE syncMux; // v5.70: Cross-core atomic protection for sync_mode
+extern portMUX_TYPE
+    syncMux; // v5.70: Cross-core atomic protection for sync_mode
 
 void rtcRead(void *pvParameters);
 
@@ -602,8 +618,8 @@ int setup_ftp(int transMode = 0);
 void fetchFromHttpAndUpdate(char *fileName);
 void copyFromSPIFFSToFS(char *dateFile);
 void loadGPS();
+void sync_rtc_from_http_header();
 // I2C Protection (v5.49)
-
 
 // MODEM / GPRS
 String waitForResponse(const char *expected, unsigned long timeout);
@@ -612,7 +628,8 @@ void saveYearToSPIFFS(int year);
 void configure_sensors_for_awake();
 void configure_sensors_for_sleep();
 void copyFilesFromSPIFFSToSD(const char *dirname);
-void copyFile(const char *sourcePath, const char *destPath, bool alreadyLocked = false); // v5.75
+void copyFile(const char *sourcePath, const char *destPath,
+              bool alreadyLocked = false); // v5.75
 void flushSerialSIT();
 bool copyFile_legacy(String fileName);
 void validate_ulp_counters();

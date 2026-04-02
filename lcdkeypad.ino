@@ -535,7 +535,7 @@ void lcdkeypad(void *pvParameters) {
               rf_res_edit_state = 0;
               strcpy(ui_data[FLD_RF_RES].topRow, "RF RESOLUTION");
             } else if (cur_fld_no == FLD_DELETE_DATA) {
-              strcpy(ui_data[FLD_DELETE_DATA].topRow, "DELETE DATA?");
+              snprintf(ui_data[FLD_DELETE_DATA].topRow, 17, "DELETE DATA?   %c", hw_tag);
             }
             cur_mode = eEditOff;
             show_now = 1;
@@ -548,7 +548,7 @@ void lcdkeypad(void *pvParameters) {
             show_now = 1;
           } else if (delete_confirm_state == 1) {
             delete_confirm_state = 0;
-            strcpy(ui_data[FLD_DELETE_DATA].topRow, "DELETE DATA?");
+            snprintf(ui_data[FLD_DELETE_DATA].topRow, 17, "DELETE DATA?   %c", hw_tag);
             show_now = 1;
           } else if (rf_res_edit_state > 0) {
             rf_res_edit_state = 0;
@@ -759,33 +759,45 @@ void lcdkeypad(void *pvParameters) {
           } else if (cur_fld_no == FLD_DELETE_DATA) {
             if (delete_confirm_state == 0) {
               delete_confirm_state = 1;
-              strcpy(ui_data[FLD_DELETE_DATA].topRow, "ARE YOU SURE?");
+              snprintf(ui_data[FLD_DELETE_DATA].topRow, 17, "ARE YOU SURE?  %c", hw_tag);
               strcpy(ui_data[FLD_DELETE_DATA].bottomRow, "PRESS SET: YES");
               debugln("[LCD] User selected DELETE_DATA. Awaiting confirmation...");
             } else {
               debugln("[LCD] User confirmed Factory Reset via Keypad! Initiating...");
               // Perform deletion
               if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
-                 lcd.clear(); lcd.print("Deleting...");
-                 xSemaphoreGive(i2cMutex); // Release immediately so background processes don't stall 
+                 lcd.clear(); 
+                 if (hw_tag == '!') {
+                    lcd.print("Repairing FS...");
+                    debugln("[LCD] HW Tag is '!', triggered FULL FORMAT (REPAIR)...");
+                 } else {
+                    lcd.print("Deleting...");
+                    debugln("[LCD] Factory Reset (Healthy FS). Wiping local logs...");
+                 }
+                 xSemaphoreGive(i2cMutex); 
                  
                  // v5.70: Protect manual wipe with fsMutex
-                 if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-                    debugln("[LCD] Erasing /unsent.txt & /ftpunsent.txt...");
-                    SPIFFS.remove("/unsent.txt"); SPIFFS.remove("/ftpunsent.txt");
-                    
-                    debugln("[LCD] Erasing old daily log files...");
-                    File root = SPIFFS.open("/"); 
-                    File file = root.openNextFile();
-                    while(file) {
-                       String n = file.name();
-                       if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt")) {
-                         debug("Removing: "); debugln(n);
-                         SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
+                 if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
+                    if (hw_tag == '!') {
+                       // v5.75 Golden: Hard repair — formats the underlying SPIFFS
+                       SPIFFS.format(); // v5.75 Golden: Guaranteed re-init
+                       SPIFFS.begin(true, "/spiffs", 10, "spiffs"); 
+                       debugln("[LCD] SPIFFS REPAIR COMPLETE. System reboot required.");
+                    } else {
+                       // Standard File Wipe
+                       SPIFFS.remove("/unsent.txt"); SPIFFS.remove("/ftpunsent.txt");
+                       File root = SPIFFS.open("/"); 
+                       File file = root.openNextFile();
+                       while(file) {
+                          String n = file.name();
+                          if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt")) {
+                            SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
+                          }
+                          file.close(); file = root.openNextFile();
                        }
-                       file.close(); file = root.openNextFile();
+                       root.close();
+                       debugln("[LCD] LOG WIPE COMPLETE. System reboot required.");
                     }
-                    root.close();
                     xSemaphoreGive(fsMutex);
                  }
                  
@@ -793,13 +805,12 @@ void lcdkeypad(void *pvParameters) {
                     lcd.clear(); lcd.print("DONE! REBOOTING");
                     xSemaphoreGive(i2cMutex);
                  }
-                 debugln("[LCD] Delete complete. Restarting ESP32...");
                  vTaskDelay(2000 / portTICK_PERIOD_MS);
                  ESP.restart();
               } else {
                  debugln("[LCD] ERROR: Failed to acquire i2cMutex during DELETE_DATA!");
                  delete_confirm_state = 0;
-                 strcpy(ui_data[FLD_DELETE_DATA].topRow, "DELETE DATA?");
+                 snprintf(ui_data[FLD_DELETE_DATA].topRow, 17, "DELETE DATA?   %c", hw_tag);
                  strcpy(ui_data[FLD_DELETE_DATA].bottomRow, "MUTEX TIMEOUT");
               }
             }

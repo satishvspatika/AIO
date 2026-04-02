@@ -38,7 +38,7 @@ ALL_FLASH_VARIANTS = {
 }
 
 # External Release Path
-EXTERNAL_RELEASE_BASE = Path("/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5/AIO9_5.0")
+EXTERNAL_RELEASE_BASE = Path("/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5")
 
 # Colors
 class Colors:
@@ -102,6 +102,14 @@ def update_globals(system, unit, disable_webserver=False):
     # 4MB builds: disable WebServer to fit within 1.25MB slot
     if disable_webserver:
         content = re.sub(r'#define ENABLE_WEBSERVER \d+', '#define ENABLE_WEBSERVER 0', content)
+    
+    # [BUILD-04] Optional Debug override:
+    if "--enable-debug" in sys.argv:
+        content = re.sub(r'#define DEBUG \d+', '#define DEBUG 1', content)
+        print("  DEBUG set to: 1 (Manual override)")
+    else:
+        content = re.sub(r'#define DEBUG \d+', '#define DEBUG 0', content)
+        print("  DEBUG set to: 0 (Official Production)")
     
     # Write back
     with open(GLOBALS_H, 'w') as f:
@@ -238,6 +246,10 @@ def main():
         "--flash", nargs="+", default=["8mb"],
         choices=["4mb", "8mb", "16mb"],
         help="Flash size variant(s) to build. Default: 8mb. Example: --flash 8mb 4mb"
+    )
+    parser.add_argument(
+        "--enable-debug", action="store_true",
+        help="Keep Serial Debug logs active in the official build (Not recommended for field units)."
     )
     args = parser.parse_args()
 

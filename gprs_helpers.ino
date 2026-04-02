@@ -431,6 +431,105 @@ void flushSerialSIT() {
     esp_task_wdt_reset();
   }
 }
+
+/**
+ * v5.75: Spatika Multi-Platform Header Sync (IST)
+ * 
+ * Fetches the standard HTTP 'Date' header from the server and syncs the RTC.
+ * This works on any platform (IIS, Apache, Nginx, Google) as it follows RFC 7231.
+ * Format: "Date: Wed, 01 Apr 2026 12:45:05 GMT"
+ * 
+ * This resolves the 'Rejected' issue where the server rejects future-timed data.
+ */
+void sync_rtc_from_http_header(const String& head) {
+  if (head.length() < 20) {
+    debugln("[RTC-Sync] Invalid header string passed.");
+    return;
+  }
+  debugln("[RTC-Sync] Processing Server Header (IST Transition)...");
+  
+  // Standard HTTP Header Parsing
+  int dateIdx = head.indexOf("Date: ");
+  if (dateIdx == -1) {
+    debugln("[RTC-Sync] Date header not found. Check modem logs.");
+    return;
+  }
+  
+  // Extract: "Wed, 01 Apr 2026 07:15:05 GMT"
+  String dateStr = head.substring(dateIdx + 6);
+  int endIdx = dateStr.indexOf('\r');
+  if (endIdx != -1) dateStr = dateStr.substring(0, endIdx);
+  dateStr.trim();
+  
+  int day, year, hour, min, sec;
+  char monStr[4];
+  
+  // Skip weekday (e.g. "Wed, ") - move to first digit
+  const char* p = dateStr.c_str();
+  while (*p && !isdigit(*p)) p++; 
+  
+  if (sscanf(p, "%d %3s %d %d:%d:%d", &day, monStr, &year, &hour, &min, &sec) == 6) {
+    int month = 1;
+    // Multi-platform month array (standard abbreviated names)
+    const char* months[] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+    for (int i=0; i<12; i++) {
+       if (strcasecmp(monStr, months[i]) == 0) { month = i + 1; break; }
+    }
+    
+    // Safety check for valid year range (2025-2050)
+    if (year < 2025 || year > 2050) {
+        debugf("[RTC-Sync] Invalid Year parsed: %d\n", year);
+        return;
+    }
+
+    struct tm t_in = {0};
+    t_in.tm_year = year - 1900;
+    t_in.tm_mon = month - 1;
+    t_in.tm_mday = day;
+    t_in.tm_hour = hour;
+    t_in.tm_min = min;
+    t_in.tm_sec = sec;
+    t_in.tm_isdst = 0;
+    
+    // Robust GMT -> IST (+5:30) logic
+    convert_gmt_to_ist(&t_in);
+    
+    int s_yy = t_in.tm_year + 1900;
+    int s_mm = t_in.tm_mon + 1;
+    int s_dd = t_in.tm_mday;
+    int s_hh = t_in.tm_hour;
+    int s_mi = t_in.tm_min;
+    int s_ss = t_in.tm_sec;
+
+    // v5.75 Hardening [H-02]: Guard against mid-slot chaotic time jumps
+    // If we are currently at min 14, and server says it is min 10 (RTC was fast),
+    // we MUST NOT jump current_min back to 10 immediately or the scheduler will 
+    // think it missed a minute and may not trigger the 15-min slot properly.
+    // We update the physical RTC, but only update globals if drift < 120s.
+    long current_ts = current_hour * 3600 + current_min * 60 + current_sec;
+    long server_ts = s_hh * 3600 + s_mi * 60 + s_ss;
+    bool sync_globals = (abs(server_ts - current_ts) < 120) || (current_min % 15 != 14 && s_mi % 15 != 14);
+
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+      // 1. Update Physical RTC always (Hard correction)
+      rtc.adjust(DateTime(s_yy, s_mm, s_dd, s_hh, s_mi, s_ss));
+      xSemaphoreGive(i2cMutex);
+      
+      // 2. Update Global Variables only if safe (Soft correction)
+      if (sync_globals) {
+        portENTER_CRITICAL(&rtcTimeMux);
+        current_day = s_dd; current_month = s_mm; current_year = s_yy;
+        current_hour = s_hh; current_min = s_mi; current_sec = s_ss;
+        portEXIT_CRITICAL(&rtcTimeMux);
+      }
+      
+      rtc_daily_sync_done = true;
+      debugf("[RTC-Sync] ✅ RTC Corrected to IST: %04d-%02d-%02d %02d:%02d:%02d\n", s_yy, s_mm, s_dd, s_hh, s_mi, s_ss);
+    }
+  } else {
+    debugln("[RTC-Sync] Header parsing failed. Non-standard date string or buffer corruption.");
+  }
+}
 void sync_rtc_from_server_tm(const char *payload, bool force) {
   String response;
   if (!payload)
@@ -571,10 +670,9 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
   current_sec = s_ss;
   portEXIT_CRITICAL(&rtcTimeMux);
 
-  if (!force) {
-    rtc_daily_sync_done = true;
-    last_sync_day = current_day;
-  }
+  // v5.75 FIX: [C-02] Correct Anchor Sequencing
+  rtc_daily_sync_done = true;
+  last_sync_day = current_day;
 
   debugln("[RTC-Sync] ✅ RTC corrected from server time (IST).");
 }

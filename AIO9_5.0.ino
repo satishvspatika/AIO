@@ -25,6 +25,7 @@
 #include "globals.h"
 #include <driver/adc.h>
 #include <rom/rtc.h>
+#include <esp_flash.h>
 
 
 int wired = 1; // Integrated is 1 or Standalone LCD module is 0
@@ -119,9 +120,9 @@ char sample_cum_rf[10], sample_inst_rf[10], sample_temp[10], sample_hum[10],
     sample_avgWS[10], sample_WD[10], sample_bat[10], ftpsample_avgWS[10],
     ftpsample_cum_rf[10];
 char ht_data[80] = ""; 
-RTC_DATA_ATTR char apn_str[20] = "";
-
-char reg_status[16] = "";
+ // v5.75: apn_str and carrier relocated to block below with 32-char expansion
+ 
+ char reg_status[16] = "";
 char *reg_status_ptr = NULL;
 char reg_val[3] = "";
 char rssi_resp[10] = "";
@@ -208,7 +209,8 @@ volatile bool schedulerBusy = false;
 RTC_DATA_ATTR double lati = 0.0, longi = 0.0;
 RTC_DATA_ATTR double gps_latitude = 0.0, gps_longitude = 0.0;
 RTC_DATA_ATTR int gps_fix_dd = 0, gps_fix_mm = 0, gps_fix_yy = 0;
-RTC_DATA_ATTR char carrier[20] = "";
+RTC_DATA_ATTR char apn_str[32] = ""; // v5.75: Expanded from 20 to 32 (M-03 fix)
+RTC_DATA_ATTR char carrier[32] = ""; // v5.75: Expanded from 20 to 32 (M-03 fix)
 RTC_DATA_ATTR char sim_number[20] = "NA";
 RTC_DATA_ATTR char cached_iccid[25] = "";
 RTC_DATA_ATTR bool isLTE = false;
@@ -306,8 +308,8 @@ RTC_DATA_ATTR int firmwareUpdated = 0;
 RTC_DATA_ATTR int last_processed_sample_idx = -1;
 RTC_DATA_ATTR bool fresh_boot_check_done = false;
 RTC_DATA_ATTR bool apn_saved_this_sim = false;
-RTC_DATA_ATTR float last_valid_temp = 26.0;
-RTC_DATA_ATTR float last_valid_hum = 65.0;
+RTC_DATA_ATTR float last_valid_temp = 0.0;
+RTC_DATA_ATTR float last_valid_hum = 0.0;
 RTC_DATA_ATTR int last_valid_wd = 0;
 RTC_DATA_ATTR float rtc_daily_cum_rf = 0.0;
 
@@ -318,6 +320,7 @@ RTC_DATA_ATTR int last_recorded_hr = 0;
 RTC_DATA_ATTR int last_recorded_min = 0;
 
 RTC_DATA_ATTR bool signature_valid = false;
+char hw_tag = ' '; // v5.75: Passive hardware/VFS health tag
 RTC_DATA_ATTR bool pending_manual_status = false;
 RTC_DATA_ATTR bool pending_manual_gps = false;
 RTC_DATA_ATTR bool pending_manual_health = false;
@@ -428,6 +431,10 @@ void setup() {
 #if DEBUG == 1
   Serial.begin(115200);
 #endif
+  // v5.75: Force-Enable Logs (Clears stale RTC RAM silence flags)
+  ota_silent_mode = false;
+  bearer_recovery_active = false;
+
   delay(1000);
   debugln("\n\n[BOOT] HELLO! System starting... (Debug Enabled)");
 
@@ -799,6 +806,8 @@ void setup() {
     File altF = SPIFFS.open("/station_alt.txt", FILE_READ);
     if (altF) {
       float loaded_alt = altF.readString().toFloat();
+      void loadGPS();
+      void sync_rtc_from_http_header(String& head); // v5.75: Pre-captured header sync
       altF.close();
       if (loaded_alt >= 0.0 && loaded_alt <= 5000.0) {
         station_altitude_m = loaded_alt;
@@ -1012,6 +1021,19 @@ void setup() {
     strncpy(UNIT_VER, "UNCONFIGURED", sizeof(UNIT_VER) - 1);
   }
 
+  // v5.75 Hardened: [C-03] Server Index Protection
+#if SYSTEM == 0
+  if (http_no >= 7) { 
+    http_no = -1; 
+    debugln("!!! FATAL: http_no OOB for SYSTEM 0 !!!"); 
+  }
+#else
+  if (http_no >= 11) { 
+    http_no = -1; 
+    debugln("!!! FATAL: http_no OOB for SYSTEM 1/2 !!!"); 
+  }
+#endif
+
   debugln();
 
 #if SYSTEM == 0
@@ -1086,6 +1108,18 @@ void setup() {
               Update.writeStream(firmware);
               if (Update.end()) {
                 debugln("Update finished! Storing MD5 and restarting...");
+                
+                // v5.75 Golden Fix: Force-Reset the OTA 'Ghost' Signpost
+                // This ensures the unit MUST boot into the new Slot 0 version.
+                const esp_partition_t *ota_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, "otadata");
+                if (ota_partition != NULL) {
+                    debugln("[OTA] Wiping Ghost Signpost (0xe000)...");
+                    esp_err_t erase_ret = esp_partition_erase_range(ota_partition, 0, ota_partition->size);
+                    if (erase_ret != ESP_OK) {
+                        debugf("[OTA] Ghost-Kill erase FAILED: %d. Boot may revert.\n", erase_ret);
+                    }
+                }
+
                 diag_fw_just_updated = true; // v5.76
                 File md5Write = SPIFFS.open("/sd_fw_md5.txt", FILE_WRITE);
                 if (md5Write) {
@@ -1182,7 +1216,7 @@ void setup() {
     }
   } else {
     // Create firmware.doc if missing (Fresh install)
-    debugln("firmware.doc not found, creating with current version...");
+    debugln("firmware.doc not found, creating default...");
     File verTemp1 = SPIFFS.open("/firmware.doc", FILE_WRITE);
     if (verTemp1) {
       verTemp1.print(UNIT_VER);
@@ -1281,10 +1315,60 @@ void setup() {
     }
   }
 
-  gprs_mode = eGprsInitial;
-  sync_mode = eSyncModeInitial;
+  // RF Resolution Change Cleanup
+  if (rf_res_changed) {
+    debugln("Resolution changed. Cleaning up data files...");
+    // 1. Get current date from RTC
+    DateTime now = rtc.now();
+    int currentDay = now.day();
+    int currentMonth = now.month();
+    int currentYear = now.year();
 
-  // v5.74 Fix A: Crash-loop prevention guard.
+    // 2. Determine rf_close_date (same logic as scheduler)
+    int rf_day = currentDay, rf_month = currentMonth, rf_year = currentYear;
+    int sn = (now.hour() * 4 + now.minute() / 15 + 61) % 96;
+    if (sn <= 60) {
+      // Inline next_date logic
+      int daysInMonth[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+      if ((rf_year % 4 == 0 && rf_year % 100 != 0) || (rf_year % 400 == 0))
+        daysInMonth[2] = 29;
+      rf_day++;
+      if (rf_day > daysInMonth[rf_month]) {
+        rf_day = 1;
+        rf_month++;
+        if (rf_month > 12) {
+          rf_month = 1;
+          rf_year++;
+        }
+      }
+    }
+
+    // 3. Construct and Delete today's file
+    char today_file[50];
+    snprintf(today_file, sizeof(today_file), "/%s_%04d%02d%02d.txt",
+             station_name, rf_year, rf_month, rf_day);
+    if (SPIFFS.exists(today_file)) {
+      debug("Deleting present day file: ");
+      debugln(today_file);
+      SPIFFS.remove(today_file);
+    }
+
+    // 4. Delete unsent files
+    SPIFFS.remove("/unsent.txt");
+    SPIFFS.remove("/ftpunsent.txt");
+    SPIFFS.remove("/signature.txt");
+
+    // 5. Reset ULP counters
+    SPIFFS.remove("/calib.txt");
+    rf_count.val = 0;
+    wind_count.val = 0;
+    // v5.57 Fix: Sync 32-bit accumulator anchors immediately after zeroing ULP
+    // counters, otherwise the next cycle delta = (new_raw - old_anchor) which
+    // can be a huge spurious number (treated as noise, but cleaner to prevent).
+    last_raw_rf_count = 0;
+    last_sched_rf_pulses_32 = total_rf_pulses_32;
+    debugln("Cleanup complete. Starting fresh.");
+  }
   // If the same task caused a stack overflow 3+ consecutive times (persisted in RTC RAM),
   // skip recreating it this boot to break the reboot loop.
   // The counter resets to 0 on a POWERON_RESET (fresh power cycle).
@@ -1299,6 +1383,39 @@ void setup() {
   if (diag_crash_count >= 3) {
     debugf("[BOOT] ⚠️ CRASH LOOP GUARD: Task '%s' crashed %d times. Skipping task.\n",
            diag_crash_task_rtc, diag_crash_count);
+  }
+
+  // v7.95: CRITICAL RACE FIX — Initialize ULP and anchors BEFORE creating tasks.
+  // This prevents the scheduler from reading uninitialized ULP RAM or stale 
+  // counters before setup() has finished zeroing/syncing them.
+  uint16_t preserved_rf = (rr == POWERON_RESET) ? 0 : rf_count.val;
+#if (SYSTEM == 1) || (SYSTEM == 2)
+  uint32_t preserved_wind = (rr == POWERON_RESET) ? 0 : wind_count.val;
+#endif
+
+  debug("ULP Wakeup Period set to 1ms (High Resolution for Wind)");
+  ULP_COUNTING(ULP_WAKEUP_TC);
+  debugln("ULP Program loaded and started.");
+
+  // Safely restore the physical counts back into the fresh ULP memory block
+  rf_count.val = preserved_rf;
+#if (SYSTEM == 1) || (SYSTEM == 2)
+  wind_count.val = preserved_wind;
+#endif
+
+  // v7.94: FINAL HARDWARE ANCHOR
+  // We MUST anchor the 'last_raw' counters to the CURRENT hardware state
+  // AFTER any ULP code loads or version-based resets.
+  // CRITICAL FIX: Only do this on FRESH BOOT, otherwise we clear all pulses
+  // accumulated during Deep Sleep before the scheduler can read them!
+  if ((rr == POWERON_RESET || rr == EXT_CPU_RESET || rr == SW_CPU_RESET) && !healer_reboot_in_progress) {
+    last_raw_wind_count = wind_count.val;
+    last_raw_rf_count = rf_count.val;
+    last_sched_wind_pulses_32 = total_wind_pulses_32;
+    last_sched_rf_pulses_32 = total_rf_pulses_32;
+    debugf2("[BOOT] ULP Anchors Synced: Wind=%u, Rain=%u\n", last_raw_wind_count, last_raw_rf_count);
+  } else {
+    debugf2("[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=%u, Rain=%u\n", last_raw_wind_count, last_raw_rf_count);
   }
 
   xTaskCreatePinnedToCore(rtcRead, "rtcReadTask", 8192, NULL, 2, &rtcRead_h,
@@ -1396,91 +1513,6 @@ void setup() {
   // v5.66 CRITICAL FIX: We MUST preserve the ULP's counted values before re-loading the code,
   // otherwise the injection permanently zeroes out any physical tips that fell during Deep Sleep
   // or right before an EXT_CPU_RESET crash!
-  uint16_t preserved_rf = (rr == POWERON_RESET) ? 0 : rf_count.val;
-#if (SYSTEM == 1) || (SYSTEM == 2)
-  uint32_t preserved_wind = (rr == POWERON_RESET) ? 0 : wind_count.val;
-#endif
-
-  debug("ULP Wakeup Period set to 1ms (High Resolution for Wind)");
-  ULP_COUNTING(ULP_WAKEUP_TC);
-  debugln("ULP Program loaded and started.");
-
-  // Safely restore the physical counts back into the fresh ULP memory block
-  rf_count.val = preserved_rf;
-#if (SYSTEM == 1) || (SYSTEM == 2)
-  wind_count.val = preserved_wind;
-#endif
-  // RF Resolution Change Cleanup
-  if (rf_res_changed) {
-    debugln("Resolution changed. Cleaning up data files...");
-    // 1. Get current date from RTC
-    DateTime now = rtc.now();
-    int currentDay = now.day();
-    int currentMonth = now.month();
-    int currentYear = now.year();
-
-    // 2. Determine rf_close_date (same logic as scheduler)
-    int rf_day = currentDay, rf_month = currentMonth, rf_year = currentYear;
-    int sn = (now.hour() * 4 + now.minute() / 15 + 61) % 96;
-    if (sn <= 60) {
-      // Inline next_date logic
-      int daysInMonth[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-      if ((rf_year % 4 == 0 && rf_year % 100 != 0) || (rf_year % 400 == 0))
-        daysInMonth[2] = 29;
-      rf_day++;
-      if (rf_day > daysInMonth[rf_month]) {
-        rf_day = 1;
-        rf_month++;
-        if (rf_month > 12) {
-          rf_month = 1;
-          rf_year++;
-        }
-      }
-    }
-
-    // 3. Construct and Delete today's file
-    char today_file[50];
-    snprintf(today_file, sizeof(today_file), "/%s_%04d%02d%02d.txt",
-             station_name, rf_year, rf_month, rf_day);
-    if (SPIFFS.exists(today_file)) {
-      debug("Deleting present day file: ");
-      debugln(today_file);
-      SPIFFS.remove(today_file);
-    }
-
-    // 4. Delete unsent files
-    SPIFFS.remove("/unsent.txt");
-    SPIFFS.remove("/ftpunsent.txt");
-    SPIFFS.remove("/signature.txt");
-
-    // 5. Reset ULP counters
-    SPIFFS.remove("/calib.txt");
-    rf_count.val = 0;
-    wind_count.val = 0;
-    // v5.57 Fix: Sync 32-bit accumulator anchors immediately after zeroing ULP
-    // counters, otherwise the next cycle delta = (new_raw - old_anchor) which
-    // can be a huge spurious number (treated as noise, but cleaner to prevent).
-    last_raw_rf_count = 0;
-    last_sched_rf_pulses_32 = total_rf_pulses_32;
-    debugln("Cleanup complete. Starting fresh.");
-  }
-
-  // v7.94: FINAL HARDWARE ANCHOR
-  // We MUST anchor the 'last_raw' counters to the CURRENT hardware state
-  // at the very end of setup, AFTER any ULP code loads or version-based resets.
-  // This prevents 'deltas' from old garbage or initialization jumps.
-  // CRITICAL FIX: Only do this on FRESH BOOT, otherwise we clear all pulses
-  // accumulated during Deep Sleep before the scheduler can read them!
-  // Note: rr == 5 is DEEPSLEEP_RESET. We NEVER sync here if rr == 5.
-  if ((rr == POWERON_RESET || rr == EXT_CPU_RESET || rr == SW_CPU_RESET) && !healer_reboot_in_progress) {
-    last_raw_wind_count = wind_count.val;
-    last_raw_rf_count = rf_count.val;
-    last_sched_wind_pulses_32 = total_wind_pulses_32;
-    last_sched_rf_pulses_32 = total_rf_pulses_32;
-    debugf2("[BOOT] ULP Anchors Synced: Wind=%u, Rain=%u\n", last_raw_wind_count, last_raw_rf_count);
-  } else {
-    debugf2("[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=%u, Rain=%u\n", last_raw_wind_count, last_raw_rf_count);
-  }
 
   // Final cleanup of boot flags
   if (healer_reboot_in_progress) {
@@ -1574,8 +1606,14 @@ void initialize_hw() {
   gpio_hold_dis(GPIO_NUM_17); // v5.83: Restore UART from ESD Hold
 
   bool spiffs_mounted = false;
+  uint32_t chip_size = ESP.getFlashChipSize();
+  char hw_tag = (chip_size == 16*1024*1024) ? 'X' : ((chip_size == 8*1024*1024) ? 'H' : 'L');
+
   for (int i = 0; i < 3; i++) {
-    if (SPIFFS.begin(false)) { // Safe mount, no auto-format
+    // v5.75: Hardened Label-Based Mount (Dynamic VFS)
+    // By using the label "spiffs", the ESP32 internally finds the partition segment 
+    // even if it moved from 2.5MB (4MB chips) to 6MB (8MB chips).
+    if (SPIFFS.begin(false, "/spiffs", 10, "spiffs")) { 
       spiffs_mounted = true;
       break;
     }
@@ -1584,15 +1622,14 @@ void initialize_hw() {
   }
 
   if (!spiffs_mounted) {
-    debugln("[BOOT] SPIFFS mount failed 3 times. Attempting recovery with format...");
-    if (!SPIFFS.begin(true)) {
-      debugln("[BOOT] CRITICAL: SPIFFS FAILED even after format.");
-      // v5.66: Removed misleading diag_rtc_battery_ok = false proxy assignment
-    } else {
-      debugln("[BOOT] SPIFFS reformatted. All local data lost.");
-    }
+    debugln("[BOOT] CRITICAL: SPIFFS failed 3x. Safe-mode enabled (NO REFORMAT).");
+    hw_tag = '!';
   } else {
     debugln("[BOOT] SPIFFS: OK");
+    
+    // v5.75: Secret Hardware Tag (Passive indicator)
+    // Injected into the FLD_DELETE_DATA heading (Far-right column 15)
+    snprintf(ui_data[FLD_DELETE_DATA].topRow, sizeof(ui_data[FLD_DELETE_DATA].topRow), "DELETE DATA?   %c", hw_tag);
     
     // v6.03: Atomic Recovery - Restore stranded .tmp files from power-fail
     if (!SPIFFS.exists("/gps_fix.txt") && SPIFFS.exists("/gps_fix.tmp")) {
@@ -1713,8 +1750,16 @@ void loop() {
 
   // v5.85: P7 - Dynamic Sleep Optimization (5s -> 2s for timer wakeups)
   uint32_t min_awake_ms = (wakeup_reason_is == ext0) ? 5000 : 2000;
+  
+  // v5.76.2: Mutex-Aware Sleep Guard (Total Race Prevention)
+  // Check the actual semaphore handles to ensure no task is currently holding 
+  // the modem or file system, regardless of high-level boolean flag state.
+  bool modemIsBusy = (uxSemaphoreGetCount(modemMutex) == 0);
+  bool fsIsBusy = (uxSemaphoreGetCount(fsMutex) == 0);
+
   if ((millis() > min_awake_ms) &&
       safe_to_sleep_sync &&
+      !modemIsBusy && !fsIsBusy &&
       (lcdkeypad_start == 0) && (wifi_active == false) &&
       (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false) && (health_in_progress == false) &&
       (snap_schedulerBusy == false) && (gprs_started == false || sync_mode == eHttpStop) &&
@@ -1837,6 +1882,8 @@ void print_reset_reason(RESET_REASON reason) {
   }
 
   get_chip_id();
+  uint32_t chip_size = ESP.getFlashChipSize(); 
+  debugf("[BOOT] Chip ID: %s | Flash: %d MB\n", chip_id, chip_size / (1024 * 1024));
 }
 
 // ------------------------------------------------------------------------

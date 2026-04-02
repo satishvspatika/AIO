@@ -2,7 +2,8 @@
 
 void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
   // v7.70+: ABBA DEADLOCK FIX — Strictly enforce hierarchy: modemMutex → fsMutex
-  char put_buf[256] = {0}; // v5.70: Moved to function scope for Cleanup Race Guard
+  char put_buf[256] = {0}; 
+  bool success = true; // v5.76.5 Protocol Armor Flag
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(20000)) != pdTRUE) {
       debugln("[FTP] Mutex Timeout: modemMutex busy.");
       return;
@@ -17,7 +18,8 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
   const char *response_char;
   const char *csqstr;
   char gprs_xmit_buf[300];
-  int handle_no, fileSize = 0;
+  int handle_no = 0, fileSize = 0; // v5.76: Explicitly initialized
+  bool cid9_bounced = false;       // v5.76: Moved to function scope
   String response1;
 
   flushSerialSIT(); 
@@ -56,11 +58,19 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
     waitForResponse("OK", 2000);
     
     ftp_login_flag = setup_ftp(initial_ftp_mode);
-    if (ftp_login_flag == 0) { // v13.1 Fix: Added missing if block for login retry
-        debugln("[FTP] First Login attempt failed (Network Drop). Retrying once...");
-        verify_bearer_or_recover();
-        vTaskDelay(5000 / portTICK_PERIOD_MS); // Reduced from 12s/15s
-        ftp_login_flag = setup_ftp(1 - initial_ftp_mode);
+    if (ftp_login_flag == 0) {
+        debugln("[FTP] First Login attempt failed. BSNL Shield: Forcing Context Refresh...");
+        
+        // [FTP-05]: BSNL NAT Port Clear - Tightened Delays in v5.76.3
+        SerialSIT.println("AT+CGACT=0,1");
+        waitForResponse("OK", 2000);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        SerialSIT.println("AT+CGACT=1,1");
+        waitForResponse("OK", 8000); // Reduced from 15s
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        
+        // Retry with same mode (Active for BSNL)
+        ftp_login_flag = setup_ftp(initial_ftp_mode);
     }
     
     if (ftp_login_flag == 1) {
@@ -70,15 +80,6 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
       waitForResponse("OK", 10000);
 
       char *modulePath = (fileName[0] == '/') ? &fileName[1] : fileName;
-      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSOPEN=\"C:/%s\",0\r\n", modulePath);
-      SerialSIT.println(gprs_xmit_buf);
-      response = waitForResponse("+FSOPEN", 5000);
-      csqstr = strstr(response.c_str(), "+FSOPEN:");
-      if (csqstr == NULL) {
-        debugln("Error: +FSOPEN not found");
-        goto ftp_cleanup;
-      }
-      sscanf(csqstr, "+FSOPEN: %d,", &handle_no);
 
             File file1;
             if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
@@ -93,37 +94,75 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
                         goto ftp_cleanup;
                     }
                     if (fileSize > 0) {
-                        snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSWRITE=%d,%d,30\r\n", handle_no, fileSize);
-                        debugln("[FTP] Sending FSWRITE command...");
-                        vTaskDelay(200 / portTICK_PERIOD_MS);
+                        debugf("[FTP] FSDEL path: %s\n", modulePath);
+                        snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSDEL=\"C:/%s\"", modulePath);
+                        SerialSIT.println(gprs_xmit_buf); 
+                        waitForResponse("OK", 3000); // Clean up old staging file
+
+                        snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSOPEN=\"C:/%s\",0", modulePath);
+                        debugf("[FTP] FSOPEN cmd: %s\n", gprs_xmit_buf);
                         SerialSIT.println(gprs_xmit_buf);
-                        if (waitForResponse("CONNECT", 5000).indexOf("CONNECT") != -1) {
-                            char file_buf[256];
-                            int bytes_streamed = 0;
-                            while (file1.available()) {
-                                int bytesRead = file1.read((uint8_t*)file_buf, 255);
-                                SerialSIT.write((uint8_t*)file_buf, bytesRead);
-                                bytes_streamed += bytesRead;
-                                if (bytes_streamed % (16 * 1024) == 0) {
-                                    esp_task_wdt_reset();
-                                    last_activity_time = millis();
+                        String fsresp = waitForResponse("+FSOPEN", 5000);
+                        const char *fso = strstr(fsresp.c_str(), "+FSOPEN:");
+                        handle_no = 0;
+                        if (fso != NULL) {
+                            sscanf(fso, "+FSOPEN: %d,", &handle_no);
+                            debugf("[FTP] Found FH: %d\n", handle_no);
+                        }
+
+                        if (handle_no > 0) {
+                            snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSWRITE=%d,%d,30", handle_no, fileSize);
+                            debugln("[FTP] Sending FSWRITE command...");
+                            vTaskDelay(200 / portTICK_PERIOD_MS);
+                            SerialSIT.println(gprs_xmit_buf);
+                            response = waitForResponse("CONNECT", 7000);
+                            bool write_ready = (response.indexOf("CONNECT") != -1 || response.indexOf(">") != -1);
+                            
+                            if (write_ready) {
+                                // Stream data directly
+                                File rf = SPIFFS.open(fileName, FILE_READ);
+                                if (rf) {
+                                    uint8_t buf[256];
+                                    while (rf.available()) {
+                                        size_t len = rf.read(buf, sizeof(buf));
+                                        SerialSIT.write(buf, len);
+                                        vTaskDelay(1); // Allow UART buffer to breathe
+                                    }
+                                    rf.close();
+                                    debugln("[FTP] Data stream finished.");
+                                    waitForResponse("+FSWRITE", 10000);
+                                    
+                                    // MANDATORY: Close handle so FTP stack can read the file
+                                    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSCLOSE=%d", handle_no);
+                                    SerialSIT.println(gprs_xmit_buf);
+                                    waitForResponse("OK", 3000);
+                                    handle_no = 0; // Mark as released
                                 }
+                            } else {
+                                debugln("[FTP] ❌ FSWRITE failed to prompt (CONNECT). Aborting current attempt.");
+                                if (handle_no > 0) {
+                                    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSCLOSE=%d", handle_no);
+                                    SerialSIT.println(gprs_xmit_buf);
+                                    waitForResponse("OK", 2000);
+                                }
+                                success = false; // Force retry
                             }
-                            SerialSIT.println();
-                            waitForResponse("+FSWRITE", 5000);
                         } else {
-                            // v13.7: No CONNECT — modem not ready (CID bounce/busy). Abort.
-                            debugln("[FTP] FSWRITE: No CONNECT response. Modem not ready. Aborting.");
-                            file1.close();
-                            xSemaphoreGive(fsMutex);
-                            goto ftp_cleanup;
+                             // v5.76.7: Treat any other response (timeout/garbage) as failure
+                             debugln("[FTP] ❌ FSOPEN timeout or unrecognized error. Retrying.");
+                             success = false;
                         }
                     }
-                    file1.close();
+
+                    file1.close(); // v5.76.7 Fix: Close SPIFFS handle regardless of staging success
+                    if (success) {
+                        debugln("[FTP] Dispatching PUTFILE command...");
+                        snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSPUTFILE=\"%s\",1", modulePath);
+                    }
                 } else {
-                   debugln("Failed to open local file for FTP.");
-                   xSemaphoreGive(fsMutex);
-                   goto ftp_cleanup;
+                    debugln("Failed to open local file for FTP.");
+                    xSemaphoreGive(fsMutex);
+                    goto ftp_cleanup;
                 }
                 xSemaphoreGive(fsMutex);
             } else {
@@ -131,14 +170,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
                 goto ftp_cleanup;
             }
 
-        snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSCLOSE=%d", handle_no);
-        SerialSIT.println(gprs_xmit_buf);
-        waitForResponse("OK", 5000);
-
-        int ftp_put_retries = 0;
-        bool upload_success = false;
-        bool cid9_bounced = false; // Track if CID 9 bounced during login/DNS phase
-        snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSPUTFILE=\"%s\",1", modulePath); // v13.9: Reverted to binary mode (,1) baseline
+        // v5.76: Buffer isolated below in the retry loop.
 
         // v13.6: Detect CID 9 bounce — modem FTP stack corrupted. Restart before PUTFILE.
         // Drain UART for any pending URCs from the setup/login phase
@@ -149,9 +181,9 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
             while (SerialSIT.available() && pi < 63) { probe[pi++] = (char)SerialSIT.read(); probe[pi] = '\0'; }
             vTaskDelay(50 / portTICK_PERIOD_MS);
           }
-          // v13.7: Broaden CID probe — CID 8 also disrupts FTP stack (observed in field logs)
-          if (strstr(probe, "+CGEV: ME PDN DEACT")) {
-            debugln("[FTP] PDN DEACT detected after login. Restarting FTP stack...");
+          // v13.7: Broaden CID probe — CID 8 or DEACT also disrupts FTP stack
+          if (strstr(probe, "+CGEV: ME PDN DEACT") || strstr(probe, "+CGEV: ME PDN ACT 8") || strstr(probe, "+CGEV: NW PDN DEACT")) {
+            debugln("[FTP] PDN Event (DEACT/ACT8) detected after login. Restarting FTP stack...");
             cid9_bounced = true;
             SerialSIT.println("AT+CFTPSLOGOUT");
             waitForResponse("+CFTPSLOGOUT: 0", 2000);
@@ -174,7 +206,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
                     SerialSIT.println(gprs_xmit_buf);
                     if (waitForResponse("CONNECT", 5000).indexOf("CONNECT") != -1) {
                       char rb[256]; while (rrf.available()) { int n = rrf.read((uint8_t*)rb,255); SerialSIT.write((uint8_t*)rb,n); }
-                      SerialSIT.println(); waitForResponse("+FSWRITE", 5000);
+                      waitForResponse("+FSWRITE", 5000);
                     }
                   }
                   if (rrf) rrf.close();
@@ -188,11 +220,21 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
           }
         }
 
+        int ftp_put_retries = 0;
+        bool upload_success = false;
+        // v5.76: cid9_bounced moved to function top
+        
+        // v5.76.3: Refined recovery and breather
+        if (cid9_bounced) vTaskDelay(3000 / portTICK_PERIOD_MS); 
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        
         while (ftp_put_retries <= 1) {
           esp_task_wdt_reset();
           if (!verify_bearer_or_recover()) break;
 
           debugln("[FTP] Dispatching PUTFILE command...");
+          // v5.76.7 Elite: Naming compatibility with v3.0 scripts (now .txt by construction)
+          snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSPUTFILE=\"%s\",1", modulePath);
           SerialSIT.println(gprs_xmit_buf);
           memset(put_buf, 0, sizeof(put_buf));
           int put_idx = 0;
@@ -219,17 +261,28 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
             break;
           } else {
             // v13.6: Only retry if CID 9 didn't already bounce (we already did one restart above)
+            // v5.75: HYBRID SMART FTP RETRY
+            // If the chosen mode crashes or rejects, flip the mode dynamically (Active -> Passive, or Passive -> Active).
             if (ftp_put_retries < 1 && !cid9_bounced) {
-              debugln("[FTP] PUT failed. Re-staging and retrying once (same mode)...");
+              // v5.75: BSNL NAT Shield — Force PASSIVE mode on retry if BSNL detected (CGNAT Safe)
+              int retry_mode = (strstr(carrier, "BSNL")) ? 1 : (1 - initial_ftp_mode);
+              debugf2("[FTP] PUT failed. Re-staging and retrying in mode (%d)...\n", retry_mode);
               verify_bearer_or_recover();
               SerialSIT.println("AT+CFTPSLOGOUT");
               waitForResponse("+CFTPSLOGOUT: 0", 3000);
-              if (setup_ftp(initial_ftp_mode) != 1) { break; }
+              if (setup_ftp(retry_mode) != 1) { break; }
+              
+              // Give the modem filesystem an extra breath to mount if it just rebooted
+              vTaskDelay(2000 / portTICK_PERIOD_MS); 
+              
               SerialSIT.println("AT+FSCD=C:/");
               waitForResponse("OK", 3000);
               snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSDEL=\"C:/%s\"", modulePath);
+              debugln(gprs_xmit_buf); // Log it for visibility
               SerialSIT.println(gprs_xmit_buf); waitForResponse("OK", 2000);
+              
               snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSOPEN=\"C:/%s\",0\r\n", modulePath);
+              debugln(gprs_xmit_buf); // Log it for visibility
               SerialSIT.println(gprs_xmit_buf);
               String fsresp = waitForResponse("+FSOPEN", 5000);
               const char *fso = strstr(fsresp.c_str(), "+FSOPEN:");
@@ -238,19 +291,54 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
               if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
                 File rf = SPIFFS.open(fileName, FILE_READ);
                 if (rf && rf.size() > 0) {
-                  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSWRITE=%d,%d,30\r\n", new_handle, (int)rf.size());
+                  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSWRITE=%d,%d,30", new_handle, (int)rf.size());
+                  debugf("[FTP] Retry FSWRITE cmd: %s\n", gprs_xmit_buf);
                   SerialSIT.println(gprs_xmit_buf);
-                  if (waitForResponse("CONNECT", 5000).indexOf("CONNECT") != -1) {
-                    char rb[256]; while (rf.available()) { int n = rf.read((uint8_t*)rb,255); SerialSIT.write((uint8_t*)rb,n); }
-                    SerialSIT.println(); waitForResponse("+FSWRITE", 5000);
+                  response = waitForResponse("CONNECT", 7000);
+                  if (response.indexOf("PB DONE") != -1) {
+                      debugln("[FTP] 🚨 Reboot detected in retry. Aborting.");
+                      goto ftp_cleanup;
+                  }
+                  bool retry_write_ready = (response.indexOf("CONNECT") != -1 || response.indexOf(">") != -1);
+                  if (retry_write_ready) {
+                    char rb[256]; 
+                    while (rf.available()) { 
+                      size_t l = rf.read((uint8_t*)rb, sizeof(rb)); 
+                      SerialSIT.write((uint8_t*)rb, l); 
+                      vTaskDelay(1);
+                    } 
+                    rf.close(); 
+                    debugln("[FTP] Retry stream complete.");
+                    // v5.76.7: Wait for modem to commit flash before closing handle
+                    waitForResponse("+FSWRITE", 10000); 
+                    
+                    // MANDATORY: Close handle before PUTFILE
+                    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSCLOSE=%d", new_handle);
+                    SerialSIT.println(gprs_xmit_buf);
+                    waitForResponse("OK", 3000);
+                    new_handle = 0;
+
+                    // Final ATOMIC PUTFILE (Only if write succeeded)
+                    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSPUTFILE=\"%s\",1", modulePath);
+                    SerialSIT.println(gprs_xmit_buf);
+                    response = waitForResponse("+CFTPSPUTFILE:", 60000);
+                    debugf("[FTP] Retry CFTPSPUTFILE response: %s\n", response.c_str());
+                    if (response.indexOf("+CFTPSPUTFILE: 0") != -1) upload_success = true;
+                    // v5.76.6: Final retry attempt concluded. Terminate loop regardless of result.
+                    ftp_put_retries = 2; 
+                  } else {
+                    debugln("[FTP] ❌ Retry FSWRITE failed. Aborting.");
+                    rf.close();
                   }
                 }
-                if (rf) rf.close();
                 xSemaphoreGive(fsMutex);
               }
-              snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSCLOSE=%d", new_handle);
-              SerialSIT.println(gprs_xmit_buf); waitForResponse("OK", 3000);
-              snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSPUTFILE=\"%s\",1", modulePath);
+              if (new_handle > 0) {
+                 snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSCLOSE=%d", new_handle);
+                 SerialSIT.println(gprs_xmit_buf); waitForResponse("OK", 3000);
+              }
+               // v5.75 Retry: Standard numeric ID 1 for C:/
+               snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSPUTFILE=\"%s\",1", modulePath);
             } else {
               debugln("[FTP] PUT failed after all attempts. Giving up to save battery.");
               break; // Don't waste more time — sleep and retry next cycle
@@ -275,6 +363,14 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
           if (isDailyFTP) {
             String toDelete[16];
             int delCount = 0;
+            char today_str[16], yest_str[16];
+            int y_day = 0, y_mon = 0, y_yr = 0;
+            diag_rejected_count = 0; // Reset on success
+
+            // v5.75: FTP Breather — Allow modem stack to clear HTTP context before FTP starts
+            // Prevents the 'ERROR' response during rapid data-flow transitions.
+            // Pass 1: collect candidates (Wrapped in Mutex to prevent rtcRead race)
+            if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
             // Pass 1: collect candidates
             // Bug B fix: use ftp_station dynamically instead of hardcoded "1941_2"
             char stn_prefix[24];
@@ -293,9 +389,8 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
               scanDir.close();
             }
             // Bug A fix: proper days-per-month table — no more hardcoded y_day=31
-            char today_str[16], yest_str[16];
             snprintf(today_str, sizeof(today_str), "%04d%02d%02d", rf_cls_yy, rf_cls_mm, rf_cls_dd);
-            int y_day = rf_cls_dd - 1, y_mon = rf_cls_mm, y_yr = rf_cls_yy;
+            y_day = rf_cls_dd - 1; y_mon = rf_cls_mm; y_yr = rf_cls_yy;
             if (y_day < 1) {
               y_mon--;
               if (y_mon < 1) { y_mon = 12; y_yr--; }
@@ -304,13 +399,18 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
               bool leap = (y_yr % 4 == 0 && (y_yr % 100 != 0 || y_yr % 400 == 0));
               y_day = (y_mon == 2 && leap) ? 29 : dim[y_mon];
             }
+        xSemaphoreGive(fsMutex);
+    }
             snprintf(yest_str, sizeof(yest_str), "%04d%02d%02d", y_yr, y_mon, y_day);
             // Pass 2: delete files not matching today or yesterday
-            for (int i = 0; i < delCount; i++) {
-              if (toDelete[i].indexOf(today_str) < 0 && toDelete[i].indexOf(yest_str) < 0) {
-                SPIFFS.remove(toDelete[i]);
-                debug("[SPIFFS] Old file purged: "); debugln(toDelete[i]);
+            if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+              for (int i = 0; i < delCount; i++) {
+                if (toDelete[i].indexOf(today_str) < 0 && toDelete[i].indexOf(yest_str) < 0) {
+                  SPIFFS.remove(toDelete[i]);
+                  debug("[SPIFFS] Old file purged: "); debugln(toDelete[i]);
+                }
               }
+              xSemaphoreGive(fsMutex);
             }
           }
 
@@ -327,14 +427,20 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
             }
             rootDir.close();
           }
-          for (int i = 0; i < kwdCount; i++) SPIFFS.remove(kwdFiles[i]);
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+            for (int i = 0; i < kwdCount; i++) SPIFFS.remove(kwdFiles[i]);
+            xSemaphoreGive(fsMutex);
+          }
 
           snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSDEL=\"C:/%s\"", modulePath);
           SerialSIT.println(gprs_xmit_buf);
           waitForResponse("OK", 5000);
         } else {
           strcpy(last_cmd_res, "Fail: FTP PUT Error");
-          if (SPIFFS.exists("/ftpremain.txt")) SPIFFS.remove("/ftpremain.txt");
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+            if (SPIFFS.exists("/ftpremain.txt")) SPIFFS.remove("/ftpremain.txt");
+            xSemaphoreGive(fsMutex);
+          }
         }
       } 
     }
@@ -460,13 +566,13 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
   const char *ftpPassword;
   int portName, rssiIndex, result;
 
-  if (strstr(UNIT, "BIHAR")) {
+  if (strstr(UNIT, "BIHAR") || strstr(NETWORK, "BIHAR")) {
     if (send_daily == 1) {
       ftpServer = "ftphbih.spatika.net"; ftpUser = "trg_desbih_csvdt"; ftpPassword = FTP_PASS_BIH_D; portName = 21; send_daily = 0;
     } else {
       ftpServer = "89.32.144.163"; ftpUser = "dota_bih"; ftpPassword = FTP_PASS_BIH_GEN; portName = 21;
     }
-  } else if (strstr(UNIT, "KSNDMC")) {
+  } else if (strstr(UNIT, "KSNDMC") || strstr(UNIT, "DMC") || strstr(NETWORK, "KSNDMC")) {
     if (send_daily == 1) {
       ftpServer = "ftp1.ksndmc.net"; ftpUser = "trg_spatika_v2@ksndmc.net"; ftpPassword = FTP_PASS_KS_TRG; portName = 21; send_daily = 0;
     } else if (send_daily == 2) {
@@ -478,9 +584,10 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
 #endif
       send_daily = 0;
     } else {
+      // v5.38 Golden Path: Standard non-daily Karnataka data always uses Dota DMC
       ftpServer = "89.32.144.163"; ftpUser = "dota_dmc"; ftpPassword = "airdata2016"; portName = 21;
     }
-  } else if (strstr(UNIT, "SPATIKA")) {
+  } else if (strstr(UNIT, "SPATIKA") || strstr(NETWORK, "SPATIKA")) {
 #if SYSTEM == 0
     ftpServer = "ftp.spatika.net"; ftpUser = "trg_gen"; ftpPassword = "spgen123"; portName = 21;
 #endif
@@ -500,63 +607,74 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
   debugln(waitForResponse("OK", 5000));
 
   SerialSIT.println("AT+CFTPSSTART");
-  response = waitForResponse("+CFTPSSTART: 0", 20000);
+  response = waitForResponse("+CFTPSSTART: 0", 20000); // v7.70: Increased to 20s for BSNL stability (H-03)
   debugln(response);
 
+  // v5.38 Harmonization: Explicitly Configure FTP Client Context
+  // Ensure plain FTP (No SSL/TLS) and bind strictly to GPRS Context 1
+  // v5.75 FIX: These MUST be sent AFTER Start response for A7672S stack stability (M-01)
+  SerialSIT.println("AT+CFTPSCFG=\"security\",0");
+  waitForResponse("OK", 2000);
+  SerialSIT.println("AT+CFTPSCFG=\"bindcid\",1");
+  waitForResponse("OK", 2000);
+
   SerialSIT.println("AT+CFTPSSINGLEIP=1"); // Data channel binding — confirmed working in v13.9
-  debugln(waitForResponse("OK", 5000));
-
-  if (transMode == 1) {
-    debugln("[FTP] Using Passive Mode (transmode=1)");
-    SerialSIT.println("AT+CFTPSCFG=\"transmode\",1");
-  } else {
-    debugln("[FTP] Using Active Mode (transmode=0)");
-    SerialSIT.println("AT+CFTPSCFG=\"transmode\",0");
+  
+  // v5.75 BSNL Active Mode Hardening (Moved to post-start)
+  debugf("[FTP] Configuring mode (%d)...\n", transMode);
+  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSCFG=\"transmode\",%d", transMode);
+  SerialSIT.println(gprs_xmit_buf);
+  if (waitForResponse("OK", 3000).indexOf("OK") == -1) {
+      debugln("[FTP] Lowercase transmode failed. Trying UPPERCASE...");
+      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSCFG=\"TRANSMODE\",%d", transMode);
+      SerialSIT.println(gprs_xmit_buf);
+      waitForResponse("OK", 3000);
   }
-  debugln(waitForResponse("OK", 3000));
-
+  SerialSIT.println("AT+CFTPSCFG=\"type\",I");
+  waitForResponse("OK", 3000);
   SerialSIT.println("AT+CMEE=1");
   debugln(waitForResponse("OK", 2000));
 
 
+  // v5.76.6: DNS Resilience - Fresh retry per call. 
+  bool dns_failed_this_session = false; 
+  char targetAddress[64];
+  strcpy(targetAddress, ftpServer); // Default to the domain string
 
-  // DNS Warm-up: Force resolution of FTP server before login (Fixes Error 13)
-  debugln("[FTP] Warming up DNS...");
-  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CDNSGIP=\"%s\"", ftpServer);
-  SerialSIT.println(gprs_xmit_buf);
-  response = waitForResponse("+CDNSGIP:", 25000); // v13.9: 25s DNS wait
-  debugln(response);
-
-  if (response.indexOf("+CDNSGIP: 1") == -1) {
-    debugln("[FTP] DNS failed. Checking Insurance IP fallback...");
-    const char* fallbackIP = NULL;
-    if (strstr(ftpServer, "ksndmc.net")) fallbackIP = "117.216.42.181";
-    else if (strstr(ftpServer, "spatika.net")) {
-      if (strstr(ftpServer, "ftphbih")) fallbackIP = "185.250.105.225";
-      else fallbackIP = "144.91.104.105";
-    }
-
-    if (fallbackIP != NULL) {
-      debugln("[FTP] Using Insurance IP fallback: " + String(fallbackIP));
-      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-               "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",0",
-               fallbackIP, portName, ftpUser, ftpPassword);
-    } else {
-      debugln("[FTP] No fallback IP known. Retrying DNS once...");
-      vTaskDelay(3000 / portTICK_PERIOD_MS);
-      SerialSIT.println(gprs_xmit_buf); // original domain command
-      response = waitForResponse("+CDNSGIP:", 20000);
-      debugln(response);
-    }
+  if (dns_failed_this_session) {
+      debugln("[FTP] Using Insurance IP (DNS Skip)...");
+      if (strstr(ftpServer, "spatika.net")) strcpy(targetAddress, "144.91.104.105");
+      else if (strstr(ftpServer, "ksndmc.net")) strcpy(targetAddress, "117.216.42.181");
+  } else {
+      debugln("[FTP] Warming up DNS...");
+      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CDNSGIP=\"%s\"", ftpServer);
+      SerialSIT.println(gprs_xmit_buf);
+      // v5.76.3: Reduced timeout to 12s for faster transition
+      response = waitForResponse("+CDNSGIP:", 12000); 
+      if (response.indexOf("+CDNSGIP: 1") != -1) {
+          int first_q = response.indexOf("\",\"");
+          int second_q = response.indexOf("\"", first_q + 3);
+          if (first_q != -1 && second_q != -1) {
+              String resolved = response.substring(first_q + 3, second_q);
+              if (resolved.length() > 6) {
+                  strcpy(targetAddress, resolved.c_str());
+                  debugf("[FTP] DNS Resolved: %s\n", targetAddress);
+              }
+          }
+      } else {
+          debugln("[FTP] DNS Failed. Switching to Insurance IP.");
+          dns_failed_this_session = true; // Cache the failure
+          if (strstr(ftpServer, "spatika.net")) strcpy(targetAddress, "144.91.104.105");
+          else if (strstr(ftpServer, "ksndmc.net")) strcpy(targetAddress, "117.216.42.181");
+      }
   }
 
-  vTaskDelay(2000 / portTICK_PERIOD_MS); // Pre-login settling delay
+  // Pre-login settling delay
+  vTaskDelay(1000 / portTICK_PERIOD_MS); 
 
-  if (response.indexOf("+CDNSGIP: 1") != -1) {
-    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-             "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",0", ftpServer, portName,
-             ftpUser, ftpPassword);
-  }
+  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
+           "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",0",
+           targetAddress, portName, ftpUser, ftpPassword); // v7.70: Use resolved IP to skip BSNL DNS (H-02)
 
   SerialSIT.println(gprs_xmit_buf);
   response = waitForResponse("+CFTPSLOGIN:", 60000);
@@ -1035,15 +1153,35 @@ void copyFromSPIFFSToFS(char *dateFile) {
     return;
   }
   String response;
-  char SPIFFSFile[50], fileName[50];
-  char stnId[16];
+  char SPIFFSFile[50], fileName[100];
+  char stnId[32];
+  
   if (strlen(station_name) == 4 && isDigitStr(station_name)) {
     snprintf(stnId, sizeof(stnId), "00%s", station_name);
   } else {
     strcpy(stnId, station_name);
   }
-  snprintf(SPIFFSFile, sizeof(SPIFFSFile), "/%s_%s.txt", station_name, dateFile);
-  snprintf(fileName, sizeof(fileName), "%s_%s.txt", stnId, dateFile);
+
+  const char *prefix = "UN_";
+#if SYSTEM == 0
+  prefix = "TRG_";
+#elif SYSTEM == 1
+  prefix = "TWS_";
+#elif SYSTEM == 2
+  prefix = "TWSRF_";
+#endif
+
+  const char *extension = ".txt";
+  if (strstr(UNIT, "SPATIKA")) {
+    extension = ".swd";
+  } else if (strstr(UNIT, "KSNDMC") || strstr(UNIT, "DMC")) {
+    extension = ".kwd";
+  }
+
+  snprintf(SPIFFSFile, sizeof(SPIFFSFile), "/%s_%s.txt", station_name,
+           dateFile);
+  snprintf(fileName, sizeof(fileName), "%s%s_%s%s", prefix, stnId, dateFile,
+           extension);
   debugln("SPIFFS Card FileName is ");
   debugln(SPIFFSFile);
   debugln("FileName is ");

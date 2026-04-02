@@ -19,7 +19,7 @@ void get_signal_strength() {
   int invalid_signal_count = 0;
   // rssi 0 = -113dBm. Continuous -113 is essentially no signal.
   while ((signal_lvl == -111) &&
-         (retries < 60)) { // v5.85: Restored v5.67 patience
+         (retries < 60)) { // v5.85: Restored v5.67 patience (H-05 Restore)
     esp_task_wdt_reset();
     last_activity_time = millis(); // v5.85: Pet the safety heartbeat during long signal search
     SerialSIT.println("AT+CSQ");
@@ -48,7 +48,7 @@ void get_signal_strength() {
       invalid_signal_count++;
       // v5.85 Hardened: Signal Dead-Zone Fast-Fail. 
       // Matched to v5.67 EXACT: 60 iterations (~60-90s) for deep-scan tolerance.
-      if (invalid_signal_count >= 60) {
+      if (invalid_signal_count >= 60) { // v5.85: Restored v5.67 patience (H-05 Restore)
         debugln("[GPRS] Dead signal zone detected. Skipping long-poll wait.");
         signal_lvl = signal_strength; // Use the last-seen -113/85
         break;
@@ -242,7 +242,7 @@ void get_registration() {
   // - BSNL: 2G/3G only. Uses CREG + CGREG (no LTE). 24 retries max.
   // - Hard cap: 24 retries total (~2.5 min max). No more 50-cycle waste.
   bool isBSNL = (strstr(carrier, "BSNL") != nullptr);
-  int no_of_retries = 24; // M-NEW-4: Standardized at 24 (v5.67 level) for higher data success rates
+  int no_of_retries = 20; // v5.75: BSNL-Hardened cap (C-01 adjusted to 20) to stay in window
   int initial_cnmp = last_successful_cnmp; // v5.85: Elevated to function scope
   registration = 0;
   retries = 0;
@@ -534,7 +534,7 @@ void get_registration() {
             SerialSIT.println("AT+CGATT=1");
             waitForResponse("OK", 3000);
         }
-      } else if (retries == 23) {
+      } else if (retries == 19) { // v5.75: Tier 4 shifted for 20-retry cap (C-01 adjusted)
         // Tier 4 @ iter 23 (Final Attempt): Restore Auto-Mode + COPS auto
         debugln("[GPRS] Tier4 @ iter23: Restoring Auto-Mode (CNMP=2, COPS=0) for final retry...");
         SerialSIT.println("AT+CNMP=2"); // Auto (LTE+GSM)
