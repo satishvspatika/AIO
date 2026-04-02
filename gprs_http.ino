@@ -665,6 +665,7 @@ void prepare_data_and_send() {
             sampleNo) { // v5.72 Hardened: Dedup guard for TRG fallback write
           if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
             snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
+            pruneFile(unsent_file, (300 * record_length), true); // v5.75: H-R2-01 Fix — cap at 300 records (alreadyLocked=true)
             File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
             if (file2) {
               file2.print(
@@ -1377,7 +1378,8 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
   debugf5("[FTP-Gate] unsent=%d cur_time=%02d:%02d sched=%s cleanup=%s\n",
           unsent_cnt, snap_hr, snap_mi, scheduled_slot ? "YES" : "NO",
           morning_cleanup ? "YES" : "NO");
-  bool should_push = (unsent_cnt > 2); // v5.75: Testing: Trigger FTP if records > 2
+  bool should_push =
+      (unsent_cnt > 2); // v5.75: Testing: Trigger FTP if records > 2
 
   if (signal_lvl > -95 && (should_push || force_ftp) &&
       SPIFFS.exists(ftpunsent_file)) {
@@ -1481,7 +1483,9 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
               // v5.76.7: Zero-allocation length check (replaces line.trim())
               if (len > 15) {
                 // v5.75 FIX: [C-04] readBytesUntil trailing \r strip
-                if (len > 0 && lineBuf[len - 1] == '\r') { lineBuf[--len] = '\0'; }
+                if (len > 0 && lineBuf[len - 1] == '\r') {
+                  lineBuf[--len] = '\0';
+                }
 
                 if (linesRead < FTP_CHUNK_SIZE) {
                   chunk.write((uint8_t *)lineBuf, len);
@@ -2020,7 +2024,7 @@ void store_current_unsent_data() {
       if (file2) {
         if (cleanData.length() > 0) {
           file2.print(cleanData); // v5.75: Explicitly print (Fixed H-06)
-          file2.print("\r\n"); 
+          file2.print("\r\n");
           if (diag_backlog_total < 999999)
             diag_backlog_total++; // v5.65 P3: Increment total backlog counter
                                   // for health report
