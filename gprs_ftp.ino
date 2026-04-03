@@ -19,6 +19,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
   const char *csqstr;
   char gprs_xmit_buf[300];
   int handle_no = 0, fileSize = 0; // v5.76: Explicitly initialized
+  int new_handle = 0; // v5.76.6 Elevated scope for cleanup safety (M-04 fix)
   bool cid9_bounced = false;       // v5.76: Moved to function scope
   String response1;
 
@@ -287,7 +288,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
               String fsresp = waitForResponse("+FSOPEN", 5000);
               const char *fso = strstr(fsresp.c_str(), "+FSOPEN:");
               if (fso == NULL) { debugln("[FTP] Re-stage: FSOPEN failed. Giving up."); break; }
-              int new_handle = 0; sscanf(fso, "+FSOPEN: %d,", &new_handle);
+              sscanf(fso, "+FSOPEN: %d,", &new_handle);
               if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
                 File rf = SPIFFS.open(fileName, FILE_READ);
                 if (rf && rf.size() > 0) {
@@ -459,6 +460,13 @@ ftp_cleanup:
     waitForResponse("OK", 3000);
   }
   
+  // v5.76.6 Fix M-04: Prevent handle leakage if goto ftp_cleanup was called during re-stage
+  if (new_handle > 0) {
+      char cl_cmd[32];
+      snprintf(cl_cmd, sizeof(cl_cmd), "AT+FSCLOSE=%d", new_handle);
+      SerialSIT.println(cl_cmd);
+      waitForResponse("OK", 2000);
+  }
   if (weLockedFS) xSemaphoreGive(fsMutex);
   xSemaphoreGive(modemMutex);
 }

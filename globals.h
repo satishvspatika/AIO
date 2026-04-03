@@ -348,7 +348,7 @@ extern int
 extern char ftp_station[16];
 extern size_t len;
 extern char last_logged[16];
-extern char http_data[350];
+extern char http_data[512]; // v5.76: Fixed from 350 to 512 to prevent overflows on TWS-RF JSON payloads
 extern char sample_cum_rf[10], sample_inst_rf[10], sample_temp[10],
     sample_hum[10], sample_avgWS[10], sample_WD[10], sample_bat[10],
     ftpsample_avgWS[10], ftpsample_cum_rf[10];
@@ -525,7 +525,7 @@ extern float avg_cumRF, new_current_cumRF, new_current_instRF;
 extern int prev_wind_count;
 extern volatile float temperature, humidity, windSpCount, cur_wind_speed,
     pressure;
-extern float cur_avg_wind_speed;
+extern RTC_DATA_ATTR float cur_avg_wind_speed;
 extern volatile int windDir; // written by windDirection task, read by scheduler
 extern float sea_level_pressure;
 extern char inst_hum[10], avg_wind_speed[10], inst_wd[10];

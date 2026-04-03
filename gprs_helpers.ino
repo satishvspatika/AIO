@@ -21,6 +21,7 @@ void save_apn_config(String apn, String ccid) {
   }
 }
 
+// v5.76 H-01 Deadlock Warning: Caller MUST NOT hold fsMutex when calling this.
 bool load_apn_config(String current_ccid, char *target_apn, size_t max_len) {
   if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) != pdTRUE) { // v5.72: Increased for heavy daily logs
     debugln("APN Load Failed: fsMutex Locked");
@@ -241,6 +242,7 @@ bool try_activate_apn(const char *apn) {
   return false;
 }
 
+// PRECONDITION: fsMutex must NOT be held by caller (load_apn_config takes it internally)
 bool verify_bearer_or_recover() {
   bearer_recovery_active = true; // Block UI/I2C tasks from interrupting
   flushSerialSIT();
@@ -366,7 +368,7 @@ bearer_recovery: // Label used for ghost-session fallthrough
   // 4. Fallback: Query CCID and load stored APN from SPIFFS.
   debugln("AG Recovery: Runtime APN failed. Querying CCID...");
   String ccid = get_ccid();
-  char stored_apn[20] = {0};
+  char stored_apn[32] = {0};
   if (load_apn_config(ccid, stored_apn, sizeof(stored_apn))) {
     debugf("AG Recovery: Trying stored APN -> %s\n", stored_apn);
     if (try_activate_apn(stored_apn)) {
@@ -523,7 +525,9 @@ void sync_rtc_from_http_header(const String& head) {
         portEXIT_CRITICAL(&rtcTimeMux);
       }
       
+      portENTER_CRITICAL(&rtcTimeMux);
       rtc_daily_sync_done = true;
+      portEXIT_CRITICAL(&rtcTimeMux);
       debugf("[RTC-Sync] ✅ RTC Corrected to IST: %04d-%02d-%02d %02d:%02d:%02d\n", s_yy, s_mm, s_dd, s_hh, s_mi, s_ss);
     }
   } else {
@@ -537,16 +541,28 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
 
   // Reset daily sync flag at midnight each new day
   static int last_sync_day = -1;
-  if (current_day != last_sync_day) {
+  // v5.76 M-01 Hardening: Atomic day-change check to prevent midnight rollover race
+  int snap_day;
+  portENTER_CRITICAL(&rtcTimeMux);
+  snap_day = current_day;
+  portEXIT_CRITICAL(&rtcTimeMux);
+  
+  if (snap_day != last_sync_day) {
+    portENTER_CRITICAL(&rtcTimeMux);
     rtc_daily_sync_done = false;
-    last_sync_day =
-        current_day; // M1 FIX: was never updated — reset fired every wake cycle
+    portEXIT_CRITICAL(&rtcTimeMux);
+    last_sync_day = snap_day;
   }
 
   // v7.87: Correct at midnight or first successful check-in of each day.
   // force=true for Rejection path (always syncs).
   // force=false for Success path (syncs only once per day).
-  if (!force && rtc_daily_sync_done)
+  bool sync_already_done;
+  portENTER_CRITICAL(&rtcTimeMux);
+  sync_already_done = rtc_daily_sync_done;
+  portEXIT_CRITICAL(&rtcTimeMux);
+  
+  if (!force && sync_already_done)
     return;
 
   // Find "tm":"YYMMDDHHMMSS" in payload
@@ -630,8 +646,8 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
   // If Server=23:59:50 and RTC=00:00:10, drift is technically 20s, not 86380s.
   int drift = (raw_drift > 43200) ? (86400 - raw_drift) : raw_drift;
 
-  // Threshold: force path=45s, daily path=90s
-  int threshold = force ? 45 : 90;
+  // Threshold: force path=45s, daily path=75s
+  int threshold = force ? 45 : 75;
   debugf("[RTC-Sync] Drift = %ds (threshold %ds, force=%d)\n", drift, threshold,
          (int)force);
 
@@ -639,8 +655,11 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
     // Extra safety: only skip if it's literally just a few seconds off.
     // If we wrapped days, we probably want to sync anyway just to lock dates.
     debugln("[RTC-Sync] Drift within tolerance. No correction needed.");
-    if (!force)
+    if (!force) {
+      portENTER_CRITICAL(&rtcTimeMux);
       rtc_daily_sync_done = true; // Mark as done even if no correction
+      portEXIT_CRITICAL(&rtcTimeMux);
+    }
     last_sync_day = current_day;
     return;
   }
@@ -671,7 +690,9 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
   portEXIT_CRITICAL(&rtcTimeMux);
 
   // v5.75 FIX: [C-02] Correct Anchor Sequencing
+  portENTER_CRITICAL(&rtcTimeMux);
   rtc_daily_sync_done = true;
+  portEXIT_CRITICAL(&rtcTimeMux);
   last_sync_day = current_day;
 
   debugln("[RTC-Sync] ✅ RTC corrected from server time (IST).");

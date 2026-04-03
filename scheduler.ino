@@ -172,7 +172,9 @@ void scheduler(void *pvParameters) {
         timeSyncRequired == false &&
         (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false)) {
 
+      portENTER_CRITICAL(&syncMux);
       schedulerBusy = true; // v5.65: Lock system awake during 15-min processing
+      portEXIT_CRITICAL(&syncMux);
       // last_processed_sample_idx = current_sample_idx; // v5.66: Moved to END
       // of successful processing to allow retries on failure
       skip_primary_http = false; // Reset on new slot processing start
@@ -680,8 +682,13 @@ void scheduler(void *pvParameters) {
 
       snprintf(inst_temp, sizeof(inst_temp), "%05.1f", check_temp);
       snprintf(inst_hum, sizeof(inst_hum), "%05.1f", hum_output);
+#if SYSTEM == 1 || SYSTEM == 2
+      snprintf(avg_wind_speed, sizeof(avg_wind_speed), "%05.2f",
+               cur_avg_wind_speed);
+#else
       snprintf(avg_wind_speed, sizeof(avg_wind_speed), "%04.1f",
                cur_avg_wind_speed);
+#endif
       snprintf(inst_wd, sizeof(inst_wd), "%03d", windDir);
 
       debugln();
@@ -841,7 +848,10 @@ void scheduler(void *pvParameters) {
         debugln("[SCHED] 🗓 Day Change Detected. Performing Rollover...");
         bool isFirstRollover = (diag_last_rollover_day <= 0);
         diag_last_rollover_day = rf_cls_dd;
-        rtc_daily_sync_done = false; // v5.75: H-04 Decoupled (Fires unconditionally every day transition)
+        
+        portENTER_CRITICAL(&rtcTimeMux);
+        rtc_daily_sync_done = false; // v5.76: Fix C-04 Torn Read (Decoupled sync gate)
+        portEXIT_CRITICAL(&rtcTimeMux);
 
         if (isFirstRollover) {
           debugln(
@@ -995,7 +1005,9 @@ void scheduler(void *pvParameters) {
                  cur_file);
           vTaskDelay(5000 /
                      portTICK_PERIOD_MS); // v5.66: Wait longer if contention
+          portENTER_CRITICAL(&syncMux);
           schedulerBusy = false;
+          portEXIT_CRITICAL(&syncMux);
           continue;
         }
 
@@ -1292,8 +1304,8 @@ void scheduler(void *pvParameters) {
 
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
           debugln("[SCHED] Error: SPIFFS Mutex Timeout. Deferring record.");
-          data_writing_initiated = 0; // v5.66: Prevent garbage data upload
           portENTER_CRITICAL(&syncMux);
+          data_writing_initiated = 0; // v5.66: Prevent garbage data upload
           sync_mode = eHttpStop; // v5.66: Abort HTTP queueing
           portEXIT_CRITICAL(&syncMux);
           goto TRIGGER_HTTP;
@@ -1306,13 +1318,13 @@ void scheduler(void *pvParameters) {
           debugln("[PWR] CRITICAL: Battery too low for flash write. Aborting "
                   "to prevent brownout/corruption.");
           signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
+          portENTER_CRITICAL(&syncMux);
           data_writing_initiated = 0;
           schedulerBusy = false;
-          xSemaphoreGive(fsMutex);
-          fs_locked = false;
-          portENTER_CRITICAL(&syncMux);
           sync_mode = eHttpStop;
           portEXIT_CRITICAL(&syncMux);
+          xSemaphoreGive(fsMutex);
+          fs_locked = false;
           goto TRIGGER_HTTP;
         }
 
@@ -1357,13 +1369,13 @@ void scheduler(void *pvParameters) {
             debugln("[SPIFFS] FATAL: Could not locate old logs. System files "
                     "dominating storage. Aborting write.");
             signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
+            portENTER_CRITICAL(&syncMux);
             data_writing_initiated = 0;
             schedulerBusy = false;
-            xSemaphoreGive(fsMutex); // Orphaned Give C-01 (Path A)
-            fs_locked = false;
-            portENTER_CRITICAL(&syncMux);
             sync_mode = eHttpStop;
             portEXIT_CRITICAL(&syncMux);
+            xSemaphoreGive(fsMutex); // Orphaned Give C-01 (Path A)
+            fs_locked = false;
             goto TRIGGER_HTTP;
           }
           prune_attempts++;
@@ -1434,13 +1446,13 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 1
               snprintf(
                   append_text, sizeof(append_text),
-                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n",
+                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
                   q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_strength,
                   bat_val);
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
-                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_strength,
                   bat_val);
@@ -1457,7 +1469,7 @@ void scheduler(void *pvParameters) {
                        signal_strength, bat_val);
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
-                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                   signal_strength, bat_val);
@@ -1579,8 +1591,13 @@ void scheduler(void *pvParameters) {
                 if (fill_AvgWS > 1.93)
                   fill_AvgWS = 1.93;
               }
+#if SYSTEM == 1 || SYSTEM == 2
               snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
                        "%05.2f", fill_AvgWS);
+#else
+              snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
+                       "%04.1f", fill_AvgWS);
+#endif
 
 #if (SYSTEM == 0 || SYSTEM == 2)
               // Gap Interpolation for Rainfall (Bresenham Distribution)
@@ -1636,7 +1653,7 @@ void scheduler(void *pvParameters) {
               // TWS: Standardize to 10 fields (Filler Rainfall at field 4)
               snprintf(
                   append_text, sizeof(append_text),
-                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n",
+                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
                   q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
                   fill_inst_wd,
@@ -1644,7 +1661,7 @@ void scheduler(void *pvParameters) {
                   bat_val);
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
-                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
                   fill_inst_wd,
@@ -1666,7 +1683,7 @@ void scheduler(void *pvParameters) {
                        bat_val);
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
-                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   fill_ftpcum_rf, fill_inst_temp, fill_inst_hum,
                   fill_avg_wind_speed, fill_inst_wd,
@@ -1765,16 +1782,16 @@ void scheduler(void *pvParameters) {
 
 // TWS
 #if SYSTEM == 1
-          snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_strength, bat_val);
+          snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_strength, bat_val);
           // v7.70: Strict TWS FTP Format (57 bytes)
-          snprintf(ftpappend_text, sizeof(ftpappend_text), "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n", stnId, temp_year, temp_month, temp_day, record_hr, record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
+          snprintf(ftpappend_text, sizeof(ftpappend_text), "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n", stnId, temp_year, temp_month, temp_day, record_hr, record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
 #endif
 
 #if SYSTEM == 2
           snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(new_current_cumRF));
-          snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%05.2f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
+          snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
           // v7.70: Strict TWSRF FTP Format (63 bytes)
-          snprintf(ftpappend_text, sizeof(ftpappend_text), "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n", stnId, temp_year, temp_month, temp_day, record_hr, record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
+          snprintf(ftpappend_text, sizeof(ftpappend_text), "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n", stnId, temp_year, temp_month, temp_day, record_hr, record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
 #endif
 
           //                                            len =
@@ -1967,12 +1984,12 @@ void scheduler(void *pvParameters) {
 // TWS
 #if SYSTEM == 1
           snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n",
+                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
                    sampleNo, temp_year, temp_month, temp_day, record_hr,
                    record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                    signal_strength, bat_val);
           snprintf(ftpappend_text, sizeof(ftpappend_text),
-                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, temp_year, temp_month, temp_day, record_hr,
                    record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                    signal_strength, bat_val);
@@ -1986,12 +2003,12 @@ void scheduler(void *pvParameters) {
           ftpcum_rf[5] = 0;
           snprintf(
               append_text, sizeof(append_text),
-              "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%05.2f\r\n",
+              "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
               sampleNo, temp_year, temp_month, temp_day, record_hr, record_min,
               cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
               signal_strength, bat_val);
           snprintf(ftpappend_text, sizeof(ftpappend_text),
-                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                    stnId, temp_year, temp_month, temp_day, record_hr,
                    record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
                    inst_wd, signal_strength, bat_val);
@@ -2126,7 +2143,7 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 1
             snprintf(append_text, sizeof(append_text),
                      "%02d,%04d-%02d-%02d,%02d:%02d,000.0,000.0,00.0,000,%04d,"
-                     "%05.2f\r\n",
+                     "%04.1f\r\n",
                      i, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
@@ -2140,12 +2157,12 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 2
             snprintf(append_text, sizeof(append_text),
                      "%02d,%04d-%02d-%02d,%02d:%02d,000.00,000.0,000.0,00.0,"
-                     "000,%04d,%05.2f\r\n",
+                     "000,%04d,%04.1f\r\n",
                      i, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
                      "%s;%04d-%02d-%02d,%02d:%02d;00.00;000.0;000.0;00.0;000;%"
-                     "04d;%05.2f\r\n",
+                     "04d;%04.1f\r\n",
                      stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
 #endif
@@ -2194,12 +2211,12 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 1
             snprintf(
                 append_text, sizeof(append_text),
-                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n",
+                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
                 sampleNo, cur_year, cur_month, cur_day, record_hr, record_min,
                 inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_strength,
                 bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
-                     "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                     "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
                      stnId, cur_year, cur_month, cur_day, record_hr, record_min,
                      inst_temp, inst_hum, avg_wind_speed, inst_wd,
                      signal_strength, bat_val);
@@ -2209,13 +2226,13 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 2
             snprintf(
                 append_text, sizeof(append_text),
-                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%05.2f\r\n",
+                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
                 sampleNo, cur_year, cur_month, cur_day, record_hr, record_min,
                 cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                 signal_strength, bat_val);
             snprintf(
                 ftpappend_text, sizeof(ftpappend_text),
-                "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
                 stnId, cur_year, cur_month, cur_day, record_hr, record_min,
                 ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                 signal_strength, bat_val);
@@ -2634,8 +2651,13 @@ void scheduler(void *pvParameters) {
                     fill_AvgWS = 0.1;
                   // Removed the artificial 2.2 cap
                 }
+#if SYSTEM == 1 || SYSTEM == 2
                 snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
                          "%05.2f", fill_AvgWS);
+#else
+                snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
+                         "%04.1f", fill_AvgWS);
+#endif
 
                 // Cumulative Rainfall Interpolation for BACKLOG
                 // (previous-day) BUG FIX: Do NOT interpolate toward
@@ -2683,13 +2705,13 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 1
                 snprintf(
                     append_text, sizeof(append_text),
-                    "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n",
+                    "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
                     q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                     fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
                     fill_inst_wd, SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
                 snprintf(
                     ftpappend_text, sizeof(ftpappend_text),
-                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
                     stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                     fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
                     fill_inst_wd, SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
@@ -3112,9 +3134,11 @@ void scheduler(void *pvParameters) {
       if (li_bat_val < 3.4f && li_bat_val > 0.5f) {
         debugln("[PWR] FATAL BROWNOUT GUARD: Network blocked. Sleeping "
                 "immediately to save hardware.");
+        portENTER_CRITICAL(&syncMux);
         sync_mode = eHttpStop;
-        __atomic_store_n(&httpInitiated, false, __ATOMIC_RELEASE);
         data_writing_initiated = 0;
+        portEXIT_CRITICAL(&syncMux);
+        __atomic_store_n(&httpInitiated, false, __ATOMIC_RELEASE);
       } else {
 
         // Wait for manual triggers (SMS/GPS) to finish before proceeding with
@@ -3137,15 +3161,21 @@ void scheduler(void *pvParameters) {
           debugln("Skipped data writing. Checking if GPRS needs to send unsent "
                   "data then Sleep.");
           // Protect manual triggers (SMS/GPS/Startup) from being overwritten
+          bool going_to_sleep = false;
+          portENTER_CRITICAL(&syncMux);
           if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
               sync_mode != eStartupGPS && sync_mode != eHealthStart) {
             if (is_valid_window || timeSyncRequired) {
               sync_mode =
                   eHttpBegin; // Force connection check on boot/duplicate
             } else {
-              debugln("[SCHED] Between intervals. Modem will remain OFF.");
               sync_mode = eHttpStop; // Allow sleep
+              going_to_sleep = true;
             }
+          }
+          portEXIT_CRITICAL(&syncMux);
+          if (going_to_sleep) {
+              debugln("[SCHED] Between intervals. Modem will remain OFF.");
           }
           // v7.65 Persistence: Trigger FTP backlog through the GPRS task loop
           // to avoid collision with Health Report tasks.
@@ -3158,9 +3188,11 @@ void scheduler(void *pvParameters) {
         } else {
           debugln();
           // Trigger HTTP after manual task is done
+          portENTER_CRITICAL(&syncMux);
           sync_mode = eHttpBegin;
-          __atomic_store_n(&httpInitiated, true, __ATOMIC_RELEASE);
           data_writing_initiated = 0;
+          portEXIT_CRITICAL(&syncMux);
+          __atomic_store_n(&httpInitiated, true, __ATOMIC_RELEASE);
 
           // v5.41 Test Mode: Send Health Report every slot
 #if ENABLE_HEALTH_REPORT == 1
@@ -3185,7 +3217,9 @@ void scheduler(void *pvParameters) {
       debugf1("[SCHED] Stack HWM: %d bytes free\n",
               uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
 
+      portENTER_CRITICAL(&syncMux);
       schedulerBusy = false; // v5.65: Release sleep lock
+      portEXIT_CRITICAL(&syncMux);
     } else if (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false &&
                sync_mode == eSyncModeInitial) {
       // v7.08: IDLE TRAP PROTECTION
@@ -3200,7 +3234,9 @@ void scheduler(void *pvParameters) {
           15000) { // 15s window for manual buttons
         debugf("[SCHED] Idle: Slot %d already processed. Entering sleep...\n",
                current_sample_idx);
+        portENTER_CRITICAL(&syncMux);
         sync_mode = eHttpStop;
+        portEXIT_CRITICAL(&syncMux);
         idle_awake_start = (uint32_t)-1;
       }
     } // %15 loop

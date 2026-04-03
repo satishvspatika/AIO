@@ -16,8 +16,15 @@ void start_deep_sleep() {
     return;
   }
   
-  // v5.85: Final gprs_started check. If we are NOT in eHttpStop but gprs is active, defer.
-  if (gprs_started && sync_mode != eHttpStop) {
+  bool snap_gprs;
+  int snap_sync;
+  portENTER_CRITICAL(&syncMux);
+  snap_gprs = gprs_started;
+  snap_sync = sync_mode;
+  portEXIT_CRITICAL(&syncMux);
+
+  // v5.85: Final gprs_started check natively snapshotted to prevent torn RTOS reads.
+  if (snap_gprs && snap_sync != eHttpStop) {
     debugln("[PWR] Modem starting or searching. Deferring sleep.");
     return;
   }
@@ -61,8 +68,12 @@ void start_deep_sleep() {
   
   // TIER 3: SLEEP TIMER EARLY-WAKE DRIFT
   // Eliminate up to 90 seconds of RTOS polling staleness by reading the hardware directly.
-  int live_min = current_min;
-  int live_sec = current_sec; // fallback
+  int live_min;
+  int live_sec;
+  portENTER_CRITICAL(&rtcTimeMux);
+  live_min = current_min;
+  live_sec = current_sec; // fallback
+  portEXIT_CRITICAL(&rtcTimeMux);
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
       DateTime now = rtc.now();
       
@@ -1299,10 +1310,14 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
     return;
   }
 
+  // v5.76 Fix: Increased to 48 chars to prevent buffer overflow on SYSTEM 2 paths + ".tmp"
+  char tmp_path[48];
+  snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+
   // v5.70 Hardened: [R-1 Recovery] If original is missing but tmp exists, recover it.
-  if (!SPIFFS.exists(path) && SPIFFS.exists("/trim.tmp")) {
-      debugf1("[SPIFFS] pruneFile: path %s missing, recovering from /trim.tmp\n", path);
-      SPIFFS.rename("/trim.tmp", path);
+  if (!SPIFFS.exists(path) && SPIFFS.exists(tmp_path)) {
+      debugf2("[SPIFFS] pruneFile: path %s missing, recovering from %s\n", path, tmp_path);
+      SPIFFS.rename(tmp_path, path);
   }
 
   if (!SPIFFS.exists(path)) {
@@ -1341,7 +1356,7 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
       // drain partial line into the void
   }
 
-  File tmp = SPIFFS.open("/trim.tmp", FILE_WRITE);
+  File tmp = SPIFFS.open(tmp_path, FILE_WRITE);
   if (tmp) {
     uint8_t buf[512];
     while (f.available()) {
@@ -1357,7 +1372,7 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
     // On worn partitions, an immediate rename can fail. Give the VFS 50ms to breathe.
     esp_task_wdt_reset();
     vTaskDelay(50 / portTICK_PERIOD_MS);
-    if (!SPIFFS.rename("/trim.tmp", path)) {
+    if (!SPIFFS.rename(tmp_path, path)) {
       debugf1("[SPIFFS] FATAL: Final rename failed for %s.\n", path);
     }
   } else {

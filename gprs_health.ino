@@ -242,7 +242,7 @@ void get_registration() {
   // - BSNL: 2G/3G only. Uses CREG + CGREG (no LTE). 24 retries max.
   // - Hard cap: 24 retries total (~2.5 min max). No more 50-cycle waste.
   bool isBSNL = (strstr(carrier, "BSNL") != nullptr);
-  int no_of_retries = 20; // v5.75: BSNL-Hardened cap (C-01 adjusted to 20) to stay in window
+  int no_of_retries = 24; // v5.76: BSNL-Hardened cap (Restored logic to wait 120s max for congestion)
   int initial_cnmp = last_successful_cnmp; // v5.85: Elevated to function scope
   registration = 0;
   retries = 0;
@@ -534,7 +534,7 @@ void get_registration() {
             SerialSIT.println("AT+CGATT=1");
             waitForResponse("OK", 3000);
         }
-      } else if (retries == 19) { // v5.75: Tier 4 shifted for 20-retry cap (C-01 adjusted)
+      } else if (retries == 23) { // v5.76: Tier 4 shifted back for 24-retry cap
         // Tier 4 @ iter 23 (Final Attempt): Restore Auto-Mode + COPS auto
         debugln("[GPRS] Tier4 @ iter23: Restoring Auto-Mode (CNMP=2, COPS=0) for final retry...");
         SerialSIT.println("AT+CNMP=2"); // Auto (LTE+GSM)

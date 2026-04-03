@@ -665,7 +665,9 @@ void prepare_data_and_send() {
             sampleNo) { // v5.72 Hardened: Dedup guard for TRG fallback write
           if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
             snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-            pruneFile(unsent_file, (300 * record_length), true); // v5.75: H-R2-01 Fix — cap at 300 records (alreadyLocked=true)
+            pruneFile(unsent_file, (300 * record_length),
+                      true); // v5.75: H-R2-01 Fix — cap at 300 records
+                             // (alreadyLocked=true)
             File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
             if (file2) {
               file2.print(
@@ -1379,7 +1381,7 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
           unsent_cnt, snap_hr, snap_mi, scheduled_slot ? "YES" : "NO",
           morning_cleanup ? "YES" : "NO");
   bool should_push =
-      (unsent_cnt > 2); // v5.75: Testing: Trigger FTP if records > 2
+      (unsent_cnt >= 1); // v5.75: Testing: Trigger FTP if records > 2
 
   if (signal_lvl > -95 && (should_push || force_ftp) &&
       SPIFFS.exists(ftpunsent_file)) {
@@ -1488,6 +1490,8 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
                 }
 
                 if (linesRead < FTP_CHUNK_SIZE) {
+                  debugf2("[FTP Backlog] Servicing Record #%d of %d\n",
+                          linesRead + 1, unsent_cnt);
                   chunk.write((uint8_t *)lineBuf, len);
                   chunk.print("\r\n");
                 } else {

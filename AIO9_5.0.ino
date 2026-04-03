@@ -115,7 +115,7 @@ bool valid_dt = false, valid_time = false;
 int ftp_login_flag = 0;
 size_t len = 0;
 char last_logged[16] = "";
-char http_data[350] = ""; 
+char http_data[512] = ""; // v5.76 Fixed from 350 to 512 to prevent overflows on TWS-RF JSON payloads
 char sample_cum_rf[10], sample_inst_rf[10], sample_temp[10], sample_hum[10],
     sample_avgWS[10], sample_WD[10], sample_bat[10], ftpsample_avgWS[10],
     ftpsample_cum_rf[10];
@@ -136,7 +136,7 @@ char cum_rf[10], inst_rf[10], inst_temp[10], avg_cum_rf[10];
 char ftpcum_rf[10];
 float avg_cumRF = 0, new_current_cumRF = 0, new_current_instRF = 0;
 volatile float temperature = 0, humidity = 0, windSpCount = 0, cur_wind_speed = 0, pressure = 0;
-float cur_avg_wind_speed = 0;
+RTC_DATA_ATTR float cur_avg_wind_speed = 0;
 volatile int windDir = 0;               // written by windDirection task, read by scheduler
 float sea_level_pressure = 0;
 char inst_hum[10], avg_wind_speed[10], inst_wd[10];
