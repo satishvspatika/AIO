@@ -7,8 +7,8 @@
  * ========================================================================= */
 
 // --- 1. CORE SYSTEM IDENTITY ---
-#define SYSTEM 1                // 0: TRG, 1: TWS, 2: TWS-RF Addon
-#define UNIT_CFG "KSNDMC_TWS" // Exact station network name:
+#define SYSTEM 2                // 0: TRG, 1: TWS, 2: TWS-RF Addon
+#define UNIT_CFG "KSNDMC_ADDON" // Exact station network name:
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
