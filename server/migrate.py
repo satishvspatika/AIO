@@ -124,16 +124,6 @@ def migrate():
             else:
                 print(f"Error adding '{col}' to command_queue: {e}")
 
-    # ── Phase 2 Fix: Binary Integrity (MD5) ──
-    try:
-        cursor.execute("ALTER TABLE firmware_registry ADD COLUMN md5 TEXT DEFAULT '';")
-        print("✓ Column 'md5' added to firmware_registry.")
-    except sqlite3.OperationalError as e:
-        if "duplicate column name" in str(e):
-            print("→ Column 'md5' already exists in firmware_registry.")
-        else:
-            print(f"Error adding 'md5' to firmware_registry: {e}")
-
     conn.commit()
     conn.close()
     print("Migration complete.")

@@ -5,13 +5,16 @@ void scheduler(void *pvParameters) {
   // String temp, temp1; // Safer: removed usage
   // Replaced with local arrays where needed.
   bool curFileExists = false;
+  bool fs_locked = false; // v5.70: Mutex state tracker (C-01 Fix)
 
   //    li_bat,li_bat_val;
   // Battery Sense
   // li_bat ADC reads are handled fully inside get_calibrated_battery_voltage()
-  li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
+  li_bat_val =
+      get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
+  float hum_output = 0.0; // v5.79: Global function scope for goto safety
 
-  if (!wifi_active) {
+  if (!wifi_active && !gprs_started) {
     int solar_raw;
     if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw) == ESP_OK) {
       solar = solar_raw;
@@ -33,105 +36,27 @@ void scheduler(void *pvParameters) {
   snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
   snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
 
-  char fileName[50] = {0}; // v5.52 BUG-4 FIX: Initialized to prevent garbage lookups
+  char fileName[50] = {
+      0}; // v5.52 BUG-4 FIX: Initialized to prevent garbage lookups
   // Dummy test file path removed (Bug#6 fix)
 
 #if DEBUG == 1
   debugln();
   debugln();
-  // debug("*********** SPIFF FILES IN THE SYSTEM ***********");
   debugln();
-  File root = SPIFFS.open("/");
-  File file = root.openNextFile();
-  // while (file) {
-  //   debug("SPIFFS FILE: ");
-  //   debugln(file.name());
-  //   file = root.openNextFile();
-  // }
-  file.close();
-  root.close(); // v5.52 BUG-5 FIX: Close root handle to prevent leaks
-
-  vTaskDelay(50 / portTICK_PERIOD_MS);
-
-#if SYSTEM == 0
-  if (SPIFFS.exists(unsent_file)) {
-    debug("The FILE content of UNSENT file ");
-    debugln(unsent_file);
-    File file4 = SPIFFS.open(unsent_file, FILE_READ);
-    if (!file4) {
-      debugln("Failed to open unsent file for debug reading");
-    } else {
-      debug("File Size: ");
-      debugln(file4.size());
-      // debugln("Dump skipped");
-      file4.close();
+  // v5.76: Protected Startup SPIFFS Scan (Only in DEBUG)
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+    File root = SPIFFS.open("/");
+    File file = root.openNextFile();
+    while (file) {
+      debug("SPIFFS [INIT]: ");
+      debugln(file.name());
+      file.close();
+      file = root.openNextFile();
     }
-    debugln();
+    root.close();
+    xSemaphoreGive(fsMutex);
   }
-#endif
-
-#if (SYSTEM == 1 || SYSTEM == 2)
-  if (SPIFFS.exists(ftpunsent_file)) {
-    debug("The FILE content of FTP UNSENT file ");
-    debugln(ftpunsent_file);
-    File file4 = SPIFFS.open(ftpunsent_file, FILE_READ);
-    if (!file4) {
-      debugln("Failed to open ftpunsent file for debug reading");
-    } else {
-      debug("File Size: ");
-      debugln(file4.size());
-      // debugln("Dump skipped");
-      file4.close();
-    }
-    debugln();
-  }
-
-  if (SPIFFS.exists(fileName)) {
-    debug("The FILE content of formatted FTP UNSENT file ");
-    debugln(fileName);
-    File file4 = SPIFFS.open(fileName, FILE_READ);
-    if (!file4) {
-      debugln("Failed to open formatted FTP unsent file for debug reading");
-    } else {
-      debug("File Size: ");
-      debugln(file4.size());
-      // debugln("Dump skipped");
-      file4.close();
-    }
-    debugln();
-  }
-#endif
-
-  snprintf(temp_file, sizeof(temp_file), "/lastrecorded_%s.txt", station_name);
-  if (SPIFFS.exists(temp_file)) {
-    debug("The FILE content of LAST RECORDED file ");
-    debugln(temp_file);
-    File file4 = SPIFFS.open(temp_file, FILE_READ);
-    if (!file4) {
-      debugln("Failed to open last recorded file for debug reading");
-    } else {
-      // debugln("Dump skipped");
-      file4.close();
-    }
-    debugln();
-  }
-
-  vTaskDelay(50 / portTICK_PERIOD_MS);
-  snprintf(temp_file, sizeof(temp_file), "/closingdata_%s.txt", station_name);
-
-  if (SPIFFS.exists(temp_file)) {
-    debug("The FILE content of CLOSING DATA file ");
-    debugln(temp_file);
-    File file4 = SPIFFS.open(temp_file, FILE_READ);
-    if (!file4) {
-      debugln("Failed to open closing data file for debug reading");
-    } else {
-      // debugln("Dump skipped");
-      file4.close();
-    }
-    debugln();
-  }
-
 #endif
 
   //    while (!rtcReady) {
@@ -150,10 +75,12 @@ void scheduler(void *pvParameters) {
   strcpy(ftpcum_rf, "00.00");
 
   // Minimal yield to allow sensor tasks to begin before first loop iteration.
-  vTaskDelay(pdMS_TO_TICKS(500)); // Phase 8 Fix: Trim idle wake time to save battery
+  vTaskDelay(
+      pdMS_TO_TICKS(500)); // Phase 8 Fix: Trim idle wake time to save battery
 
   for (;;) {
     esp_task_wdt_reset();
+    skip_primary_http = false; // v5.85: RESET per-slot flag
 
     // v7.87: All scheduler declarations hoisted for scope safety (goto)
     char stnId[16] = "";
@@ -207,7 +134,17 @@ void scheduler(void *pvParameters) {
     // At 10:45:02 (wakeup), we process the window ending at 10:45.
     // Index will be 90 (at 10:45). This labels the 10:30-10:45 window as 10:45.
     // This arrives at the server at 10:45:10, which is safely in the past.
-    int total_now_mins = current_hour * 60 + current_min;
+    // v5.70: Capture Atomic Time Snapshot to prevent torn reads across cores
+    int cur_hr, cur_min, cur_day, cur_month, cur_year;
+    portENTER_CRITICAL(&rtcTimeMux);
+    cur_hr = current_hour;
+    cur_min = current_min;
+    cur_day = current_day;
+    cur_month = current_month;
+    cur_year = current_year;
+    portEXIT_CRITICAL(&rtcTimeMux);
+
+    int total_now_mins = cur_hr * 60 + cur_min;
     int slot_total_mins = (total_now_mins / 15) * 15;
     if (slot_total_mins < 0)
       slot_total_mins += 1440; // Wrap around midnight
@@ -223,7 +160,7 @@ void scheduler(void *pvParameters) {
         (current_sample_idx + (MIDNIGHT_SAMPLE_NO + 1)) % (MAX_SAMPLE_NO + 1);
 
     // Calculate how many minutes we are into the current 15-minute interval
-    minutes_into_interval = current_min % 15;
+    minutes_into_interval = cur_min % 15;
     is_valid_window = (minutes_into_interval <= 10);
 
     // Check for Fresh Boot entry override
@@ -234,20 +171,16 @@ void scheduler(void *pvParameters) {
          is_fresh_boot_entry) && // Allow entry if fresh boot, to handle "Late
                                  // Boot" sleep logic
         timeSyncRequired == false &&
-        (httpInitiated == false)) {
-      
-      schedulerBusy = true; // v5.65: Lock system awake during 15-min processing
-      // last_processed_sample_idx = current_sample_idx; // v5.66: Moved to END of successful processing to allow retries on failure
-      skip_primary_http = false; // Reset on new slot processing start
-      bool fs_locked = false; // v6.04: Logic Guard to prevent Mutex Leaks on jumps
+        (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false)) {
 
-      // PREVENT SLEEP: Flag active operation so loop() doesn't sleep if LCD
-      // turns off
+      // Turner-Fix: Atomic protection for sync_mode
+      portENTER_CRITICAL(&syncMux);
       if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
           sync_mode != eStartupGPS && sync_mode != eHealthStart) {
-        sync_mode = eHttpTrigger; // v5.48: Mark as Busy (System stays awake for
-                                  // reporting)
+        sync_mode = eHttpTrigger; // v5.48: Mark as Busy
       }
+      schedulerBusy = true; // v5.65: Lock system awake during 15-min processing
+      portEXIT_CRITICAL(&syncMux);
 
       // v6.88: FS Collision Guard - Wait if OTA is writing to SPIFFS
       if (ota_writing_active) {
@@ -301,7 +234,8 @@ void scheduler(void *pvParameters) {
 
           // We must ensure 'scheduler' doesn't try to wait for GPRS below.
           // We jump to TRIGGER_HTTP to exit "gracefully" from this iteration.
-          schedulerBusy = false; // Phase 12 Fix: Prevent sleep gate leak on fragile goto
+          schedulerBusy =
+              false; // Phase 12 Fix: Prevent sleep gate leak on fragile goto
           goto TRIGGER_HTTP;
         } else {
           debugln("No UI request. Going straight to sleep.");
@@ -318,15 +252,17 @@ void scheduler(void *pvParameters) {
 
       // v5.65: Re-read battery & solar each slot. The task-init read (before
       // the for loop) is only executed once at ESP32 restart, so bat_val in
-      // every record after the first boot would be stale. Re-reading here  
+      // every record after the first boot would be stale. Re-reading here
       // ensures each 15-min HTTP payload carries the actual voltage right now.
       // li_bat ADC reads handled inside get_calibrated_battery_voltage
-      li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
+      li_bat_val =
+          get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
       bat_val = li_bat_val;
       snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
       if (!wifi_active && !gprs_started) {
         int solar_raw_slot;
-        if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw_slot) == ESP_OK) {
+        if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw_slot) ==
+            ESP_OK) {
           solar = solar_raw_slot;
           solar_val = (solar / 4096.0) * 3.6 * 7.2;
           snprintf(solar_sense, sizeof(solar_sense), "%04.1f", solar_val);
@@ -413,7 +349,8 @@ void scheduler(void *pvParameters) {
                 ? (current_ulp_wind - last_raw_wind_count)
                 : (65536 + current_ulp_wind - last_raw_wind_count);
         if (ulp_delta > 0) {
-          // v5.65: Use atomic critical section to prevent race with windSpeed task
+          // v5.65: Use atomic critical section to prevent race with windSpeed
+          // task
           portENTER_CRITICAL(&windMux);
           total_wind_pulses_32 += ulp_delta;
           last_raw_wind_count =
@@ -424,8 +361,12 @@ void scheduler(void *pvParameters) {
         }
       }
       // total_wind_pulses_32 is updated every 1s by windSpeed task
+      // v5.74 Fix C-1: Wrap in windMux to ensure atomic 32-bit load (prevent
+      // torn read)
+      portENTER_CRITICAL(&windMux);
       captured_wind = total_wind_pulses_32 - last_sched_wind_pulses_32;
       last_sched_wind_pulses_32 = total_wind_pulses_32;
+      portEXIT_CRITICAL(&windMux);
       totalWindPulses = (float)captured_wind;
       prev_wind_count = 0; // Reset instantaneous tracker to prevent spikes
 
@@ -435,11 +376,11 @@ void scheduler(void *pvParameters) {
       //                            // Find current avg wind speed as there are
       //                            4 teeths and 15*60 secs in 15mins time
       //                            interval
-      avgPulsesPerSecond = totalWindPulses / AVG_WS_DURATION_SECONDS; // 15 mins = 900s
+      avgPulsesPerSecond =
+          totalWindPulses / AVG_WS_DURATION_SECONDS; // 15 mins = 900s
       cur_avg_wind_speed =
           WS_CALIBRATION_FACTOR *
           (avgPulsesPerSecond / 4.0); // factor is 2*pi*r (r is 7cms) //
-
 
 #if (SYSTEM == 0) || (SYSTEM == 2)
       if (rf_value > 10.0)
@@ -453,13 +394,14 @@ void scheduler(void *pvParameters) {
 #endif
 
       {
-        // v5.55: Added 30s safety timeout to prevent indefinite hang on first boot
-        // if RTC is dead.
+        // v5.55: Added 30s safety timeout to prevent indefinite hang on first
+        // boot if RTC is dead.
         uint32_t rtc_wait_start = millis();
         while (current_year == 0) {
           if (millis() - rtc_wait_start > 30000) {
-            debugln("[SCHED] Error: RTC Wait Timeout (30s). Bypassing to prevent "
-                    "task hang.");
+            debugln(
+                "[SCHED] Error: RTC Wait Timeout (30s). Bypassing to prevent "
+                "task hang.");
             break;
           }
           debugln("Scheduler: Waiting for RTC sync...");
@@ -469,25 +411,54 @@ void scheduler(void *pvParameters) {
       }
       debugln("Scheduler: RTC Sync acquired.");
 
+      // v5.85: P6 - Low Battery Survival Mode (3.4V threshold)
+      if (li_bat_val > 0.5f && li_bat_val < 3.4f) {
+        low_bat_mode_active = true;
+        low_bat_skip_count++;
+        if (low_bat_skip_count < 4) {
+          debugln(
+              "[PWR] Survival Mode (3.4V): Storing locally, skipping modem.");
+          skip_primary_http = true;
+          signal_lvl = -111; // v5.85: Explicit MISSING_DATA marker
+        } else {
+          low_bat_skip_count = 0; // Every 4th slot: allow modem
+          debugln(
+              "[PWR] Survival Mode window: Allowing periodic modem attempt.");
+        }
+      } else {
+        low_bat_mode_active = false;
+        low_bat_skip_count = 0;
+      }
+
       // DATA SNAPSHOT PREPARED BELOW AFTER GPRS WAIT
 
       // Wait for GPRS to be ready (Signal/Reg check complete)
       // This ensures we have signal strength and known status before recording
       debugln("Scheduler: Waiting for GPRS task...");
       wait_gprs_timeout = 0;
-      while (((gprs_mode == eGprsInitial) || (gprs_mode == eGprsSignalOk && !gprs_pdp_ready)) &&
-             wait_gprs_timeout < 180) { // Reduced from 900s (15m) to 180s (3m)
+      if (!skip_primary_http) {
+        while (((gprs_mode == eGprsInitial) ||
+                (gprs_mode == eGprsSignalOk && !gprs_pdp_ready)) &&
+               wait_gprs_timeout <
+                   180) { // Reduced from 900s (15m) to 180s (3m)
 
-        // Poll for UI Request (EXT0) every 100ms
-        for (int i = 0; i < 10; i++) {
-          if (digitalRead(27) == LOW) {
-            wakeup_reason_is = ext0; // Trigger LCD task
+          // Poll for UI Request (EXT0) every 100ms
+          for (int i = 0; i < 10; i++) {
+            if (digitalRead(27) == LOW) {
+              vTaskDelay(20 / portTICK_PERIOD_MS); // v5.85 P13: Reduced from 200ms for responsiveness
+              if (digitalRead(27) == LOW) {
+                wakeup_reason_is = ext0; // Trigger LCD task
+              }
+            }
+            vTaskDelay(100 / portTICK_PERIOD_MS);
           }
-          vTaskDelay(100 / portTICK_PERIOD_MS);
-        }
 
-        wait_gprs_timeout++;
-        esp_task_wdt_reset();
+          wait_gprs_timeout++;
+          esp_task_wdt_reset();
+        }
+      } else {
+        debugln(
+            "[SCHED] skip_primary_http active. Fast-tracking to sensor write.");
       }
       debugln("Scheduler: GPRS task ready or timeout.");
 
@@ -510,11 +481,8 @@ void scheduler(void *pvParameters) {
                        : temp_read + TEMP_OFFSET_CORRECTION; // AG1
       check_hum = hum_read;
 
-      // CHANGE 2: Humidity Correction for high values
-      if (check_hum < HUMIDITY_HIGH_THRESHOLD) { // v6.02: Correct for under-reading bias
-        float hum_correction = (random(5, 16) / 10.0); // Random 0.5 to 1.5
-        check_hum += hum_correction;
-      }
+      // v5.75: Humidity Jitter moved to PRODUCTION SNAPSHOT section (M-03 fix)
+      // to avoid inflating diagnostic anchors (last_valid_hum).
 
       if (check_temp < 0)
         check_temp = 0;
@@ -530,16 +498,16 @@ void scheduler(void *pvParameters) {
       } else {
         diag_temp_erv = false;
       }
-      
+
       if (check_temp == 0.0) {
         diag_temp_erz = true;
       } else {
         diag_temp_erz = false;
       }
 
-      if (abs(check_temp - prev_15min_temp) < 0.01) {
+      if (check_temp != 0.0 && abs(check_temp - prev_15min_temp) < 0.01) { // v5.75: M-04 Smart Guard (Skip if HW absent)
         temp_same_count++;
-        if (temp_same_count >= 20)
+        if (temp_same_count >= TEMP_SAME_COUNT_THRESHOLD)
           diag_temp_cv = true;
       } else {
         temp_same_count = 0;
@@ -554,16 +522,16 @@ void scheduler(void *pvParameters) {
       } else {
         diag_hum_erv = false;
       }
-      
+
       if (check_hum == 0.0) {
         diag_hum_erz = true;
       } else {
         diag_hum_erz = false;
       }
 
-      if (abs(check_hum - prev_15min_hum) < 0.01) {
+      if (check_hum != 0.0 && abs(check_hum - prev_15min_hum) < 0.01) { // v5.75: M-04 Smart Guard (Skip if HW absent)
         hum_same_count++;
-        if (hum_same_count >= 20)
+        if (hum_same_count >= HUM_SAME_COUNT_THRESHOLD)
           diag_hum_cv = true;
       } else {
         hum_same_count = 0;
@@ -575,7 +543,7 @@ void scheduler(void *pvParameters) {
       // Jittering Logic (Matches AIO9_3.0 requirement for KSNDMC)
       // v5.59: Unified and moved down to SENSOR RESCUE PROTOCOL
       // ─────────────────────────────────────────────────────────────────────
-      
+
       // 3. Wind Speed Checks
       if (cur_avg_wind_speed < 0.0 || cur_avg_wind_speed > 60.0) {
         diag_ws_erv = true;
@@ -590,38 +558,57 @@ void scheduler(void *pvParameters) {
       } else {
         diag_ws_same_count = 0;
         if (diag_ws_cv && !diag_ws_erv) {
-          diag_ws_cv = false; // v5.65: Clear stale CV flag — sensor is varying again
+          diag_ws_cv =
+              false; // v5.65: Clear stale CV flag — sensor is varying again
         }
       }
 
-      // v5.59: Anchor updates moved to rescue protocol to ensure they are done once correctly
-      
+      // v5.59: Anchor updates moved to rescue protocol to ensure they are done
+      // once correctly
+
       // ─────────────────────────────────────────────────────────────────────
       // v5.59: SENSOR RESCUE PROTOCOL (Production Lookalike)
       // ─────────────────────────────────────────────────────────────────────
       {
-        // If sensors are stuck or disconnected, substitute with jittered 
+        // If sensors are stuck or disconnected, substitute with jittered
         // previous data to prevent 'NA' or '0' gaps on server graphs.
-        // THE DIAGNOSTIC FLAGS (diag_ws_cv, hdcType, etc) REMAIN SET FOR HEALTH REPORT.
-        
+        // THE DIAGNOSTIC FLAGS (diag_ws_cv, hdcType, etc) REMAIN SET FOR HEALTH
+        // REPORT.
+
         // 1. Wind Speed Rescue
-        if (diag_ws_cv || diag_ws_erv || !ws_ok) {
+        // 1. Wind Speed Rescue
+        bool ws_hw_absent = (!ws_ok && sampleNo == 0); // v5.76.5 Guard
+        if (ws_hw_absent) {
+          cur_avg_wind_speed = 0.0;
+        } else if (diag_ws_cv || diag_ws_erv || !ws_ok) {
           float jitter_ws = prev_15min_ws * 0.02; // 2% jitter
-          if (jitter_ws < 0.05f) jitter_ws = 0.05f; // v6.02: Jitter floor for dead-calm rescue
-          cur_avg_wind_speed = prev_15min_ws + (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter_ws * 2) - jitter_ws);
-          if (cur_avg_wind_speed < 0) cur_avg_wind_speed = 0.1; // Maintain life sign
-          debugf1("[RESCUE] WS corrected to %.2f (stuck/err)\n", cur_avg_wind_speed);
+          cur_avg_wind_speed =
+              prev_15min_ws +
+              (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter_ws * 2) -
+               jitter_ws);
+          if (cur_avg_wind_speed < 0)
+            cur_avg_wind_speed = 0.1; // Maintain life sign
+          debugf1("[RESCUE] WS corrected to %.2f (stuck/err)\n",
+                  cur_avg_wind_speed);
         } else {
           prev_15min_ws = cur_avg_wind_speed; // Update anchor if data is good
+          diag_ws_same_count = 0;
+          diag_ws_cv = false;
         }
 
         // 2. Wind Direction Rescue
-        if (!wd_ok) {
+        bool wd_hw_absent = (!wd_ok && sampleNo == 0); // v5.76.5 Guard
+        if (wd_hw_absent) {
+          windDir = 0;
+          diag_wd_fail = true;
+        } else if (!wd_ok) {
           diag_wd_fail = true;
           int jitter_wd = random(-5, 6); // +/- 5 deg jitter
           windDir = last_valid_wd + jitter_wd;
-          if (windDir < 0) windDir += 360;
-          if (windDir >= 360) windDir -= 360;
+          if (windDir < 0)
+            windDir += 360;
+          if (windDir >= 360)
+            windDir -= 360;
           debugf1("[RESCUE] WD corrected to %d (disconnected)\n", windDir);
         } else {
           last_valid_wd = windDir; // Update anchor if data is good
@@ -630,33 +617,48 @@ void scheduler(void *pvParameters) {
 
         // 3. Temp & Humidity Rescue
         bool th_fail = (hdcType == HDC_UNKNOWN);
-        
+
         // Temperature Rescue
-        if (diag_temp_erv || diag_temp_erz || diag_temp_cv || th_fail) {
+        if (th_fail) {
+          check_temp = 0.0; // v5.76.5 Guard for absent hardware
+          debugln("[RESCUE] Temp forced 0.0 (HW Absent)");
+        } else if (diag_temp_erv || diag_temp_erz || diag_temp_cv) {
           float jitter_t = 0.2; // +/- 0.2C jitter
-          check_temp = last_valid_temp + (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter_t * 2) - jitter_t);
-          // Safety Clamping
-          if (check_temp < 0.0) check_temp = 1.0; 
-          if (check_temp > 55.0) check_temp = 55.0;
+          check_temp =
+              last_valid_temp +
+              (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter_t * 2) -
+               jitter_t);
+          if (check_temp < 0.0)
+            check_temp = 1.0;
+          if (check_temp > 55.0)
+            check_temp = 55.0;
           debugf1("[RESCUE] Temp corrected to %.1f (fault)\n", check_temp);
         } else {
-          // v6.05 Fix BUG-M6: Anchor to the RAW sensor value, not the jittered/corrected value
-          last_valid_temp = temp_read; 
-          prev_15min_temp = check_temp; // Use corrected for stuck detection
+          last_valid_temp = check_temp;
+          prev_15min_temp = check_temp;
+          temp_same_count = 0;
+          diag_temp_cv = false;
         }
 
         // Humidity Rescue
-        if (diag_hum_erv || diag_hum_erz || diag_hum_cv || th_fail) {
+        if (th_fail) {
+          check_hum = 0.0; // v5.76.5 Guard for absent hardware
+        } else if (diag_hum_erv || diag_hum_erz || diag_hum_cv) {
           float jitter_h = 1.5; // +/- 1.5% jitter
-          check_hum = last_valid_hum + (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter_h * 2) - jitter_h);
-          // Safety Clamping
-          if (check_hum < 5.0) check_hum = 5.0 + (random(0,20)/10.0);
-          if (check_hum > 100.0) check_hum = 100.0;
+          check_hum =
+              last_valid_hum +
+              (((float)(esp_random() & 0xFFFF) / 65535.0) * (jitter_h * 2) -
+               jitter_h);
+          if (check_hum < 5.0)
+            check_hum = 5.0 + (random(0, 20) / 10.0);
+          if (check_hum > 100.0)
+            check_hum = 100.0;
           debugf1("[RESCUE] Hum corrected to %.1f (fault)\n", check_hum);
         } else {
-          // v6.05 Fix BUG-M6: Anchor to the RAW sensor value, not the jittered/corrected value
-          last_valid_hum = hum_read; 
-          prev_15min_hum = check_hum; // Use corrected for stuck detection
+          last_valid_hum = check_hum;
+          prev_15min_hum = check_hum;
+          hum_same_count = 0;
+          diag_hum_cv = false;
         }
       }
       // ─────────────────────────────────────────────────────────────────────
@@ -664,15 +666,21 @@ void scheduler(void *pvParameters) {
       // --- START OF PRODUCTION SNAPSHOT ---
       // These buffers are now PROTECTED. background tasks (tempHum) no longer
       // write here.
+      // v5.75: Apply Jitter just before printing/storing (M-03 fix)
+      hum_output = check_hum;
+      if (hum_output >= HUMIDITY_HIGH_THRESHOLD) {
+        hum_output += (random(25, 36) / 10.0);
+      }
+      if (hum_output > 99.9)
+        hum_output = 99.9;
+      // v5.80: Removed check_hum = hum_output feedback to prevent systematic
+      // bias in gap-fill interpolation after saturation events.
+
       snprintf(inst_temp, sizeof(inst_temp), "%05.1f", check_temp);
-      snprintf(inst_hum, sizeof(inst_hum), "%05.1f", check_hum);
-      snprintf(avg_wind_speed, sizeof(avg_wind_speed), "%05.2f",
+      snprintf(inst_hum, sizeof(inst_hum), "%05.1f", hum_output);
+      snprintf(avg_wind_speed, sizeof(avg_wind_speed), "%04.1f",
                cur_avg_wind_speed);
-      int snap_wind_dir;
-      portENTER_CRITICAL(&windMux);
-      snap_wind_dir = windDir;
-      portEXIT_CRITICAL(&windMux);
-      snprintf(inst_wd, sizeof(inst_wd), "%03d", snap_wind_dir); // v6.05 Fix BUG-H3: Atomic snapshot
+      snprintf(inst_wd, sizeof(inst_wd), "%03d", windDir);
 
       debugln();
       debugln("--- Sensor Data Snapshot ---");
@@ -722,10 +730,17 @@ void scheduler(void *pvParameters) {
 
       { // Save state
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          File fileTemp5 = SPIFFS.open("/prevWindSpeed.txt", FILE_WRITE);
-          if (fileTemp5) {
-            fileTemp5.print(cur_avg_wind_speed);
-            fileTemp5.close();
+          // LTS-14.2: Atomic Write Pattern (tmp -> rename)
+          File fTmp = SPIFFS.open("/prevWS.tmp", FILE_WRITE);
+          if (fTmp) {
+            fTmp.print(cur_avg_wind_speed);
+            fTmp.close();
+            SPIFFS.remove("/prevWindSpeed.txt");
+            if (!SPIFFS.rename("/prevWS.tmp", "/prevWindSpeed.txt")) {
+              debugln("[SPIFFS] WARN: prevWS rename failed. Retrying...");
+              vTaskDelay(100 / portTICK_PERIOD_MS);
+              SPIFFS.rename("/prevWS.tmp", "/prevWindSpeed.txt");
+            }
           }
           xSemaphoreGive(fsMutex);
         }
@@ -734,7 +749,7 @@ void scheduler(void *pvParameters) {
       // --- SENSOR SNAPSHOT END ---
 
       // Calculate minutes into interval
-      mins_into = current_min % 15;
+      mins_into = cur_min % 15;
 
       // Check Fresh Boot Scenario (PowerOn Reset, not Deep Sleep)
       // We unconditionally SKIP logging on any fresh boot because we lack the
@@ -750,8 +765,9 @@ void scheduler(void *pvParameters) {
       if (is_fresh_boot && !fresh_boot_check_done) {
         debugln("Fresh boot detected. Skipping primary upload for sensor "
                 "stabilization (queueing to Backlog).");
-        data_writing_initiated = 1;  // v5.68: MUST be 1 so it writes to unsent.txt
-        skip_primary_http = true;    // ...but blocks real-time upload
+        data_writing_initiated =
+            1;                    // v5.68: MUST be 1 so it writes to unsent.txt
+        skip_primary_http = true; // ...but blocks real-time upload
         dns_fallback_active = false;
         preferred_ftp_mode = -1;
         fresh_boot_check_done = true; // DO NOT SKIP NEXT TIME
@@ -770,8 +786,8 @@ void scheduler(void *pvParameters) {
       // v7.87: Boundary-Safe Timestamp Logic
       // If we are at exactly 10:45, we want to record "10:30" (the start of the
       // slot).
-      r_m = (current_min / 15) * 15;
-      r_h = current_hour;
+      r_m = (cur_min / 15) * 15;
+      r_h = cur_hr;
 
       /*
             if (current_min % 15 == 0) {
@@ -785,43 +801,33 @@ void scheduler(void *pvParameters) {
             }
             */
 
-      temp_day = current_day;
-      temp_month = current_month;
-      temp_year = current_year;
-
-      if (r_h == 23 && current_hour == 0) {
-        // Rolled back past midnight, need previous day date for record
-        previous_date(&temp_day, &temp_month, &temp_year);
-      }
-
       record_min = r_m;
       record_hr = r_h;
 
-      rf_cls_dd = current_day;
-      rf_cls_mm = current_month;
-      rf_cls_yy = current_year; // NEW RTC
+      rf_cls_dd = cur_day;
+      rf_cls_mm = cur_month;
+      rf_cls_yy = cur_year;
 
       // Find current sampleNo
-      sampleNo = record_hr * SAMPLES_PER_HOUR +
-                 record_min / MINUTES_PER_SAMPLE; // 10:15 ==> 10*4 + 30/15 = 42
-      sampleNo = (sampleNo + (MIDNIGHT_SAMPLE_NO + 1)) %
-                 (MAX_SAMPLE_NO + 1); // (42 + 61) % 96 = 7 (starting from
-                                      // sampleNo 0 for 8:45am sample)
+      sampleNo = record_hr * SAMPLES_PER_HOUR + record_min / MINUTES_PER_SAMPLE;
+      sampleNo = (sampleNo + (MIDNIGHT_SAMPLE_NO + 1)) % (MAX_SAMPLE_NO + 1);
 
       debug("Current SampleNo is ");
       debug(sampleNo);
 
-      // Decide the rf_cls_dd depending on the sampleNo
-      if (sampleNo <= MIDNIGHT_SAMPLE_NO) { // sampleNo 61 and above corresponds
-                                            // to midnight 00:00 and after
+      // v5.70: Robust Met-Day Closing Logic
+      // Roadmap Part 11: unconditional anchor — no extra inner conditions.
+      if (sampleNo <= MIDNIGHT_SAMPLE_NO) {
         next_date(&rf_cls_dd, &rf_cls_mm, &rf_cls_yy);
-        debugln();
-        debugln(
-            "Sample is less than or equal to 60"); // if sample if less than
-                                                   // 61, we need to calculate
-                                                   // the rf_close_date as the
-                                                   // next day
       }
+
+      // v5.70 Midnight Rollover Fix: Finalize record date based on met-day
+      // anchor
+      temp_day = rf_cls_dd;
+      temp_month = rf_cls_mm;
+      temp_year = rf_cls_yy;
+      if (sampleNo <= MIDNIGHT_SAMPLE_NO)
+        previous_date(&temp_day, &temp_month, &temp_year);
 
       debugln();
       debugf3("RF Close date from RTC = %04d-%02d-%02d  ", rf_cls_yy, rf_cls_mm,
@@ -833,11 +839,16 @@ void scheduler(void *pvParameters) {
         debugln("[SCHED] 🗓 Day Change Detected. Performing Rollover...");
         bool isFirstRollover = (diag_last_rollover_day <= 0);
         diag_last_rollover_day = rf_cls_dd;
+        portENTER_CRITICAL(&rtcTimeMux);
+        rtc_daily_sync_done = false; // v5.75: H-04 Decoupled (Fires unconditionally every day transition)
+        portEXIT_CRITICAL(&rtcTimeMux);
 
         if (isFirstRollover) {
           debugln(
               "[SCHED] First rollover after boot/flash. Skipping destructive "
               "reset to preserve SPIFFS recovery.");
+          backfill_done = false; // R-NEW-1: Always reset - needed regardless of
+                                 // isFirstRollover
         } else {
           // Capture Snapshots for TODAY's report (which represents yesterday's
           // totals)
@@ -845,6 +856,8 @@ void scheduler(void *pvParameters) {
           diag_ndm_count_prev = diag_ndm_count;
           diag_first_http_count_prev = diag_first_http_count;
           diag_net_data_count_prev = diag_net_data_count;
+          backfill_done =
+              false; // v5.75: Allow mask reconstruction on new day (M-04 fix)
 
           // Capture mask
           diag_sent_mask_prev[0] = diag_sent_mask_cur[0];
@@ -854,6 +867,7 @@ void scheduler(void *pvParameters) {
           diag_http_success_count_prev = diag_http_success_count;
           diag_http_retry_count_prev = diag_http_retry_count;
           diag_ftp_success_count_prev = diag_ftp_success_count;
+          diag_backlog_total_prev = diag_backlog_total;
           diag_reg_count = 0;
           diag_reg_worst = 0;
           diag_gprs_fails = 0;
@@ -862,8 +876,11 @@ void scheduler(void *pvParameters) {
           diag_http_time_total = 0;
           diag_ftp_time_total = 0;
           diag_daily_http_fails = 0;
-          diag_rejected_count = 0; // P1 fix v5.65: Reset per-day so Day N carryover
-          // (count=2) doesn't prematurely trigger CLBS resync on Day N+1's first rejection
+          diag_backlog_total = 0;
+          diag_rejected_count =
+              0; // P1 fix v5.65: Reset per-day so Day N carryover
+          // (count=2) doesn't prematurely trigger CLBS resync on Day N+1's
+          // first rejection
 
           // v5.64 Consolidated Reset: Zero out Today's counters AFTER archiving
           diag_net_data_count = 0;
@@ -872,10 +889,14 @@ void scheduler(void *pvParameters) {
           diag_ftp_success_count = 0;
           diag_reg_time_total = 0;
           diag_stored_apn_fails = 0;
-          
+
           diag_sent_mask_cur[0] = 0;
           diag_sent_mask_cur[1] = 0;
           diag_sent_mask_cur[2] = 0;
+          last_unsent_sampleNo =
+              -1; // v5.73 Fix: Reset cross-day dedup guard on rollover
+          last_ftp_unsent_sampleNo = -1; // [REG-01] FTP Guard Reset
+          rtc_daily_sync_count = 0;      // [v5.77 Signal] Reset daily sync retry budget
 
           new_current_cumRF = 0;
           total_rf_pulses_32 = 0;
@@ -886,30 +907,41 @@ void scheduler(void *pvParameters) {
           diag_sensor_fault_sent_today = false; // Reset daily fault report flag
           diag_first_http_count = 0;
           diag_wd_fail = false; // Reset WD diagnostic for new day
-          // NOTE: rtc_daily_cum_rf, diag_http_success_count, diag_http_retry_count,
-          // diag_ftp_success_count are already reset above at the v5.64 Consolidated
-          // Reset block (lines ~816-830). Do NOT reset them again here — a second
-          // rtc_daily_cum_rf=0.0 here would race with the RF rescue logic that reads
-          // rtc_daily_cum_rf on the very same wakeup. (BUG-C1 fix v5.65)
+          // NOTE: rtc_daily_cum_rf, diag_http_success_count,
+          // diag_http_retry_count, diag_ftp_success_count are already reset
+          // above at the v5.64 Consolidated Reset block (lines ~816-830). Do
+          // NOT reset them again here — a second rtc_daily_cum_rf=0.0 here
+          // would race with the RF rescue logic that reads rtc_daily_cum_rf on
+          // the very same wakeup. (BUG-C1 fix v5.65)
 
           // Reset stuck detection counters for a fresh day
           temp_same_count = 0;
           hum_same_count = 0;
           diag_ws_same_count = 0;
+          debugln("[SCHED] Rollover Complete.");
+
+          // [LTS-3] v5.72 Hardened: DailyFTP Staging Cleanup - M-NEW-1 Fix
+          // (Protect with Mutex)
+          int pd = rf_cls_dd, pm = rf_cls_mm, py = rf_cls_yy;
+          previous_date(&pd, &pm, &py);
+          char yesterday_ftp[50];
+          snprintf(yesterday_ftp, sizeof(yesterday_ftp),
+                   "/dailyftp_%04d%02d%02d.txt", py, pm, pd);
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            if (SPIFFS.exists(yesterday_ftp)) {
+              SPIFFS.remove(yesterday_ftp);
+              debugln("[LTS] Yesterday's DailyFTP staging file pruned.");
+            }
+            xSemaphoreGive(fsMutex);
+          }
         } // End of destructive reset
-
-
-        debugln("[SCHED] Rollover Complete.");
       }
 
       // v7.82 Reconstruction: Recover sent mask from SPIFFS (Cold Boot or
-      // Recovery) Must happen AFTER rollover check to prevent recovered counts
-      // from being wiped. 
-      // Phase 12 Fix: Guard strictly with last_processed_sample_idx == -1 so
-      // normal midnight rollovers (which reset diag_pd_count to 0) do not
-      // unnecessarily trigger a full disk scan!
-      if (diag_pd_count == 0 && current_year > 2024 && last_processed_sample_idx == -1) {
-        reconstructSentMasks();
+      // Recovery or Midnight) Must happen AFTER rollover check to prevent
+      // recovered counts from being wiped.
+      if (diag_pd_count == 0 && current_year > 2024) {
+        reconstructSentMasks(); // v5.70: Removed index guard to fix M-04
         fresh_boot_check_done = true;
       }
 
@@ -940,31 +972,63 @@ void scheduler(void *pvParameters) {
 
         //                                String content;
 
-
         bool file_read_ok = false;
-        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) { // v5.66: Increased from 2s to 10s
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) ==
+            pdTRUE) { // v5.66: Increased from 2s to 10s
           file1 = SPIFFS.open(cur_file, FILE_READ);
           if (file1) {
             s = file1.size();
-            s = (s > record_length) ? s - record_length : 0;
-            file1.seek(s);
-            int bytes_read = file1.readBytes(content_buf, sizeof(content_buf) - 1);
+            // v5.85: Read 2x record length to guarantee a full last line is captured
+            int read_amount = 2 * (int)record_length;
+            if (s > read_amount) {
+              file1.seek(s - read_amount);
+            } else {
+              file1.seek(0);
+            }
+            int bytes_read =
+                file1.readBytes(content_buf, sizeof(content_buf) - 1);
             content_buf[bytes_read] = '\0'; // Null terminate
             file1.close();
+            
+            // v5.85 P11: Robust parsing to find actual last record start.
+            // Addresses issue where seeking record_length lands on the last 
+            // digit of the previous record (e.g. "7\n58,2026...")
+            char *last_nl = strrchr(content_buf, '\n');
+            if (last_nl) {
+                // If the very last char was \n, remove it and look for the one before it
+                if (last_nl[1] == '\0') {
+                    *last_nl = '\0';
+                    char *pen_nl = strrchr(content_buf, '\n');
+                    if (pen_nl) {
+                        memmove(content_buf, pen_nl + 1, strlen(pen_nl + 1) + 1);
+                    }
+                } else {
+                    // There's text AFTER the last \n (partial line?) 
+                    // No, usually our lines end with \n. But let's be safe.
+                    memmove(content_buf, last_nl + 1, strlen(last_nl + 1) + 1);
+                }
+            }
             file_read_ok = true;
           } else {
-             debugf1("[SCHED] Error: File exists but cannot be opened for reading: %s\n", cur_file);
+            debugf1("[SCHED] Error: File exists but cannot be opened for "
+                    "reading: %s\n",
+                    cur_file);
           }
           xSemaphoreGive(fsMutex);
         }
 
         if (!file_read_ok) {
-          debugf("[SCHED] Error: Failed to open %s for reading. MutexStatus=TAKEN\n", cur_file);
-          vTaskDelay(5000 / portTICK_PERIOD_MS); // v5.66: Wait longer if contention
-          schedulerBusy = false; 
-          continue; 
+          debugf("[SCHED] Error: Failed to open %s for reading. "
+                 "MutexStatus=TAKEN\n",
+                 cur_file);
+          vTaskDelay(5000 /
+                     portTICK_PERIOD_MS); // v5.66: Wait longer if contention
+          portENTER_CRITICAL(&syncMux);
+          schedulerBusy = false; // v5.72: Critical exit protection
+          portEXIT_CRITICAL(&syncMux);
+          continue;
         }
-        
+
         len = strlen(content_buf); // Update len properly
 
         if (len == 0) {
@@ -1009,7 +1073,8 @@ void scheduler(void *pvParameters) {
           debugln("Duplicate sample detected (RF). Data already logged.");
           data_writing_initiated = 0;
           skip_primary_http = true; // No need to hit server with a duplicate
-          httpInitiated = true;     // v5.50: Block sleep
+          __atomic_store_n(&httpInitiated, true,
+                           __ATOMIC_RELEASE); // v5.50: Block sleep
           goto TRIGGER_HTTP;
         }
 
@@ -1026,7 +1091,8 @@ void scheduler(void *pvParameters) {
 
         // v5.59: RF Rescue Protocol
         // Trust RTC RAM daily total if SPIFFS parsed total is zero mid-day.
-        if (last_cumRF < 0.001 && rtc_daily_cum_rf > 0.001 && last_sampleNo > 0) {
+        if (last_cumRF < 0.001 && rtc_daily_cum_rf > 0.001 &&
+            last_sampleNo > 0) {
           debugln("[RESCUE] RF Cumulative restored from RTC RAM anchor.");
           last_cumRF = rtc_daily_cum_rf;
         }
@@ -1080,7 +1146,9 @@ void scheduler(void *pvParameters) {
                   "this interval.");
           data_writing_initiated = 0;
           skip_primary_http = true;
-          httpInitiated = true; // v5.50: Block sleep for GPRS task
+          __atomic_store_n(
+              &httpInitiated, true,
+              __ATOMIC_RELEASE); // v5.50: Block sleep for GPRS task
           goto TRIGGER_HTTP;
         }
 
@@ -1102,7 +1170,7 @@ void scheduler(void *pvParameters) {
             last_instWD = atof(p + 1);
 
           // FIX: Ensure display variables match file data immediately
-          if (last_AvgWS > 0) {
+          if (last_AvgWS >= 0) {
             cur_avg_wind_speed = last_AvgWS;
             snprintf(prevWindSpeedAvg_str, sizeof(prevWindSpeedAvg_str),
                      "%05.2f", last_AvgWS);
@@ -1119,6 +1187,11 @@ void scheduler(void *pvParameters) {
             last_instWD = 0;
           if (last_instWD >= WIND_DIR_MAX)
             last_instWD = 0;
+
+          // Turner-Fix: Assign ACTIVE values only after clamping sanity check
+          temperature = last_instTemp;
+          humidity = last_instHum;
+          windDir = (int)last_instWD;
         }
 #endif
 
@@ -1132,8 +1205,9 @@ void scheduler(void *pvParameters) {
           debugln("Duplicate sample detected (TWS-RF).");
           data_writing_initiated = 0;
           skip_primary_http = true;
-          httpInitiated =
-              true; // v5.50: Block sleep for GPRS task health/backlog check
+          __atomic_store_n(&httpInitiated, true,
+                           __ATOMIC_RELEASE); // v5.50: Block sleep for GPRS
+                                              // task health/backlog check
           goto TRIGGER_HTTP;
         }
 
@@ -1144,9 +1218,10 @@ void scheduler(void *pvParameters) {
           p = strchr(p + 1, ',');
         if (p) {
           last_cumRF = atof(p + 1);
-          
+
           // v5.59: RF Rescue Protocol (TWS-RF)
-          if (last_cumRF < 0.001 && rtc_daily_cum_rf > 0.001 && last_sampleNo > 0) {
+          if (last_cumRF < 0.001 && rtc_daily_cum_rf > 0.001 &&
+              last_sampleNo > 0) {
             debugln("[RESCUE] RF-TWS Cumulative restored from RTC RAM anchor.");
             last_cumRF = rtc_daily_cum_rf;
           }
@@ -1175,7 +1250,7 @@ void scheduler(void *pvParameters) {
             last_instWD = atof(p + 1);
 
           // FIX: Ensure display variables match file data immediately
-          if (last_AvgWS > 0) {
+          if (last_AvgWS >= 0) {
             cur_avg_wind_speed = last_AvgWS;
             snprintf(prevWindSpeedAvg_str, sizeof(prevWindSpeedAvg_str),
                      "%05.2f", last_AvgWS);
@@ -1194,6 +1269,11 @@ void scheduler(void *pvParameters) {
             last_instWD = 0;
           if (last_instWD >= WIND_DIR_MAX)
             last_instWD = 0;
+
+          // Turner-Fix: Assign ACTIVE values only after clamping sanity check
+          temperature = last_instTemp;
+          humidity = last_instHum;
+          windDir = (int)last_instWD;
         }
 
         debug("Last Parse: CRF=");
@@ -1227,196 +1307,205 @@ void scheduler(void *pvParameters) {
 #endif
 
         // NOTE: file1 was already closed after readBytes() above.
-        // Do NOT call file1.close() here again — double-close is harmless on SPIFFS
-        // but would corrupt the VFS handle table on LittleFS. (BUG-C2 fix v5.65)
+        // Do NOT call file1.close() here again — double-close is harmless on
+        // SPIFFS but would corrupt the VFS handle table on LittleFS. (BUG-C2
+        // fix v5.65)
 
-        // v6.04: Skip redundant step-based time initialization - derived directly from sampleNo index point below
+        // Finding the last recorded hr and min from SPIFFs
+        int temp_hr = START_HOUR;
+        int temp_min = START_MINUTE;
+        for (int i = 0; i < last_sampleNo; i++) {
+          temp_min += 15;
+          if (temp_min == 60) {
+            temp_hr += 1;
+            if (temp_hr == 24) {
+              temp_hr = 0;
+            }
+            temp_min = 0;
+          }
+        }
+
+        debug("Last recorded hour/min is ");
+        debug(temp_hr);
+        debug(":");
+        debugln(temp_min);
+
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
           debugln("[SCHED] Error: SPIFFS Mutex Timeout. Deferring record.");
           data_writing_initiated = 0; // v5.66: Prevent garbage data upload
-          sync_mode = eHttpStop;      // v5.66: Abort HTTP queueing
+          portENTER_CRITICAL(&syncMux);
+          sync_mode = eHttpStop; // v5.66: Abort HTTP queueing
+          portEXIT_CRITICAL(&syncMux);
           goto TRIGGER_HTTP;
         }
+        fs_locked =
+            true; // v5.71 FIX: Track lock state for global release (NEW-3)
 
         // TIER 1 DATA SANCTITY: Brownout Protection
         if (li_bat_val < 3.4f && li_bat_val > 0.5f) {
-           debugln("[PWR] CRITICAL: Battery too low for flash write. Aborting to prevent brownout/corruption.");
-           signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
-           data_writing_initiated = 0;
-           schedulerBusy = false;
-           sync_mode = eHttpStop;
-           xSemaphoreGive(fsMutex);
-           goto TRIGGER_HTTP;
+          debugln("[PWR] CRITICAL: Battery too low for flash write. Aborting "
+                  "to prevent brownout/corruption.");
+          signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
+          data_writing_initiated = 0;
+          portENTER_CRITICAL(&syncMux);
+          schedulerBusy = false;
+          portEXIT_CRITICAL(&syncMux);
+          xSemaphoreGive(fsMutex);
+          fs_locked = false;
+          portENTER_CRITICAL(&syncMux);
+          sync_mode = eHttpStop;
+          portEXIT_CRITICAL(&syncMux);
+          goto TRIGGER_HTTP;
         }
 
         // TIER 1 DATA SANCTITY: Filesystem Space Protection (Circular Logging)
-        // v5.68 FIX: Actually prune old files instead of permanently aborting. 
-        // We raised the threshold to 4096 bytes to guarantee a gap-fill burst can fit safely.
+        // v5.68 FIX: Actually prune old files instead of permanently aborting.
+        // We raised the threshold to 4096 bytes to guarantee a gap-fill burst
+        // can fit safely.
         int prune_attempts = 0;
-        while (((SPIFFS.totalBytes() - SPIFFS.usedBytes()) < 4096) && (prune_attempts < 10)) {
-           debugln("[SCHED] CRITICAL: SPIFFS nearly full. Analyzing filesystem to prune oldest log...");
-           
-           File root = SPIFFS.open("/");
-           File f = root.openNextFile();
-           String oldest_file = "";
-           
-           while (f) {
-               esp_task_wdt_reset();
-               String fName = f.name();
-               // Identify daily log files: e.g. TWS1931_20260324.txt
-               if (fName.indexOf("_20") != -1 && fName.endsWith(".txt")) {
-            // v6.05 Fix BUG-M2: Skip the current daily log file during space recovery
-            if (cur_file && strstr(fName.c_str(), cur_file + 1) != NULL) continue; 
-            if (oldest_file == "" || fName < oldest_file) {
-                       oldest_file = fName;
-                   }
-               }
-               f.close();
-               f = root.openNextFile();
-           }
-           root.close();
+        while (((SPIFFS.totalBytes() - SPIFFS.usedBytes()) < 4096) &&
+               (prune_attempts < 10)) {
+          debugln("[SCHED] CRITICAL: SPIFFS nearly full. Analyzing filesystem "
+                  "to prune oldest log...");
 
-           if (oldest_file != "" && oldest_file.length() > 5) {
-               debugf1("[SPIFFS] Rotating out oldest log to recover space: %s\n", oldest_file.c_str());
-               SPIFFS.remove(oldest_file);
-           } else {
-               debugln("[SPIFFS] FATAL: Could not locate old logs. System files dominating storage. Aborting write.");
-               signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
-               data_writing_initiated = 0;
-               schedulerBusy = false; 
-               sync_mode = eHttpStop; 
-               xSemaphoreGive(fsMutex);
-               goto TRIGGER_HTTP;
-           }
-           prune_attempts++;
-        }
+          File root = SPIFFS.open("/");
+          File f = root.openNextFile();
+          String oldest_file = "";
 
-        // Filling the SPIFF file and SD card file with missing data. Only
-        // updating unsent file if FILLGAP is 1
-
-        File file2 = SPIFFS.open(
-            cur_file, FILE_APPEND); // this is rf_close date IN spiffs
-        if (!file2) {
-          debugln("Failed to open SPIFFS file for appending");
-        } // #TRUEFIX
-        File sd2;
-        if (sd_card_ok) {
-          sd2 = SD.open(cur_file, FILE_APPEND);
-          if (!sd2) {
-            debugln("Failed to open SD file for appending");
+          while (f) {
+            esp_task_wdt_reset();
+            vTaskDelay(
+                10 /
+                portTICK_PERIOD_MS); // v5.70: Yield during FS walk (H-01 fix)
+            String fName = f.name();
+            // Identify daily log files: e.g. TWS1931_20260324.txt
+            if (fName.indexOf("_20") != -1 && fName.endsWith(".txt")) {
+              // v5.70 FIX H-05: Absolute protection for current active log
+              if (fName != cur_file &&
+                  (oldest_file == "" || fName < oldest_file)) {
+                oldest_file = fName;
+              }
+            }
+            f.close();
+            f = root.openNextFile();
           }
+          root.close();
+
+          if (oldest_file != "" && oldest_file.length() > 5) {
+            debugf1("[SPIFFS] Rotating out oldest log to recover space: %s\n",
+                    oldest_file.c_str());
+            SPIFFS.remove(oldest_file);
+          } else {
+            debugln("[SPIFFS] FATAL: Could not locate old logs. System files "
+                    "dominating storage. Aborting write.");
+            signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
+            data_writing_initiated = 0;
+            xSemaphoreGive(fsMutex); // Orphaned Give C-01 (Path A)
+            fs_locked = false;
+            portENTER_CRITICAL(&syncMux);
+            schedulerBusy = false; // v5.72: Critical exit protection
+            sync_mode = eHttpStop;
+            portEXIT_CRITICAL(&syncMux);
+            goto TRIGGER_HTTP;
+          }
+          prune_attempts++;
         }
 
-        int gap = sampleNo - last_sampleNo;
-        if (gap < 0) gap += 96; // Handle midnight rollover (95 -> 0 wrap)
-        if (gap > 1) { // THERE ARE GAPS IN THE SPIFFs FILE
+        // v5.70 (N-10): Mutex Pulsing Strategy - Outer file handles removed.
+        // We will open/write/close/give inside the loop to prevent 5-second
+        // starvation.
+        if (fs_locked) {
+          xSemaphoreGive(fsMutex);
+          fs_locked = false;
+        }
 
+        if ((sampleNo - last_sampleNo > 1) || skip_primary_http) {
 #if FILLGAP == 1
-
 #if SYSTEM == 0
           snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-          File unsent = SPIFFS.open(unsent_file, FILE_APPEND);
-          if (!unsent) {
-              debugln("[SCHED] FATAL GAP: Could not open unsent.txt for Gap Fill!");
-              data_writing_initiated = 0; schedulerBusy = false; sync_mode = eHttpStop;
-              xSemaphoreGive(fsMutex); goto TRIGGER_HTTP;
+          if (SPIFFS.exists(unsent_file)) {
+            pruneFile(unsent_file, (300 * record_length), false);
           }
 #endif
-
 #if (SYSTEM == 1 || SYSTEM == 2)
           snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-          File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-          if (!ftpunsent) {
-              debugln("[SCHED] FATAL GAP: Could not open ftpunsent.txt for Gap Fill!");
-              data_writing_initiated = 0; schedulerBusy = false; sync_mode = eHttpStop;
-              xSemaphoreGive(fsMutex); goto TRIGGER_HTTP;
+          if (SPIFFS.exists(ftpunsent_file)) {
+            pruneFile(ftpunsent_file, (300 * record_length), false);
           }
 #endif
-
 #endif
-
-          // Fill the gaps starting from last_recorded sampleNo+1 to current
-          // sampleNo including current sampleNo
           debugln("Gap filling for loop started... ");
-          for (int i = 0; i < gap; i++) {
-            int q = (last_sampleNo + 1 + i) % 96;
+          for (int q = last_sampleNo + 1; q <= sampleNo; q++) {
+            esp_task_wdt_reset(); // v5.73: Pet WDT on every gap iteration (C-03
+                                  // fix)
+            vTaskDelay(1 / portTICK_PERIOD_MS); // v5.73: Yield on every
+                                                // iteration (C-03 fix)
+
             // diag_pd_count and diag_ndm_count incremented after file write
             // (line ~1294)
-            int raw_slot = (q - (MIDNIGHT_SAMPLE_NO + 1) + 96) % 96;
-            int temp_hr = raw_slot / 4;
-            int temp_min = (raw_slot % 4) * 15;
-            temp_day = current_day;
-            temp_month = current_month;
-            temp_year = current_year;
-
-            debug("Appending record hour/min is ");
-            debug(temp_hr);
-            debug(":");
-            debugln(temp_min);
-
-            // This means that the gap is starting before midnight and the
-            // lastSample recorded is before midnight
-            if ((q <= MIDNIGHT_SAMPLE_NO) &&
-                (sampleNo >= (MIDNIGHT_SAMPLE_NO + 1))) {
-              previous_date(&temp_day, &temp_month, &temp_year);
-              debug("Gap started before midnight extending to next day, so "
-                    "calculating the previous day to store. Current record : ");
-              debug(temp_hr);
-              debug(" : ");
-              debugln(temp_min);
+            temp_min += MINUTES_PER_SAMPLE;
+            if (temp_min == 60) {
+              temp_hr += 1;
+              if (temp_hr == 24) {
+                temp_hr = 0;
+              }
+              temp_min = 0;
             }
+            // v5.70: Robust date anchor for mid-day gap fill
+            temp_day = rf_cls_dd;
+            temp_month = rf_cls_mm;
+            temp_year = rf_cls_yy;
+            if (q <= MIDNIGHT_SAMPLE_NO)
+              previous_date(&temp_day, &temp_month, &temp_year);
+
+            debugf("Appending record %02d:%02d (%02d-%02d-%04d)\n", temp_hr,
+                   temp_min, temp_day, temp_month, temp_year);
 
             if (q ==
                 sampleNo) { // The current sample will only get stored in
                             // cur_file and sd card file but not unsent file
 
-// RF
 #if SYSTEM == 0
               snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%04.1f\r\n", q,
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%05.2f\r\n", q,
                        temp_year, temp_month, temp_day, temp_hr, temp_min,
                        inst_rf, cum_rf, signal_strength, bat_val);
 #endif
 
 // TWS
 #if SYSTEM == 1
-              snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%"
-                       "04.1f\r\n",
-                       q, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                       inst_temp, inst_hum, avg_wind_speed, inst_wd,
-                       signal_strength, bat_val);
-              snprintf(ftpappend_text, sizeof(ftpappend_text),
-                       "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%"
-                       "04.1f\r\n",
-                       stnId, temp_year, temp_month, temp_day, temp_hr,
-                       temp_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-                       signal_strength, bat_val);
+              snprintf(
+                  append_text, sizeof(append_text),
+                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n",
+                  q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_strength,
+                  bat_val);
+              snprintf(
+                  ftpappend_text, sizeof(ftpappend_text),
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                  stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_strength,
+                  bat_val);
 
 #endif
 
 // TWS-RF
 #if SYSTEM == 2
               snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04."
-                       "1f\r\n",
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%05."
+                       "2f\r\n",
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                        cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                        signal_strength, bat_val);
-              snprintf(ftpappend_text, sizeof(ftpappend_text),
-                       "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04."
-                       "1f\r\n",
-                       stnId, temp_year, temp_month, temp_day, temp_hr,
-                       temp_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
-                       inst_wd, signal_strength, bat_val);
+              snprintf(
+                  ftpappend_text, sizeof(ftpappend_text),
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                  stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                  signal_strength, bat_val);
 
 #endif
-              //                                                        len =
-              //                                                        strlen(append_text);
-              //                                                        append_text[len]
-              //                                                        =
               //                                                        '\0';
-
             } else { // Gap Filling with Linear Interpolation
               float target_number, min_val, max_val;
               char fill_inst_temp[7], fill_inst_hum[7], fill_avg_wind_speed[7],
@@ -1427,18 +1516,15 @@ void scheduler(void *pvParameters) {
               int fill_sig;
 
               int total_gaps = sampleNo - last_sampleNo;
-              if (total_gaps < 0) total_gaps += 96; // Correct for midnight rollover during interpolation
               int gap_idx = q - last_sampleNo;
-              if (gap_idx < 0) gap_idx += 96; // Normalize gap index for the loop q-sweep
 
-              // v6.01: Anchor quality guard — prefer live sensor readings when
-              // the last record's T/H parse shows placeholder zeros, indicating
-              // the previous record was a gap-fill. Prevents drift compounding.
-              bool anchor_is_synthetic = (last_instTemp < 1.0 || last_instHum < 1.0);
-              float start_t = (anchor_is_synthetic && temperature > 5.0)
+              // IQ Start: Ensure we don't interpolate from 0.0 if it looks
+              // like an error IQ Start: Ensure we don't interpolate from 0.0
+              // or -999.0 if it looks like an error
+              float start_t = (last_instTemp < 1.0 && temperature > 5.0)
                                   ? temperature
                                   : last_instTemp;
-              float start_h = (anchor_is_synthetic && humidity > 5.0)
+              float start_h = (last_instHum < 1.0 && humidity > 5.0)
                                   ? humidity
                                   : last_instHum;
               float start_ws = (last_AvgWS < 0.0 || last_AvgWS > 50.0)
@@ -1476,7 +1562,9 @@ void scheduler(void *pvParameters) {
                 }
 
                 target_number =
-                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) * (max_val - min_val) + min_val;
+                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) *
+                        (max_val - min_val) +
+                    min_val;
               } else {
                 target_number = 0.0;
               }
@@ -1501,7 +1589,9 @@ void scheduler(void *pvParameters) {
                 }
 
                 target_number =
-                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) * (max_val - min_val) + min_val;
+                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) *
+                        (max_val - min_val) +
+                    min_val;
                 if (target_number > 100.0)
                   target_number = 100.0;
                 if (target_number < 10.0)
@@ -1521,17 +1611,18 @@ void scheduler(void *pvParameters) {
               } else {
                 min_val = fill_AvgWS - 0.2;
                 max_val = fill_AvgWS + 0.2;
-                fill_AvgWS =
-                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) * (max_val - min_val) + min_val;
+                fill_AvgWS = ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) *
+                                 (max_val - min_val) +
+                             min_val;
 
-                // Keep wind speed within a realistic calm-breeze range for gap fill
+                // Keep wind speed between 0.1 and 1.93 during gap fill
                 if (fill_AvgWS < 0.1)
                   fill_AvgWS = 0.1;
-                if (fill_AvgWS > 2.44) // v6.01: Cap at 2.44 m/s (light breeze) — gap fill should stay calm
-                  fill_AvgWS = 2.44;
+                if (fill_AvgWS > 1.93)
+                  fill_AvgWS = 1.93;
               }
               snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
-                       "%05.2f", fill_AvgWS);
+                       "%04.1f", fill_AvgWS);
 
 #if (SYSTEM == 0 || SYSTEM == 2)
               // Gap Interpolation for Rainfall (Bresenham Distribution)
@@ -1551,9 +1642,9 @@ void scheduler(void *pvParameters) {
                 tips_assigned = curr_accum - prev_accum;
               }
 
-              fill_crf =
-                  start_crf + ((((float)gap_idx * missing_tips) / num_gap_slots) *
-                                RF_RESOLUTION);
+              fill_crf = start_crf +
+                         ((((float)gap_idx * missing_tips) / num_gap_slots) *
+                          RF_RESOLUTION);
               fill_irf = tips_assigned * RF_RESOLUTION;
 
               snprintf(fill_cum_rf, sizeof(fill_cum_rf), "%06.2f", fill_crf);
@@ -1565,74 +1656,64 @@ void scheduler(void *pvParameters) {
               // Wind Direction (Simple random around current/last midpoint)
               if ((windDir > WIND_DIR_MIN_VALID) &&
                   (windDir < WIND_DIR_MAX_VALID)) {
-                // v6.05 Fix BUG-H3: Capture windDir under windMux to prevent race conditions
-                portENTER_CRITICAL(&windMux);
                 fill_WD = random(windDir - WIND_DIR_RANGE,
                                  windDir + WIND_DIR_RANGE + 1);
-                portEXIT_CRITICAL(&windMux);
                 snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", fill_WD);
               } else {
                 snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", windDir);
               }
 
-              // v6.01 Fix: Use SIGNAL_STRENGTH_GAP_FILLED sentinel so scanFileToMask
-              // correctly skips this record (same as TWS/ADDON). Previous random
-              // -115..-120 range was NOT a sentinel and inflated diag_net_data_count.
-              fill_sig = SIGNAL_STRENGTH_GAP_FILLED;
+              // Calculate fill_sig as negative for consistent formatting
+              fill_sig = -((rand() % (FILL_SIG_MAX - FILL_SIG_MIN + 1)) +
+                           FILL_SIG_MIN);
 
-// RF
 #if SYSTEM == 0
               snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%04.1f\r\n", q,
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%05.2f\r\n", q,
                        temp_year, temp_month, temp_day, temp_hr, temp_min,
                        fill_inst_rf, fill_cum_rf, fill_sig, bat_val);
 #endif
 
 #if SYSTEM == 1
               // TWS: Standardize to 10 fields (Filler Rainfall at field 4)
-              snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%"
-                       "04.1f\r\n",
-                       q, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                       fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
-                       fill_inst_wd,
-                       (q == sampleNo) ? signal_lvl
-                                       : SIGNAL_STRENGTH_GAP_FILLED,
-                       bat_val);
-
-              snprintf(ftpappend_text, sizeof(ftpappend_text),
-                       "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%"
-                       "04.1f\r\n",
-                       stnId, temp_year, temp_month, temp_day, temp_hr,
-                       temp_min, fill_inst_temp, fill_inst_hum,
-                       fill_avg_wind_speed, fill_inst_wd,
-                       (q == sampleNo) ? signal_lvl
-                                       : SIGNAL_STRENGTH_GAP_FILLED,
-                       bat_val);
+              snprintf(
+                  append_text, sizeof(append_text),
+                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n",
+                  q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
+                  fill_inst_wd,
+                  (q == sampleNo) ? signal_lvl : SIGNAL_STRENGTH_GAP_FILLED,
+                  bat_val);
+              snprintf(
+                  ftpappend_text, sizeof(ftpappend_text),
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                  stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
+                  fill_inst_wd,
+                  (q == sampleNo) ? signal_lvl : SIGNAL_STRENGTH_GAP_FILLED,
+                  bat_val);
 #endif
 
 // TWS-RF
 #if SYSTEM == 2
               // TWS-RF: Standardized 10 fields (Rainfall at field 4)
               snprintf(append_text, sizeof(append_text),
-                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04."
-                       "1f\r\n",
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%05."
+                       "2f\r\n",
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                        fill_cum_rf, fill_inst_temp, fill_inst_hum,
                        fill_avg_wind_speed, fill_inst_wd,
                        (q == sampleNo) ? signal_lvl
                                        : SIGNAL_STRENGTH_GAP_FILLED,
                        bat_val);
-
-              snprintf(ftpappend_text, sizeof(ftpappend_text),
-                       "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04."
-                       "1f\r\n",
-                       stnId, temp_year, temp_month, temp_day, temp_hr,
-                       temp_min, fill_ftpcum_rf, fill_inst_temp, fill_inst_hum,
-                       fill_avg_wind_speed, fill_inst_wd,
-                       (q == sampleNo) ? signal_lvl
-                                       : SIGNAL_STRENGTH_GAP_FILLED,
-                       bat_val);
+              snprintf(
+                  ftpappend_text, sizeof(ftpappend_text),
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                  stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  fill_ftpcum_rf, fill_inst_temp, fill_inst_hum,
+                  fill_avg_wind_speed, fill_inst_wd,
+                  (q == sampleNo) ? signal_lvl : SIGNAL_STRENGTH_GAP_FILLED,
+                  bat_val);
 #endif
             }
 
@@ -1643,40 +1724,75 @@ void scheduler(void *pvParameters) {
 
             debugln(q);
 
-            file2.print(append_text);
-            if (sd_card_ok && sd2) {
-              sd2.print(append_text);
-            }
-            if (diag_pd_count < 96)
-              diag_pd_count++;
-            if (q >= 49 && q <= 85) // v5.57 Fix: sample 49 = 21:00 (9 PM) was excluded. Range is 49-85 inclusive.
-              diag_ndm_count++; // 9 PM to 6 AM
-#if FILLGAP == 1
-            if (i < gap - 1) { // Only append GAPS (not current) to unsent backlog
-              debug("APPENDED TEXT to unsent.txt is : ");
-              debugln(append_text);
+            // v5.70 (N-10): Pulsed Write (Take -> Open -> Write -> Close ->
+            // Give)
+            if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
 #if SYSTEM == 0
-              if (unsent)
-                unsent.print(append_text);
+              File file2_p = SPIFFS.open(cur_file, FILE_APPEND);
+              if (file2_p) {
+                file2_p.print(append_text);
+                file2_p.close();
+              }
 #endif
-#if (SYSTEM == 1 || SYSTEM == 2)
-              if (ftpunsent)
-                ftpunsent.print(ftpappend_text);
+#if SYSTEM == 1
+              File file2_p = SPIFFS.open(cur_file, FILE_APPEND);
+              if (file2_p) {
+                file2_p.print(append_text);
+                file2_p.close();
+              }
 #endif
-            }
+#if SYSTEM == 2
+              File file2_p = SPIFFS.open(cur_file, FILE_APPEND);
+              if (file2_p) {
+                file2_p.print(append_text);
+                file2_p.close();
+              }
 #endif
-          } // End of q loop
 
 #if FILLGAP == 1
 #if SYSTEM == 0
-          if (unsent)
-            unsent.close();
+              if ((q < sampleNo || skip_primary_http) && q != last_unsent_sampleNo) {
+                File uns_p = SPIFFS.open("/unsent.txt", FILE_APPEND);
+                if (uns_p) {
+                  uns_p.print(append_text);
+                  uns_p.close();
+                }
+                last_unsent_sampleNo = q; // Mark as written
+              }
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
-          if (ftpunsent)
-            ftpunsent.close();
+              if (q < sampleNo &&
+                  q != last_ftp_unsent_sampleNo) { // [FTP-03] Persistent Dedup
+                File funs_p = SPIFFS.open("/ftpunsent.txt", FILE_APPEND);
+                if (funs_p) {
+                  funs_p.print(ftpappend_text);
+                  funs_p.close();
+                }
+                last_ftp_unsent_sampleNo = q; // Mark as written
+              }
 #endif
 #endif
+              xSemaphoreGive(fsMutex);
+            }
+
+            if (sd_card_ok) {
+              File sd2_p = SD.open(cur_file, FILE_APPEND);
+              if (sd2_p) {
+                sd2_p.print(append_text);
+                sd2_p.close();
+              }
+            }
+
+            if (diag_pd_count < 96)
+              diag_pd_count++;
+            if (q >= 49 && q <= 85)
+              diag_ndm_count++; // 9 PM to 6 AM
+          }                     // End of q loop
+
+          // Re-acquire lock for the logic downstream
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+            fs_locked = true;
+          }
 
         } else { // **********************  THERE ARE NO GAPS
                  // ************************
@@ -1684,45 +1800,26 @@ void scheduler(void *pvParameters) {
           debugln("NO GAPS FOUND ...");
           debugln();
 
+// [FTP-04] Signal Inconsistency Fix: Synchronize signal_lvl with live signal_strength
+          signal_lvl = signal_strength;
+
 // RF
 #if SYSTEM == 0
-          snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%04.1f\r\n",
-                   sampleNo, temp_year, temp_month, temp_day, record_hr,
-                   record_min, inst_rf, cum_rf, signal_strength,
-                   bat_val); // Use signal_strength (dBm) for graph consistency
+          snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%05.2f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, inst_rf, cum_rf, signal_strength, bat_val); 
 #endif
 
 // TWS
 #if SYSTEM == 1
-          snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
-                   sampleNo, temp_year, temp_month, temp_day, record_hr,
-                   record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-                   signal_strength, bat_val);
+          snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_strength, bat_val);
           // v7.70: Strict TWS FTP Format (57 bytes)
-          snprintf(ftpappend_text, sizeof(ftpappend_text),
-                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
-                   stnId, current_year, current_month, current_day, record_hr,
-                   record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-                   signal_lvl, bat_val);
+          snprintf(ftpappend_text, sizeof(ftpappend_text), "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n", stnId, temp_year, temp_month, temp_day, record_hr, record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
 #endif
 
 #if SYSTEM == 2
-          snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f",
-                   float(new_current_cumRF));
-          snprintf(
-              append_text, sizeof(append_text),
-              "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
-              sampleNo, current_year, current_month, current_day, record_hr,
-              record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-              signal_lvl, bat_val);
+          snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(new_current_cumRF));
+          snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%05.2f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
           // v7.70: Strict TWSRF FTP Format (63 bytes)
-          snprintf(ftpappend_text, sizeof(ftpappend_text),
-                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
-                   stnId, current_year, current_month, current_day, record_hr,
-                   record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
-                   inst_wd, signal_lvl, bat_val);
+          snprintf(ftpappend_text, sizeof(ftpappend_text), "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n", stnId, temp_year, temp_month, temp_day, record_hr, record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
 #endif
 
           //                                            len =
@@ -1730,14 +1827,28 @@ void scheduler(void *pvParameters) {
           //                                            append_text[len] =
           //                                            '\0';
 
-          if (file2)
-            file2.print(append_text);
-          if (sd_card_ok && sd2)
-            sd2.print(append_text);
+          // v5.70 (N-10): Pulsed Write for NO GAPS path
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+            File file2_p = SPIFFS.open(cur_file, FILE_APPEND);
+            if (file2_p) {
+              file2_p.print(append_text);
+              file2_p.close();
+            }
+            xSemaphoreGive(fsMutex);
+          }
+
+          if (sd_card_ok) {
+            File sd2_p = SD.open(cur_file, FILE_APPEND);
+            if (sd2_p) {
+              sd2_p.print(append_text);
+              sd2_p.close();
+            }
+          }
 
           if (diag_pd_count < 96)
             diag_pd_count++;
-          if (sampleNo >= 49 && sampleNo <= 85) // v5.57 Fix: sample 49 = 21:00 (9 PM)
+          if (sampleNo >= 49 &&
+              sampleNo <= 85) // v5.57 Fix: sample 49 = 21:00 (9 PM)
             diag_ndm_count++; // 9 PM to 6 AM
 
           debugln();
@@ -1745,30 +1856,72 @@ void scheduler(void *pvParameters) {
           debugln(append_text);
         }
 
-        file2.close();
-        if (sd_card_ok && sd2)
-          sd2.close();
+        // Pulse logic removed the need for holistic file2.close() here.
+        // xSemaphoreGive handled at TRIGGER_HTTP
 
-        // 🚨 CRITICAL FIX: The mid-day sequence assumes gprs.ino handles unsent.txt
-        // for the *current* record (sampleNo). But if skip_primary_http is true 
-        // (like on fresh boot), gprs.ino completely bypasses it. We MUST queue it here!
-        // Note: fsMutex is actively held from line 1239, safely protecting these file writes.
+        // 🚨 CRITICAL FIX: The mid-day sequence assumes gprs.ino handles
+        // unsent.txt for the *current* record (sampleNo). But if
+        // skip_primary_http is true (like on fresh boot), gprs.ino completely
+        // bypasses it. We MUST queue it here! Note: fsMutex is actively held
+        // from line 1239, safely protecting these file writes.
         if (data_writing_initiated == 1 && skip_primary_http) {
 #if SYSTEM == 0
-            debugln("Primary skipped mid-day. Queuing CURRENT record to unsent.txt...");
-            File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
-            if (mid_unsent) {
+          debugln("Primary skipped mid-day. Queuing CURRENT record to "
+                  "unsent.txt...");
+          if (last_unsent_sampleNo != sampleNo) { // v5.72: Dedup guard
+            pruneFile(unsent_file, (300 * record_length), fs_locked);
+            if (!fs_locked &&
+                xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+              File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
+              if (mid_unsent) {
                 mid_unsent.print(append_text);
                 mid_unsent.close();
+                if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
+              }
+              xSemaphoreGive(fsMutex);
+              last_unsent_sampleNo = sampleNo;
+            } else if (fs_locked) {
+              File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
+              if (mid_unsent) {
+                mid_unsent.print(append_text);
+                mid_unsent.close();
+                if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
+              }
+              last_unsent_sampleNo = sampleNo;
             }
+          } else {
+            debugln("[SCHED] Record already in unsent.txt. Skipping duplicate "
+                    "append.");
+          }
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
-            debugln("Primary skipped mid-day. Queuing CURRENT record to ftpunsent.txt...");
-            File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-            if (mid_ftp) {
+          debugln("Primary skipped mid-day. Queuing CURRENT record to "
+                  "ftpunsent.txt...");
+          if (last_ftp_unsent_sampleNo != sampleNo) { // [FTP-03] Persistent Dedup
+            pruneFile(ftpunsent_file, (300 * record_length), fs_locked);
+            if (!fs_locked &&
+                xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+              File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+              if (mid_ftp) {
                 mid_ftp.print(ftpappend_text);
                 mid_ftp.close();
+                if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
+              }
+              xSemaphoreGive(fsMutex);
+              last_ftp_unsent_sampleNo = sampleNo;
+            } else if (fs_locked) {
+              File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+              if (mid_ftp) {
+                mid_ftp.print(ftpappend_text);
+                mid_ftp.close();
+                if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
+              }
+              last_ftp_unsent_sampleNo = sampleNo;
             }
+          } else {
+            debugln("[SCHED] Record already in ftpunsent.txt. Skipping "
+                    "duplicate append.");
+          }
 #endif
         }
 
@@ -1785,7 +1938,8 @@ void scheduler(void *pvParameters) {
         // true.
     HANDLE_NO_FILE:
       if (!SPIFFS.exists(cur_file)) // *** SPIFFS FILE IS NOT PRESENT ***
-      { // Either it is 8:45 (sample 0) data or the device is switched on
+      { 
+        // Either it is 8:45 (sample 0) data or the device is switched on
         // during
         // mid-day when the RTC NVRAM still has last recorded date as previous
         // some rf-close date. SPIFFs file for the rf_close_dd is also NOT
@@ -1796,9 +1950,14 @@ void scheduler(void *pvParameters) {
                 "DAYS  ***********");
         debugln();
         File file1;
-        // Phase 12 Fix: Lock fsMutex for the ENTIRE duration of new file creation
-        // to prevent VFS table shredding.
-        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
+        // v5.75 FIX: [M-01] ABBA Deadlock / Double-Take Fix
+        // fsMutex is already held by the outer loop (Line 1230).
+        // Do NOT reset fs_locked or attempt a second Take (non-recursive
+        // mutex).
+        if (fs_locked) {
+          file1 = SPIFFS.open(cur_file, FILE_APPEND);
+        } else if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
+          // Fallback for safety if somehow entered from a path without a lock
           fs_locked = true;
           file1 = SPIFFS.open(cur_file, FILE_APPEND);
         }
@@ -1823,17 +1982,21 @@ void scheduler(void *pvParameters) {
           debugln("Outside valid window for new file. Skipping retroactive "
                   "logging.");
           data_writing_initiated = 0;
-          
-          // Phase 13 Fix: Cannot goto and bypass the holistic xSemaphoreGive at the bottom!
-          // Must cleanly decouple the SPIFFS handle before jumping out of this block.
+
+          // Phase 13 Fix: Cannot goto and bypass the holistic xSemaphoreGive at
+          // the bottom! Must cleanly decouple the SPIFFS handle before jumping
+          // out of this block.
           if (fs_locked) {
-            if (file1) file1.close();
+            if (file1)
+              file1.close();
             xSemaphoreGive(fsMutex);
+            fs_locked = false; // Fix Path B: Reset flag before double-give at
+                               // TRIGGER_HTTP
           }
           if (sd_card_ok && sd1) {
             sd1.close();
           }
-          
+
           goto TRIGGER_HTTP;
         }
 
@@ -1844,22 +2007,21 @@ void scheduler(void *pvParameters) {
           // For sample 0, inst and cum are identical (start of day)
           snprintf(cum_rf, sizeof(cum_rf), "%s", inst_rf);
           snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%04.1f\r\n",
+                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%05.2f\r\n",
                    sampleNo, temp_year, temp_month, temp_day, record_hr,
                    record_min, inst_rf, cum_rf, signal_strength,
-                   bat_val); // inst_rf and cum_rf preserved separately
+                   bat_val);
 #endif
 
 // TWS
 #if SYSTEM == 1
           snprintf(append_text, sizeof(append_text),
-                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
+                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n",
                    sampleNo, temp_year, temp_month, temp_day, record_hr,
                    record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                    signal_strength, bat_val);
-          // v7.53: Legacy TWS FTP Format (57 bytes)
           snprintf(ftpappend_text, sizeof(ftpappend_text),
-                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n",
                    stnId, temp_year, temp_month, temp_day, record_hr,
                    record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                    signal_strength, bat_val);
@@ -1869,17 +2031,16 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 2
           snprintf(cum_rf, sizeof(cum_rf), "%06.1f", float(rf_value));
           cum_rf[6] = 0;
-          snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.1f", float(rf_value));
+          snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(rf_value));
           ftpcum_rf[5] = 0;
           snprintf(
               append_text, sizeof(append_text),
-              "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
+              "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%05.2f\r\n",
               sampleNo, temp_year, temp_month, temp_day, record_hr, record_min,
               cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
               signal_strength, bat_val);
-          // v7.53: Legacy ADDON FTP Format (63 bytes)
           snprintf(ftpappend_text, sizeof(ftpappend_text),
-                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
                    stnId, temp_year, temp_month, temp_day, record_hr,
                    record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
                    inst_wd, signal_strength, bat_val);
@@ -1909,38 +2070,54 @@ void scheduler(void *pvParameters) {
           debugln(append_text);
 
 #if FILLGAP == 1
-          // Check if previous day's file exists before treating this as a gap
+          // v5.72: Queue Sample 00 to backlog ONLY if the previous day was
+          // missing (Gap Fill) or if the mission-critical primary HTTP is being
+          // skipped this slot (Issue R-NEW-2 Fix)
           int pd = rf_cls_dd, pm = rf_cls_mm, py = rf_cls_yy;
           previous_date(&pd, &pm, &py);
           char prev_day_file[32];
           snprintf(prev_day_file, sizeof(prev_day_file), "/%s_%04d%02d%02d.txt",
                    station_name, py, pm, pd);
 
-          if (SPIFFS.exists(prev_day_file)) {
-            debugln("Previous day file exists. Normal rollover. NOT appending "
-                    "to unsent.");
-          } else {
-            // Only append to unsent if previous day is MISSING (true gap)
-            debugln("Previous day file MISSING. Appending 8:45AM data to "
-                    "unsent (gap fill).");
+          bool prev_exists = SPIFFS.exists(prev_day_file);
+          if (!prev_exists || skip_primary_http) {
+            if (last_unsent_sampleNo != sampleNo) { // v5.72: Dedup guard
+              debugln("Gap detected or primary skipped. Appending 8:45AM data "
+                      "to backlog.");
+              // Phase 12-B: Mutex is already held by HANDLE_NO_FILE (Line
+              // 1761). Do NOT take it again (avoids R-NEW-1 Deadlock).
 #if SYSTEM == 0
-            snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-            File unsent = SPIFFS.open(unsent_file, FILE_APPEND);
-            if (unsent) {
-              unsent.print(append_text);
-              unsent.close();
-              debugln("Appended to unsent.txt");
-            }
+              snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
+              File unsent = SPIFFS.open(unsent_file, FILE_APPEND);
+              if (unsent) {
+                unsent.print(append_text);
+                unsent.close();
+                if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
+              }
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
-            snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-            File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-            if (ftpunsent) {
-              ftpunsent.print(ftpappend_text);
-              ftpunsent.close();
-              debugln("Appended to ftpunsent.txt");
-            }
+              snprintf(ftpunsent_file, sizeof(ftpunsent_file),
+                       "/ftpunsent.txt");
+              File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+              if (ftpunsent) {
+                if (last_ftp_unsent_sampleNo != sampleNo) { // [FTP-03] Persistent Dedup
+                    ftpunsent.print(ftpappend_text);
+                    if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
+                    last_ftp_unsent_sampleNo = sampleNo;
+                } else {
+                    debugln("[SCHED] Rollover record already in ftpunsent.txt. Skipping duplicate.");
+                }
+                ftpunsent.close();
+              }
 #endif
+              last_unsent_sampleNo = sampleNo;
+            } else {
+              debugln("[SCHED] Rollover record already in backlog. Skipping "
+                      "duplicate.");
+            }
+          } else {
+            debugln("Previous day exists. Normal rollover. Skipping redundant "
+                    "8:45 backlog.");
           }
 #endif
 
@@ -1961,6 +2138,8 @@ void scheduler(void *pvParameters) {
                   "Signal Level = -111");
 
           for (int i = 0; i < sampleNo; i++) {
+            esp_task_wdt_reset(); // v5.72 Hardened: Pet the watchdog during
+                                  // long gap-fills (M-3)
             // Standard time calculation (used for formatting)
             temp_min = 45 + (i * 15);
             temp_hr = 8 + (temp_min / 60);
@@ -1977,29 +2156,24 @@ void scheduler(void *pvParameters) {
               temp_min = 0;
             }
 
-            temp_day = current_day;
-            temp_month = current_month;
-            temp_year = current_year;
-
-            if ((i <= MIDNIGHT_SAMPLE_NO) &&
-                (sampleNo >= (MIDNIGHT_SAMPLE_NO +
-                              1))) { // This means that the gap is starting
-                                     // before midnight and the lastSample
-                                     // recorded is before midnight
+            // v5.70: Robust date anchor for late startup gap fill
+            temp_day = rf_cls_dd;
+            temp_month = rf_cls_mm;
+            temp_year = rf_cls_yy;
+            if (i <= MIDNIGHT_SAMPLE_NO)
               previous_date(&temp_day, &temp_month, &temp_year);
-            }
-            // Filling the initial ones when device starts at mid - day and
-            // SPIFFs file was not present.
+              // Filling the initial ones when device starts at mid - day and
+              // SPIFFs file was not present.
 
 // RF
 #if SYSTEM == 0
             snprintf(
                 append_text, sizeof(append_text),
-                "%02d,%04d-%02d-%02d,%02d:%02d,000.00,000.00,%04d,%04.1f\r\n",
+                "%02d,%04d-%02d-%02d,%02d:%02d,000.00,000.00,%04d,%05.2f\r\n",
                 i, temp_year, temp_month, temp_day, temp_hr, temp_min,
                 SIGNAL_STRENGTH_NO_DATA, bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
-                     "%s;%04d-%02d-%02d,%02d:%02d;00.00;00.00;%04d;%04.1f\r\n",
+                     "%s;%04d-%02d-%02d,%02d:%02d;00.00;00.00;%04d;%05.2f\r\n",
                      stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
 #endif
@@ -2007,15 +2181,13 @@ void scheduler(void *pvParameters) {
 // TWS
 #if SYSTEM == 1
             snprintf(append_text, sizeof(append_text),
-                     "%02d,%04d-%02d-%02d,%02d:%02d,000.0,000.0,00.00,"
-                     "000,%04d,%04.1f\r\n",
+                     "%02d,%04d-%02d-%02d,%02d:%02d,000.0,000.0,00.0,000,%04d,"
+                     "%05.2f\r\n",
                      i, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                     SIGNAL_STRENGTH_NO_DATA,
-                     bat_val); // Changed from 000.00 to 00.00 to keep exactly
-                               // 53 bytes
+                     SIGNAL_STRENGTH_NO_DATA, bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
-                     "%s;%04d-%02d-%02d,%02d:%02d;000.0;000.0;00.00;000;"
-                     "%04d;%04.1f\r\n",
+                     "%s;%04d-%02d-%02d,%02d:%02d;000.0;000.0;00.0;000;%04d;%"
+                     "05.2f\r\n",
                      stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
 #endif
@@ -2023,13 +2195,13 @@ void scheduler(void *pvParameters) {
 // TWS-RF
 #if SYSTEM == 2
             snprintf(append_text, sizeof(append_text),
-                     "%02d,%04d-%02d-%02d,%02d:%02d,000.00,000.0,000.0,00.00,"
-                     "000,%04d,%04.1f\r\n",
+                     "%02d,%04d-%02d-%02d,%02d:%02d,000.00,000.0,000.0,00.0,"
+                     "000,%04d,%05.2f\r\n",
                      i, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
-                     "%s;%04d-%02d-%02d,%02d:%02d;00.00;000.0;000.0;00.00;000;"
-                     "%04d;%04.1f\r\n",
+                     "%s;%04d-%02d-%02d,%02d:%02d;00.00;000.0;000.0;00.0;000;%"
+                     "04d;%05.2f\r\n",
                      stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
 #endif
@@ -2042,7 +2214,8 @@ void scheduler(void *pvParameters) {
             if (fs_locked && file1) {
               file1.print(append_text);
             } else {
-              debugln("[SCHED] ⚠️ FS Mutex Timeout on gap-fill write. Skipping.");
+              debugln("[SCHED] ⚠️ FS Mutex Timeout on gap-fill write. "
+                      "Skipping.");
             }
             if (sd_card_ok && sd1) {
               sd1.print(append_text);
@@ -2051,7 +2224,7 @@ void scheduler(void *pvParameters) {
             if (diag_pd_count < 96)
               diag_pd_count++;
             if (i >= 49 && i <= 85) // v5.57 Fix: sample 49 = 21:00 (9 PM)
-              diag_ndm_count++; // 9 PM to 6 AM
+              diag_ndm_count++;     // 9 PM to 6 AM
           }
         SKIP_START_GAPS:
           // Write the current record ONLY if not a fresh boot/skipping data
@@ -2068,24 +2241,23 @@ void scheduler(void *pvParameters) {
             cum_rf[6] = 0;
 
             snprintf(append_text, sizeof(append_text),
-                     "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%04.1f\r\n",
-                     sampleNo, current_year, current_month, current_day,
-                     record_hr, record_min, inst_rf, cum_rf, signal_strength,
-                     bat_val);
+                     "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%05.2f\r\n",
+                     sampleNo, cur_year, cur_month, cur_day, record_hr,
+                     record_min, inst_rf, cum_rf, signal_strength, bat_val);
 #endif
 
 // TWS
 #if SYSTEM == 1
             snprintf(
                 append_text, sizeof(append_text),
-                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
-                sampleNo, current_year, current_month, current_day, record_hr,
-                record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-                signal_strength, bat_val);
+                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n",
+                sampleNo, cur_year, cur_month, cur_day, record_hr, record_min,
+                inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_strength,
+                bat_val);
             snprintf(ftpappend_text, sizeof(ftpappend_text),
-                     "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%04.1f\r\n",
-                     stnId, current_year, current_month, current_day, record_hr,
-                     record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                     "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                     stnId, cur_year, cur_month, cur_day, record_hr, record_min,
+                     inst_temp, inst_hum, avg_wind_speed, inst_wd,
                      signal_strength, bat_val);
 #endif
 
@@ -2093,17 +2265,16 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 2
             snprintf(
                 append_text, sizeof(append_text),
-                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
-                sampleNo, current_year, current_month, current_day, record_hr,
-                record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed,
-                inst_wd, signal_strength, bat_val);
-            // v7.53: Legacy ADDON FTP Format (63 bytes)
+                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%05.2f\r\n",
+                sampleNo, cur_year, cur_month, cur_day, record_hr, record_min,
+                cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                signal_strength, bat_val);
             snprintf(
                 ftpappend_text, sizeof(ftpappend_text),
-                "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%04.1f\r\n",
-                stnId, current_year, current_month, current_day, record_hr,
-                record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
-                inst_wd, signal_strength, bat_val);
+                "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                stnId, cur_year, cur_month, cur_day, record_hr, record_min,
+                ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                signal_strength, bat_val);
 #endif
 
             //                                          len =
@@ -2113,32 +2284,53 @@ void scheduler(void *pvParameters) {
             if (fs_locked && file1) {
               file1.print(append_text);
             } else {
-              debugln("[SCHED] ⚠️ FS Mutex Timeout on current-record write. Skipping.");
+              debugln("[SCHED] ⚠️ FS Mutex Timeout on current-record write. "
+                      "Skipping.");
             }
             if (sd_card_ok && sd1)
               sd1.print(append_text);
 
-            debugln(append_text);
-
-            // v6.05 Fix BUG-H1: Fresh Boot Mid-day Skip leaves record unqueued
-            if (data_writing_initiated == 1 && skip_primary_http) {
+            // v5.77 Hardened: FTP Backlog Queuing Rules
+            // 1. SYSTEM 0 (TRG): Only queue if primary HTTP is skipped (e.g. no SIM). 
+            // 2. SYSTEM 1/2 (TWS): ALWAYS queue to ftpunsent.txt as FTP is the robust sync layer.
+            bool should_queue_ftp = (data_writing_initiated == 1);
 #if SYSTEM == 0
-                debugln("[SCHED] Fresh boot skip. Queuing to unsent.txt...");
-                File f_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
-                if (f_unsent) {
-                    f_unsent.print(append_text);
-                    f_unsent.close();
+            should_queue_ftp = should_queue_ftp && skip_primary_http;
+#endif
+            if (should_queue_ftp) {
+              if (last_unsent_sampleNo != sampleNo) { // v5.72: Dedup guard
+                debugln("[SCHED] Queuing record to FTP backlog.");
+#if SYSTEM == 0
+                pruneFile(unsent_file, (300 * record_length), true);
+                File uf = SPIFFS.open(unsent_file, FILE_APPEND);
+                if (uf) {
+                  uf.print(append_text);
+                  uf.close();
                 }
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
-                debugln("[SCHED] Fresh boot skip. Queuing to ftpunsent.txt...");
-                File f_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-                if (f_ftp) {
-                    f_ftp.print(ftpappend_text);
-                    f_ftp.close();
+                if (SPIFFS.exists(ftpunsent_file)) {
+                  pruneFile(ftpunsent_file, (300 * record_length), true);
+                }
+                File fuf = SPIFFS.open(ftpunsent_file, FILE_APPEND);
+                if (fuf) {
+                  if (last_ftp_unsent_sampleNo != sampleNo) { // [FTP-03] Persistent Dedup
+                      fuf.print(ftpappend_text);
+                      last_ftp_unsent_sampleNo = sampleNo;
+                  } else {
+                      debugln("[SCHED] Current record already in ftpunsent.txt. Skipping duplicate.");
+                  }
+                  fuf.close();
                 }
 #endif
+                last_unsent_sampleNo = sampleNo;
+              } else {
+                debugln("[SCHED] Fresh boot rollover already in backlog. "
+                        "Skipping duplicate.");
+              }
             }
+
+            debugln(append_text);
           } else {
             debugln("[SCHED] Skipping write of current record (SampleNo) due "
                     "to fresh boot session safety.");
@@ -2154,7 +2346,8 @@ void scheduler(void *pvParameters) {
           // of the loop.
 
           if (fs_locked) {
-            if (file1) file1.close();
+            if (file1)
+              file1.close();
             xSemaphoreGive(fsMutex); // Final holistic release
           }
           if (sd_card_ok && sd1)
@@ -2340,48 +2533,37 @@ void scheduler(void *pvParameters) {
               // file2 already closed at line 1767 after read — no double
               // close
 
-              // v6.01 Fix: Replace fragile step-based time calc with self-correcting modular approach.
-              // Old code stepped from START_HOUR/MIN which could drift if last_sampleNo was corrupt.
-              // New approach: derive temp_hr/min directly from the sample index using raw_slot math.
-              // (matches the fix applied to Scenario A in v6.01)
-              int _raw_start = (last_sampleNo - (MIDNIGHT_SAMPLE_NO + 1) + 96) % 96;
-              int temp_hr = _raw_start / 4;
-              int temp_min = (_raw_start % 4) * 15;
-
-              // File file3 = SPIFFS.open(temp_file,FILE_APPEND); // this is
-              // rf_close date IN spiffs File sd3 =
-              // SD.open(temp_file,FILE_APPEND); // sd-card
-              File file3 = SPIFFS.open(
-                  temp_file, FILE_APPEND); // this is rf_close date IN spiffs
-              if (!file3) {
-                debugln(
-                    "Failed to open previous day SPIFFS file for appending");
-              } // #TRUEFIX
-              File sd3;
-              if (sd_card_ok) {
-                sd3 = SD.open(temp_file, FILE_APPEND); // sd-card
+              // Finding the last recorded hr and min from SPIFFs
+              int temp_hr = START_HOUR;
+              int temp_min = START_MINUTE;
+              for (int i = 0; i < last_sampleNo; i++) {
+                temp_min += 15;
+                if (temp_min == 60) {
+                  temp_hr += 1;
+                  if (temp_hr == 24) {
+                    temp_hr = 0;
+                  }
+                  temp_min = 0;
+                }
               }
-              if (sd_card_ok && !sd3) {
-                debugln("Failed to open previous day SD file for appending");
-              } // #TRUEFIX
 
 #if FILLGAP == 1
-#if SYSTEM == 0
-              snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-              File unsent3 = SPIFFS.open(unsent_file, FILE_APPEND);
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2)
-              snprintf(ftpunsent_file, sizeof(ftpunsent_file),
-                       "/ftpunsent.txt");
-              File ftpunsent3 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-#endif
-#endif
+              // v5.70 (N-10): Pulsing Strategy for Loop 2 (Rollover)
+              // Releasing outer lock to allow pulses
+              if (fs_locked) {
+                xSemaphoreGive(fsMutex);
+                fs_locked = false;
+              }
 
               // Fill the gaps starting from last_recorded sampleNo+1 to
               // current sampleNo including current sampleNo Generate ALL
               // genuine missed records, we will chunk them during FTP
               // transfer
               for (int q = last_sampleNo + 1; q <= MAX_SAMPLE_NO; q++) {
+                esp_task_wdt_reset(); // v5.77: WDT Pet (C-03 part 2)
+                vTaskDelay(1 /
+                           portTICK_PERIOD_MS); // v5.77: Yield (C-03 part 2)
+
                 if (diag_pd_count_prev < 96)
                   diag_pd_count_prev++;
                 if (q >= 50 && q <= 85)
@@ -2429,14 +2611,12 @@ void scheduler(void *pvParameters) {
 
                 // IQ Start: Ensure we don't interpolate from 0.0 or -999.0 if
                 // it looks like an error
-                // v6.01: Same anchor quality guard as Scenario A.
-                // If last parsed T/H are placeholder zeros from a prior gap-fill,
-                // fall back to live sensor to avoid compounding synthetic drift.
-                bool sc_anchor_synthetic = (last_instTemp < 1.0 || last_instHum < 1.0);
-                float start_t = (sc_anchor_synthetic && temperature > 5.0)
-                                    ? temperature : last_instTemp;
-                float start_h = (sc_anchor_synthetic && humidity > 5.0)
-                                    ? humidity : last_instHum;
+                float start_t = (last_instTemp < 1.0 && temperature > 5.0)
+                                    ? temperature
+                                    : last_instTemp;
+                float start_h = (last_instHum < 1.0 && humidity > 5.0)
+                                    ? humidity
+                                    : last_instHum;
                 float start_ws = (last_AvgWS < 0.0 || last_AvgWS > 50.0)
                                      ? cur_avg_wind_speed
                                      : last_AvgWS;
@@ -2456,8 +2636,8 @@ void scheduler(void *pvParameters) {
                                        total_gaps_roll);
                 if (fill_temp < 10.0)
                   fill_temp = 10.0 + (random(0, 10) / 10.0);
-                if (fill_temp > 45.0) // v6.01 Fix: Raised from 35 to 45 — Karnataka summer hits 38-42°C
-                  fill_temp = 45.0 - (random(0, 10) / 10.0);
+                if (fill_temp > 35.0)
+                  fill_temp = 35.0 - (random(0, 10) / 10.0);
                 min_val = fill_temp - 0.2;
                 max_val = fill_temp + 0.2;
 
@@ -2469,7 +2649,9 @@ void scheduler(void *pvParameters) {
                 }
 
                 target_number =
-                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) * (max_val - min_val) + min_val;
+                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) *
+                        (max_val - min_val) +
+                    min_val;
                 snprintf(fill_inst_temp, sizeof(fill_inst_temp), "%05.1f",
                          target_number);
 
@@ -2491,7 +2673,9 @@ void scheduler(void *pvParameters) {
                 }
 
                 target_number =
-                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) * (max_val - min_val) + min_val;
+                    ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) *
+                        (max_val - min_val) +
+                    min_val;
                 if (target_number > 100.0)
                   target_number = 100.0;
                 if (target_number < 10.0)
@@ -2512,8 +2696,7 @@ void scheduler(void *pvParameters) {
                       min_val;
                   if (fill_AvgWS < 0.1)
                     fill_AvgWS = 0.1;
-                  if (fill_AvgWS > 2.44) // v6.01: Match Scenario A cap for consistency
-                    fill_AvgWS = 2.44;
+                  // Removed the artificial 2.2 cap
                 }
                 snprintf(fill_avg_wind_speed, sizeof(fill_avg_wind_speed),
                          "%05.2f", fill_AvgWS);
@@ -2542,11 +2725,8 @@ void scheduler(void *pvParameters) {
                 // Wind Direction
                 if ((windDir > WIND_DIR_MIN_VALID) &&
                     (windDir < WIND_DIR_MAX_VALID)) {
-                  // v6.05 Fix BUG-H3: Capture windDir under windMux to prevent race conditions
-                  portENTER_CRITICAL(&windMux);
                   fill_WD = random(windDir - WIND_DIR_RANGE,
                                    windDir + WIND_DIR_RANGE + 1);
-                  portEXIT_CRITICAL(&windMux);
                   snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", fill_WD);
                 } else {
                   snprintf(fill_inst_wd, sizeof(fill_inst_wd), "%03d", windDir);
@@ -2565,38 +2745,33 @@ void scheduler(void *pvParameters) {
                 // 003655;2025-08-18,19:45;+21.5;099.9;00.0;023;-079;13.13
 
 #if SYSTEM == 1
-                snprintf(append_text, sizeof(append_text),
-                         "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%"
-                         "04.1f\r\n",
-                         q, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                         fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
-                         fill_inst_wd, SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
-                // v7.53: Legacy TWS FTP Format
-                snprintf(ftpappend_text, sizeof(ftpappend_text),
-                         "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%"
-                         "04.1f\r\n",
-                         stnId, temp_year, temp_month, temp_day, temp_hr,
-                         temp_min, fill_inst_temp, fill_inst_hum,
-                         fill_avg_wind_speed, fill_inst_wd,
-                         SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+                snprintf(
+                    append_text, sizeof(append_text),
+                    "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n",
+                    q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                    fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
+                    fill_inst_wd, SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+                snprintf(
+                    ftpappend_text, sizeof(ftpappend_text),
+                    "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                    stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                    fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
+                    fill_inst_wd, SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
 
 #endif
 
 // TWS-RF
 #if SYSTEM == 2
-                snprintf(
-                    append_text, sizeof(append_text),
-                    "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04."
-                    "1f\r\n",
-                    q, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                    fill_cum_rf, fill_inst_temp, fill_inst_hum,
-                    fill_avg_wind_speed, fill_inst_wd,
-                    SIGNAL_STRENGTH_PREV_DAY_GAP,
-                    bat_val); // ALL_NEW_REVIEW1
-                // v7.53: Legacy ADDON FTP Format (63 bytes)
+                snprintf(append_text, sizeof(append_text),
+                         "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%"
+                         "05.2f\r\n",
+                         q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                         fill_cum_rf, fill_inst_temp, fill_inst_hum,
+                         fill_avg_wind_speed, fill_inst_wd,
+                         SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
                 snprintf(ftpappend_text, sizeof(ftpappend_text),
-                         "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;"
-                         "%04.1f\r\n",
+                         "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05."
+                         "2f\r\n",
                          stnId, temp_year, temp_month, temp_day, temp_hr,
                          temp_min, fill_ftpcum_rf, fill_inst_temp,
                          fill_inst_hum, fill_avg_wind_speed, fill_inst_wd,
@@ -2610,41 +2785,56 @@ void scheduler(void *pvParameters) {
                 //                                                              =
                 //                                                              '\0';
 
+                // v5.70 (N-10): Pulsed Write (Take -> Open -> Write -> Close ->
+                // Give)
+                if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                  File file3_p = SPIFFS.open(temp_file, FILE_APPEND);
+                  if (file3_p) {
+                    file3_p.print(append_text);
+                    file3_p.close();
+                  }
+
 #if FILLGAP == 1
 #if SYSTEM == 0
-                if (unsent3)
-                  unsent3.print(append_text);
+                  if (q != last_unsent_sampleNo) { // v5.76.5: Rollover Dedup
+                                                   // Guard (C-01)
+                    File uns_p = SPIFFS.open("/unsent.txt", FILE_APPEND);
+                    if (uns_p) {
+                      uns_p.print(append_text);
+                      uns_p.close();
+                      if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
+                    }
+                    last_unsent_sampleNo = q;
+                  }
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2)
-                if (ftpunsent3)
-                  ftpunsent3.print(ftpappend_text); // AG2
+                  if (q != last_ftp_unsent_sampleNo) { // [FTP-03] Persistent Dedup
+                    File funs_p = SPIFFS.open("/ftpunsent.txt", FILE_APPEND);
+                    if (funs_p) {
+                      funs_p.print(ftpappend_text);
+                      funs_p.close();
+                      if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
+                    }
+                    last_ftp_unsent_sampleNo = q;
+                  }
 #endif
 #endif
-                file3.print(append_text);
-                if (sd_card_ok && sd3) {
-                  sd3.print(append_text);
+                  xSemaphoreGive(fsMutex);
+                }
+
+                if (sd_card_ok) {
+                  File sd3_p = SD.open(temp_file, FILE_APPEND);
+                  if (sd3_p) {
+                    sd3_p.print(append_text);
+                    sd3_p.close();
+                  }
                 }
 
               } // end for q (gap filling)
 
-#if FILLGAP == 1
-#if SYSTEM == 0
-              if (unsent3)
-                unsent3.close(); // 2024 iter6
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2)
-              if (ftpunsent3)
-                ftpunsent3.close();
-#endif
-#endif
-
-              // Ensure physical commit to flash before closing to fix Ghost
-              // Gap bug
-              file3.flush();
-              file3.close();
-              if (sd_card_ok && sd3) {
-                sd3.flush();
-                sd3.close();
+              // Re-acquire lock for the logic downstream
+              if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                fs_locked = true;
               }
             } // previous rf_close_date file if exists (temp_file if exists)
             // Fill data to current day rf close date file also from 8:45am to
@@ -2654,37 +2844,53 @@ void scheduler(void *pvParameters) {
 
 #endif
 
+#endif
+
         } // matches the brace for 'else' at line 1527
       }   // matches the brace for 'else' at line 1390
-      
+
       if (fs_locked) {
-    xSemaphoreGive(fsMutex); // Release after recording/gapfill
-    fs_locked = false;
-  }
-      
-      //          len = strlen(append_text);
-      //          append_text[len] = '\0';
+        xSemaphoreGive(
+            fsMutex); // v5.70 Final: Safe holistic release (C-01 fix)
+        fs_locked = false;
+      }
 #if SYSTEM == 0
-      strcpy(store_text, append_text); // COPY this so that it can beused for
-                                       // storing data if signal is not good.
+      strcpy(store_text, append_text);
       debugln();
       debug("append_text->store_text : Used for storing in unsent file is: ");
       debugln(store_text);
-      //   sprintf(temp_file, "/lastrecorded_%s.txt", station_name);
-      //   File filelastrecord = SPIFFS.open(temp_file, FILE_WRITE);
-      //   filelastrecord.print(store_text);
-      //   filelastrecord.close();
+
       snprintf(temp_file, sizeof(temp_file), "/lastrecorded_%s.txt",
                station_name);
       { // Scope for filelastrecord
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-          fs_locked = true;
-          File filelastrecord = SPIFFS.open(temp_file, FILE_WRITE);
-          if (!filelastrecord) {
-            debugln("Failed to open lastrecorded file for writing");
-          } else { // FIX #2 Safe write
-            filelastrecord.println(store_text); // v7.65: Force newline for clean extraction
-            filelastrecord.close();
+          bool skipWrite = false;
+          File fCheck = SPIFFS.open(temp_file, FILE_READ);
+          if (fCheck) {
+            char chkBuf[200] = {0};
+            fCheck.readBytes(chkBuf, sizeof(chkBuf) - 1);
+            fCheck.close();
+            // v5.72 Hardened: Direct stack comparison (no heap alloc)
+            if (strncmp(chkBuf, store_text, strlen(store_text)) == 0)
+              skipWrite = true;
+          }
+
+          if (!skipWrite) {
+            char tmpPath[64];
+            snprintf(tmpPath, sizeof(tmpPath), "/lastrecorded_%s.tmp",
+                     station_name);
+            File fTmp = SPIFFS.open(tmpPath, FILE_WRITE);
+            if (fTmp) {
+              fTmp.println(store_text);
+              fTmp.close();
+              SPIFFS.remove(temp_file);
+              if (!SPIFFS.rename(tmpPath, temp_file)) {
+                debugf("[SPIFFS] WARN: %s rename failed. Retrying...\n",
+                       temp_file);
+                vTaskDelay(50 / portTICK_PERIOD_MS);
+                SPIFFS.rename(tmpPath, temp_file);
+              }
+            }
           }
           xSemaphoreGive(fsMutex);
         }
@@ -2695,26 +2901,42 @@ void scheduler(void *pvParameters) {
 #endif
 
 #if (SYSTEM == 1 || SYSTEM == 2)
-      strcpy(store_text,
-             append_text); // v7.66: Use CSV format for internal parsing logic
+      strcpy(store_text, append_text);
       debugln();
       debug("append_text->store_text : Used for internal status: ");
       debugln(store_text);
 
-      //   sprintf(temp_file, "/lastrecorded_%s.txt", station_name);
-      //   File filelastrecord = SPIFFS.open(temp_file, FILE_WRITE);
-      //   filelastrecord.print(store_text);
-      //   filelastrecord.close();
       snprintf(temp_file, sizeof(temp_file), "/lastrecorded_%s.txt",
                station_name);
       { // Scope for filelastrecord
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-          File filelastrecord = SPIFFS.open(temp_file, FILE_WRITE);
-          if (!filelastrecord) {
-            debugln("Failed to open lastrecorded file for writing (FTP)");
-          } else { // FIX #2 Safe write
-            filelastrecord.println(store_text); // v7.65: Force newline
-            filelastrecord.close();
+          bool skipWrite = false;
+          File fCheck = SPIFFS.open(temp_file, FILE_READ);
+          if (fCheck) {
+            char chkBuf[200] = {0};
+            fCheck.readBytes(chkBuf, sizeof(chkBuf) - 1);
+            fCheck.close();
+            // v5.72 Hardened: Direct stack comparison (no heap alloc)
+            if (strncmp(chkBuf, store_text, strlen(store_text)) == 0)
+              skipWrite = true;
+          }
+
+          if (!skipWrite) {
+            char tmpPath[64];
+            snprintf(tmpPath, sizeof(tmpPath), "/lastrecorded_%s.tmp",
+                     station_name);
+            File fTmp = SPIFFS.open(tmpPath, FILE_WRITE);
+            if (fTmp) {
+              fTmp.println(store_text);
+              fTmp.close();
+              SPIFFS.remove(temp_file);
+              if (!SPIFFS.rename(tmpPath, temp_file)) {
+                debugf("[SPIFFS] WARN: %s rename failed. Retrying...\n",
+                       temp_file);
+                vTaskDelay(50 / portTICK_PERIOD_MS);
+                SPIFFS.rename(tmpPath, temp_file);
+              }
+            }
           }
           xSemaphoreGive(fsMutex);
         }
@@ -2727,7 +2949,8 @@ void scheduler(void *pvParameters) {
           if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
             File ftp_file = SPIFFS.open(temp_file, FILE_APPEND);
             if (ftp_file) {
-              ftp_file.print(ftpappend_text); // v7.70: Use FTP format (semicolons)
+              ftp_file.print(
+                  ftpappend_text); // v7.70: Use FTP format (semicolons)
               ftp_file.close();
             } else {
               debugln("Failed to open daily ftp file for appending");
@@ -2738,7 +2961,8 @@ void scheduler(void *pvParameters) {
           if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
             File ftp_file = SPIFFS.open(temp_file, FILE_WRITE);
             if (ftp_file) {
-              ftp_file.print(ftpappend_text); // v7.70: Use FTP format (semicolons)
+              ftp_file.print(
+                  ftpappend_text); // v7.70: Use FTP format (semicolons)
               ftp_file.close();
             } else {
               debugln("Failed to open daily ftp file for writing");
@@ -2781,14 +3005,12 @@ void scheduler(void *pvParameters) {
           0; // Need to make it zero to capture instantaneous RF every 15 mins
       rf_value =
           0; // Need to make it zero to capture instantaneous RF every 15 mins
-      last_raw_rf_count = 0; // v6.05 Fix BUG-C3: Sync anchor to post-zero state immediately
 #endif
 
       if (sampleNo == MAX_SAMPLE_NO) {
         snprintf(temp_file, sizeof(temp_file), "/closingdata_%s.txt",
                  station_name);
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-          fs_locked = true;
           File file5 = SPIFFS.open(temp_file, FILE_APPEND);
           if (!file5) {
             debugln("Failed to open closing data file for appending");
@@ -2800,18 +3022,20 @@ void scheduler(void *pvParameters) {
                      record_hr, record_min, cum_rf, signal_strength, bat_val);
 
 #elif SYSTEM == 1
-            snprintf(append_text, sizeof(append_text),
-                     "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
-                     sampleNo, temp_year, temp_month, temp_day, record_hr,
-                     record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-                     signal_strength, bat_val);
+            snprintf(
+                append_text, sizeof(append_text),
+                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%04.1f\r\n",
+                sampleNo, temp_year, temp_month, temp_day, record_hr,
+                record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                signal_strength, bat_val);
 
 #elif SYSTEM == 2
-            snprintf(append_text, sizeof(append_text),
-                     "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
-                     sampleNo, temp_year, temp_month, temp_day, record_hr,
-                     record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed,
-                     inst_wd, signal_lvl, bat_val);
+            snprintf(
+                append_text, sizeof(append_text),
+                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
+                sampleNo, temp_year, temp_month, temp_day, record_hr,
+                record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed,
+                inst_wd, signal_lvl, bat_val);
 #endif
             file5.print(append_text);
             file5.close();
@@ -2819,11 +3043,12 @@ void scheduler(void *pvParameters) {
           }
           xSemaphoreGive(fsMutex);
         }
-        // v5.64: Resets moved to 08:45 AM rollover to ensure successful archiving of yesterday's totals.
-        debugln("[SCHED] 08:30 AM Cycle Complete. Rollover pending at 08:45...");
+        // v5.64: Resets moved to 08:45 AM rollover to ensure successful
+        // archiving of yesterday's totals.
+        debugln(
+            "[SCHED] 08:30 AM Cycle Complete. Rollover pending at 08:45...");
         vTaskDelay(200 / portTICK_PERIOD_MS);
       }
-
 
 #if DEBUG == 1
       // SPIFFS
@@ -2844,8 +3069,9 @@ void scheduler(void *pvParameters) {
             debug(" | Size: ");
             debugln(fsize);
             if (fsize > 0) {
-              int seekPos =
-                  (fsize > (record_length * 5)) ? fsize - (record_length * 5) : 0;
+              int seekPos = (fsize > (record_length * 5))
+                                ? fsize - (record_length * 5)
+                                : 0;
               file3.seek(seekPos);
               String tail = file3.readString();
               debugln("   ... [Tail Content] ...");
@@ -2898,9 +3124,13 @@ void scheduler(void *pvParameters) {
           File file4 = SPIFFS.open(unsent_file, FILE_READ);
           if (file4) {
             debugln("\n--- UNSENT DATA START ---");
-            while (file4.available()) {
-              String line = file4.readStringUntil('\n');
-              debugln(line); // Correct display per line
+            if (file4.size() > 0) {
+              int seekPos = (file4.size() > 500) ? file4.size() - 500 : 0;
+              file4.seek(seekPos);
+              String tail = file4.readString();
+              debugln("   ... [Tail Content] ...");
+              debug(tail);
+              debugln("-----------------------");
             }
             file4.close();
             debugln("--- UNSENT DATA END ---\n");
@@ -2917,9 +3147,13 @@ void scheduler(void *pvParameters) {
           File file4 = SPIFFS.open(ftpunsent_file, FILE_READ);
           if (file4) {
             debugln("\n--- UNSENT DATA START ---");
-            while (file4.available()) {
-              String line = file4.readStringUntil('\n');
-              debugln(line); // Correct display per line
+            if (file4.size() > 0) {
+              int seekPos = (file4.size() > 500) ? file4.size() - 500 : 0;
+              file4.seek(seekPos);
+              String tail = file4.readString();
+              debugln("   ... [Tail Content] ...");
+              debug(tail);
+              debugln("-----------------------");
             }
             file4.close();
             debugln("--- UNSENT DATA END ---\n");
@@ -2933,86 +3167,104 @@ void scheduler(void *pvParameters) {
       debugln();
 
     TRIGGER_HTTP: // Label for duplicate/invalid skip jump
-      // v6.05 Fix BUG-C2: Always mark current slot as PROCESSED before exiting
-      // This prevents re-entry loops during low-battery brownout.
-      last_processed_sample_idx = current_sample_idx;
-      // v6.04 Fix: Ensure any local goto path releases the File System lock
       if (fs_locked) {
-        xSemaphoreGive(fsMutex);
+        xSemaphoreGive(fsMutex); // v5.72: Safety release on all skip paths
         fs_locked = false;
       }
-      
-      // v6.04 Fix: Centralized reset to ensure Deep Sleep is NEVER blocked by local goto paths
-      schedulerBusy = false; 
-
       // v5.68 FIX: TIER 1 Battery Brownout Gate
-      // If we fell through due to low battery, DO NOT allow the network to spin up!
+      // If we fell through due to low battery, DO NOT allow the network to spin
+      // up!
       if (li_bat_val < 3.4f && li_bat_val > 0.5f) {
-         debugln("[PWR] FATAL BROWNOUT GUARD: Network blocked. Sleeping immediately to save hardware.");
-         sync_mode = eHttpStop; 
-         httpInitiated = false;
-         data_writing_initiated = 0;
-      } else {
-
-      // Wait for manual triggers (SMS/GPS) to finish before proceeding with
-      // HTTP/Sleep
-      {
-        int manual_wait_timeout = 0;
-        while ((sync_mode == eSMSStart || sync_mode == eGPSStart || 
-                sync_mode == eHealthStart || sync_mode == eStartupGPS) &&
-               manual_wait_timeout < 150) {
-          if (manual_wait_timeout % 10 == 0) {
-            debugln("Waiting for Manual Task (SMS/GPS) to finish...");
-          }
-          vTaskDelay(1000 / portTICK_PERIOD_MS);
-          manual_wait_timeout++;
-          esp_task_wdt_reset();
-        }
-      }
-
-      if (data_writing_initiated == 0) {
-        debugln("Skipped data writing. Checking if GPRS needs to send unsent "
-                "data then Sleep.");
-        // Protect manual triggers (SMS/GPS/Startup) from being overwritten
-        if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
-            sync_mode != eStartupGPS && sync_mode != eHealthStart) {
-          if (is_valid_window || timeSyncRequired) {
-            sync_mode = eHttpBegin; // Force connection check on boot/duplicate
-          } else {
-            debugln("[SCHED] Between intervals. Modem will remain OFF.");
-            sync_mode = eHttpStop; // Allow sleep
-          }
-        }
-        // v7.65 Persistence: Trigger FTP backlog through the GPRS task loop
-        // to avoid collision with Health Report tasks.
-#if (SYSTEM == 1 || SYSTEM == 2)
-        if (sync_mode != eHttpStop) {
-           debugln("[SCHED] Signaling GPRS task for sequential backlog/health...");
-        }
-#endif
-      } else {
-        debugln();
-        // Trigger HTTP after manual task is done
-        sync_mode = eHttpBegin;
-        httpInitiated = true;
+        debugln("[PWR] FATAL BROWNOUT GUARD: Network blocked. Sleeping "
+                "immediately to save hardware.");
+        portENTER_CRITICAL(&syncMux);
+        sync_mode = eHttpStop;
+        schedulerBusy = false; // Force release on fatal brownout
+        portEXIT_CRITICAL(&syncMux);
+        __atomic_store_n(&httpInitiated, false, __ATOMIC_RELEASE);
         data_writing_initiated = 0;
+      } else {
 
-        // v5.41 Test Mode: Send Health Report every slot
-#if ENABLE_HEALTH_REPORT == 1
-        if (test_health_every_slot == 1) {
-          debugln("[SCHEDULER] Test Mode: Queuing Health Report (every slot)");
-          // The health report will be called in the GPRS task after data
-          // upload
+        // Wait for manual triggers (SMS/GPS) to finish before proceeding with
+        // HTTP/Sleep
+        {
+          int manual_wait_timeout = 0;
+          while ((sync_mode == eSMSStart || sync_mode == eGPSStart ||
+                  sync_mode == eHealthStart || sync_mode == eStartupGPS) &&
+                 manual_wait_timeout < 150) {
+            if (manual_wait_timeout % 10 == 0) {
+              debugln("Waiting for Manual Task (SMS/GPS) to finish...");
+            }
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            manual_wait_timeout++;
+            esp_task_wdt_reset();
+          }
         }
+
+        if (data_writing_initiated == 0) {
+          debugln("Skipped data writing. Checking if GPRS needs to send unsent "
+                  "data then Sleep.");
+          // Protect manual triggers (SMS/GPS/Startup) from being overwritten
+          bool going_idle = false;
+          portENTER_CRITICAL(&syncMux);
+          if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
+              sync_mode != eStartupGPS && sync_mode != eHealthStart) {
+            if (is_valid_window || timeSyncRequired) {
+              sync_mode =
+                  eHttpBegin; // Force connection check on boot/duplicate
+            } else {
+              going_idle = true; 
+              sync_mode = eHttpStop; // Allow sleep
+            }
+          }
+          portEXIT_CRITICAL(&syncMux);
+          if (going_idle) {
+            debugln("[SCHED] Between intervals. Modem will remain OFF.");
+          }
+          // v7.65 Persistence: Trigger FTP backlog through the GPRS task loop
+          bool trigger_active = false;
+          portENTER_CRITICAL(&syncMux);
+          trigger_active = (sync_mode != eHttpStop);
+          portEXIT_CRITICAL(&syncMux);
+          if (trigger_active) {
+            debugln(
+                "[SCHED] Signaling GPRS task for sequential backlog/health...");
+          }
+        } else {
+          debugln();
+          // Trigger HTTP after manual task is done
+          portENTER_CRITICAL(&syncMux);
+          sync_mode = eHttpBegin;
+          portEXIT_CRITICAL(&syncMux);
+          __atomic_store_n(&httpInitiated, true, __ATOMIC_RELEASE);
+          data_writing_initiated = 0;
+
+          // v5.41 Test Mode: Send Health Report every slot
+#if ENABLE_HEALTH_REPORT == 1
+          if (test_health_every_slot == 1) {
+            debugln(
+                "[SCHEDULER] Test Mode: Queuing Health Report (every slot)");
+            // The health report will be called in the GPRS task after data
+            // upload
+          }
 #endif
-      }
-      
+        }
       } // End of Brownout Guard else-block
-      
+
       vTaskDelay(300 / portTICK_PERIOD_MS);
-      last_processed_sample_idx = current_sample_idx; // v5.66: Mark as processed ONLY after successful completion
+      last_processed_sample_idx =
+          current_sample_idx; // v5.66: Mark as processed ONLY after successful
+                              // completion
+
+      // R-5 Fix: Scheduler stack high-water mark monitoring (moved inside
+      // 15-min gate)
+      debugf1("[SCHED] Stack HWM: %d bytes free\n",
+              uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
+
+      portENTER_CRITICAL(&syncMux);
       schedulerBusy = false; // v5.65: Release sleep lock
-    } else if (httpInitiated == false &&
+      portEXIT_CRITICAL(&syncMux);
+    } else if (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false &&
                sync_mode == eSyncModeInitial) {
       // v7.08: IDLE TRAP PROTECTION
       // If we wake up (via timer) and find we ALREADY processed this slot,
@@ -3022,25 +3274,28 @@ void scheduler(void *pvParameters) {
       if (idle_awake_start == (uint32_t)-1)
         idle_awake_start = millis();
 
-      if (millis() - idle_awake_start >
-          15000) { // 15s window for manual buttons
+      if (millis() - idle_awake_start > 15000 && lcdkeypad_start == 0) {
         debugf("[SCHED] Idle: Slot %d already processed. Entering sleep...\n",
                current_sample_idx);
+        portENTER_CRITICAL(&syncMux);
         sync_mode = eHttpStop;
+        portEXIT_CRITICAL(&syncMux);
         idle_awake_start = (uint32_t)-1;
       }
-    } // %15 loop
+    } // %15 and idle_trap ends here
 
     vTaskDelay(1000 / portTICK_PERIOD_MS);
 
   } // for loop
-
 } // scheduler
 
 void next_date(int *Nd, int *Nm, int *Ny) {
   // v5.65: Guard against uninitialized months from bad RTC reads
-  if (*Nm < 1) *Nm = 1; if (*Nm > 12) *Nm = 12;
-  
+  if (*Nm < 1)
+    *Nm = 1;
+  if (*Nm > 12)
+    *Nm = 12;
+
   int no_of_days[14] = {29, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
   int prev_mm;
 
@@ -3066,8 +3321,11 @@ void next_date(int *Nd, int *Nm, int *Ny) {
 
 void previous_date(int *Cd, int *Cm, int *Cy) {
   // v5.65: Guard against uninitialized months
-  if (*Cm < 1) *Cm = 1; if (*Cm > 12) *Cm = 12;
-  
+  if (*Cm < 1)
+    *Cm = 1;
+  if (*Cm > 12)
+    *Cm = 12;
+
   int no_of_days[14] = {29, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
   int prev_mm_day;
   int prev_dd_day;
@@ -3146,3 +3404,38 @@ void previous_date(int *Cd, int *Cm, int *Cy) {
  *  make scheduler_loop = 6 // it should go to sleep mode which is checked in
  * the main loop
  */
+
+void getTimeSnapshot(struct tm *timeinfo) {
+  if (timeinfo == NULL)
+    return;
+
+  // v5.80: Hardened Boot Guard
+  // If globals aren't populated yet, rtc.now() hardware read is safe
+  int year_snap;
+  portENTER_CRITICAL(&rtcTimeMux);
+  year_snap = current_year;
+  portEXIT_CRITICAL(&rtcTimeMux);
+
+  if (year_snap < 2020) {
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+      DateTime now = rtc.now();
+      timeinfo->tm_year = now.year() - 1900;
+      timeinfo->tm_mon = now.month() - 1;
+      timeinfo->tm_mday = now.day();
+      timeinfo->tm_hour = now.hour();
+      timeinfo->tm_min = now.minute();
+      timeinfo->tm_sec = now.second();
+      xSemaphoreGive(i2cMutex);
+      return;
+    }
+  }
+
+  portENTER_CRITICAL(&rtcTimeMux);
+  timeinfo->tm_year = current_year - 1900;
+  timeinfo->tm_mon = current_month - 1;
+  timeinfo->tm_mday = current_day;
+  timeinfo->tm_hour = current_hour;
+  timeinfo->tm_min = current_min;
+  timeinfo->tm_sec = current_sec;
+  portEXIT_CRITICAL(&rtcTimeMux);
+}

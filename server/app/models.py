@@ -13,7 +13,6 @@ class FirmwareRegistry(Base):
     filename     = Column(String(128), default="firmware.bin")
     total_target = Column(Integer, default=0)
     updated_at   = Column(DateTime, server_default=func.now(), onupdate=func.now())
-    md5          = Column(String(32), default="") # Phase 2 Fix: Sticky MD5 for integrity
 
 
 class HealthReport(Base):

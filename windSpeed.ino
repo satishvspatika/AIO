@@ -9,14 +9,18 @@ void windSpeed(void *pvParameters) {
 
   // READ WIND SPEED TWS & TWS-RF
 #if (SYSTEM == 1) || (SYSTEM == 2)
-  if (SPIFFS.exists("/prevWindSpeed.txt")) {
-    File fileTemp5 = SPIFFS.open("/prevWindSpeed.txt", FILE_READ);
-    if (fileTemp5) {
-      temp1 = fileTemp5.readStringUntil('\n');
-      strcpy(prevWindSpeedAvg_str, temp1.c_str());
-      fileTemp5.close();
-      debugln("Loaded Prev Wind Speed Avg: " + String(prevWindSpeedAvg_str));
+  // v5.70: Fix Issue 24 - Protect boot-time SPIFFS read with fsMutex
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+    if (SPIFFS.exists("/prevWindSpeed.txt")) {
+      File fileTemp5 = SPIFFS.open("/prevWindSpeed.txt", FILE_READ);
+      if (fileTemp5) {
+        temp1 = fileTemp5.readStringUntil('\n');
+        strcpy(prevWindSpeedAvg_str, temp1.c_str());
+        fileTemp5.close();
+        debugln("Loaded Prev Wind Speed Avg: " + String(prevWindSpeedAvg_str));
+      }
     }
+    xSemaphoreGive(fsMutex);
   }
 #endif
 
@@ -88,18 +92,28 @@ void windSpeed(void *pvParameters) {
 
       snprintf(windSpeedInst_str, sizeof(windSpeedInst_str), "%.2f",
                cur_wind_speed);
+      
+      // R-4 Fix: Protect struct writes to prevent cross-core tearing
+      portENTER_CRITICAL(&sensorDataMux);
       latestSensorData.windSpeed = cur_wind_speed;
+      portEXIT_CRITICAL(&sensorDataMux);
     } else {
       cur_wind_speed = 0;
       snprintf(windSpeedInst_str, sizeof(windSpeedInst_str), "00.00");
+      
+      portENTER_CRITICAL(&sensorDataMux);
       latestSensorData.windSpeed = 0;
+      portEXIT_CRITICAL(&sensorDataMux);
     }
 
     // #3 FIX: Single consolidated guard - if sensor is marked failed, override
     if (!ws_ok) {
       strcpy(windSpeedInst_str, "NA");
       strcpy(prevWindSpeedAvg_str, "NA");
+      
+      portENTER_CRITICAL(&sensorDataMux);
       latestSensorData.windSpeed = 0;
+      portEXIT_CRITICAL(&sensorDataMux);
     }
 
     // Move to next buffer slot

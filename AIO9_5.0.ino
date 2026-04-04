@@ -25,19 +25,22 @@
 #include "globals.h"
 #include <driver/adc.h>
 #include <rom/rtc.h>
+#include <esp_flash.h>
 
 
 int wired = 1; // Integrated is 1 or Standalone LCD module is 0
 const int chipSelect = SS;
 bool ws_ok = true;
-bool wd_ok = true; // WD sensor wired on all KSNDMC_TWS field units
+volatile bool wd_ok = true; // WD sensor wired on all KSNDMC_TWS field units
 
 TaskHandle_t scheduler_h;
 TaskHandle_t gprs_h; // http,sms,ftp,dota
 volatile bool primary_data_delivered = false;
 RTC_DATA_ATTR volatile bool skip_primary_http = false; // v5.50: Survive warm resets (volatile Fix)
 volatile bool force_ftp = false;
+volatile bool sleep_sequence_active = false; // v5.77: Sleep Gate signal
 volatile bool force_ftp_daily = false;
+RTC_DATA_ATTR int rtc_daily_sync_count = 0; // v5.77: Daily sync retry cap
 char ftp_daily_date[12] = "";
 volatile bool force_reboot = false;
 volatile bool force_ota = false;
@@ -51,7 +54,6 @@ volatile bool ota_silent_mode = false; // Rule 43
 volatile bool bearer_recovery_active = false;
                                        // v6.88
 char ota_cmd_param[128] = "";
-char ota_md5_hash[33] = ""; // Phase 2: Secure binary verification
 RTC_DATA_ATTR int last_cmd_id = 0;
 RTC_DATA_ATTR char last_cmd_res[64] = "N/A";
 int ota_fail_count = 0;
@@ -59,12 +61,13 @@ char ota_fail_reason[48] = "NONE";
 volatile bool health_in_progress = false;
 TaskHandle_t lcdkeypad_h; // UI
 TaskHandle_t tempHum_h;
+volatile uint32_t last_activity_time = 0; // v5.85: Safety Heartbeat Timer
 
 // v5.66: Core System State (Moved from globals.h)
 volatile int sync_mode = eSyncModeInitial;
 volatile int gprs_mode = eGprsInitial;
 volatile int data_mode = eCurrentData;
-int sampleNo = 0;
+volatile int sampleNo = 0;
 int rf_cls_dd = 0, rf_cls_mm = 0, rf_cls_yy = 0;
 int rf_cls_ram_dd = 0, rf_cls_ram_mm = 0, rf_cls_ram_yy = 0;
 int time_to_sleep = 0;
@@ -84,15 +87,16 @@ char ftpdaily_file[50] = "";
 
 // v5.66: GPRS Counters (Moved from globals.h)
 int http_no = 0, msg_sent = 0;
-int rssiIndex = 0, rssiEndIndex = 0, retries = 0, registration = 0;
-int unsent_count = 0, success_count = 0;
-int s = 0, fileSize = 0;
+int rssiIndex = 0, rssiEndIndex = 0, registration = 0;
+volatile int retries = 0;               // cross-task: written by GPRS, read by scheduler
+volatile int unsent_count = 0, success_count = 0; // cross-task shared counters
+volatile int s = 0, fileSize = 0;       // cross-task file-size helpers
 int delay_val = 10000; // Default delay before starting GPRS(Moved from globals.h)
 
 // v5.66: System & Power Variables (Moved from globals.h)
 char UNIT_VER[20] = ""; 
+char NETWORK[15] = ""; 
 char STATION_TYPE[10] = "";
-char NETWORK[10] = "";
 char universalNumber[20] = "";
 char battery[10] = "0.0";
 char solar_sense[10] = "0.0";
@@ -113,14 +117,14 @@ bool valid_dt = false, valid_time = false;
 int ftp_login_flag = 0;
 size_t len = 0;
 char last_logged[16] = "";
-char http_data[512] = ""; 
+char http_data[350] = ""; 
 char sample_cum_rf[10], sample_inst_rf[10], sample_temp[10], sample_hum[10],
     sample_avgWS[10], sample_WD[10], sample_bat[10], ftpsample_avgWS[10],
     ftpsample_cum_rf[10];
 char ht_data[80] = ""; 
-char apn_str[20] = "";
-
-char reg_status[16] = "";
+ // v5.75: apn_str and carrier relocated to block below with 32-char expansion
+ 
+ char reg_status[16] = "";
 char *reg_status_ptr = NULL;
 char reg_val[3] = "";
 char rssi_resp[10] = "";
@@ -133,9 +137,10 @@ int rf_res_edit_state = 0;
 char cum_rf[10], inst_rf[10], inst_temp[10], avg_cum_rf[10];
 char ftpcum_rf[10];
 float avg_cumRF = 0, new_current_cumRF = 0, new_current_instRF = 0;
-float temperature = 0, humidity = 0, windSpCount = 0, cur_wind_speed = 0, pressure = 0;
-float cur_avg_wind_speed = 0;
-int windDir = 0;
+RTC_DATA_ATTR volatile float temperature = 0, humidity = 0, pressure = 0;
+volatile float windSpCount = 0, cur_wind_speed = 0;
+RTC_DATA_ATTR float cur_avg_wind_speed = 0.0;
+RTC_DATA_ATTR volatile int windDir = 0;               // written by windDirection task, read by scheduler
 float sea_level_pressure = 0;
 char inst_hum[10], avg_wind_speed[10], inst_wd[10];
 int pcb_clear_state = 0;
@@ -158,11 +163,7 @@ char present_bottomRow[17] = "";
 
 // Definitions of global objects (v5.65 Extern Pass)
 HardwareSerial SerialSIT(2);
-#if KEYPAD_TYPE == 2
-Nuvoton_Smart_LCD lcd;
-#else
 LiquidCrystal_I2C lcd(0x27, 16, 2);
-#endif
 SemaphoreHandle_t i2cMutex = NULL;
 SemaphoreHandle_t serialMutex = NULL;
 SemaphoreHandle_t modemMutex = NULL;
@@ -173,6 +174,8 @@ portMUX_TYPE timerMux1 = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE timerMux2 = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE windMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE rtcTimeMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE syncMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE sensorDataMux = portMUX_INITIALIZER_UNLOCKED;
 
 volatile char show_now = 0;
 TaskHandle_t bmeTask_h;
@@ -209,7 +212,8 @@ volatile bool schedulerBusy = false;
 RTC_DATA_ATTR double lati = 0.0, longi = 0.0;
 RTC_DATA_ATTR double gps_latitude = 0.0, gps_longitude = 0.0;
 RTC_DATA_ATTR int gps_fix_dd = 0, gps_fix_mm = 0, gps_fix_yy = 0;
-RTC_DATA_ATTR char carrier[20] = "";
+RTC_DATA_ATTR char apn_str[32] = ""; // v5.75: Expanded from 20 to 32 (M-03 fix)
+RTC_DATA_ATTR char carrier[32] = ""; // v5.75: Expanded from 20 to 32 (M-03 fix)
 RTC_DATA_ATTR char sim_number[20] = "NA";
 RTC_DATA_ATTR char cached_iccid[25] = "";
 RTC_DATA_ATTR bool isLTE = false;
@@ -220,6 +224,7 @@ RTC_DATA_ATTR int temp_same_count = 0;
 RTC_DATA_ATTR int hum_same_count = 0;
 RTC_DATA_ATTR int diag_reg_time_total = 0;
 RTC_DATA_ATTR int diag_backlog_total = 0;
+RTC_DATA_ATTR int diag_backlog_total_prev = 0;
 RTC_DATA_ATTR int diag_reg_count = 0;
 RTC_DATA_ATTR int diag_reg_worst = 0;
 RTC_DATA_ATTR int diag_gprs_fails = 0;
@@ -245,10 +250,13 @@ RTC_DATA_ATTR bool diag_rain_calc_invalid = false;
 RTC_DATA_ATTR bool diag_rain_reset = false;
 RTC_DATA_ATTR bool diag_wd_fail = false;
 RTC_DATA_ATTR int diag_consecutive_http_fails = 0;
+RTC_DATA_ATTR int last_ftp_unsent_sampleNo = -1; // v5.77: Persistent FTP Dedup
 RTC_DATA_ATTR int diag_daily_http_fails = 0;
 RTC_DATA_ATTR int diag_http_present_fails = 0;
 RTC_DATA_ATTR int diag_http_cum_fails = 0;
 RTC_DATA_ATTR int diag_cum_fail_reset_month = -1;
+RTC_DATA_ATTR int last_http_ok_slot = -1; // v5.72: Track slot of last successful HTTP
+RTC_DATA_ATTR int last_unsent_sampleNo = -1; // v5.72: Dedup guard for unsent.txt
 RTC_DATA_ATTR int diag_rejected_count = 0;
 RTC_DATA_ATTR bool diag_sensor_fault_sent_today = false;
 RTC_DATA_ATTR char diag_crash_task[16] = "NONE";
@@ -289,6 +297,8 @@ RTC_DATA_ATTR char cached_server_domain[64] = "";
 RTC_DATA_ATTR bool dns_fallback_active = false;
 RTC_DATA_ATTR int preferred_ftp_mode = -1;
 RTC_DATA_ATTR bool healer_reboot_in_progress = false;
+RTC_DATA_ATTR char diag_crash_task_rtc[16] = ""; // v5.74: Task name that triggered last stack overflow
+RTC_DATA_ATTR int diag_crash_count = 0;           // v5.74: Consecutive crashes of the same task
 
 RTC_DATA_ATTR int health_last_sent_hour = -1;
 RTC_DATA_ATTR int health_last_sent_day = -1;
@@ -303,8 +313,8 @@ RTC_DATA_ATTR int firmwareUpdated = 0;
 RTC_DATA_ATTR int last_processed_sample_idx = -1;
 RTC_DATA_ATTR bool fresh_boot_check_done = false;
 RTC_DATA_ATTR bool apn_saved_this_sim = false;
-RTC_DATA_ATTR float last_valid_temp = 26.0;
-RTC_DATA_ATTR float last_valid_hum = 65.0;
+RTC_DATA_ATTR float last_valid_temp = 0.0;
+RTC_DATA_ATTR float last_valid_hum = 0.0;
 RTC_DATA_ATTR int last_valid_wd = 0;
 RTC_DATA_ATTR float rtc_daily_cum_rf = 0.0;
 
@@ -315,9 +325,15 @@ RTC_DATA_ATTR int last_recorded_hr = 0;
 RTC_DATA_ATTR int last_recorded_min = 0;
 
 RTC_DATA_ATTR bool signature_valid = false;
+char hw_tag = ' '; // v5.75: Passive hardware/VFS health tag
 RTC_DATA_ATTR bool pending_manual_status = false;
 RTC_DATA_ATTR bool pending_manual_gps = false;
 RTC_DATA_ATTR bool pending_manual_health = false;
+RTC_DATA_ATTR int last_successful_cnmp = 2; // v5.84: 2=Auto, 13=GSM, 38=LTE
+RTC_DATA_ATTR bool last_http_ok = false;    // v5.84: Skip IP check if last slot worked
+RTC_DATA_ATTR int gprs_2g_slots_count = 0; // v5.84: Self-recovering 'Peeking' for LTE
+RTC_DATA_ATTR int low_bat_skip_count = 0;   // v5.85: P6 - counts skipped slots
+RTC_DATA_ATTR bool low_bat_mode_active = false; // v5.85: Tracking flag
 // --- End RTC Definitions ---
 
 // --- UI & Server Configurations (v5.65 ODR Fix) ---
@@ -394,19 +410,20 @@ int test_health_every_slot = TEST_HEALTH_DEFAULT;
 float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 unsigned long last_key_time = 0;
 int cur_file_found = 0;
-int data_writing_initiated = 0;
+volatile int data_writing_initiated = 0;
 int time_to_deepsleep = 13;
 float bat_val = 0.0;
 int solar_conn = 0;
 int calib_header_drawn = 0;
 int unsent_counter = 0;
 int http_code = -1;
-int signal_strength = SIGNAL_STRENGTH_NO_DATA;
-int signal_lvl = SIGNAL_STRENGTH_NO_DATA;
+volatile int signal_strength = SIGNAL_STRENGTH_NO_DATA; // cross-task: GPRS writes, scheduler reads
+volatile int signal_lvl = SIGNAL_STRENGTH_NO_DATA;      // cross-task: GPRS writes, scheduler reads
 int sd_card_ok = 0;
 int send_daily = 0;
 int cur_mode = 0;
 int cur_fld_no = 0;
+int last_lcd_state = 0; // v5.70 Final: Global UI state tracker
 volatile bool gprs_started = false;
 int badReads = 0;
 int prev_wind_count = 0;
@@ -414,10 +431,34 @@ char pres_str[20] = "NA";
 // --- End System Definitions ---
 
 void setup() {
+  // v5.77 Hardened [UI-WAKE]: Instant LCD Activation
+  // If we woke up by EXT0 (User Button), flip the 5V rail ON immediately
+  // before the 5s safety delay to prevent the 'Double-Press' requirement.
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
+      pinMode(32, OUTPUT);
+      digitalWrite(32, HIGH);
+      gpio_hold_dis(GPIO_NUM_32);
+      wakeup_reason_is = ext0; // v5.77: Pre-anchor reason for task inheritance
+  }
+  
+  // v5.85 P10 CRITICAL: Clear power-saving holds from Deep Sleep
+  gpio_hold_dis(GPIO_NUM_26);
+  gpio_hold_dis(GPIO_NUM_32);
+  gpio_hold_dis(GPIO_NUM_16); 
+  gpio_hold_dis(GPIO_NUM_17);
+  rtc_gpio_deinit(GPIO_NUM_27); // Re-map keypad to digital IO
+  pinMode(27, INPUT_PULLUP);    // v5.85: Force pull-up early for set_wakeup_reason()
 
+  // v5.85: P8 - Serial production guard (saved ~1.5mA)
+#if DEBUG == 1
   Serial.begin(115200);
+#endif
+  // v5.75: Force-Enable Logs (Clears stale RTC RAM silence flags)
+  ota_silent_mode = false;
+  bearer_recovery_active = false;
+
   delay(1000);
-  Serial.println("\n\n[BOOT] HELLO! System starting... (Debug Enabled)");
+  debugln("\n\n[BOOT] HELLO! System starting... (Debug Enabled)");
 
   // Seed the random number generator using internal RNG for better jitter
   srand(esp_random());
@@ -453,11 +494,8 @@ void setup() {
   // Reason 12 is triggered by 'DELETE DATA' or manually via ESP.restart().
   // v5.55 SELF-HEALING: Protect metrics during maintenance reboots.
   // If healer_reboot_in_progress is set, skip wiping counters even on Reason 12.
-  // v6.04 Fix BUG-5: handling EXT_CPU_RESET (Reason 14/Watchdog) for anchor preservation
-  if ((rr == 1 || rr == 14 || rr == 12) && !healer_reboot_in_progress) {
-    debugln("[BOOT] Fresh Start (Reason 1/14/12). Initializing RTC variables.");
-    last_raw_wind_count = wind_count.val;
-    last_raw_rf_count = rf_count.val;
+  if ((rr == POWERON_RESET || rr == EXT_CPU_RESET) && !healer_reboot_in_progress) {
+    debugf("[BOOT] Fresh Start (Reason %d). Initializing RTC variables.\n", (int)rr);
     // v5.60: Time-of-day dependent sensor anchor initialization
     int boot_hr = 10; // Default to mid-morning if RTC fails
     if (diag_rtc_battery_ok) {
@@ -486,7 +524,7 @@ void setup() {
 
     // v5.50 Bug#10 Fix: Reset diagnostic counters on DELETE DATA (SW_CPU_RESET)
     // so they don't carry stale values into fresh logs (explains netcount=42 issue)
-    if (rr == 12) {
+    if (false) { // v6.03: Reason 12 (SW Restart) no longer destructive to preserve continuity
       strcpy(diag_cdm_status, "PENDING");
       diag_pd_count = 0;
       diag_ndm_count = 0;
@@ -604,6 +642,21 @@ void setup() {
     }
   }
   // --- GPS Location Recovery ---
+  // v5.82 Platinum: Post-ID Recovery for atomic State-Anchor temp files
+  if (strlen(station_name) > 0) {
+      char tmpRec[64], txtRec[64];
+      snprintf(tmpRec, sizeof(tmpRec), "/lastrecorded_%s.tmp", station_name);
+      snprintf(txtRec, sizeof(txtRec), "/lastrecorded_%s.txt", station_name);
+      if (!SPIFFS.exists(txtRec) && SPIFFS.exists(tmpRec)) {
+          SPIFFS.rename(tmpRec, txtRec);
+          debugln("[FS] Recovered stranded lastrecorded.tmp");
+      }
+  }
+  if (!SPIFFS.exists("/prevWindSpeed.txt") && SPIFFS.exists("/prevWS.tmp")) {
+      SPIFFS.rename("/prevWS.tmp", "/prevWindSpeed.txt");
+      debugln("[FS] Recovered stranded prevWS.tmp");
+  }
+
   loadGPS(); // v5.51: Ensure coordinates are available even after POR
 
   // --- OTA Failure Tracking (Change namespace) ---
@@ -685,60 +738,40 @@ void setup() {
       strcpy(station_name, ""); // Force reset below
   }
 
-  if (strlen(station_name) > 0) {
-    // Already loaded
-  } else {
-    // Create default station.doc if strictly needed or just use default
-    // AG: Moved away from data upload dependency.
-    debugln("station.doc not found, creating default...");
-    File fileTemp = SPIFFS.open("/station.doc", FILE_WRITE);
-    if (fileTemp) {
-      fileTemp.print("SIT999");
-      fileTemp.close();
-      strcpy(station_name, "SIT999");
-      strcpy(ftp_station, "SIT999");
-    }
+  // v5.77 Hardened [C-04/N-12]: Universal Station ID Padding
+  // Ensure the station_name used for all subsequent logic is strictly 6-digits.
+  char raw_unpadded[16] = {0};
+  strncpy(raw_unpadded, station_name, 15);
+  
+  if (strlen(station_name) == 4 && isDigitStr(station_name)) {
+      char tmp_pad[16];
+      snprintf(tmp_pad, sizeof(tmp_pad), "00%s", station_name);
+      strncpy(station_name, tmp_pad, sizeof(station_name) - 1);
+      station_name[sizeof(station_name) - 1] = '\0';
+      strncpy(ftp_station, station_name, sizeof(ftp_station) - 1);
+      ftp_station[sizeof(ftp_station) - 1] = '\0';
+      debugln("[BOOT] Canonical ID Enforced: " + String(station_name));
   }
 
-  // --- Proactive Station Data Migration ---
-  // If the station name was normalized (e.g. from 001934 to 1934),
-  // proactively rename critical persistence files to maintain continuity.
-  if (strlen(station_name) == 4 && isDigitStr(station_name)) {
+  // --- Proactive Station Data Migration (REVERSED for 6-Digit Hardening) ---
+  // If we have legacy 4-digit files, migrate them to the 6-digit padded format.
+  if (strlen(raw_unpadded) == 4 && isDigitStr(raw_unpadded)) {
     char old_prefix_lastrec[32], new_prefix_lastrec[32];
-    snprintf(old_prefix_lastrec, sizeof(old_prefix_lastrec),
-             "/lastrecorded_00%s.txt", station_name);
-    snprintf(new_prefix_lastrec, sizeof(new_prefix_lastrec),
-             "/lastrecorded_%s.txt", station_name);
-    if (SPIFFS.exists(old_prefix_lastrec) &&
-        !SPIFFS.exists(new_prefix_lastrec)) {
-      debugln("[BOOT] Migrating lastrecorded file to normalized name...");
-      File oldF = SPIFFS.open(old_prefix_lastrec, FILE_READ);
-      File newF = SPIFFS.open(new_prefix_lastrec, FILE_WRITE);
-      if (oldF && newF) {
-        while (oldF.available())
-          newF.write(oldF.read());
-        oldF.close();
-        newF.close();
-        SPIFFS.remove(old_prefix_lastrec);
-      }
+    snprintf(old_prefix_lastrec, sizeof(old_prefix_lastrec), "/lastrecorded_%s.txt", raw_unpadded);
+    snprintf(new_prefix_lastrec, sizeof(new_prefix_lastrec), "/lastrecorded_00%s.txt", raw_unpadded);
+    
+    if (SPIFFS.exists(old_prefix_lastrec) && !SPIFFS.exists(new_prefix_lastrec)) {
+      debugln("[BOOT] Migrating legacy lastrecorded to padded format...");
+      SPIFFS.rename(old_prefix_lastrec, new_prefix_lastrec);
     }
+    
     char old_prefix_closing[32], new_prefix_closing[32];
-    snprintf(old_prefix_closing, sizeof(old_prefix_closing),
-             "/closingdata_00%s.txt", station_name);
-    snprintf(new_prefix_closing, sizeof(new_prefix_closing),
-             "/closingdata_%s.txt", station_name);
-    if (SPIFFS.exists(old_prefix_closing) &&
-        !SPIFFS.exists(new_prefix_closing)) {
-      debugln("[BOOT] Migrating closingdata file to normalized name...");
-      File oldF = SPIFFS.open(old_prefix_closing, FILE_READ);
-      File newF = SPIFFS.open(new_prefix_closing, FILE_WRITE);
-      if (oldF && newF) {
-        while (oldF.available())
-          newF.write(oldF.read());
-        oldF.close();
-        newF.close();
-        SPIFFS.remove(old_prefix_closing);
-      }
+    snprintf(old_prefix_closing, sizeof(old_prefix_closing), "/closingdata_%s.txt", raw_unpadded);
+    snprintf(new_prefix_closing, sizeof(new_prefix_closing), "/closingdata_00%s.txt", raw_unpadded);
+    
+    if (SPIFFS.exists(old_prefix_closing) && !SPIFFS.exists(new_prefix_closing)) {
+      debugln("[BOOT] Migrating legacy closingdata to padded format...");
+      SPIFFS.rename(old_prefix_closing, new_prefix_closing);
     }
   }
 
@@ -775,6 +808,8 @@ void setup() {
     File altF = SPIFFS.open("/station_alt.txt", FILE_READ);
     if (altF) {
       float loaded_alt = altF.readString().toFloat();
+      void loadGPS();
+      void sync_rtc_from_http_header(String& head); // v5.75: Pre-captured header sync
       altF.close();
       if (loaded_alt >= 0.0 && loaded_alt <= 5000.0) {
         station_altitude_m = loaded_alt;
@@ -929,7 +964,7 @@ void setup() {
     debug(NETWORK);
     debug(" | Type: ");
     debugln(STATION_TYPE);
-    http_no = 6; // 6(KSNDMC SERVER)
+    http_no = 6; // 6 (KSNDMC TWS)
   } else if ((strstr(UNIT, "KSNDMC_ADDON") && (SYSTEM == 2))) {
     strcpy(universalNumber, "9980945474");
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TWSRF9-DMC-%s", FIRMWARE_VERSION);
@@ -941,7 +976,7 @@ void setup() {
     debug(NETWORK);
     debug(" | Type: ");
     debugln(STATION_TYPE);
-    http_no = 7; // 7(KSNDMC SERVER)
+    http_no = 7; // 7 (KSNDMC ADDON)
   } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 0))) {
     strcpy(universalNumber, "9980945474"); //"9980945474"); // Universal number
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG9-GEN-%s", FIRMWARE_VERSION);
@@ -953,7 +988,7 @@ void setup() {
     debug(NETWORK);
     debug(" | Type: ");
     debugln(STATION_TYPE);
-    http_no = 6; // 8(SPATIKA SERVER)
+    http_no = 6; // 6 (SPATIKA GEN TRG - index 6 confirmed)
   } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 1))) {
     strcpy(universalNumber, "9980945474");
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-GEN-%s", FIRMWARE_VERSION);
@@ -965,7 +1000,7 @@ void setup() {
     debug(NETWORK);
     debug(" | Type: ");
     debugln(STATION_TYPE);
-    http_no = 8; // Spatika Server for TWS
+    http_no = 8; // 8 (SPATIKA TWS)
   } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 2))) { // EMPRII
     strcpy(universalNumber, "9980945474"); //"9980945474"); // Universal number
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TWSRF9-GEN-%s", FIRMWARE_VERSION);
@@ -977,7 +1012,7 @@ void setup() {
     debug(NETWORK);
     debug(" | Type: ");
     debugln(STATION_TYPE);
-    http_no = 10; // 10 (SPATIKA SERVER)
+    http_no = 10; // 10 (SPATIKA GEN TWS-RF)
   } else {
     debugln("!!! FATAL: ********** NO UNIT/SYSTEM MATCH FOUND **********");
     debugln("!!! Check UNIT and SYSTEM defines in globals.h!");
@@ -987,6 +1022,19 @@ void setup() {
     http_no = -1;
     strncpy(UNIT_VER, "UNCONFIGURED", sizeof(UNIT_VER) - 1);
   }
+
+  // v5.75 Hardened: [C-03] Server Index Protection
+#if SYSTEM == 0
+  if (http_no >= 7) { 
+    http_no = -1; 
+    debugln("!!! FATAL: http_no OOB for SYSTEM 0 !!!"); 
+  }
+#else
+  if (http_no >= 11) { 
+    http_no = -1; 
+    debugln("!!! FATAL: http_no OOB for SYSTEM 1/2 !!!"); 
+  }
+#endif
 
   debugln();
 
@@ -1062,6 +1110,18 @@ void setup() {
               Update.writeStream(firmware);
               if (Update.end()) {
                 debugln("Update finished! Storing MD5 and restarting...");
+                
+                // v5.75 Golden Fix: Force-Reset the OTA 'Ghost' Signpost
+                // This ensures the unit MUST boot into the new Slot 0 version.
+                const esp_partition_t *ota_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, "otadata");
+                if (ota_partition != NULL) {
+                    debugln("[OTA] Wiping Ghost Signpost (0xe000)...");
+                    esp_err_t erase_ret = esp_partition_erase_range(ota_partition, 0, ota_partition->size);
+                    if (erase_ret != ESP_OK) {
+                        debugf("[OTA] Ghost-Kill erase FAILED: %d. Boot may revert.\n", erase_ret);
+                    }
+                }
+
                 diag_fw_just_updated = true; // v5.76
                 File md5Write = SPIFFS.open("/sd_fw_md5.txt", FILE_WRITE);
                 if (md5Write) {
@@ -1109,7 +1169,8 @@ void setup() {
       }
       debug("Firmware ver stored in SPIFFS is ");
       debugln(UNIT_VER);
-        // v5.67: Differentiate between a simple OTA patch and a cross-architecture flash
+      
+      // v5.67: Differentiate between a simple OTA patch and a cross-architecture flash
       // (e.g. changing from TWS to TWS-RF where the CSV structures physically change)
       int lastDash1 = String(UNIT_VER).lastIndexOf('-');
       int lastDash2 = temp.lastIndexOf('-');
@@ -1131,14 +1192,12 @@ void setup() {
           File root = SPIFFS.open("/"); 
           File file = root.openNextFile();
           while(file) {
-              if (!file) break; // v6.04 Fix BUG-8: Guard against null iterator crash
               String n = file.name();
               if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt" || n == "firmware.doc")) {
                   debug("Removing incompatible structure: "); debugln(n);
                   SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
               }
-              file.close(); 
-              file = root.openNextFile();
+              file.close(); file = root.openNextFile();
           }
           root.close();
           debugln("[OTA] Wipe complete.");
@@ -1159,7 +1218,7 @@ void setup() {
     }
   } else {
     // Create firmware.doc if missing (Fresh install)
-    debugln("firmware.doc not found, creating with current version...");
+    debugln("firmware.doc not found, creating default...");
     File verTemp1 = SPIFFS.open("/firmware.doc", FILE_WRITE);
     if (verTemp1) {
       verTemp1.print(UNIT_VER);
@@ -1246,8 +1305,10 @@ void setup() {
           }
         } else {
           debugln(
-              "[OTA] Update FAILED. Keeping /firmware.bin and /firmware.ready for retry.");
-          // v6.04: BUG-12: NOT deleting .ready so setup() can try again on next boot
+              "Firmware update failed, keeping /firmware.bin for analysis.");
+          if (SPIFFS.exists("/firmware.ready")) {
+            SPIFFS.remove("/firmware.ready");
+          }
         }
 
         delay(500); // TRG8-3.0.5g reduced from 2secs to 500ms
@@ -1256,97 +1317,6 @@ void setup() {
     }
   }
 
-  gprs_mode = eGprsInitial;
-  sync_mode = eSyncModeInitial;
-
-  // Task creation and spawning
-  xTaskCreatePinnedToCore(rtcRead, "rtcReadTask", 8192, NULL, 2, &rtcRead_h,
-                          1); // Core 1
-  xTaskCreatePinnedToCore(scheduler, "schedulerTask", 14336, NULL, 2,
-                          &scheduler_h, 1); // Core 1 (Phase 10: Dropped from P3 to P2 to prevent starvation)
-  xTaskCreatePinnedToCore(gprs, "gprsTask", 16384, NULL, 2, &gprs_h,
-                          0); // Core 0
-
-  //    #if DEBUG == 1
-  //        xTaskCreatePinnedToCore(stackMonitor, "StackMonitor", 2048, NULL,
-  //        1, NULL, 1);
-  //    #endif
-
-#if (SYSTEM == 1) || (SYSTEM == 2)
-  // #7: Smart Task Creation - Only spawn tasks if sensors were found in
-  // initialize_hw
-  if (hdcType != HDC_UNKNOWN || bmeType != BME_UNKNOWN) {
-    xTaskCreatePinnedToCore(tempHum, "tempHumTask", 4096, NULL, 2, &tempHum_h,
-                            1); // Core 1
-  } else {
-    tempHum_h = NULL;
-    debugln("[BOOT] No T/H sensor (HDC or BME). tempHumTask NOT created.");
-  }
-
-  // v5.50: Only spawn bmeTask if Pressure is enabled AND this is a TWS-AP
-  // unit
-  bool pressure_supported =
-      (SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP") != NULL);
-  if (bmeType == BME_280 && ENABLE_PRESSURE_SENSOR == 1 && pressure_supported) {
-    xTaskCreatePinnedToCore(bmeTask, "bmeTask", 4096, NULL, 2, &bmeTask_h,
-                            1); // Core 1
-  } else {
-    bmeTask_h = NULL;
-    if (bmeType == BME_280) {
-      debugln("[BOOT] BME280 found but Pressure Task DISABLED per "
-              "configuration/unit type.");
-    } else {
-      debugln("[BOOT] BME280 not found. bmeTask NOT created.");
-    }
-  }
-
-  xTaskCreatePinnedToCore(windSpeed, "windSpeedTask", 4096, NULL, 2,
-                          &windSpeed_h,
-                          1); // Core 1
-  xTaskCreatePinnedToCore(windDirection, "windDirectionTask", 4096, NULL, 2,
-                          &windDirection_h, 1); // Core 1
-#endif
-
-  if (wired == 1) {
-    // v5.57: Stack increased 4096→6144 (+2KB). lcdkeypad handles full menu
-    // navigation, snprintf formatting, and SPIFFS reads. Total stack budget
-    // for worst-case SYSTEM 1/2 is ~61KB vs ~220KB free heap — well within limits.
-    xTaskCreatePinnedToCore(lcdkeypad, "lcdkeypadTask", 6144, NULL, 2,
-                            &lcdkeypad_h, 0); // Core 0
-    if (wakeup_reason_is != timer) {
-      digitalWrite(32, HIGH); // Power on LCD only if NOT a background wakeup
-      delay(100);
-    }
-  }
-
-  //    }
-
-  // attachInterrupt(27, ext0_isr, FALLING); // DISABLE: Conflicts with ULP
-  // Counting on Pin 27. ULP handles counting.
-  debugln("ULP Counting Enabled (attachInterrupt 27 Disabled).");
-  delay(1000);
-
-  // Should be called only after getting the correct RF count from SPIFF. If
-  // no RF is present, make rf_count.val = 0 and call this ()
-
-  // REVERTED to AIO9_3.0 logic: Always load/restart ULP on setup to ensure counting is active.
-  // v5.66 CRITICAL FIX: We MUST preserve the ULP's counted values before re-loading the code,
-  // otherwise the injection permanently zeroes out any physical tips that fell during Deep Sleep
-  // or right before an EXT_CPU_RESET crash!
-  uint16_t preserved_rf = (rr == POWERON_RESET) ? 0 : rf_count.val;
-#if (SYSTEM == 1) || (SYSTEM == 2)
-  uint32_t preserved_wind = (rr == POWERON_RESET) ? 0 : wind_count.val;
-#endif
-
-  debug("ULP Wakeup Period set to 1ms (High Resolution for Wind)");
-  ULP_COUNTING(ULP_WAKEUP_TC);
-  debugln("ULP Program loaded and started.");
-
-  // Safely restore the physical counts back into the fresh ULP memory block
-  rf_count.val = preserved_rf;
-#if (SYSTEM == 1) || (SYSTEM == 2)
-  wind_count.val = preserved_wind;
-#endif
   // RF Resolution Change Cleanup
   if (rf_res_changed) {
     debugln("Resolution changed. Cleaning up data files...");
@@ -1401,14 +1371,45 @@ void setup() {
     last_sched_rf_pulses_32 = total_rf_pulses_32;
     debugln("Cleanup complete. Starting fresh.");
   }
+  // If the same task caused a stack overflow 3+ consecutive times (persisted in RTC RAM),
+  // skip recreating it this boot to break the reboot loop.
+  // The counter resets to 0 on a POWERON_RESET (fresh power cycle).
+  bool skip_gprs_task      = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "gprsTask",      15) == 0);
+  bool skip_scheduler_task = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "schedulerTask", 15) == 0);
+  bool skip_rtc_task       = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "rtcReadTask",   15) == 0);
+  bool skip_lcd_task       = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "lcdkeypadTask", 15) == 0);
+  bool skip_temphum_task   = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "tempHumTask",   15) == 0);
+  bool skip_ws_task        = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "windSpeedTask", 15) == 0);
+  bool skip_wd_task        = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "windDirectio",  15) == 0); // truncated to 15 chars
+
+  if (diag_crash_count >= 3) {
+    debugf("[BOOT] ⚠️ CRASH LOOP GUARD: Task '%s' crashed %d times. Skipping task.\n",
+           diag_crash_task_rtc, diag_crash_count);
+  }
+
+  // v7.95: CRITICAL RACE FIX — Initialize ULP and anchors BEFORE creating tasks.
+  // This prevents the scheduler from reading uninitialized ULP RAM or stale 
+  // counters before setup() has finished zeroing/syncing them.
+  uint16_t preserved_rf = (rr == POWERON_RESET) ? 0 : rf_count.val;
+#if (SYSTEM == 1) || (SYSTEM == 2)
+  uint32_t preserved_wind = (rr == POWERON_RESET) ? 0 : wind_count.val;
+#endif
+
+  debug("ULP Wakeup Period set to 1ms (High Resolution for Wind)");
+  ULP_COUNTING(ULP_WAKEUP_TC);
+  debugln("ULP Program loaded and started.");
+
+  // Safely restore the physical counts back into the fresh ULP memory block
+  rf_count.val = preserved_rf;
+#if (SYSTEM == 1) || (SYSTEM == 2)
+  wind_count.val = preserved_wind;
+#endif
 
   // v7.94: FINAL HARDWARE ANCHOR
   // We MUST anchor the 'last_raw' counters to the CURRENT hardware state
-  // at the very end of setup, AFTER any ULP code loads or version-based resets.
-  // This prevents 'deltas' from old garbage or initialization jumps.
+  // AFTER any ULP code loads or version-based resets.
   // CRITICAL FIX: Only do this on FRESH BOOT, otherwise we clear all pulses
   // accumulated during Deep Sleep before the scheduler can read them!
-  // Note: rr == 5 is DEEPSLEEP_RESET. We NEVER sync here if rr == 5.
   if ((rr == POWERON_RESET || rr == EXT_CPU_RESET || rr == SW_CPU_RESET) && !healer_reboot_in_progress) {
     last_raw_wind_count = wind_count.val;
     last_raw_rf_count = rf_count.val;
@@ -1418,6 +1419,102 @@ void setup() {
   } else {
     debugf2("[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=%u, Rain=%u\n", last_raw_wind_count, last_raw_rf_count);
   }
+
+  xTaskCreatePinnedToCore(rtcRead, "rtcReadTask", 8192, NULL, 2, &rtcRead_h,
+                          1); // Core 1
+  if (!skip_scheduler_task) {
+    xTaskCreatePinnedToCore(scheduler, "schedulerTask", 14336, NULL, 2,
+                            &scheduler_h, 1);
+  } else {
+    scheduler_h = NULL;
+    debugln("[BOOT] schedulerTask SKIPPED (crash-loop guard).");
+  }
+  if (!skip_gprs_task) {
+    xTaskCreatePinnedToCore(gprs, "gprsTask", 16384, NULL, 2, &gprs_h,
+                            0); // Core 0
+  } else {
+    gprs_h = NULL;
+    debugln("[BOOT] gprsTask SKIPPED (crash-loop guard). Data-store-only mode.");
+    // Advance sync state so sleep logic doesn't wait for GPRS forever
+    sync_mode = eHttpStop;
+  }
+
+  //    #if DEBUG == 1
+  //        xTaskCreatePinnedToCore(stackMonitor, "StackMonitor", 2048, NULL,
+  //        1, NULL, 1);
+  //    #endif
+
+#if (SYSTEM == 1) || (SYSTEM == 2)
+  // #7: Smart Task Creation - Only spawn tasks if sensors were found in
+  // initialize_hw
+  if ((hdcType != HDC_UNKNOWN || bmeType != BME_UNKNOWN) && !skip_temphum_task) {
+    xTaskCreatePinnedToCore(tempHum, "tempHumTask", 4096, NULL, 2, &tempHum_h,
+                            1); // Core 1
+  } else {
+    tempHum_h = NULL;
+    if (skip_temphum_task) debugln("[BOOT] tempHumTask SKIPPED (crash-loop guard).");
+    else debugln("[BOOT] No T/H sensor (HDC or BME). tempHumTask NOT created.");
+  }
+
+  // v5.50: Only spawn bmeTask if Pressure is enabled AND this is a TWS-AP
+  // unit
+  bool pressure_supported =
+      (SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP") != NULL);
+  if (bmeType == BME_280 && ENABLE_PRESSURE_SENSOR == 1 && pressure_supported) {
+    xTaskCreatePinnedToCore(bmeTask, "bmeTask", 4096, NULL, 2, &bmeTask_h,
+                            1); // Core 1
+  } else {
+    bmeTask_h = NULL;
+    if (bmeType == BME_280) {
+      debugln("[BOOT] BME280 found but Pressure Task DISABLED per "
+              "configuration/unit type.");
+    } else {
+      debugln("[BOOT] BME280 not found. bmeTask NOT created.");
+    }
+  }
+
+  if (!skip_ws_task) {
+    xTaskCreatePinnedToCore(windSpeed, "windSpeedTask", 4096, NULL, 2,
+                            &windSpeed_h, 1); // Core 1
+  } else {
+    windSpeed_h = NULL;
+    debugln("[BOOT] windSpeedTask SKIPPED (crash-loop guard).");
+  }
+  if (!skip_wd_task) {
+    xTaskCreatePinnedToCore(windDirection, "windDirectionTask", 4096, NULL, 2,
+                            &windDirection_h, 1); // Core 1
+  } else {
+    windDirection_h = NULL;
+    debugln("[BOOT] windDirectionTask SKIPPED (crash-loop guard).");
+  }
+#endif
+
+  if (wired == 1 && !skip_lcd_task) {
+    xTaskCreatePinnedToCore(lcdkeypad, "lcdkeypadTask", 6144, NULL, 2,
+                            &lcdkeypad_h, 0); // Core 0
+    if (wakeup_reason_is != timer) {
+      digitalWrite(32, HIGH);
+      delay(100);
+    }
+  } else if (wired == 1) {
+    lcdkeypad_h = NULL;
+    debugln("[BOOT] lcdkeypadTask SKIPPED (crash-loop guard).");
+  }
+
+  //    }
+
+  // attachInterrupt(27, ext0_isr, FALLING); // DISABLE: Conflicts with ULP
+  // Counting on Pin 27. ULP handles counting.
+  debugln("ULP Counting Enabled (attachInterrupt 27 Disabled).");
+  delay(1000);
+
+  // Should be called only after getting the correct RF count from SPIFF. If
+  // no RF is present, make rf_count.val = 0 and call this ()
+
+  // REVERTED to AIO9_3.0 logic: Always load/restart ULP on setup to ensure counting is active.
+  // v5.66 CRITICAL FIX: We MUST preserve the ULP's counted values before re-loading the code,
+  // otherwise the injection permanently zeroes out any physical tips that fell during Deep Sleep
+  // or right before an EXT_CPU_RESET crash!
 
   // Final cleanup of boot flags
   if (healer_reboot_in_progress) {
@@ -1455,7 +1552,9 @@ void initialize_hw() {
     solar_val = (solar / 4096.0) * 3.6 * 7.2;
   }
 
+#if DEBUG == 1
   Serial.begin(115200);
+#endif
   // v7.06: CRITICAL! Expand UART RX buffer to 16KB so that incoming AT+HTTPREAD
   // data does not drop bytes when Update.write() blocks the CPU during flash
   // erase operations.
@@ -1502,13 +1601,15 @@ void initialize_hw() {
   pinMode(26, OUTPUT);
   pinMode(27, INPUT_PULLUP);
 
-  // SELF-HEALING: Release GPIO holds from deep sleep
-  gpio_hold_dis(GPIO_NUM_26);
-  gpio_hold_dis(GPIO_NUM_32);
-
   bool spiffs_mounted = false;
+  uint32_t chip_size = ESP.getFlashChipSize();
+  char hw_tag = (chip_size == 16*1024*1024) ? 'X' : ((chip_size == 8*1024*1024) ? 'H' : 'L');
+
   for (int i = 0; i < 3; i++) {
-    if (SPIFFS.begin(false)) { // Safe mount, no auto-format
+    // v5.75: Hardened Label-Based Mount (Dynamic VFS)
+    // By using the label "spiffs", the ESP32 internally finds the partition segment 
+    // even if it moved from 2.5MB (4MB chips) to 6MB (8MB chips).
+    if (SPIFFS.begin(false, "/spiffs", 10, "spiffs")) { 
       spiffs_mounted = true;
       break;
     }
@@ -1517,15 +1618,60 @@ void initialize_hw() {
   }
 
   if (!spiffs_mounted) {
-    debugln("[BOOT] SPIFFS mount failed 3 times. Attempting recovery with format...");
-    if (!SPIFFS.begin(true)) {
-      debugln("[BOOT] CRITICAL: SPIFFS FAILED even after format.");
-      // v5.66: Removed misleading diag_rtc_battery_ok = false proxy assignment
-    } else {
-      debugln("[BOOT] SPIFFS reformatted. All local data lost.");
-    }
+    debugln("[BOOT] CRITICAL: SPIFFS failed 3x. Safe-mode enabled (NO REFORMAT).");
+    hw_tag = '!';
   } else {
     debugln("[BOOT] SPIFFS: OK");
+    
+    // v5.75: Secret Hardware Tag (Passive indicator)
+    // Injected into the FLD_DELETE_DATA heading (Far-right column 15)
+    snprintf(ui_data[FLD_DELETE_DATA].topRow, sizeof(ui_data[FLD_DELETE_DATA].topRow), "DELETE DATA?   %c", hw_tag);
+    
+    // v6.03: Atomic Recovery - Restore stranded .tmp files from power-fail
+    if (!SPIFFS.exists("/gps_fix.txt") && SPIFFS.exists("/gps_fix.tmp")) {
+        SPIFFS.rename("/gps_fix.tmp", "/gps_fix.txt");
+        debugln("[FS] Recovered stranded gps_fix.tmp");
+    }
+    if (!SPIFFS.exists("/signature.txt") && SPIFFS.exists("/signature.tmp")) {
+        SPIFFS.rename("/signature.tmp", "/signature.txt");
+        debugln("[FS] Recovered stranded signature.tmp");
+    }
+
+    // v5.80: Trim Recovery (Adoption of stranded data after power-cut)
+    if (!SPIFFS.exists("/unsent.txt") && SPIFFS.exists("/trim.tmp")) {
+        SPIFFS.rename("/trim.tmp", "/unsent.txt");
+        debugln("[FS] Recovered stranded trim.tmp -> unsent.txt");
+    }
+    if (!SPIFFS.exists("/ftpunsent.txt") && SPIFFS.exists("/ftptrim.tmp")) {
+        SPIFFS.rename("/ftptrim.tmp", "/ftpunsent.txt");
+        debugln("[FS] Recovered stranded ftptrim.tmp -> ftpunsent.txt");
+    }
+    
+    // v5.80: Pointer Recovery
+    if (!SPIFFS.exists("/unsent_pointer.txt") && SPIFFS.exists("/ptr.tmp")) {
+        SPIFFS.rename("/ptr.tmp", "/unsent_pointer.txt");
+        debugln("[FS] Recovered stranded ptr.tmp -> unsent_pointer.txt");
+    }
+
+    // v5.85: [Emergency Purge] - Clear orphan KWD files if they pile up at boot (Crash Recovery)
+    int kwd_count = 0;
+    File rootDir = SPIFFS.open("/");
+    if (rootDir) {
+        File f = rootDir.openNextFile();
+        while(f) {
+            String n = String(f.name());
+            if (n.endsWith(".kwd") || n.endsWith(".swd")) {
+                kwd_count++;
+                if (kwd_count > 3) {
+                   f.close();
+                   SPIFFS.remove("/" + n);
+                   debugln("[FS] Emergency Boot Purge: " + n);
+                } else f.close();
+            } else f.close();
+            f = rootDir.openNextFile();
+        }
+        rootDir.close();
+    }
   }
 
   SPI.begin(18, 19, 23, 5);
@@ -1567,6 +1713,7 @@ void initialize_hw() {
 #endif
 
   debugln("[BOOT] Hardware Initialized.");
+  last_activity_time = millis(); // v5.85: Trigger safety heartbeat starting now
 }
 
 void loop() {
@@ -1581,12 +1728,39 @@ void loop() {
   // WiFi is now manually triggered via the LCD menu.
   // We no longer aggressively auto-start the Access Point here on EXT0
   // wakeups.
-  if ((millis() > 5000) &&
-      ((sync_mode == eHttpStop) || (sync_mode == eSMSStop) ||
-       (sync_mode == eExceptionHandled)) &&
+  bool safe_to_sleep_sync = false;
+  
+  int snap_min, snap_sec;
+  portENTER_CRITICAL(&rtcTimeMux);
+  snap_min = current_min;
+  snap_sec = current_sec;
+  portEXIT_CRITICAL(&rtcTimeMux);
+
+  int seconds_to_next_15 = (15 - (snap_min % 15)) * 60 - snap_sec;
+  bool too_close_to_slot = (seconds_to_next_15 < 45); 
+
+  portENTER_CRITICAL(&syncMux);
+  safe_to_sleep_sync = ((sync_mode == eHttpStop) || (sync_mode == eSMSStop) || (sync_mode == eExceptionHandled)) && !too_close_to_slot;
+  bool snap_schedulerBusy = schedulerBusy; // v5.74 Fix #2: snapshot inside syncMux for atomicity
+  portEXIT_CRITICAL(&syncMux);
+
+  // v5.85: P7 - Dynamic Sleep Optimization (5s -> 2s for timer wakeups)
+  uint32_t min_awake_ms = (wakeup_reason_is == ext0) ? 5000 : 2000;
+  
+  // v5.76.2: Mutex-Aware Sleep Guard (Total Race Prevention)
+  // Check the actual semaphore handles to ensure no task is currently holding 
+  // the modem or file system, regardless of high-level boolean flag state.
+  bool modemIsBusy = (uxSemaphoreGetCount(modemMutex) == 0);
+  bool fsIsBusy = (uxSemaphoreGetCount(fsMutex) == 0);
+
+  if ((millis() > min_awake_ms) &&
+      safe_to_sleep_sync &&
+      !modemIsBusy && !fsIsBusy &&
       (lcdkeypad_start == 0) && (wifi_active == false) &&
-      (httpInitiated == false) && (health_in_progress == false) &&
-      (schedulerBusy == false) && (gprs_started == false) &&
+      (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false) && (health_in_progress == false) &&
+      (snap_schedulerBusy == false) && (gprs_started == false || sync_mode == eHttpStop) &&
+      (pending_manual_status == false) && (pending_manual_gps == false) &&
+      (pending_manual_health == false) &&
       (force_reboot == false) && (force_ota == false) &&
       (ota_writing_active == false)) {
 
@@ -1608,11 +1782,43 @@ void loop() {
     // Double-check the system hasn't just woken up in the last microsecond
     vTaskDelay(50 / portTICK_PERIOD_MS);
     
-    // Phase 11 Fix: Re-evaluate the full gate, not just schedulerBusy,
-    // to catch any state changes during the 50ms yield.
-    if (schedulerBusy || gprs_started || health_in_progress || httpInitiated) {
-        debugln("[PWR] Race Prevented: System became active during sleep delay. Aborting.");
-        return; // Re-enter the loop
+    // Phase 11 Fix: Re-evaluate the FULL gate, not just schedulerBusy,
+    // to catch any state changes during the 50ms yield (e.g. OTA started).
+    bool sys_busy = false;
+    portENTER_CRITICAL(&syncMux);
+    bool race_sync_invalid = (sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled);
+    sys_busy = (snap_schedulerBusy || (gprs_started && sync_mode != eHttpStop) || health_in_progress || __atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) || 
+                force_reboot || force_ota || ota_writing_active || lcdkeypad_start || (wakeup_reason_is == ext0) || 
+                wifi_active || race_sync_invalid || 
+                pending_manual_status || pending_manual_gps || pending_manual_health);
+    portEXIT_CRITICAL(&syncMux);
+
+    if (sys_busy) {
+        // v5.85: Final Safety Valve — Forced Duty Cycle Cap to protect battery.
+        bool awake_cap_reached = (millis() > 300000); // 5 minutes absolute max
+        bool idle_cap_reached = (millis() - last_activity_time > 180000); // 3 mins idle
+
+        // v5.75: Mutex Hang Recovery
+        if (awake_cap_reached && (modemIsBusy || fsIsBusy)) {
+            debugln("[PWR] LOCKUP RECOVERY: Mutex held by hung task > 5min. Forcing Reboot...");
+            ESP.restart();
+        }
+
+        if (lcdkeypad_start == 0 && (awake_cap_reached || idle_cap_reached) && !too_close_to_slot) {
+            debugln("[PWR] SAFETY VALVE: Duty-Cycle Cap or Idle Timeout reached. Forcing Sleep...");
+            // Force-reset all blockers
+            portENTER_CRITICAL(&syncMux);
+            gprs_started = false;
+            sync_mode = eHttpStop;
+            schedulerBusy = false;
+            __atomic_store_n(&httpInitiated, false, __ATOMIC_RELEASE);
+            health_in_progress = false;
+            portEXIT_CRITICAL(&syncMux);
+            http_ready = false; 
+        } else {
+            debugln("[PWR] Race Prevented: System became active during sleep delay. Aborting sleep.");
+            return; // Re-enter the loop
+        }
     }
 
     debugln("[PWR] All tasks done. Entering Deep Sleep...");
@@ -1621,7 +1827,7 @@ void loop() {
   }
 
   esp_task_wdt_reset(); // Pet the watchdog for the loopTask
-  delay(500);
+  vTaskDelay(500 / portTICK_PERIOD_MS); // v5.85: P5 - loop polling 100ms -> 500ms
 }
 
 void print_reset_reason(RESET_REASON reason) {
@@ -1677,6 +1883,8 @@ void print_reset_reason(RESET_REASON reason) {
   }
 
   get_chip_id();
+  uint32_t chip_size = ESP.getFlashChipSize(); 
+  debugf("[BOOT] Chip ID: %s | Flash: %d MB\n", chip_id, chip_size / (1024 * 1024));
 }
 
 // ------------------------------------------------------------------------
@@ -1704,7 +1912,6 @@ void ULP_COUNTING(uint32_t us) {
   } else {
     debug("[ULP] Warm Boot. Preserving Counters. RF=");
     debugln(rf_count.val);
-
     // Validate counters to detect memory corruption
     validate_ulp_counters();
   }
@@ -1865,6 +2072,15 @@ void ULP_COUNTING(uint32_t us) {
 // v5.59: Stack Overflow Hook to persistent RTC RAM
 extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
   if (pcTaskName) {
+    // v5.74 Fix #16: Count consecutive crashes of the same task.
+    // After 3 crashes, stop recreating it to break the reboot loop.
+    if (strncmp(diag_crash_task_rtc, pcTaskName, 15) == 0) {
+      diag_crash_count++;
+    } else {
+      diag_crash_count = 1;
+      strncpy(diag_crash_task_rtc, pcTaskName, 15);
+      diag_crash_task_rtc[15] = '\0';
+    }
     strncpy(diag_crash_task, pcTaskName, 15);
     diag_crash_task[15] = '\0';
   }

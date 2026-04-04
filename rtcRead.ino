@@ -146,17 +146,38 @@ void rtcRead(void *pvParameters) {
       //        sampleNo   = (record_hr * 60 + record_min) / 15;
     }
 
-    // Handle too many bad reads
-    if (badReads >= 24) {
-      bool gprs_idle = ((sync_mode == eHttpStop || sync_mode == eSMSStop ||
-                         sync_mode == eExceptionHandled) &&
-                        !health_in_progress && !wifi_active);
-      if (gprs_idle) {
-        badReads = -1;
-        debugln("rtcRead: Too many bad reads — resyncing RTC");
-        resync_time();
+    // v5.75: Automatic Daily Sync & Drift Correction (H-04 Fix)
+    // Check if the daily rollover (midnight) has reset the rtc_daily_sync_done flag
+    // OR if hardware failure (badReads) suggests a network correction is needed.
+    bool auto_sync_needed = false;
+    portENTER_CRITICAL(&rtcTimeMux);
+    auto_sync_needed = !rtc_daily_sync_done;
+    portEXIT_CRITICAL(&rtcTimeMux);
+
+    if (badReads >= 40 || (auto_sync_needed && (hr == 11 || test_health_every_slot == 1))) {
+      // v5.77: Coordination Guard — Do not sync if sleep is imminent or retry cap reached
+      if (sleep_sequence_active) {
+        debugln("[RTC] Sleep imminent. Deferring sync.");
+      } else if (rtc_daily_sync_count >= 3) {
+        debugln("[RTC] Daily sync retry cap reached. Deferring.");
       } else {
-        debugln("[RTC] Deferring resync, GPRS task is busy.");
+        portENTER_CRITICAL(&syncMux);
+        int mode_snap = sync_mode;
+        portEXIT_CRITICAL(&syncMux);
+        bool gprs_idle = ((mode_snap == eHttpStop || mode_snap == eSMSStop ||
+                           mode_snap == eExceptionHandled) &&
+                          !health_in_progress && !wifi_active);
+        if (gprs_idle) {
+          if (badReads >= 40) debugln("[RTC] Too many bad reads — resyncing RTC");
+          else {
+            debugln("[RTC] Scheduled daily sync/drift correction triggered.");
+            rtc_daily_sync_count++; // Increment retry counter
+          }
+          badReads = -1;
+          resync_time();
+        } else {
+          debugln("[RTC] Deferring sync, GPRS task is busy.");
+        }
       }
     }
 
@@ -180,14 +201,24 @@ void resync_time() {
 
   debugln("[RTC] Resync Requested. Powering on GPRS...");
   debugln();
-  health_in_progress = true; // Guard against sleep
-  sync_mode = eHttpTrigger;  // Mark busy
+  portENTER_CRITICAL(&syncMux);
+  health_in_progress = true; // [H-01] Guard and Mark busy inside same critical section
+  sync_mode = eHttpTrigger;
+  portEXIT_CRITICAL(&syncMux);
 
   signal_strength = 0;
   signal_lvl = 0;
   strcpy(reg_status, "NA");
+  
+  // H-NEW-1: Wrapped in critical section to prevent sleep gate race
+  portENTER_CRITICAL(&syncMux);
   gprs_started = true;
+  portEXIT_CRITICAL(&syncMux);
+
+  // M-NEW-3: Pet WDT before and after the 15s blocking take
+  esp_task_wdt_reset();
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
+    esp_task_wdt_reset();
     start_gprs();
     esp_task_wdt_reset();
     SerialSIT.println("ATE0");
@@ -207,8 +238,10 @@ void resync_time() {
     // Without this, health_in_progress=true and sync_mode=eHttpTrigger
     // are leaked permanently, blocking the sleep gate until reboot!
     health_in_progress = false;
+    portENTER_CRITICAL(&syncMux);
     gprs_started = false;
     sync_mode = eExceptionHandled;
+    portEXIT_CRITICAL(&syncMux);
     
     return;
   }
@@ -264,10 +297,18 @@ void resync_time() {
     }
   } else {
     debugln("Error: +CLBS not found in response - will retry later");
-    // v6.02 Fix: Reset flags so loop() can enter deep sleep despite failure
-    gprs_started = false;
+    // Removed ESP.restart() to prevent boot loops on poor signal
+  }
+
+  // Phase 14 Fix: Ensure the activity flags are ALWAYS cleared if 
+  // parse_and_convert_clbs_response() was not called (e.g., parsing failed above)
+  if (health_in_progress) {
+    debugln("[RTC] Cleaning up pending activity flags after failed resync attempt.");
     health_in_progress = false;
+    portENTER_CRITICAL(&syncMux);
+    gprs_started = false;
     sync_mode = eExceptionHandled;
+    portEXIT_CRITICAL(&syncMux);
   }
 
   //  sscanf(csqstr, "+CLBS: %d,%f,%f,%d,%d/%d/%d,%d:%d:%d", &tmp,
@@ -295,21 +336,23 @@ void parse_and_convert_clbs_response(const char *response, int year1,
   timeinfo.tm_sec = seconds1;
 
   // Print the original GMT time
-  printf("Original GMT Time: %s", asctime(&timeinfo));
+  debugf("Original GMT Time: %s", asctime(&timeinfo));
 
   // Convert to IST
   convert_gmt_to_ist(&timeinfo);
 
   // Print the converted IST time
-  printf("Converted IST Time: %s", asctime(&timeinfo));
+  debugf("Converted IST Time: %s", asctime(&timeinfo));
 
   if ((timeinfo.tm_mon + 1) <= 12 && (timeinfo.tm_mday <= 31) &&
       (timeinfo.tm_year + 1900 <= 2099) && (timeinfo.tm_hour < 24) &&
       (timeinfo.tm_min < 60)) { // Strict bounds: hour 0-23, minute 0-59
-    // This is only when there is a resync of RTC that requires storing
-    // last_recorded date to NVRAM, otherwise hr:min will be 00:00 and sampleNo
-    // will be calculated wrongly
-    now = rtc.now();
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+      now = rtc.now();
+      xSemaphoreGive(i2cMutex);
+    } else {
+      debugln("[RTC] Warning: Failed to take I2C Mutex for now() - using stale RAM time.");
+    }
     //                    record_hr = now.hour(); record_min = now.minute();
     //                    current_hour = now.hour(); current_min = now.minute();
     //                    // This is for getting into the loop of %15 in
@@ -377,14 +420,19 @@ void parse_and_convert_clbs_response(const char *response, int year1,
       xSemaphoreGive(serialMutex);
     }
     vTaskDelay(1000 / portTICK_PERIOD_MS);
-    gprs_started = false; // EX6 FIX: reset flag so next GPRS cycle powers modem
+    rtc_daily_sync_done = true; // Mark done for today (H-04 fix)
     health_in_progress = false; // Task COMPLETED
+    portENTER_CRITICAL(&syncMux);
+    gprs_started = false;       // Hardened: only the wrapped version remains
     sync_mode = eExceptionHandled;
+    portEXIT_CRITICAL(&syncMux);
 
   } else {
     debugln("Failed to get the correct time");
-    gprs_started = false;       // EX6 FIX: reset on failure path too
     health_in_progress = false; // Allow error recovery
+    portENTER_CRITICAL(&syncMux);
+    gprs_started = false;       // Hardened: wrapped in syncMux
     sync_mode = eExceptionHandled;
+    portEXIT_CRITICAL(&syncMux);
   }
 }

@@ -1,7 +1,4 @@
 #include "globals.h"
-#if KEYPAD_TYPE == 1
-#include <Keypad_I2C.h>
-#endif
 
 /*
  * LCD - I2C based SCL,SDA,VCC,GND
@@ -11,19 +8,10 @@
 #define COLUMN_NUM 3 // four columns
 char keys[ROW_NUM][COLUMN_NUM] = {{'1', '2', '3'}, {'4', '5', '6'}};
 char *key_name[7] = {"NOKEY", "CLEAR", "UP", "SET", "LEFT", "DOWN", "RIGHT"};
-
-#if KEYPAD_TYPE == 1
-#define PCF8574_ADDR 0x20 // Standard I2C address for PCF8574T
-byte pin_rows[ROW_NUM] = {0, 1};           // PCF pins P0, P1
-byte pin_column[COLUMN_NUM] = {2, 3, 4};   // PCF pins P2, P3, P4
-Keypad_I2C keypad = Keypad_I2C(makeKeymap(keys), pin_rows, pin_column, ROW_NUM, COLUMN_NUM, PCF8574_ADDR);
-#elif KEYPAD_TYPE == 0
-byte pin_rows[ROW_NUM] = {4, 12};           // Native GPIO R1,R2
-byte pin_column[COLUMN_NUM] = {13, 14, 15}; // Native GPIO C1,C2,C3
-Keypad keypad = Keypad(makeKeymap(keys), pin_rows, pin_column, ROW_NUM, COLUMN_NUM);
-#elif KEYPAD_TYPE == 2
-Nuvoton_Smart_Keypad keypad;
-#endif
+byte pin_rows[ROW_NUM] = {4, 12};           // R1,R2
+byte pin_column[COLUMN_NUM] = {13, 14, 15}; // C1,C2,C3
+Keypad keypad =
+    Keypad(makeKeymap(keys), pin_rows, pin_column, ROW_NUM, COLUMN_NUM);
 int calib_initial = 0;
 
 // Keypad timing configuration for better responsiveness
@@ -132,13 +120,17 @@ void draw_current_page() {
         snprintf(line1, 17, "%-16s", ui_data[cur_fld_no].bottomRow);
 
         // Blink active manual states so the user knows it hasn't crashed
+        portENTER_CRITICAL(&syncMux);
+        int mode_snap = sync_mode;
+        portEXIT_CRITICAL(&syncMux);
+
         bool is_pending = (pending_manual_status && cur_fld_no == FLD_SEND_STATUS) ||
                           (pending_manual_gps && cur_fld_no == FLD_SEND_GPS) ||
                           (pending_manual_health && cur_fld_no == FLD_SEND_HEALTH) ||
-                          (sync_mode == eHealthStart && cur_fld_no == FLD_SEND_HEALTH) ||
-                          (sync_mode == eGPSStart && cur_fld_no == FLD_SEND_GPS) ||
-                          (sync_mode == eSMSStart && cur_fld_no == FLD_SEND_STATUS) ||
-                          (sync_mode == eStartupGPS && cur_fld_no == FLD_SEND_GPS);
+                          (mode_snap == eHealthStart && cur_fld_no == FLD_SEND_HEALTH) ||
+                          (mode_snap == eGPSStart && cur_fld_no == FLD_SEND_GPS) ||
+                          (mode_snap == eSMSStart && cur_fld_no == FLD_SEND_STATUS) ||
+                          (mode_snap == eStartupGPS && cur_fld_no == FLD_SEND_GPS);
         if (is_pending && (millis() / 500) % 2 == 0) {
           memset(line1, ' ', 16);
           line1[16] = '\0';
@@ -185,12 +177,22 @@ void draw_current_page() {
 
 // v5.60: Background data refresh - exact original formatting
 void refresh_sensor_data() {
+  int d, m, y, hr, mi;
+  portENTER_CRITICAL(&rtcTimeMux);
+  d = current_day; m = current_month; y = current_year;
+  hr = current_hour; mi = current_min;
+  portEXIT_CRITICAL(&rtcTimeMux);
+
   // Update static fields
   strcpy(ui_data[FLD_STATION].topRow, "STATION ID");
-  snprintf(ui_data[FLD_STATION].bottomRow, 17, "%-16s", station_name);
+  const char *lcd_id = station_name;
+  if (strlen(station_name) == 6 && strncmp(station_name, "00", 2) == 0 && isDigitStr(station_name)) {
+      lcd_id = station_name + 2;
+  }
+  snprintf(ui_data[FLD_STATION].bottomRow, 17, "%-16s", lcd_id);
   snprintf(ui_data[FLD_VERSION].bottomRow, 17, "%-16s", UNIT_VER);
-  snprintf(ui_data[FLD_DATE].bottomRow, 17, "%02d-%02d-%04d", current_day, current_month, current_year);
-  snprintf(ui_data[FLD_TIME].bottomRow, 17, "%02d:%02d", current_hour, current_min);
+  snprintf(ui_data[FLD_DATE].bottomRow, 17, "%02d-%02d-%04d", d, m, y);
+  snprintf(ui_data[FLD_TIME].bottomRow, 17, "%02d:%02d", hr, mi);
   if (strlen(last_logged) == 0) {
     snprintf(ui_data[FLD_LAST_LOGGED].bottomRow, 17, "%-16s", "NA");
   } else {
@@ -216,9 +218,14 @@ void refresh_sensor_data() {
   }
 
   // Live fields
-  if (cur_fld_no == FLD_TEMP) snprintf(ui_data[FLD_TEMP].bottomRow, 17, "%0.1f", temperature);
-  else if (cur_fld_no == FLD_HUMIDITY) snprintf(ui_data[FLD_HUMIDITY].bottomRow, 17, "%0.1f", humidity);
-  else if (cur_fld_no == FLD_INST_WS) snprintf(ui_data[FLD_INST_WS].bottomRow, 17, "%0.2f", cur_wind_speed);
+  // v5.76: Protected sensor read (Consistency Fix)
+  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+    if (cur_fld_no == FLD_TEMP) snprintf(ui_data[FLD_TEMP].bottomRow, 17, "%0.1f", temperature);
+    else if (cur_fld_no == FLD_HUMIDITY) snprintf(ui_data[FLD_HUMIDITY].bottomRow, 17, "%0.1f", humidity);
+    xSemaphoreGive(i2cMutex);
+  }
+  
+  if (cur_fld_no == FLD_INST_WS) snprintf(ui_data[FLD_INST_WS].bottomRow, 17, "%0.2f", cur_wind_speed);
   else if (cur_fld_no == FLD_AVG_WS) snprintf(ui_data[FLD_AVG_WS].bottomRow, 17, "%0.2f", cur_avg_wind_speed);
   else if (cur_fld_no == FLD_WIND_DIR) snprintf(ui_data[FLD_WIND_DIR].bottomRow, 17, "%03d", (int)windDir);
   else if (cur_fld_no == FLD_PRESSURE) snprintf(ui_data[FLD_PRESSURE].bottomRow, 17, "%0.1f", pressure);
@@ -247,7 +254,7 @@ void refresh_sensor_data() {
     static int bl_cur = 0;
     if (millis() - last_bl > 2000) {
       last_bl = millis();
-      bl_cur = get_total_backlogs();
+      bl_cur = get_total_backlogs(false);
     }
     snprintf(ui_data[FLD_HTTP_FAILS].bottomRow, 17, "P:%-2d C:%-4d B:%-4d", 
              diag_http_present_fails, diag_http_cum_fails, bl_cur);
@@ -271,7 +278,6 @@ void refresh_sensor_data() {
 void lcdkeypad(void *pvParameters) {
   esp_task_wdt_add(NULL);
   static int calib_mode = 0; // 0=Field, 1=Test
-  static int last_lcd_state = 0; 
   static char savedWakeupKey = NO_KEY;
   static int delete_confirm_state = 0; // v5.60: For two-step factory reset
 
@@ -279,7 +285,7 @@ void lcdkeypad(void *pvParameters) {
 
   lcdkeypad_start = 0;
   calib_flag = 0;
-  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  delay(1000);
   disp_fld_no = -1;
   cur_fld_no = 0;
   input_buf[0] = 0;
@@ -291,40 +297,50 @@ void lcdkeypad(void *pvParameters) {
   } else {
     if (wakeup_reason_is != timer) {
       digitalWrite(32, HIGH); 
+      portENTER_CRITICAL(&syncMux);
       lcdkeypad_start = 1;
+      portEXIT_CRITICAL(&syncMux);
     } else {
       digitalWrite(32, LOW);
+      portENTER_CRITICAL(&syncMux);
       lcdkeypad_start = 0;
+      portEXIT_CRITICAL(&syncMux);
     }
   }
   vTaskDelay(100 / portTICK_PERIOD_MS);
 
   // Load Calibration string for UI display
 #if (SYSTEM == 0) || (SYSTEM == 2)
-  if (SPIFFS.exists("/calib.txt")) {
-    File f8 = SPIFFS.open("/calib.txt", FILE_READ);
-    if (f8) {
-      String c = f8.readStringUntil('\n');
-      f8.close();
-      strncpy(ui_data[FLD_RF_CALIB].bottomRow, c.c_str(), 16);
-      ui_data[FLD_RF_CALIB].bottomRow[16] = '\0';
-      strcpy(calib_text, c.c_str());
+  // v5.70: Protect calibration load with fsMutex
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+    if (SPIFFS.exists("/calib.txt")) {
+      File f8 = SPIFFS.open("/calib.txt", FILE_READ);
+      if (f8) {
+        String c = f8.readStringUntil('\n');
+        f8.close();
+        strncpy(ui_data[FLD_RF_CALIB].bottomRow, c.c_str(), 16);
+        ui_data[FLD_RF_CALIB].bottomRow[16] = '\0';
+        strcpy(calib_text, c.c_str());
 
-      // v5.61: Parse historical calibration data into RTC variables for SMS/Status reports
-      int yr, mo, dy;
-      char st[8];
-      if (sscanf(calib_text, "%04d-%02d-%02d %s", &yr, &mo, &dy, st) >= 3) {
-        calib_year = yr;
-        calib_month = mo;
-        calib_day = dy;
-        if (strstr(st, "PASS"))
-          calib_sts = 1;
-        else
-          calib_sts = 0;
-        debugf("[CALIB] Loaded: %04d-%02d-%02d Status: %d\n", calib_year,
-               calib_month, calib_day, calib_sts);
+        // v5.61: Parse historical calibration data into RTC variables for SMS/Status reports
+        int yr, mo, dy;
+        char st[8];
+        if (sscanf(calib_text, "%04d-%02d-%02d %s", &yr, &mo, &dy, st) >= 3) {
+          calib_year = yr;
+          calib_month = mo;
+          calib_day = dy;
+          if (strstr(st, "PASS"))
+            calib_sts = 1;
+          else
+            calib_sts = 0;
+          debugf("[CALIB] Loaded: %04d-%02d-%02d Status: %d\n", calib_year,
+                 calib_month, calib_day, calib_sts);
+        }
       }
     }
+    xSemaphoreGive(fsMutex);
+  } else {
+    debugln("[UI] Mutex Timeout: Skipping calib.txt load.");
   }
 #endif
 
@@ -350,15 +366,7 @@ void lcdkeypad(void *pvParameters) {
     }
 
     if (lcdkeypad_start == 0) {
-#if KEYPAD_TYPE == 1 || KEYPAD_TYPE == 2
-      char wakeupKey = NO_KEY;
-      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
-        wakeupKey = keypad.getKey();
-        xSemaphoreGive(i2cMutex);
-      }
-#else
       char wakeupKey = keypad.getKey();
-#endif
       
       // v5.68 Hardware Ghosting Fix: If the physical power switch for the LCD/Keypad is OFF,
       // the data pins will float and keypad.getKey() hallucinate random keys (like '6').
@@ -376,10 +384,21 @@ void lcdkeypad(void *pvParameters) {
       }
 
       if (wakeupKey != NO_KEY || digitalRead(27) == LOW) {
-        wakeup_reason_is = ext0;
-        savedWakeupKey = wakeupKey;
-        debugf("[UI] Wakeup detected. Key: %c\n", (wakeupKey != NO_KEY ? wakeupKey : 'P'));
-        vTaskDelay(200 / portTICK_PERIOD_MS); 
+        bool verified_press = true;
+        if (wakeupKey == NO_KEY && digitalRead(27) == LOW) {
+          // v5.85 P14: Reduced from 200ms for responsiveness
+          vTaskDelay(20 / portTICK_PERIOD_MS);
+          if (digitalRead(27) != LOW) {
+            verified_press = false; // Short spike detected
+          }
+        }
+        
+        if (verified_press) {
+          wakeup_reason_is = ext0;
+          savedWakeupKey = wakeupKey;
+          debugf("[UI] Wakeup detected. Key: %c\n", (wakeupKey != NO_KEY ? wakeupKey : 'P'));
+          delay(100); 
+        }
       }
     }
 
@@ -392,6 +411,7 @@ void lcdkeypad(void *pvParameters) {
 
     if (should_activate) {
       if (lcdkeypad_start == 0 || lcd_timer == NULL) {
+        lcdkeypad_start = 1; // v5.77: Claim UI priority immediately before power-up delays
         digitalWrite(32, HIGH);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
         cur_fld_no = 0; // v5.60: Ensure we always start at Station ID on wakeup
@@ -401,37 +421,34 @@ void lcdkeypad(void *pvParameters) {
           if (lcd_timer) timerAttachInterrupt(lcd_timer, &lcdTimer);
         }
         
-#if KEYPAD_TYPE == 0
         pinMode(4, INPUT_PULLUP);
         pinMode(12, INPUT_PULLUP);
         pinMode(13, OUTPUT);
         pinMode(14, OUTPUT);
         pinMode(15, OUTPUT);
-#endif
 
         if (lcd_timer) {
           timerAlarm(lcd_timer, 180000000, false, 0); // v5.60: 180s default 
           timerWrite(lcd_timer, 0);
         }
-
-        lcdkeypad_start = 1;
         // cur_fld_no = 0 already handled in wakeup block
         vTaskDelay(200 / portTICK_PERIOD_MS);
 
-        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+        // v5.85: Increased timeout to 3s and added retry logic to prevent LCD activation failures 
+        // when RTC or Temp/Hum tasks are busy on the I2C bus.
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
           lcd.init();
           lcd.display();
           lcd.backlight();
           lcd.clear();
           lcd.noCursor();
           lcd.noBlink();
-#if KEYPAD_TYPE == 1 || KEYPAD_TYPE == 2
-          keypad.begin(); // Boots PCF8574T over I2C securely within the Mutex
-#endif
           show_now = 1;
           xSemaphoreGive(i2cMutex);
         } else {
-          lcdkeypad_start = 0;
+          debugln("[UI] I2C Mutex Timeout on LCD Init - Attempting bus recovery...");
+          recoverI2CBus(false);
+          lcdkeypad_start = 0; // v5.85: Fallback to OFF if absolutely blocked
         }
       } else {
         timerWrite(lcd_timer, 0);
@@ -475,8 +492,12 @@ void lcdkeypad(void *pvParameters) {
         calib_month = current_month;
         calib_day = current_day;
 
-        File f = SPIFFS.open("/calib.txt", FILE_WRITE);
-        if (f) { f.print(calib_text); f.close(); }
+        // v5.70: Protect calibration save with fsMutex
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+          File f = SPIFFS.open("/calib.txt", FILE_WRITE);
+          if (f) { f.print(calib_text); f.close(); }
+          xSemaphoreGive(fsMutex);
+        }
 
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
           lcd.clear();
@@ -505,15 +526,7 @@ void lcdkeypad(void *pvParameters) {
       }
 
       // --- KEYPAD PROCESSING ---
-#if KEYPAD_TYPE == 1 || KEYPAD_TYPE == 2
-      key = NO_KEY;
-      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
-        key = keypad.getKey();
-        xSemaphoreGive(i2cMutex);
-      }
-#else
       key = keypad.getKey();
-#endif
       if (key == NO_KEY && savedWakeupKey != NO_KEY) {
         key = savedWakeupKey;
         savedWakeupKey = NO_KEY;
@@ -542,7 +555,7 @@ void lcdkeypad(void *pvParameters) {
               rf_res_edit_state = 0;
               strcpy(ui_data[FLD_RF_RES].topRow, "RF RESOLUTION");
             } else if (cur_fld_no == FLD_DELETE_DATA) {
-              strcpy(ui_data[FLD_DELETE_DATA].topRow, "DELETE DATA?");
+              snprintf(ui_data[FLD_DELETE_DATA].topRow, 17, "DELETE DATA?   %c", hw_tag);
             }
             cur_mode = eEditOff;
             show_now = 1;
@@ -555,7 +568,7 @@ void lcdkeypad(void *pvParameters) {
             show_now = 1;
           } else if (delete_confirm_state == 1) {
             delete_confirm_state = 0;
-            strcpy(ui_data[FLD_DELETE_DATA].topRow, "DELETE DATA?");
+            snprintf(ui_data[FLD_DELETE_DATA].topRow, 17, "DELETE DATA?   %c", hw_tag);
             show_now = 1;
           } else if (rf_res_edit_state > 0) {
             rf_res_edit_state = 0;
@@ -592,8 +605,9 @@ void lcdkeypad(void *pvParameters) {
                 lcd.clear(); lcd.print("WIFI STARTING...");
                 xSemaphoreGive(i2cMutex);
               }
-              // Spawn the dedicated WebServer task gracefully
-              xTaskCreatePinnedToCore(webServer, "webServerTask", 8192, NULL, 1, &webServer_h, 1);
+              // v5.79: Hardened WiFi startup sequence
+              setCpuFrequencyMhz(160); // Set frequency BEFORE task starts on Core 0
+              xTaskCreatePinnedToCore(webServer, "webServerTask", 8192, NULL, 1, &webServer_h, 0); // Pin to Core 0
             } else {
               if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                 lcd.clear(); lcd.print("WIFI STOPPING...");
@@ -615,28 +629,41 @@ void lcdkeypad(void *pvParameters) {
           } else if (cur_fld_no == FLD_LCD_OFF) {
             lcdkeypad_start = 0; digitalWrite(32, LOW);
           } else if (cur_fld_no == FLD_SEND_STATUS) {
+            portENTER_CRITICAL(&syncMux);
             if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
               send_status = 1; sync_mode = eSMSStart;
+              portEXIT_CRITICAL(&syncMux);
               strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "SENDING...     ");
             } else {
-              pending_manual_status = true;
+              portEXIT_CRITICAL(&syncMux);
+            portENTER_CRITICAL(&syncMux);
+            pending_manual_status = true;
+            portEXIT_CRITICAL(&syncMux);
               strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "PLEASE WAIT..  ");
             }
           } else if (cur_fld_no == FLD_SEND_GPS) {
+            portENTER_CRITICAL(&syncMux);
             if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
               sync_mode = eGPSStart;
+              portEXIT_CRITICAL(&syncMux);
               strcpy(ui_data[FLD_SEND_GPS].bottomRow, "SENDING...     ");
             } else {
-              pending_manual_gps = true;
+              portEXIT_CRITICAL(&syncMux);
+            portENTER_CRITICAL(&syncMux);
+            pending_manual_gps = true;
+            portEXIT_CRITICAL(&syncMux);
               strcpy(ui_data[FLD_SEND_GPS].bottomRow, "PLEASE WAIT..  ");
             }
           } else if (cur_fld_no == FLD_SEND_HEALTH) {
 #if ENABLE_HEALTH_REPORT == 1
+            portENTER_CRITICAL(&syncMux);
             pending_manual_health = true;
             if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
               sync_mode = eHealthStart; // Uses the GPS + HEALTH sequence explicitly
+              portEXIT_CRITICAL(&syncMux);
               strcpy(ui_data[FLD_SEND_HEALTH].bottomRow, "SENDING...     ");
             } else {
+              portEXIT_CRITICAL(&syncMux);
               strcpy(ui_data[FLD_SEND_HEALTH].bottomRow, "PLEASE WAIT..  ");
             }
 #else
@@ -652,16 +679,18 @@ void lcdkeypad(void *pvParameters) {
                  lcd.clear(); lcd.print("Wiping Backlog");
                  xSemaphoreGive(i2cMutex); // Safely release immediately
                  
-                 debugln("[LCD] User confirmed CLEAR BACKLOG.");
-                 if (xSemaphoreTake(fsMutex, portMAX_DELAY) == pdTRUE) {
-                   SPIFFS.remove("/unsent.txt");
-                   SPIFFS.remove("/ftpunsent.txt");
-                   SPIFFS.remove("/unsent_pointer.txt");
-                   xSemaphoreGive(fsMutex);
+                 // v5.70: Protect backlog wipe with fsMutex
+                 if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                    debugln("[LCD] User confirmed CLEAR BACKLOG.");
+                    SPIFFS.remove("/unsent.txt");
+                    SPIFFS.remove("/ftpunsent.txt");
+                    SPIFFS.remove("/unsent_pointer.txt");
+                    xSemaphoreGive(fsMutex);
                  }
                  diag_http_present_fails = 0;
                  diag_http_cum_fails = 0;
-                 pcb_clear_state = 0;
+                 pcb_clear_state = 0; 
+                 get_total_backlogs(true); // v5.85: Force UI refresh of backlog count immediately
                  
                  vTaskDelay(1000 / portTICK_PERIOD_MS);
                  
@@ -705,9 +734,17 @@ void lcdkeypad(void *pvParameters) {
                 cur_mode = eEditOff;
               }
             } else if (rf_res_edit_state == 2) {
-              RF_RESOLUTION = atof(input_buf);
-              File f = SPIFFS.open("/rf_res.txt", FILE_WRITE);
-              if (f) { f.print(RF_RESOLUTION); f.close(); }
+              // Apply user's edited value before saving
+              float new_res = atof(input_buf);
+              if (new_res == 0.25f || new_res == 0.50f) {
+                RF_RESOLUTION = new_res;
+              }
+              // v5.70: Protect resolution save with fsMutex
+              if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                File f = SPIFFS.open("/rf_res.txt", FILE_WRITE);
+                if (f) { f.print(RF_RESOLUTION); f.close(); }
+                xSemaphoreGive(fsMutex);
+              }
               // Requirement: Wipe all data and reboot after resolution change
               if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
                  lcd.clear(); lcd.print("RES CHANGED!");
@@ -715,21 +752,22 @@ void lcdkeypad(void *pvParameters) {
                  lcd.clear(); lcd.print("WIPING DATA...");
                  xSemaphoreGive(i2cMutex); // Release before doing massive flash wipes
                  
-                 debugln("[LCD] Resolution changed. Factory wiping SPIFFS...");
-                 if (xSemaphoreTake(fsMutex, portMAX_DELAY) == pdTRUE) {
-                   SPIFFS.remove("/unsent.txt"); SPIFFS.remove("/ftpunsent.txt");
-                   File root = SPIFFS.open("/"); 
-                   File file = root.openNextFile();
-                   while(file) {
-                      String n = file.name();
-                      if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt")) { // Exclude res configuration too
-                        debug("Removing: "); debugln(n);
-                        SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
-                      }
-                      file.close(); file = root.openNextFile();
-                   }
-                   root.close();
-                   xSemaphoreGive(fsMutex);
+                 // v5.70: Protect factory wipe with fsMutex
+                 if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+                    debugln("[LCD] Resolution changed. Factory wiping SPIFFS...");
+                    SPIFFS.remove("/unsent.txt"); SPIFFS.remove("/ftpunsent.txt");
+                    File root = SPIFFS.open("/"); 
+                    File file = root.openNextFile();
+                    while(file) {
+                       String n = file.name();
+                       if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt")) { // Exclude res configuration too
+                         debug("Removing: "); debugln(n);
+                         SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
+                       }
+                       file.close(); file = root.openNextFile();
+                    }
+                    root.close();
+                    xSemaphoreGive(fsMutex);
                  }
                  
                  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
@@ -746,46 +784,58 @@ void lcdkeypad(void *pvParameters) {
           } else if (cur_fld_no == FLD_DELETE_DATA) {
             if (delete_confirm_state == 0) {
               delete_confirm_state = 1;
-              strcpy(ui_data[FLD_DELETE_DATA].topRow, "ARE YOU SURE?");
+              snprintf(ui_data[FLD_DELETE_DATA].topRow, 17, "ARE YOU SURE?  %c", hw_tag);
               strcpy(ui_data[FLD_DELETE_DATA].bottomRow, "PRESS SET: YES");
               debugln("[LCD] User selected DELETE_DATA. Awaiting confirmation...");
             } else {
               debugln("[LCD] User confirmed Factory Reset via Keypad! Initiating...");
               // Perform deletion
               if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
-                 lcd.clear(); lcd.print("Deleting...");
-                 xSemaphoreGive(i2cMutex); // Release immediately so background processes don't stall 
+                 lcd.clear(); 
+                 if (hw_tag == '!') {
+                    lcd.print("Repairing FS...");
+                    debugln("[LCD] HW Tag is '!', triggered FULL FORMAT (REPAIR)...");
+                 } else {
+                    lcd.print("Deleting...");
+                    debugln("[LCD] Factory Reset (Healthy FS). Wiping local logs...");
+                 }
+                 xSemaphoreGive(i2cMutex); 
                  
-                 debugln("[LCD] Erasing /unsent.txt & /ftpunsent.txt...");
-                 if (xSemaphoreTake(fsMutex, portMAX_DELAY) == pdTRUE) {
-                   SPIFFS.remove("/unsent.txt"); SPIFFS.remove("/ftpunsent.txt");
-                   
-                   debugln("[LCD] Erasing old daily log files...");
-                   File root = SPIFFS.open("/"); 
-                   File file = root.openNextFile();
-                   while(file) {
-                      String n = file.name();
-                      if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt")) {
-                        debug("Removing: "); debugln(n);
-                        SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
-                      }
-                      file.close(); file = root.openNextFile();
-                   }
-                   root.close();
-                   xSemaphoreGive(fsMutex);
+                 // v5.70: Protect manual wipe with fsMutex
+                 if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
+                    if (hw_tag == '!') {
+                       // v5.75 Golden: Hard repair — formats the underlying SPIFFS
+                       SPIFFS.format(); // v5.75 Golden: Guaranteed re-init
+                       SPIFFS.begin(true, "/spiffs", 10, "spiffs"); 
+                       debugln("[LCD] SPIFFS REPAIR COMPLETE. System reboot required.");
+                    } else {
+                       // Standard File Wipe
+                       SPIFFS.remove("/unsent.txt"); SPIFFS.remove("/ftpunsent.txt");
+                       File root = SPIFFS.open("/"); 
+                       File file = root.openNextFile();
+                       while(file) {
+                          String n = file.name();
+                          if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt")) {
+                            SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
+                          }
+                          file.close(); file = root.openNextFile();
+                       }
+                       root.close();
+                       debugln("[LCD] LOG WIPE COMPLETE. System reboot required.");
+                    }
+                    xSemaphoreGive(fsMutex);
                  }
                  
                  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                     lcd.clear(); lcd.print("DONE! REBOOTING");
                     xSemaphoreGive(i2cMutex);
                  }
-                 debugln("[LCD] Delete complete. Restarting ESP32...");
                  vTaskDelay(2000 / portTICK_PERIOD_MS);
                  ESP.restart();
               } else {
                  debugln("[LCD] ERROR: Failed to acquire i2cMutex during DELETE_DATA!");
                  delete_confirm_state = 0;
-                 strcpy(ui_data[FLD_DELETE_DATA].topRow, "DELETE DATA?");
+                 snprintf(ui_data[FLD_DELETE_DATA].topRow, 17, "DELETE DATA?   %c", hw_tag);
                  strcpy(ui_data[FLD_DELETE_DATA].bottomRow, "MUTEX TIMEOUT");
               }
             }
@@ -794,8 +844,12 @@ void lcdkeypad(void *pvParameters) {
               lcd.clear(); lcd.print("COPYING TO SD...");
               xSemaphoreGive(i2cMutex); // Release lock BEFORE massive file copy sequence
 
-              debugln("[LCD] User initiated bulk copy from SPIFFS to SD Card...");
-              copyFilesFromSPIFFSToSD("/"); 
+              // v5.70: Protect SD copy with fsMutex AND block concurrent filesystem mods
+              if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+                debugln("[LCD] User initiated bulk copy from SPIFFS to SD Card...");
+                copyFilesFromSPIFFSToSD("/"); 
+                xSemaphoreGive(fsMutex);
+              } 
               
               if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                  lcd.clear(); lcd.print("SD COPY DONE");
@@ -834,57 +888,77 @@ void lcdkeypad(void *pvParameters) {
 
                 char fn[50]; snprintf(fn, 50, "/%s_%04d%02d%02d.txt", station_name, yr, mo, dy);
                 
-                // Fallback check for legacy/normalized prefix mismatch (v5.56 standard)
-                if (!SPIFFS.exists(fn)) {
-                   char fallback[50];
-                   if (strlen(station_name) == 4 && isDigitStr(station_name)) {
-                      snprintf(fallback, sizeof(fallback), "/00%s_%04d%02d%02d.txt", station_name, yr, mo, dy);
-                   } else if (strlen(station_name) == 6 && strncmp(station_name, "00", 2) == 0) {
-                      snprintf(fallback, sizeof(fallback), "/%s_%04d%02d%02d.txt", station_name + 2, yr, mo, dy);
-                   } else {
-                      strcpy(fallback, "");
-                   }
-                   if (strlen(fallback) > 0 && SPIFFS.exists(fallback)) {
-                      strcpy(fn, fallback);
-                   }
-                }
+                if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                   lcd.clear(); lcd.setCursor(0, 0); lcd.print("SCANNING...");
+                   xSemaphoreGive(i2cMutex);
+                }                
 
-                bool fileFound = SPIFFS.exists(fn);
-                bool recordFound = false;
-                char line[128];
+                // v5.70: DEADLOCK PREVENTION - Release i2cMutex BEFORE taking fsMutex (Issue 32 Cleanup)
+                if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                    // Fallback check for legacy/normalized prefix mismatch (v5.56 standard)
+                    if (!SPIFFS.exists(fn)) {
+                       char fallback[50];
+                       if (strlen(station_name) == 4 && isDigitStr(station_name)) {
+                          snprintf(fallback, sizeof(fallback), "/00%s_%04d%02d%02d.txt", station_name, yr, mo, dy);
+                       } else if (strlen(station_name) == 6 && strncmp(station_name, "00", 2) == 0) {
+                          snprintf(fallback, sizeof(fallback), "/%s_%04d%02d%02d.txt", station_name + 2, yr, mo, dy);
+                       } else {
+                          strcpy(fallback, "");
+                       }
+                       if (strlen(fallback) > 0 && SPIFFS.exists(fallback)) {
+                          strcpy(fn, fallback);
+                       }
+                    }
 
-                if (fileFound) {
-                   File f = SPIFFS.open(fn, FILE_READ);
-                   while(f.available()) {
-                      String l = f.readStringUntil('\n');
-                      if (l.substring(0,2).toInt() == sNo) { strcpy(line, l.c_str()); recordFound = true; break; }
-                   }
-                   f.close();
-                }
-
-                if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-                   lcd.clear();
-                   if (recordFound) {
-                      float tf=0, hf=0, af=0, rf=0; int wf=0;
-                      if (SYSTEM == 0) {
-                         float irf, crf; sscanf(line, "%*d,%*[^,],%*[^,],%f,%f", &irf, &crf);
-                         lcd.setCursor(0,0); lcd.print("CUM_RF:"); lcd.setCursor(0,1); lcd.print(crf,2);
-                      } else if (SYSTEM == 1) {
-                         sscanf(line, "%*d,%*[^,],%*[^,],%f,%f,%f,%d", &tf, &hf, &af, &wf);
-                         lcd.setCursor(0,0); char b1[17]; snprintf(b1,17,"T:%-4.1f H:%-4.1f",tf,hf); lcd.print(b1);
-                         lcd.setCursor(0,1); char b2[17]; snprintf(b2,17,"AWS:%-4.1f WD:%-d",af,wf); lcd.print(b2);
-                      } else if (SYSTEM == 2) {
-                         sscanf(line, "%*d,%*[^,],%*[^,],%f,%f,%f,%f,%d", &rf, &tf, &hf, &af, &wf);
-                         lcd.setCursor(0,0); char b1[17]; snprintf(b1,17,"R:%-3.1f T:%-4.1f",rf,tf); lcd.print(b1);
-                         lcd.setCursor(0,1); char b2[17]; snprintf(b2,17,"H:%-2.0f AWS:%-4.1f",hf,af); lcd.print(b2);
+                    if (SPIFFS.exists(fn)) {
+                      File f = SPIFFS.open(fn, FILE_READ);
+                      bool found = false;
+                      char line[128];
+                      while(f.available()) {
+                         String l = f.readStringUntil('\n');
+                         if (l.substring(0,2).toInt() == sNo) { strcpy(line, l.c_str()); found = true; break; }
                       }
-                      xSemaphoreGive(i2cMutex);
-                      vTaskDelay(5000 / portTICK_PERIOD_MS);
-                   } else if (!fileFound) {
-                      lcd.print("FILE NOT FOUND"); xSemaphoreGive(i2cMutex); vTaskDelay(2000/portTICK_PERIOD_MS);
-                   } else {
-                      lcd.print("NOT IN FILE"); xSemaphoreGive(i2cMutex); vTaskDelay(2000/portTICK_PERIOD_MS);
-                   }
+                      f.close();
+
+                      if (found) {
+                         float tf=0, hf=0, af=0, rf=0; int wf=0;
+                         if (SYSTEM == 0) {
+                            float irf, crf; sscanf(line, "%*d,%*[^,],%*[^,],%f,%f", &irf, &crf);
+                            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                               lcd.setCursor(0,0); lcd.print("CUM_RF:"); lcd.setCursor(0,1); lcd.print(crf,2);
+                               xSemaphoreGive(i2cMutex);
+                            }
+                         } else if (SYSTEM == 1) {
+                            sscanf(line, "%*d,%*[^,],%*[^,],%f,%f,%f,%d", &tf, &hf, &af, &wf);
+                            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                               lcd.setCursor(0,0); char b1[17]; snprintf(b1,17,"T:%-4.1f H:%-4.1f",tf,hf); lcd.print(b1);
+                               lcd.setCursor(0,1); char b2[17]; snprintf(b2,17,"AWS:%-4.1f WD:%-d",af,wf); lcd.print(b2);
+                               xSemaphoreGive(i2cMutex);
+                            }
+                         } else if (SYSTEM == 2) {
+                            sscanf(line, "%*d,%*[^,],%*[^,],%f,%f,%f,%f,%d", &rf, &tf, &hf, &af, &wf);
+                            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                               lcd.setCursor(0,0); char b1[17]; snprintf(b1,17,"R:%-3.1f T:%-4.1f",rf,tf); lcd.print(b1);
+                               lcd.setCursor(0,1); char b2[17]; snprintf(b2,17,"H:%-2.0f AWS:%-4.1f",hf,af); lcd.print(b2);
+                               xSemaphoreGive(i2cMutex);
+                            }
+                         }
+                         vTaskDelay(5000 / portTICK_PERIOD_MS);
+                      } else { 
+                        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                            lcd.clear(); lcd.print("NOT IN FILE"); xSemaphoreGive(i2cMutex);
+                        }
+                        vTaskDelay(2000/portTICK_PERIOD_MS); 
+                      }
+                    } else { 
+                       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                          lcd.clear(); lcd.print("FILE NOT FOUND"); xSemaphoreGive(i2cMutex);
+                       }
+                       vTaskDelay(2000/portTICK_PERIOD_MS); 
+                    }
+                    xSemaphoreGive(fsMutex);
+                } else {
+                   debugln("[UI] Mutex Timeout: Skipping search.");
                 }
                 cur_mode = eEditOff;
              }
@@ -894,8 +968,16 @@ void lcdkeypad(void *pvParameters) {
                 if (ui_data[cur_fld_no].fieldType != eDisplayOnly && ui_data[cur_fld_no].fieldType != eLive) {
                    cur_mode = eEditOn;
                    if (cur_fld_no == FLD_STATION) {
-                      // UX Request: Start with a completely blank slate for Station ID
-                      memset(input_buf, ' ', 16);
+                      // UX Match v5.75: Pre-fill with the unpadded ID for editing
+                      const char *clean_id = station_name;
+                      if (strlen(station_name) == 6 && strncmp(station_name, "00", 2) == 0 && isDigitStr(station_name)) {
+                          clean_id = station_name + 2;
+                      }
+                      strncpy(input_buf, clean_id, 15);
+                      input_buf[15] = '\0';
+                      // Pad remaining space to clear previous entries
+                      int clen = strlen(input_buf);
+                      for(int i=clen; i<16; i++) input_buf[i] = ' ';
                       input_buf[16] = '\0';
                    } else {
                       strcpy(input_buf, ui_data[cur_fld_no].bottomRow);
@@ -912,33 +994,49 @@ void lcdkeypad(void *pvParameters) {
                        trimmed = String(station_name);
                    }
 
-                   // Requirement (v5.56): if it's numeric "00XXXX", treat as "XXXX"
-                   if (trimmed.length() == 6 && isDigitStr(trimmed.c_str()) && trimmed.startsWith("00")) {
-                      trimmed = trimmed.substring(2);
-                   }
-                   strncpy(station_name, trimmed.c_str(), 15);
-                   station_name[15] = '\0';
-                   strcpy(ftp_station, station_name); // Sync for GPRS/FTP task
-
+                    // v5.77 Hardened [UI-PAD]: Correct Padding Hierarchy (Mimic v5.75 display / Hardened backend)
+                    if (trimmed.length() == 4 && isDigitStr(trimmed.c_str())) {
+                        char p_buf[16];
+                        snprintf(p_buf, sizeof(p_buf), "00%s", trimmed.c_str());
+                        trimmed = String(p_buf);
+                    }
+                    strncpy(station_name, trimmed.c_str(), 15);
+                    station_name[15] = '\0';
+                    strcpy(ftp_station, station_name);
                    // v5.60: Save to NVS, station.txt AND station.doc to prevent revert
                    Preferences prefs; prefs.begin("sys-config", false); 
                    prefs.putString("station", station_name); prefs.end();
-                   File f1 = SPIFFS.open("/station.txt", FILE_WRITE);
-                   if (f1) { f1.print(station_name); f1.close(); }
-                   File f2 = SPIFFS.open("/station.doc", FILE_WRITE);
-                   if (f2) { f2.print(station_name); f2.close(); }
+                   // v5.70: Protect station save with fsMutex
+                   if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                      File f1 = SPIFFS.open("/station.txt", FILE_WRITE);
+                      if (f1) { f1.print(station_name); f1.close(); }
+                      File f2 = SPIFFS.open("/station.doc", FILE_WRITE);
+                      if (f2) { f2.print(station_name); f2.close(); }
+                      xSemaphoreGive(fsMutex);
+                   }
                    // Requirement: Acquire GPS whenever ID changes (eStartupGPS does GPS + Health)
+                   portENTER_CRITICAL(&syncMux);
                    if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || 
                        sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
+#if ENABLE_HEALTH_REPORT == 1
                       sync_mode = eStartupGPS;
+#else
+                      sync_mode = eHttpStop; // Savings: Skip GPS acquisition when health is disabled
+#endif
+                      portEXIT_CRITICAL(&syncMux);
                       strcpy(ui_data[FLD_SEND_GPS].bottomRow, "ACQUIRING GPS..");
                    } else {
+                      portEXIT_CRITICAL(&syncMux);
+                      portENTER_CRITICAL(&syncMux);
                       pending_manual_gps = true;
+                      portEXIT_CRITICAL(&syncMux);
                    }
                 } else if (cur_fld_no == FLD_DATE) {
                    int dd, mm, yy;
                    if (sscanf(input_buf, "%02d-%02d-%04d", &dd, &mm, &yy) == 3) {
-                      current_day = dd; current_month = mm; current_year = yy;
+                      portENTER_CRITICAL(&rtcTimeMux);
+                       current_day = dd; current_month = mm; current_year = yy;
+                       portEXIT_CRITICAL(&rtcTimeMux);
                       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
                          rtc.adjust(DateTime(current_year, current_month, current_day, current_hour, current_min, 0));
                          xSemaphoreGive(i2cMutex);
@@ -948,30 +1046,24 @@ void lcdkeypad(void *pvParameters) {
                    int hh, mi;
                    if (sscanf(input_buf, "%02d:%02d", &hh, &mi) == 2) {
                       portENTER_CRITICAL(&rtcTimeMux);
-                      current_hour = hh; current_min = mi;
-                      portEXIT_CRITICAL(&rtcTimeMux);
+                       current_hour = hh; current_min = mi;
+                       portEXIT_CRITICAL(&rtcTimeMux);
                       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
                          rtc.adjust(DateTime(current_year, current_month, current_day, current_hour, current_min, 0));
                          record_hr = current_hour;
                          record_min = (current_min / 15) * 15;
-                         
-                         // Phase 18 Fix: Atomic and fsMutex guarded signature swap
-                         memset(signature, 0, sizeof(signature));
-                         snprintf(signature, sizeof(signature), "%04d-%02d-%02d,%02d:%02d", current_year, current_month, current_day, record_hr, record_min);
-                         
-                         rtcTimeChanged = true;
-                         xSemaphoreGive(i2cMutex); // Release i2cMutex before taking fsMutex
-                         
+                         // v5.70: Protect signature update with fsMutex
                          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-                            File fileTemp4 = SPIFFS.open("/signature.tmp", FILE_WRITE);
-                            if (fileTemp4) {
-                               fileTemp4.print(signature);
-                               fileTemp4.close();
-                               SPIFFS.remove("/signature.txt");
-                               SPIFFS.rename("/signature.tmp", "/signature.txt");
-                            }
-                            xSemaphoreGive(fsMutex);
+                             File fileTemp4 = SPIFFS.open("/signature.txt", FILE_WRITE);
+                             if (fileTemp4) {
+                                snprintf(signature, 17, "%04d-%02d-%02d,%02d:%02d", current_year, current_month, current_day, record_hr, record_min);
+                                fileTemp4.print(signature);
+                                fileTemp4.close();
+                             }
+                             xSemaphoreGive(fsMutex);
                          }
+                         rtcTimeChanged = true;
+                         xSemaphoreGive(i2cMutex);
                       }
                    }
                 }
@@ -1019,8 +1111,12 @@ void lcdkeypad(void *pvParameters) {
     }
     if (lcdkeypad_start && lcd_timer) {
       // v5.60: Stay awake during active manual triggers or startup tasks
-      if (sync_mode == eSMSStart || sync_mode == eGPSStart || 
-          sync_mode == eHealthStart || sync_mode == eStartupGPS || cur_fld_no == FLD_LOG && cur_mode == eEditOn) {
+      portENTER_CRITICAL(&syncMux);
+      int mode_check = sync_mode;
+      portEXIT_CRITICAL(&syncMux);
+
+      if (mode_check == eSMSStart || mode_check == eGPSStart || 
+          mode_check == eHealthStart || mode_check == eStartupGPS || cur_fld_no == FLD_LOG && cur_mode == eEditOn) {
         timerWrite(lcd_timer, 0);
       }
     }

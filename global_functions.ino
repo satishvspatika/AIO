@@ -6,6 +6,36 @@
 #endif
 
 void start_deep_sleep() {
+    sleep_sequence_active = true; // [v5.77 Signal] Block background syncs
+    // v5.75: Self-Healing Maintenance — Reset crash guard on 'Golden Path' success.
+    // If we've made it this far, the system has successfully completed its duties.
+    diag_crash_count = 0;
+
+    debugln("[PWR] Entering Deep Sleep Sequence...");
+    
+    // Turner-Fix: Atomic snapshot of system state before sleep decision
+    int snap_sync; bool snap_gprs, snap_http, snap_busy; 
+    portENTER_CRITICAL(&syncMux);
+  snap_sync = sync_mode;
+  snap_gprs = gprs_started;
+  snap_http = __atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE);
+  snap_busy = schedulerBusy;
+  portEXIT_CRITICAL(&syncMux);
+
+  if (health_in_progress || ota_writing_active || snap_busy || 
+      (snap_sync != eHttpStop && snap_sync != eSMSStop && snap_sync != eExceptionHandled && snap_sync != eSyncModeInitial) || 
+      snap_http) {
+    debugln("[PWR] Communication or Activity in progress. Deferring sleep.");
+    sleep_sequence_active = false; // [v5.77 Signal Reset] Release background syncs
+    return;
+  }
+  
+  // v5.85: Final gprs_started check. If we are NOT in eHttpStop but gprs is active, defer.
+  if (snap_gprs && snap_sync != eHttpStop) {
+    debugln("[PWR] Modem starting or searching. Deferring sleep.");
+    sleep_sequence_active = false; // [v5.77 Signal Reset]
+    return;
+  }
 
   if (wired == 1) {
     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
@@ -42,18 +72,23 @@ void start_deep_sleep() {
   delay(100);
 
   // SELF-HEALING: Force GPIO 26 and 32 to stay strictly LOW during sleep
-  // This prevents the modem from staying in a "zombie" state.
-  gpio_hold_en(GPIO_NUM_26);
-  gpio_hold_en(GPIO_NUM_32);
-  gpio_deep_sleep_hold_en();
+  // v5.79 Fix: digitalWrite LOW must happen BEFORE gpio_hold_en()
+  
+  // v5.77 Hardened: Atomic snapshot of RTC globals [C-02]
+  int live_min, live_sec;
+  portENTER_CRITICAL(&rtcTimeMux);
+  live_min = current_min;
+  live_sec = current_sec;
+  portEXIT_CRITICAL(&rtcTimeMux);
 
-  // TIER 3: SLEEP TIMER EARLY-WAKE DRIFT
-  // Eliminate up to 90 seconds of RTOS polling staleness by reading the hardware directly.
-  int live_sec = current_sec; // fallback
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
       DateTime now = rtc.now();
-      current_hour = now.hour(); // v6.05 Fix BUG-H5: Refresh hour for accurate sleep calc
-      current_min = now.minute(); // Update globals for accurate calc
+      
+      portENTER_CRITICAL(&rtcTimeMux);
+      live_min = now.minute();
+      current_min = live_min; // Update globals for accurate calc
+      portEXIT_CRITICAL(&rtcTimeMux);
+      
       live_sec = now.second();
       
       // Shut down I2C bus BEFORE cutting LCD power
@@ -61,25 +96,44 @@ void start_deep_sleep() {
       Wire.end();                  // Release SDA/SCL before PCF8574 loses power
       digitalWrite(32, LOW);       // Now safe to cut 5V — bus is idle
       
+      // Hardware Hold: Capture the LOW state for the duration of the sleep
+      gpio_hold_en(GPIO_NUM_32);
+      gpio_hold_en(GPIO_NUM_26); // Modem was cut in graceful_modem_shutdown()
+      gpio_hold_en(GPIO_NUM_16); // v5.70: Fix H-02 ESD diode bleed through UART pins
+      gpio_hold_en(GPIO_NUM_17);
+      gpio_deep_sleep_hold_en();
+      
       // Phase 7 Fix: Don't intentionally leak the mutex into deep sleep.
       // We will suspend FreeRTOS instead to prevent late I2C attempts.
       xSemaphoreGive(i2cMutex);
   } else {
+      // v5.77 Hardened Fallback [M-02]: Use atomic snapshot even on mutex failure
+      // to prevent up to 8m/day drift accumulation.
+      portENTER_CRITICAL(&rtcTimeMux);
+      live_min = current_min;
+      live_sec = current_sec;
+      portEXIT_CRITICAL(&rtcTimeMux);
+
       digitalWrite(32, LOW);       // Fallback cut if mutex totally hung
+      gpio_hold_en(GPIO_NUM_32);
+      gpio_hold_en(GPIO_NUM_26);
+      gpio_hold_en(GPIO_NUM_16);
+      gpio_hold_en(GPIO_NUM_17);
+      gpio_deep_sleep_hold_en();
   }
 
   // Calculate time to sleep to target the NEXT exact 15-minute boundary
   // We calculate in SECONDS for precision using the live hardware read
-  int next_boundary_min = ((current_min / 15) + 1) * 15;
+  int next_boundary_min = ((live_min / 15) + 1) * 15;
   int sleep_seconds;
 
   // Handle hour rollover (e.g., 59 minutes -> next hour at 0 minutes)
   // v7.89: Reverted to +30s offset for maximum stability.
   if (next_boundary_min >= 60) {
-    sleep_seconds = (60 - current_min) * 60 - live_sec + 15; // v5.65 fix: reduced offset to 15s
+    sleep_seconds = (60 - live_min) * 60 - live_sec + 15; // v5.65 fix: reduced offset to 15s
   } else {
     sleep_seconds =
-        (next_boundary_min * 60) - (current_min * 60 + live_sec) + 15; // v5.65 fix
+        (next_boundary_min * 60) - (live_min * 60 + live_sec) + 15; // v5.65 fix
   }
 
   // Safety bounds: 1 minute minimum, 20 minutes maximum
@@ -109,9 +163,11 @@ void start_deep_sleep() {
   // This causes the push button pin (GPIO 27) to float, making it highly susceptible
   // to RF noise/wind static, which randomly triggers ext0 and turns on the LCD mid-cycle.
   // By forcing the RTC pull-up, we lock it HIGH until genuinely pressed.
+  // v5.85 P10 Fix: Simpler EXT0 config. Internal pull-up is essential for floating prevention.
   rtc_gpio_init(GPIO_NUM_27);
   rtc_gpio_set_direction(GPIO_NUM_27, RTC_GPIO_MODE_INPUT_ONLY);
   rtc_gpio_pullup_en(GPIO_NUM_27);
+  rtc_gpio_pulldown_dis(GPIO_NUM_27);
 
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW);
   // Use the calculated seconds directly
@@ -127,6 +183,24 @@ void start_deep_sleep() {
   if (sd_card_ok) {
     SD.end();
     SPI.end();
+  }
+
+  // Phase 9 Fix: FINAL ATOMIC GUARD. Re-check for any activity that started during shutdown.
+  // This catches the exact race where scheduler started on Core 1 while Core 0 was closing modem.
+  portENTER_CRITICAL(&syncMux);
+  bool race_sync_invalid = (sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled && sync_mode != eSyncModeInitial);
+  portEXIT_CRITICAL(&syncMux);
+  
+  // v5.76.2: Final-millisecond Mutex Audit
+  bool modemMutexTaken = (uxSemaphoreGetCount(modemMutex) == 0);
+  bool fsMutexTaken = (uxSemaphoreGetCount(fsMutex) == 0);
+
+  if (schedulerBusy || gprs_started || httpInitiated || race_sync_invalid || health_in_progress || modemMutexTaken || fsMutexTaken) {
+      debugln("[PWR] 🚨 RACE PREVENTED: Activity detected during final shutdown. Aborting sleep to process task.");
+      sleep_sequence_active = false; // [v5.77 Signal Reset]
+      // Phase 10 Fix: Instead of a violent reboot, we just return. 
+      // Hardware state (Modem/I2C power cut) must be restored by the task that took control.
+      return; 
   }
 
   Serial.flush();
@@ -167,6 +241,10 @@ void set_wakeup_reason() {
   switch (wakeup_reason) {
   case ESP_SLEEP_WAKEUP_EXT0:
     debugln("Wakeup caused by external signal using RTC_IO");
+    // v5.77 Hardened: Trust the hardware. If the chip woke up via EXT0, 
+    // it IS an EXT0 wakeup. Removing the 5ms noise gait that caused 'Phantom' suppression.
+    rtc_gpio_deinit(GPIO_NUM_27);
+    pinMode(27, INPUT_PULLUP); 
     wakeup_reason_is = ext0;
     break;
   case ESP_SLEEP_WAKEUP_EXT1:
@@ -237,13 +315,19 @@ void copyFilesFromSPIFFSToSD(const char *dirname) {
 }
 
 void removeFilesFromSPIFFS(const char *dirname) {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[SPIFFS] Mutex Timeout: removeFilesFromSPIFFS aborted.");
+    return;
+  }
   File root = SPIFFS.open(dirname);
   if (!root) {
     debugln("Failed to open directory");
+    xSemaphoreGive(fsMutex); 
     return;
   }
   if (!root.isDirectory()) {
     debugln("Not a directory");
+    xSemaphoreGive(fsMutex);
     return;
   }
 
@@ -259,12 +343,18 @@ void removeFilesFromSPIFFS(const char *dirname) {
     file.close(); // v5.49 Build 5: FIX LEAK
     file = root.openNextFile();
   }
+  xSemaphoreGive(fsMutex);
 }
 
 void delete_multiple_files(const char *station) {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[SPIFFS] Mutex Timeout: delete_multiple_files aborted.");
+    return;
+  }
   File root = SPIFFS.open("/");
   if (!root) {
     debugln("Failed to open directory for deletion scan");
+    xSemaphoreGive(fsMutex);
     return;
   }
   
@@ -290,6 +380,7 @@ void delete_multiple_files(const char *station) {
     debugf1("[SPIFFS] Deleting matching file: %s\n", toDelete[i].c_str());
     SPIFFS.remove(toDelete[i]);
   }
+  xSemaphoreGive(fsMutex);
 }
 
 void get_chip_id() {
@@ -365,6 +456,7 @@ void recoverI2CBus(bool alreadyLocked) {
   }
 }
 
+
 /**
  * Persists current coordinates and timestamp (v5.49) to SPIFFS
  */
@@ -378,8 +470,12 @@ void saveGPS() {
     file.printf("%.6f,%.6f,%d,%d,%d", lati, longi, current_day, current_month,
                 current_year);
     file.close();
-    if (SPIFFS.exists("/gps_fix.txt")) SPIFFS.remove("/gps_fix.txt");
-    SPIFFS.rename("/gps_fix.tmp", "/gps_fix.txt");
+    if (SPIFFS.exists("/gps_fix.txt")) {
+        SPIFFS.remove("/gps_fix.txt");
+    }
+    if (SPIFFS.rename("/gps_fix.tmp", "/gps_fix.txt")) {
+        debugln("[PWR] GPS Fix persisted successfully.");
+    }
     gps_fix_dd = current_day;
     gps_fix_mm = current_month;
     gps_fix_yy = current_year;
@@ -396,6 +492,11 @@ void loadGPS() {
     debugln("[SPIFFS] Mutex Timeout: Skipping loadGPS");
     return;
   }
+  if (!SPIFFS.exists("/gps_fix.txt") && SPIFFS.exists("/gps_fix.tmp")) {
+    debugln("[GPS] txt missing but tmp found. Recovering...");
+    SPIFFS.rename("/gps_fix.tmp", "/gps_fix.txt");
+  }
+
   if (SPIFFS.exists("/gps_fix.txt")) {
     File file = SPIFFS.open("/gps_fix.txt", FILE_READ);
     if (file) {
@@ -515,8 +616,10 @@ void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
   *hasUnresolvedPD = false;
   *hasUnresolvedNDM = false;
 
-  // Calculate where we are in the meteorological day (0-95) for live testing
-  int current_s_idx = current_hour * 4 + current_min / 15;
+  // v5.79: Torn Time Read Fix
+  struct tm snapshot;
+  getTimeSnapshot(&snapshot);
+  int current_s_idx = snapshot.tm_hour * 4 + snapshot.tm_min / 15;
   current_s_idx = (current_s_idx + 61) % 96;
 
   for (int i = 0; i < 96; i++) {
@@ -567,7 +670,7 @@ void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
 }
 
 // One-time reconstruction of sent masks from SPIFFS files (Session Recovery)
-static bool backfill_done = false;
+RTC_DATA_ATTR bool backfill_done = false;
 
 void scanFileToMask(const char *fName, uint32_t *mask) {
   if (!SPIFFS.exists(fName))
@@ -575,20 +678,19 @@ void scanFileToMask(const char *fName, uint32_t *mask) {
   File f = SPIFFS.open(fName, FILE_READ);
   if (!f)
     return;
+  char buf[128];
   while (f.available()) {
-    String line = f.readStringUntil('\n');
-    if (line.length() < 5)
+    int l = f.readBytesUntil('\n', buf, sizeof(buf) - 1);
+    buf[l] = '\0';
+    if (l < 5)
       continue;
-    int commaIdx = line.indexOf(',');
-    if (commaIdx != -1) {
+
+    char *commaPtr = strchr(buf, ',');
+    if (commaPtr != NULL) {
       int sNum = -1;
       int sigVal = 0;
       
-      // Basic CSV parse to find SampleNo and SignalStrength
-      char buf[128];
-      strncpy(buf, line.c_str(), sizeof(buf)-1);
-      buf[sizeof(buf)-1] = '\0';
-      
+      // Basic CSV parse to find SampleNo and SignalStrength using strtok_r
       char *token;
       char *saveptr_scan = NULL;
       token = strtok_r(buf, ",", &saveptr_scan);
@@ -635,16 +737,18 @@ int countStored(const char *fName) {
   if (!f)
     return 0;
   int count = 0;
+  char line_buf[128];
   while (f.available()) {
     // v7.95: Keep WDT alive during file scan
     esp_task_wdt_reset();
-    String line = f.readStringUntil('\n');
-    // v7.70: Relaxed length to 10 for safety; check for comma (CSV) or semicolon (FTP format)
-    // v5.52 BUG-2 FIX: FTP records use ';' not ',', so check both separators
-    if (line.length() >= 10 && (line.indexOf(',') != -1 || line.indexOf(';') != -1)) {
+    int l = f.readBytesUntil('\n', line_buf, sizeof(line_buf) - 1);
+    line_buf[l] = '\0';
+    
+    // v5.79: Optimized char search (No heap String)
+    if (l >= 10 && (strchr(line_buf, ',') || strchr(line_buf, ';'))) {
       count++;
       if (count >= 120) // v7.95: Increased cap to 120 for safety
-        break; // v7.59: Cap — ghost gap-fill cannot inflate beyond one day
+        break; 
     }
   }
   f.close();
@@ -722,12 +826,15 @@ int countNightStored(const char *fName) {
   if (!f)
     return 0;
   int count = 0;
+  char line_buf[128];
   while (f.available()) {
-    String line = f.readStringUntil('\n');
-    if (line.length() >= 10) {
-      int commaIdx = line.indexOf(',');
-      if (commaIdx != -1) {
-        int sNum = line.substring(0, commaIdx).toInt();
+    esp_task_wdt_reset(); // Keep watchdog happy during scan
+    int l = f.readBytesUntil('\n', line_buf, sizeof(line_buf) - 1);
+    line_buf[l] = '\0';
+    if (l >= 10) {
+      char *commaPtr = strchr(line_buf, ',');
+      if (commaPtr != NULL) {
+        int sNum = atoi(line_buf);
         if (sNum >= 49 && sNum <= 85) {
           count++;
         }
@@ -749,76 +856,71 @@ void subtractUnsentFromMask(const char *uFile) {
       (strstr(uFile, ".kwd") != NULL || strstr(uFile, ".swd") != NULL ||
        strstr(uFile, "ftpunsent") != NULL);
 
+  char line_buf[128];
   while (f.available()) {
     esp_task_wdt_reset(); // v7.80: Handle massive backlog files without timeout
-    vTaskDelay(pdMS_TO_TICKS(1)); // Phase 7 Fix: Native RTOS 1ms yield (Avoids division by 0 on 10ms tick systems)
+    vTaskDelay(pdMS_TO_TICKS(1)); // Phase 7 Fix: Native RTOS 1ms yield
     long pos = f.position(); // Save position of the FIRST byte of the line
-    String line = f.readStringUntil('\n');
-
-    // v5.65 P4 Fix: For TRG (SYSTEM 0), skip records that are already
-    // marked as 'Processed' by the pointer to avoid inflating 'Missing' count.
+    // v5.80: Final heap optimization - direct buffer parsing
+    int l = f.readBytesUntil('\n', line_buf, sizeof(line_buf) - 1);
+    line_buf[l] = '\0';
+    
 #if SYSTEM == 0
     if (strstr(uFile, "unsent.txt") && !strstr(uFile, "ftpunsent.txt")) {
-        if (pos < unsent_pointer_count) continue;
+        if (pos < (long)unsent_pointer_count) continue;
     }
 #endif
 
-    line.trim();
-    if (line.length() < 10)
-      continue;
+    if (l < 10) continue;
 
     int sNum = -1;
-    int d_year = current_year, d_month = current_month,
-        d_day = current_day; // Default if unparseable
+    int d_year = current_year, d_month = current_month, d_day = current_day;
 
     if (isFtpFile) {
       // FTP format: stnId;YYYY-MM-DD,HH:MM;...
-      int semi1 = line.indexOf(';');
-      if (semi1 == -1)
-        continue;
-      int semi2 = line.indexOf(';', semi1 + 1);
-      if (semi2 == -1)
-        continue;
-      String dateTime = line.substring(semi1 + 1, semi2); // "YYYY-MM-DD,HH:MM"
-      if (dateTime.length() >= 10) {
-        d_year = dateTime.substring(0, 4).toInt();
-        d_month = dateTime.substring(5, 7).toInt();
-        d_day = dateTime.substring(8, 10).toInt();
+      char *semi1 = strchr(line_buf, ';');
+      if (semi1 == NULL) continue;
+      char *semi2 = strchr(semi1 + 1, ';');
+      if (semi2 == NULL) continue;
+      
+      *semi2 = '\0'; // Null terminate at second semicolon
+      char *dateTime = semi1 + 1;
+      if (strlen(dateTime) >= 10) {
+          d_year = atoi(dateTime);
+          d_month = atoi(dateTime + 5);
+          d_day = atoi(dateTime + 8);
+          
+          char *comma = strchr(dateTime, ',');
+          if (comma) {
+              int h = atoi(comma + 1);
+              char *colon = strchr(comma + 1, ':');
+              int m = colon ? atoi(colon + 1) : 0;
+              int raw = h * 4 + m / 15;
+              sNum = (raw + 61) % 96;
+          }
       }
-      int commaIdx = dateTime.indexOf(',');
-      if (commaIdx == -1)
-        continue;
-      String timeStr = dateTime.substring(commaIdx + 1); // "HH:MM"
-      int colonIdx = timeStr.indexOf(':');
-      if (colonIdx == -1)
-        continue;
-      int h = timeStr.substring(0, colonIdx).toInt();
-      int m = timeStr.substring(colonIdx + 1).toInt();
-      int raw = h * 4 + m / 15;
-      sNum = (raw + 61) % 96;
     } else {
-      // CSV format: sampleNo,YYYY-MM-DD,... OR format:
-      // sampleNo,YYYY-MM-DD,HH:MM,...
-      int commaIdx = line.indexOf(',');
-      if (commaIdx == -1)
-        continue;
-      sNum = line.substring(0, commaIdx).toInt();
-      int comma2 = line.indexOf(',', commaIdx + 1);
-      if (comma2 != -1) {
-        String sDate = line.substring(commaIdx + 1, comma2);
-        if (sDate.length() >= 10) {
-          d_year = sDate.substring(0, 4).toInt();
-          d_month = sDate.substring(5, 7).toInt();
-          d_day = sDate.substring(8, 10).toInt();
-        }
+      // CSV format: sampleNo,YYYY-MM-DD,...
+      sNum = atoi(line_buf);
+      char *comma1 = strchr(line_buf, ',');
+      if (comma1) {
+          d_year = atoi(comma1 + 1);
+          d_month = atoi(comma1 + 6);
+          d_day = atoi(comma1 + 9);
       }
     }
 
     if (sNum >= 0 && sNum <= 95) {
       // Calculate 'NOW' meteorological close date
-      int cur_dd = current_day, cur_mm = current_month, cur_yy = current_year;
-      int curr_h = (current_hour < 24) ? current_hour : 0;
-      int curr_m = (current_min < 60) ? current_min : 0;
+      int cur_dd, cur_mm, cur_yy, curr_h, curr_m;
+      portENTER_CRITICAL(&rtcTimeMux);
+      cur_dd = current_day;
+      cur_mm = current_month;
+      cur_yy = current_year;
+      curr_h = (current_hour < 24) ? current_hour : 0;
+      curr_m = (current_min < 60) ? current_min : 0;
+      portEXIT_CRITICAL(&rtcTimeMux);
+
       int curr_sNum = (curr_h * 4 + curr_m / 15 + 61) % 96;
       if (curr_sNum <= 60) {
         next_date(&cur_dd, &cur_mm, &cur_yy);
@@ -878,15 +980,18 @@ void reconstructSentMasks(bool alreadyLocked) {
   char prevFile[32];
   char curFile[32];
 
-  int cur_dd = current_day, cur_mm = current_month, cur_yy = current_year;
-  int prev_dd = current_day, prev_mm = current_month, prev_yy = current_year;
+  // v5.79: Torn Time Read Fix
+  struct tm snapshot;
+  getTimeSnapshot(&snapshot);
+  int cur_dd = snapshot.tm_mday, cur_mm = snapshot.tm_mon + 1, cur_yy = snapshot.tm_year + 1900;
+  int prev_dd = cur_dd, prev_mm = cur_mm, prev_yy = cur_yy;
 
-  int h = (current_hour < 24) ? current_hour : 0;
-  int m = (current_min < 60) ? current_min : 0;
-  int sampleNo = h * 4 + m / 15;
-  sampleNo = (sampleNo + 61) % 96;
+  int h = snapshot.tm_hour;
+  int m = snapshot.tm_min;
+  int calcSlot = h * 4 + m / 15;
+  calcSlot = (calcSlot + 61) % 96;
 
-  if (sampleNo <= 60) {
+  if (calcSlot <= 60) {
     // Time is 08:45 AM or later:
     // Current close date is Tomorrow. Previous close date is Today.
     next_date(&cur_dd, &cur_mm, &cur_yy);
@@ -1157,35 +1262,35 @@ void reset_all_diagnostics() {
   debugln("[SYS] Diagnostics cleaned.");
 }
 
-int get_total_backlogs() {
+int get_total_backlogs(bool force = false) {
   static unsigned long last_backlog_check = 0;
   // If we checked in the last 10 seconds, return the cached value
-  if (last_backlog_check > 0 && (millis() - last_backlog_check < 10000)) {
+  if (!force && last_backlog_check > 0 && (millis() - last_backlog_check < 10000)) {
     return diag_backlog_total;
   }
 
-  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
     return diag_backlog_total; // Return cached value on contention
   }
 
   int total = 0;
   const char *files[] = {"/unsent.txt", "/ftpunsent.txt"};
   for (int i = 0; i < 2; i++) {
-    if (SPIFFS.exists(files[i])) {
-      File f = SPIFFS.open(files[i], FILE_READ);
-      if (f) {
-        // v5.68 BUGFIX: Accurate UI Backlog Count
-        // Fast-forward past already transmitted JSON records so the LCD shows true remaining count
-        if (i == 0 && SPIFFS.exists("/unsent_pointer.txt")) {
-          File ptrFile = SPIFFS.open("/unsent_pointer.txt", FILE_READ);
-          if (ptrFile) {
-            long ptrVal = ptrFile.readString().toInt();
-            if (ptrVal > 0 && ptrVal < f.size()) {
-              f.seek(ptrVal);
-            }
-            ptrFile.close();
+    // v5.76: Atomic Open (R-02 fix)
+    File f = SPIFFS.open(files[i], FILE_READ);
+    if (f) {
+      // v5.68 BUGFIX: Accurate UI Backlog Count
+      if (i == 0) {
+        File ptrFile = SPIFFS.open("/unsent_pointer.txt", FILE_READ);
+        if (ptrFile) {
+          String pStr = ptrFile.readString();
+          long ptrVal = pStr.toInt();
+          if (ptrVal > 0 && ptrVal < (long)f.size()) {
+            f.seek(ptrVal);
           }
+          ptrFile.close();
         }
+      }
 
         // v5.67 UI FREEZE FIX: Switch from slow String allocation to raw buffer read
         char tbuf[128];
@@ -1199,7 +1304,6 @@ int get_total_backlogs() {
         f.close();
       }
     }
-  }
   xSemaphoreGive(fsMutex);
   diag_backlog_total = total;
   last_backlog_check = millis();
@@ -1210,7 +1314,7 @@ float get_calibrated_battery_voltage() {
   static esp_adc_cal_characteristics_t adc_chars;
   static bool initialized = false;
   if (!initialized) {
-    // Characterize ADC at 11dB attenuation for 3.3V range
+    // Characterize ADC at 11dB attenuation — must match adc1_config_channel_atten() in initialize_hw()
     esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars);
     initialized = true;
   }
@@ -1218,4 +1322,94 @@ float get_calibrated_battery_voltage() {
   uint32_t voltage_mv = esp_adc_cal_raw_to_voltage(adc1_get_raw(ADC1_CHANNEL_5), &adc_chars);
   // Apply our custom voltage divider ratio: 840K / 620K
   return ((float)voltage_mv / 1000.0) * (840.0 / 620.0);
+}
+
+void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
+  if (!alreadyLocked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
+    debugln("[SPIFFS] pruneFile Mutex Timeout: skipping.");
+    return;
+  }
+
+  // Turner-Fix: Correct recovery path identifying current per-file temp name
+  char tmp_path[48];
+  snprintf(tmp_path, sizeof(tmp_path), "%s.ptr", path);
+
+  // v5.70 Hardened: [R-1 Recovery] If original is missing but tmp exists, recover it.
+  if (!SPIFFS.exists(path) && SPIFFS.exists(tmp_path)) {
+      debugf1("[SPIFFS] pruneFile: path %s missing, recovering from %s\n", path, tmp_path);
+      SPIFFS.rename(tmp_path, path);
+  }
+
+  if (!SPIFFS.exists(path)) {
+    if (!alreadyLocked) xSemaphoreGive(fsMutex);
+    return;
+  }
+
+  File f = SPIFFS.open(path, FILE_READ);
+  if (!f) {
+    if (!alreadyLocked) xSemaphoreGive(fsMutex);
+    return;
+  }
+
+  size_t current_size = f.size();
+  if (current_size < limit) {
+    f.close();
+    if (!alreadyLocked) xSemaphoreGive(fsMutex);
+    return;
+  }
+
+  debugf2("[SPIFFS] Pruning %s (%d bytes). Limit exceeded.\n", path, (int)current_size);
+
+  // Buffer recent half of max allowed limit
+  size_t keep_size = limit / 2;
+  if (current_size > keep_size) {
+    f.seek(current_size - keep_size);
+  } else {
+    f.seek(0);
+  }
+  
+  // v5.75 FIX: [M-05] Heap fragment stall prevention
+  // Discard partial line via rapid char drain instead of bloated string allocation
+  // (f.readStringUntil('\n') allocates on exactly the code path where we are already choked)
+  char c;
+  while (f.available() && (c = f.read()) != '\n') {
+      // drain partial line into the void
+  }
+
+  // Turner-Fix: Use unique per-file temporary path to prevent collision
+  // tmp_path already declared in recovery check above
+  snprintf(tmp_path, sizeof(tmp_path), "%s.ptr", path);
+  
+  File tmp = SPIFFS.open(tmp_path, FILE_WRITE);
+  if (tmp) {
+    uint8_t buf[512];
+    while (f.available()) {
+      int n = f.read(buf, sizeof(buf));
+      tmp.write(buf, n);
+      esp_task_wdt_reset();
+    }
+    tmp.close();
+    f.close();
+    SPIFFS.remove(path);
+    
+    // v5.75 FIX: [M-02] SPIFFS Metadata Delay
+    // On worn partitions, an immediate rename can fail. Give the VFS 50ms to breathe.
+    esp_task_wdt_reset();
+    if (!alreadyLocked) xSemaphoreGive(fsMutex);
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+    if (!alreadyLocked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        debugln("[SPIFFS] pruneFile retry-Take failed. Mutex already released.");
+        return; 
+    }
+    
+    if (!SPIFFS.rename(tmp_path, path)) {
+      debugf1("[SPIFFS] FATAL: Final rename failed for %s.\n", path);
+    }
+  } else {
+    f.close();
+    debugf1("[SPIFFS] Clear: %s to recover space.\n", path);
+    SPIFFS.remove(path);
+  }
+
+  if (!alreadyLocked) xSemaphoreGive(fsMutex);
 }

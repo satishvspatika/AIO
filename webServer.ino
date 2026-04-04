@@ -3,8 +3,8 @@
 #include <WebServer.h>
 
 #if ENABLE_WEBSERVER == 1
-const char *ssid = "Spatika Web Server";
-const char *password = "12345678";
+const char *ssid = WIFI_SSID;
+const char *password = WIFI_PASS;
 WebServer server(80);
 
 // Helper to update activity time
@@ -23,7 +23,7 @@ void webServer(void *pvParameters) {
 
   // Configure ESP32 as an Access Point dynamically with Station ID
   debugln("Configuring access point...");
-  setCpuFrequencyMhz(160); // WiFi needs minimum 160MHz
+  // Frequency set by task launcher in lcdkeypad.ino
   
   char ap_name[32];
   snprintf(ap_name, sizeof(ap_name), "SpatikaWeb");
@@ -35,7 +35,7 @@ void webServer(void *pvParameters) {
   last_wifi_activity_time = millis();
 
   // Use a completely unique password to instantly break any OS caching bugs
-  WiFi.softAP(ap_name, "Spatika123");
+  WiFi.softAP(ap_name, AP_PASS);
   IPAddress IP = WiFi.softAPIP();
   debug("AP IP address: ");
   debugln(IP);
@@ -121,7 +121,7 @@ void webServer(void *pvParameters) {
 }
 
 // --- Handle Root (/) ---
-void handleRoot() {
+void handleRoot() { // v5.70 STREAMING
   if (!wifi_active) {
     server.send(200, "text/html",
                 "<html><body><h1>WiFi is OFF</h1></body></html>");
@@ -263,106 +263,23 @@ void handleRoot() {
       snprintf(timeStr, sizeof(timeStr), "%02d:%02d", last_recorded_hr,
                last_recorded_min);
   }
-  String html =
-      "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' "
-      "content='width=device-width, initial-scale=1.0'>";
-  html += "<title>SPATIKA SENSOR DATA</title>";
-  html +=
-      "<style>body{font-family:Helvetica,Arial,sans-serif;text-align:center;"
-      "background-color:#f0f8ff;color:#333;margin:0;padding:10px;}";
-  html += ".container{max-width:800px;margin:0 auto;}";
-  html += ".btn{background-color:#17a2b8;color:white;padding:12px "
-          "24px;text-align:center;text-decoration:none;display:inline-block;"
-          "font-size:15px;margin:10px "
-          "5px;cursor:pointer;border-radius:5px;border:none;transition:"
-          "background 0.2s;white-space:nowrap;}";
-  html += ".btn:hover{opacity:0.9;}";
-  html += ".btn-danger{background-color:#dc3545;}";
-  html += "input[type=submit]{background-color:#007bff;color:white;border:none;"
-          "padding:10px "
-          "20px;border-radius:5px;cursor:pointer;font-size:15px;transition:"
-          "background 0.2s;white-space:nowrap;}";
-  html += "input[type=submit]:hover{opacity:0.9;}";
-  html += ".card{background:white;border-radius:8px;box-shadow:0 2px 4px "
-          "rgba(0,0,0,0.05);padding:10px;margin:5px;display:flex;flex-"
-          "direction:column;justify-content:center;min-"
-          "width:140px;flex:1 1 "
-          "45%;box-sizing:border-box;word-wrap:break-word;white-space:normal;}";
-  html +=
-      ".value{font-size:1.2em;font-weight:700;color:#007bff;margin-top:5px;}";
-  html += ".label{font-size:0.85em;color:#6c757d;text-transform:uppercase;"
-          "letter-spacing:0.5px;line-height:1.2;}";
-  html += ".section-title{font-size:1.1em;color:#555;margin:20px 0 "
-          "10px;font-weight:bold;text-align:left;border-bottom:2px solid "
-          "#ddd;padding-bottom:5px;}";
-  html += "@media (max-width: 400px) { .card { min-width: 45%; } }";
-  html += ".warning-modal "
-          "{display:none;position:fixed;top:0;left:0;width:100%;height:100%;"
-          "background:rgba(0,0,0,0.8);z-index:999;text-align:center;padding-"
-          "top:30%;}";
-  html += ".warning-box "
-          "{background:white;padding:20px;border-radius:10px;display:inline-"
-          "block;width:80%;max-width:300px;}";
-  html += "</style>";
+  // v5.70 MEMORY FIX: Stream HTML to avoid large String allocations
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html", "");
 
-  html +=
-      "<script>"
-      "setInterval(function() {"
-      "  var xhttp = new XMLHttpRequest();"
-      "  xhttp.onreadystatechange = function() {"
-      "    if (this.readyState == 4 && this.status == 200) {"
-      "      var data = JSON.parse(this.responseText);"
-      "      if(document.getElementById('live_rf')) "
-      "document.getElementById('live_rf').innerHTML = data.rf_inst + ' <span "
-      "style=\"font-size:0.6em\">mm</span>';"
-      "      if(document.getElementById('live_temp')) "
-      "document.getElementById('live_temp').innerHTML = data.temperature + ' "
-      "<span style=\"font-size:0.6em\">&deg;C</span>';"
-      "      if(document.getElementById('live_hum')) "
-      "document.getElementById('live_hum').innerHTML = data.humidity + ' <span "
-      "style=\"font-size:0.6em\">%</span>';"
-      "      if(document.getElementById('live_ws')) "
-      "document.getElementById('live_ws').innerHTML = data.windSpeed + ' <span "
-      "style=\"font-size:0.6em\">m/s</span>';"
-      "      if(document.getElementById('live_wd')) "
-      "document.getElementById('live_wd').innerHTML = data.windDir + ' <span "
-      "style=\"font-size:0.6em\">&deg;</span>';"
-      "      if(data.pressure && document.getElementById('live_pres')) {"
-      "         var val = data.pressure.toFixed(2);"
-      "         if(data.mslp) val += ' | ' + data.mslp.toFixed(2);"
-      "         document.getElementById('live_pres').innerHTML = val + ' <span "
-      "style=\"font-size:0.6em\">hPa</span>';"
-      "      }"
-      "      if(data.wifi_left < 15) {"
-      "         document.getElementById('warnModal').style.display='block';"
-      "         document.getElementById('timeLeft').innerText = data.wifi_left;"
-      "      } else {"
-      "         document.getElementById('warnModal').style.display='none';"
-      "      }"
-      "    } else if (this.readyState == 4 && (this.status == 0 || this.status "
-      "== 500)) {"
-      // Server abruptly died (or user killed it from LCD)
-      "      document.body.innerHTML = '<div "
-      "style=\"text-align:center;margin-top:20vh;\"><h1 "
-      "style=\"color:#dc3545;\">" +
-      String(isKan ? "ವೈ-ಫೈ ಆಫ್ ಆಗಿದೆ (WiFi Disabled)" : "WiFi Disabled") +
-      "</h1><p>" +
-      String(isKan ? "ನೀವು ಟ್ಯಾಬ್ ಮುಚ್ಚಬಹುದು (You can close this tab)"
-                   : "Device was shut down from LCD. You can safely close this "
-                     "tab.") +
-      "</p></div>';"
-      "    }"
-      "  };"
-      "  xhttp.open('GET', '/data?t=' + Date.now(), true);"
-      "  xhttp.send();"
-      "}, 3000);"
-      "function extendInfo() {"
-      "  fetch('/extend').then(()=>{ "
-      "document.getElementById('warnModal').style.display='none'; });"
-      "}"
-      "</script>";
+  server.sendContent("<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'><title>SPATIKA SENSOR DATA</title>");
+  server.sendContent("<style>body{font-family:Helvetica,Arial,sans-serif;text-align:center;background-color:#f0f8ff;color:#333;margin:0;padding:10px;}.container{max-width:800px;margin:0 auto;}.btn{background-color:#17a2b8;color:white;padding:12px 24px;text-align:center;text-decoration:none;display:inline-block;font-size:15px;margin:10px 5px;cursor:pointer;border-radius:5px;border:none;transition:background 0.2s;white-space:nowrap;}.btn:hover{opacity:0.9;}.btn-danger{background-color:#dc3545;}input[type=submit]{background-color:#007bff;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;font-size:15px;transition:background 0.2s;white-space:nowrap;}input[type=submit]:hover{opacity:0.9;}.card{background:white;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.05);padding:10px;margin:5px;display:flex;flex-direction:column;justify-content:center;min-width:140px;flex:1 1 45%;box-sizing:border-box;word-wrap:break-word;white-space:normal;}.value{font-size:1.2em;font-weight:700;color:#007bff;margin-top:5px;}.label{font-size:0.85em;color:#6c757d;text-transform:uppercase;letter-spacing:0.5px;line-height:1.2;}.section-title{font-size:1.1em;color:#555;margin:20px 0 10px;font-weight:bold;text-align:left;border-bottom:2px solid #ddd;padding-bottom:5px;}@media (max-width: 400px) { .card { min-width: 45%; } }.warning-modal {display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:999;text-align:center;padding-top:30%;}.warning-box {background:white;padding:20px;border-radius:10px;display:inline-block;width:80%;max-width:300px;}</style>");
 
-  html += "</head><body>";
+  server.sendContent("<script>setInterval(function() { var xhttp = new XMLHttpRequest(); xhttp.onreadystatechange = function() { if (this.readyState == 4 && this.status == 200) { var data = JSON.parse(this.responseText);");
+  server.sendContent("if(document.getElementById('live_rf')) document.getElementById('live_rf').innerHTML = data.rf_inst + ' <span style=\"font-size:0.6em\">mm</span>';");
+  server.sendContent("if(document.getElementById('live_temp')) document.getElementById('live_temp').innerHTML = data.temperature + ' <span style=\"font-size:0.6em\">&deg;C</span>';");
+  server.sendContent("if(document.getElementById('live_hum')) document.getElementById('live_hum').innerHTML = data.humidity + ' <span style=\"font-size:0.6em\">%</span>';");
+  server.sendContent("if(document.getElementById('live_ws')) document.getElementById('live_ws').innerHTML = data.windSpeed + ' <span style=\"font-size:0.6em\">m/s</span>';");
+  server.sendContent("if(document.getElementById('live_wd')) document.getElementById('live_wd').innerHTML = data.windDir + ' <span style=\"font-size:0.6em\">&deg;</span>';");
+  server.sendContent("if(data.pressure && document.getElementById('live_pres')) { var val = data.pressure.toFixed(2); if(data.mslp) val += ' | ' + data.mslp.toFixed(2); document.getElementById('live_pres').innerHTML = val + ' <span style=\"font-size:0.6em\">hPa</span>'; }");
+  server.sendContent("if(data.wifi_left < 15) { document.getElementById('warnModal').style.display='block'; document.getElementById('timeLeft').innerText = data.wifi_left; } else { document.getElementById('warnModal').style.display='none'; }");
+  server.sendContent("} else if (this.readyState == 4 && (this.status == 0 || this.status == 500)) { document.body.innerHTML = '<div style=\"text-align:center;margin-top:20vh;\"><h1>Offline</h1></div>'; } }; xhttp.open('GET', '/data?t=' + Date.now(), true); xhttp.send(); }, 3000);");
+  server.sendContent("function extendInfo() { fetch('/extend').then(()=>{ document.getElementById('warnModal').style.display='none'; }); }</script></head><body>");
 
   String sysType = "";
 #if SYSTEM == 0
@@ -380,271 +297,47 @@ void handleRoot() {
       "1.0em;color:#666;font-weight:bold;margin-bottom:20px;'>( " +
       sysType + " )</div>";
 
-  html +=
-      "<h2 style='color:#007bff;font-size:1.5em;margin-bottom:5px;'>Spatika "
-      "Web Portal</h2>";
-  html += stationValue;
+  server.sendContent("<h2 style='color:#007bff;font-size:1.5em;margin-bottom:5px;'>Spatika Web Portal</h2>");
+  server.sendContent("<h1 style='font-size: 1.8em;color:#333;margin-bottom:5px;'>" + String(station_name) + "</h1>");
+  server.sendContent("<div style='font-size: 1.0em;color:#666;font-weight:bold;margin-bottom:20px;'>( " + sysType + " )</div>");
 
-  // Kannada Translation Setup
-  String s_live = isKan ? "ಲೈವ್ ಮಾಹಿತಿ (Live Monitor)" : "Live Monitor";
-  String s_rf = isKan ? "ಮಳೆ (Instant RF)" : "Instant RF";
-  String s_t = isKan ? "ತಾಪಮಾನ (Temp)" : "Temp";
-  String s_h = isKan ? "ತೇವಾಂಶ (Humidity)" : "Humidity";
-  String s_ws = isKan ? "ಗಾಳಿಯ ವೇಗ (Wind Spd)" : "Wind Spd";
-  String s_wd = isKan ? "ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir)" : "Wind Dir";
-  String s_p = isKan ? "ವಾತಾವರಣದ ಒತ್ತಡ (Pressure)" : "Pressure";
-  String s_lrf = isKan ? "ರೆಕಾರ್ಡ್ ಆದ ಮಳೆ (Logged RF)" : "Logged RF";
-  String s_ll = isKan ? "ಕೊನೆಯ ಲಾಗ್ (Last Logged)" : "Last Logged";
+  // Define translation labels once
+  const char* s_live = isKan ? "\xE0\xB2\xB2\xE0\xB3\x88\xE0\xB2\xB5\xE0\xB3\x8D \xE0\xB2\xAE\xE0\xB2\xBE\xE0\xB2\xB9\xE0\xB2\xBF\xE0\xB2\xA1\xE0\xB2\xBF (Live Monitor)" : "Live Monitor";
+  const char* s_rf = isKan ? "\xE0\xB2\xAE\xE0\xB2\xB3\xE0\xB3\x86 (Instant RF)" : "Instant RF";
 
-  // Main Container
-  html += "<div class='container'>";
+  server.sendContent("<div class='container'>");
 
   // --- SECTION 1: LIVE MONITOR ---
-  html += "<div class='section-title'>" + s_live +
-          " <span "
-          "style='font-size:0.6em;color:#28a745;vertical-align:middle;'>&#9679;"
-          " updating</span></div>";
+  server.sendContent("<div class='section-title'>" + String(s_live) + " <span style='font-size:0.6em;color:#28a745;vertical-align:middle;'>&#9679; updating</span></div>");
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
-    html += "<div "
-            "style='display:flex;flex-wrap:wrap;justify-content:center;gap:5px;"
-            "'>"; // Flex container
-
-#if SYSTEM == 0
-    html += "<div class='card'><div class='label'>" + s_rf +
-            "</div><div "
-            "id='live_rf' class='value'>" +
-            String((float)rf_count.val * RF_RESOLUTION, 2) +
-            " <span style='font-size:0.6em'>mm</span></div></div>";
+    server.sendContent("<div style='display:flex;flex-wrap:wrap;justify-content:center;gap:5px;'>");
+#if SYSTEM == 0 || SYSTEM == 2
+    server.sendContent("<div class='card'><div class='label'>" + String(s_rf) + "</div><div id='live_rf' class='value'>" + String((float)rf_count.val * RF_RESOLUTION, 2) + " <span style='font-size:0.6em'>mm</span></div></div>");
 #endif
-
-#if SYSTEM == 1
-    html += "<div class='card'><div class='label'>" + s_t +
-            "</div><div "
-            "id='live_temp' class='value'>" +
-            String(temperature, 1) +
-            " <span style='font-size:0.6em'>&deg;C</span></div></div>";
-    html += "<div class='card'><div class='label'>" + s_h +
-            "</div><div "
-            "id='live_hum' class='value'>" +
-            String(humidity, 1) +
-            " <span style='font-size:0.6em'>%</span></div></div>";
-    html += "<div class='card'><div class='label'>" + s_ws +
-            "</div><div "
-            "id='live_ws' class='value'>" +
-            String(cur_wind_speed, 2) +
-            " <span style='font-size:0.6em'>m/s</span></div></div>";
-    html += "<div class='card'><div class='label'>" + s_wd +
-            "</div><div "
-            "id='live_wd' class='value'>" +
-            String(windDir) +
-            " <span style='font-size:0.6em'>&deg;</span></div></div>";
-    // #14 & #15: Always show pressure card. Show placeholder if BME absent.
-    if (bmeType != BME_UNKNOWN && pressure > 300.0) {
-      html += "<div class='card'><div class='label'>" + s_p +
-              "</div><div "
-              "id='live_pres' class='value'>" +
-              String(pressure, 2) + " | " + String(sea_level_pressure, 2) +
-              " <span style='font-size:0.6em'> hPa</span></div></div>";
-    } else {
-      html += "<div class='card'><div class='label'>" + s_p +
-              "</div><div id='live_pres' class='value' "
-              "style='font-size:0.7em;color:#aaa;'>" +
-              "BME: No Sensor</div></div>";
-    }
+#if SYSTEM == 1 || SYSTEM == 2
+    server.sendContent("<div class='card'><div class='label'>Temp</div><div id='live_temp' class='value'>" + String(temperature, 1) + " &deg;C</div></div>");
+    server.sendContent("<div class='card'><div class='label'>Humidity</div><div id='live_hum' class='value'>" + String(humidity, 1) + " %</div></div>");
+    server.sendContent("<div class='card'><div class='label'>Wind</div><div id='live_ws' class='value'>" + String(cur_wind_speed, 2) + " m/s</div></div>");
 #endif
-
-#if SYSTEM == 2
-    html += "<div class='card'><div class='label'>" + s_rf +
-            "</div><div "
-            "id='live_rf' class='value'>" +
-            String((float)rf_count.val * RF_RESOLUTION, 2) +
-            " <span style='font-size:0.6em'>mm</span></div></div>";
-    html += "<div class='card'><div class='label'>" + s_t +
-            "</div><div "
-            "id='live_temp' class='value'>" +
-            String(temperature, 1) +
-            " <span style='font-size:0.6em'>&deg;C</span></div></div>";
-    html += "<div class='card'><div class='label'>" + s_h +
-            "</div><div "
-            "id='live_hum' class='value'>" +
-            String(humidity, 1) +
-            " <span style='font-size:0.6em'>%</span></div></div>";
-    html += "<div class='card'><div class='label'>" + s_ws +
-            "</div><div "
-            "id='live_ws' class='value'>" +
-            String(cur_wind_speed, 2) +
-            " <span style='font-size:0.6em'>m/s</span></div></div>";
-    html += "<div class='card'><div class='label'>" + s_wd +
-            "</div><div "
-            "id='live_wd' class='value'>" +
-            String(windDir) +
-            " <span style='font-size:0.6em'>&deg;</span></div></div>";
-    // #14 & #15: Always show pressure card. Show placeholder if BME absent.
-    if (bmeType != BME_UNKNOWN && pressure > 300.0) {
-      html += "<div class='card'><div class='label'>" + s_p +
-              "</div><div "
-              "id='live_pres' class='value'>" +
-              String(pressure, 2) + " | " + String(sea_level_pressure, 2) +
-              " <span style='font-size:0.6em'> hPa</span></div></div>";
-    } else {
-      html += "<div class='card'><div class='label'>" + s_p +
-              "</div><div id='live_pres' class='value' "
-              "style='font-size:0.7em;color:#aaa;'>" +
-              "BME: No Sensor</div></div>";
-    }
-#endif
-
-    html += "</div>"; // End Flex
+    server.sendContent("</div>");
     xSemaphoreGive(i2cMutex);
   }
 
   // --- SECTION 2: LAST RECORDED ---
-  if (rec_rf == "--" && rec_temp == "--") {
-    if (last_recorded_hr == 0 && last_recorded_min == 0)
-      snprintf(timeStr, sizeof(timeStr), "--:--");
-    else
-      snprintf(timeStr, sizeof(timeStr), "%02d:%02d", last_recorded_hr,
-               last_recorded_min);
-  }
-
-  html += "<div class='section-title'>" + s_ll +
-          "<br><span style='font-size:0.85em;color:#777;'>@ " +
-          String(timeStr) + "</span></div>";
-  html += "<div "
-          "style='display:flex;flex-wrap:wrap;justify-content:center;gap:5px;'"
-          ">"; // Flex container
-
-#if SYSTEM == 0
-  html += "<div class='card'><div class='label'>" + s_lrf +
-          "</div><div "
-          "class='value' style='color:#666'>" +
-          rec_rf + " <span style='font-size:0.6em'>mm</span></div></div>";
+  server.sendContent("<div class='section-title'>Last Recorded<br><span style='font-size:0.85em;color:#777;'>@ " + String(timeStr) + "</span></div>");
+  server.sendContent("<div style='display:flex;flex-wrap:wrap;justify-content:center;gap:5px;'>");
+#if SYSTEM == 0 || SYSTEM == 2
+  server.sendContent("<div class='card'><div class='label'>Logged RF</div><div class='value' style='color:#666'>" + rec_rf + " mm</div></div>");
 #endif
+  server.sendContent("</div>");
 
-#if SYSTEM == 1
-  html += "<div class='card'><div class='label'>" + s_t +
-          "</div><div class='value' "
-          "style='color:#666'>" +
-          rec_temp + " <span style='font-size:0.6em'>&deg;C</span></div></div>";
-  html += "<div class='card'><div class='label'>" + s_h +
-          "</div><div "
-          "class='value' style='color:#666'>" +
-          rec_hum + " <span style='font-size:0.6em'>%</span></div></div>";
-  html += "<div class='card'><div class='label'>" + s_ws +
-          "</div><div "
-          "class='value' style='color:#666'>" +
-          rec_ws + " <span style='font-size:0.6em'>m/s</span></div></div>";
-  html += "<div class='card'><div class='label'>" + s_wd +
-          "</div><div "
-          "class='value' style='color:#666'>" +
-          rec_wd + " <span style='font-size:0.6em'>&deg;</span></div></div>";
-#endif
-
-#if SYSTEM == 2
-  html += "<div class='card'><div class='label'>Logged RF</div><div "
-          "class='value' style='color:#666'>" +
-          rec_rf + " <span style='font-size:0.6em'>mm</span></div></div>";
-  html += "<div class='card'><div class='label'>Temp</div><div class='value' "
-          "style='color:#666'>" +
-          rec_temp + " <span style='font-size:0.6em'>&deg;C</span></div></div>";
-  html += "<div class='card'><div class='label'>Humidity</div><div "
-          "class='value' style='color:#666'>" +
-          rec_hum + " <span style='font-size:0.6em'>%</span></div></div>";
-  html += "<div class='card'><div class='label'>Wind Spd</div><div "
-          "class='value' style='color:#666'>" +
-          rec_ws + " <span style='font-size:0.6em'>m/s</span></div></div>";
-  html += "<div class='card'><div class='label'>Wind Dir</div><div "
-          "class='value' style='color:#666'>" +
-          rec_wd + " <span style='font-size:0.6em'>&deg;</span></div></div>";
-#endif
-  html += "</div>"; // End Flex
-
-  String s_act = isKan ? "ಆಯ್ಕೆಗಳು (Actions & History)" : "Actions & History";
-  String s_browse =
-      isKan ? "ಲಾಗ್ ಫೈಲ್ಸ್ ನೋಡಿ (Browse Log Files)" : "Browse Log Files";
-  String s_hist = isKan ? "ಹಳೆಯ ಮಾಹಿತಿ ಹುಡುಕಿ (Search History)" : "Search History";
-  String s_date = isKan ? "ದಿನಾಂಕ (Date YYYYMMDD):" : "Date (YYYYMMDD):";
-  String s_time = isKan ? "ಸಮಯ (Time HH:MM):" : "Time (HH:MM):";
-  String s_srec = isKan ? "ರೆಕಾರ್ಡ್ ಹುಡುಕಿ (Search Record)" : "Search Record";
-  String s_disc = isKan ? "ವೈ-ಫೈ ಆಫ್ ಮಾಡಿ (Disconnect WiFi)" : "Disconnect WiFi";
-  String s_stay =
-      isKan ? "ವೈ-ಫೈ ಆನ್ ಇರಬೇಕಾ? (Stay with Wifi?)" : "Stay with Wifi?";
-  String s_close = isKan ? "ಈಗ ಆಫ್ ಮಾಡಿ (Close Now)" : "Close Now";
-  String s_conf = isKan ? "ವೈ-ಫೈ ಆಫ್ ಮಾಡಬೇಕೇ? (Disconnect WiFi?)"
-                        : "Are you sure you want to disconnect WiFi?";
-
-  // --- SECTION 3: ACTIONS ---
-  html += "<div class='section-title'>" + s_act + "</div>";
-
-  // File Mgmt
-  html += "<div "
-          "style='background:white;padding:20px;border-radius:8px;box-shadow:0 "
-          "1px 3px rgba(0,0,0,0.1);max-width:500px;margin:0 "
-          "auto;margin-bottom:20px;'>";
-
-  html +=
-      "<h3 style='margin:10px 0;color:#555;font-size:1em;'>" + s_hist + "</h3>";
-  html += "<form action='/view' method='GET' style='margin-bottom:0;'>";
-  html += "<div style='text-align:left;margin-bottom:10px;'>";
-  html += "<label style='font-size:0.9em;color:#777;'>" + s_date + "</label>";
-  html += "<input type='text' name='date' value='" + String(last_recorded_yy) +
-          String(last_recorded_mm < 10 ? "0" : "") + String(last_recorded_mm) +
-          String(last_recorded_dd < 10 ? "0" : "") + String(last_recorded_dd) +
-          "' maxlength='8' "
-          "style='width:100%;padding:8px;margin-top:5px;box-sizing:border-box;"
-          "border:1px solid #ddd;border-radius:4px;'>";
-  html += "</div>";
-  html += "<div style='text-align:left;margin-bottom:15px;'>";
-  html += "<label style='font-size:0.9em;color:#777;'>" + s_time + "</label>";
-  html += "<input type='text' name='time' value='12:00' maxlength='5' "
-          "style='width:100%;padding:8px;margin-top:5px;box-sizing:border-box;"
-          "border:1px solid #ddd;border-radius:4px;'>";
-  html += "</div>";
-  html += "<input type='submit' value='" + s_srec +
-          "' class='btn' "
-          "style='width:90%;margin:0;background:#007bff;'>";
-  html += "</form>";
-  html += "</div>";
-
-  String s_fm = isKan ? "ಫೈಲ್ ನಿರ್ವಹಣೆ (File Management)" : "File Explorer";
-
-  html += "<div "
-          "style='background:white;padding:20px;border-radius:8px;box-shadow:0 "
-          "1px 3px rgba(0,0,0,0.1);max-width:500px;margin:0 "
-          "auto;margin-bottom:20px;'>";
-
-  html += "<h3 style='margin:0 0 15px 0;color:#555;font-size:1em;'>" + s_fm +
-          "</h3>";
-  html += "<a href='/files' class='btn' "
-          "style='display:block;width:100%;box-sizing:border-box;margin:0 0 "
-          "0px 0;'>" +
-          s_browse + "</a>";
-  html += "</div>";
-
-  // Disconnect
-  html += "<br><a href='#' onclick=\"if(confirm('" + s_conf +
-          "')) window.location='/disconnect';\" class='btn btn-danger' "
-          "style='width:auto;padding:10px 20px;'>" +
-          s_disc + "</a><br><br>";
-
-  html += "</div>"; // End Main Container
-  html += "<div id='warnModal' class='warning-modal'>"
-          "<div class='warning-box'>"
-          "<h2 style='color:#dc3545;'>" +
-          s_stay +
-          "</h2>"
-          "<p>Closing in <b id='timeLeft'></b> seconds...</p>"
-          "<button class='btn' style='background:#28a745;width:80%;' "
-          "onclick='extendInfo()'>" +
-          s_stay +
-          "</button>"
-          "<br><a href='/disconnect' class='btn btn-danger' "
-          "style='width:80%;'>" +
-          s_close +
-          "</a>" // Explicit close option
-          "</div></div>";
-  html += "</body></html>";
-  server.send(200, "text/html", html);
+  // --- ACTIONS ---
+  server.sendContent("<div class='section-title'>System Control</div>");
+  server.sendContent("<div style='background:white;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);max-width:500px;margin:10px auto;'>");
+  server.sendContent("<a href='/files' class='btn' style='display:block;width:100%;box-sizing:border-box;'>Browse Explorer</a>");
+  server.sendContent("<br><a href='#' onclick=\"if(confirm('Disconnect?')) window.location='/disconnect';\" class='btn btn-danger' style='width:auto;padding:10px 20px;'>Close WiFi</a>");
+  server.sendContent("</div></div></body></html>");
+  server.sendContent(""); // End
 }
 
 // --- Handle File List (/files) ---
@@ -845,6 +538,13 @@ server.send(200, "text/html", html);
 void handleFileDownload() {
   if (server.hasArg("file")) {
     String fileName = server.arg("file");
+
+    // v5.70 SECURITY FIX: Prevent path traversal (..)
+    if (fileName.indexOf("..") != -1) {
+       server.send(403, "text/plain", "Forbidden: Invalid Path");
+       return;
+    }
+
     if (!fileName.startsWith("/"))
       fileName = "/" + fileName;
 
@@ -874,6 +574,13 @@ void handleFileDownload() {
 void handleFileView() {
   if (server.hasArg("file")) {
     String fileName = server.arg("file");
+
+    // v5.70 SECURITY FIX: Prevent path traversal (..)
+    if (fileName.indexOf("..") != -1) {
+       server.send(403, "text/plain", "Forbidden: Invalid Path");
+       return;
+    }
+
     if (!fileName.startsWith("/"))
       fileName = "/" + fileName;
 
@@ -1217,7 +924,7 @@ void handleDisconnect() {
                   "tab.</p><script>setTimeout(function(){window.close();}, "
                   "2000);</script></body></html>");
 
-  delay(1000); // Allow HTTP response to flush
+  vTaskDelay(1000 / portTICK_PERIOD_MS); // Allow HTTP response to flush
   WiFi.softAPdisconnect(true);
   wifi_active = false;
   webServerStarted = false;
