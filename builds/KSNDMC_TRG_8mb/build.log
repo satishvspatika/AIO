@@ -1,3 +1,279 @@
 WARNING: library LiquidCrystal I2C claims to run on avr architecture(s) and may be incompatible with your current board which runs on esp32 architecture(s).
-Sketch uses 1187807 bytes (7%) of program storage space. Maximum is 16777216 bytes.
-Global variables use 56108 bytes (17%) of dynamic memory, leaving 271572 bytes for local variables. Maximum is 327680 bytes.
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void gprs(void*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:249:33: error: call of overloaded 'get_lat_long_date_time(char [20])' is ambiguous
+  249 |           get_lat_long_date_time(universalNumber);
+      |           ~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:1096:6: note: candidate: 'void get_lat_long_date_time(char*, bool)'
+ 1096 | void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4162:6: note: candidate: 'void get_lat_long_date_time(char*)'
+ 4162 | void get_lat_long_date_time(char *gsm_no) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:572:29: error: call of overloaded 'get_lat_long_date_time(char [20])' is ambiguous
+  572 |       get_lat_long_date_time(universalNumber);
+      |       ~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:1096:6: note: candidate: 'void get_lat_long_date_time(char*, bool)'
+ 1096 | void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4162:6: note: candidate: 'void get_lat_long_date_time(char*)'
+ 4162 | void get_lat_long_date_time(char *gsm_no) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void send_unsent_data()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2212:19: error: call of overloaded 'copyFile(char [50], char [50])' is ambiguous
+ 2212 |           copyFile(temp_file, fileName); // copyFile(source,destination);
+      |           ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:481:6: note: candidate: 'void copyFile(const char*, const char*, bool)'
+  481 | void copyFile(const char *sourcePath, const char *destPath, bool alreadyLocked) {
+      |      ^~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2638:6: note: candidate: 'void copyFile(const char*, const char*)'
+ 2638 | void copyFile(const char *sourcePath, const char *destPath) {
+      |      ^~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void process_sms(char)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3966:29: error: call of overloaded 'get_lat_long_date_time(char [100])' is ambiguous
+ 3966 |       get_lat_long_date_time(msg_rcvd_number); // WORKING UNCOMMENT IT
+      |       ~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:1096:6: note: candidate: 'void get_lat_long_date_time(char*, bool)'
+ 1096 | void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4162:6: note: candidate: 'void get_lat_long_date_time(char*)'
+ 4162 | void get_lat_long_date_time(char *gsm_no) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino: In function 'void fetchFromHttpAndUpdate(char*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4664:14: error: 'ota_md5_hash' was not declared in this scope
+ 4664 |   if (strlen(ota_md5_hash) == 32) {
+      |              ^~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino: At global scope:
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino:3:5: error: redefinition of 'int active_cid'
+    3 | int active_cid = 1;      // Default to 1
+      |     ^~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3:5: note: 'int active_cid' previously defined here
+    3 | int active_cid = 1;      // Default to 1
+      |     ^~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino:4:6: error: redefinition of 'bool http_ready'
+    4 | bool http_ready = false; // v5.42: Track if HTTPINIT succeeded for this cycle
+      |      ^~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4:6: note: 'bool http_ready' previously defined here
+    4 | bool http_ready = false; // v5.42: Track if HTTPINIT succeeded for this cycle
+      |      ^~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino:8:6: error: redefinition of 'void gprs(void*)'
+    8 | void gprs(void *pvParameters) {
+      |      ^~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:159:6: note: 'void gprs(void*)' previously defined here
+  159 | void gprs(void *pvParameters) {
+      |      ^~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino: In function 'void gprs(void*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino:127:33: error: call of overloaded 'get_lat_long_date_time(char [20])' is ambiguous
+  127 |           get_lat_long_date_time(universalNumber);
+      |           ~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:1096:6: note: candidate: 'void get_lat_long_date_time(char*, bool)'
+ 1096 | void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4162:6: note: candidate: 'void get_lat_long_date_time(char*)'
+ 4162 | void get_lat_long_date_time(char *gsm_no) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino:534:29: error: call of overloaded 'get_lat_long_date_time(char [20])' is ambiguous
+  534 |       get_lat_long_date_time(universalNumber);
+      |       ~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:1096:6: note: candidate: 'void get_lat_long_date_time(char*, bool)'
+ 1096 | void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4162:6: note: candidate: 'void get_lat_long_date_time(char*)'
+ 4162 | void get_lat_long_date_time(char *gsm_no) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino: At global scope:
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:3:6: error: redefinition of 'void send_ftp_file(char*, bool, bool)'
+    3 | void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
+      |      ^~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2235:6: note: 'void send_ftp_file(char*, bool, bool)' previously defined here
+ 2235 | void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
+      |      ^~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:520:6: error: redefinition of 'bool isBufferSanityOK(uint8_t*, int, int)'
+  520 | bool isBufferSanityOK(uint8_t *buf, int len, int offset) {
+      |      ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4291:6: note: 'bool isBufferSanityOK(uint8_t*, int, int)' previously defined here
+ 4291 | bool isBufferSanityOK(uint8_t *buf, int len, int offset) {
+      |      ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:574:5: error: redefinition of 'int setup_ftp(int)'
+  574 | int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
+      |     ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4345:5: note: 'int setup_ftp(int)' previously defined here
+ 4345 | int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
+      |     ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:717:6: error: redefinition of 'void fetchFromHttpAndUpdate(char*)'
+  717 | void fetchFromHttpAndUpdate(char *fileName) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4547:6: note: 'void fetchFromHttpAndUpdate(char*)' previously defined here
+ 4547 | void fetchFromHttpAndUpdate(char *fileName) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:1158:6: error: redefinition of 'void copyFromSPIFFSToFS(char*)'
+ 1158 | void copyFromSPIFFSToFS(char *dateFile) {
+      |      ^~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4993:6: note: 'void copyFromSPIFFSToFS(char*)' previously defined here
+ 4993 | void copyFromSPIFFSToFS(char *dateFile) {
+      |      ^~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:1366:7: error: redefinition of 'char* parse_http_head(char*, char*)'
+ 1366 | char *parse_http_head(char *response, char *check) {
+      |       ^~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:5165:7: note: 'char* parse_http_head(char*, char*)' previously defined here
+ 5165 | char *parse_http_head(char *response, char *check) {
+      |       ^~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:1380:6: error: redefinition of 'void send_daily_file(const char*)'
+ 1380 | void send_daily_file(
+      |      ^~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:1920:6: note: 'void send_daily_file(const char*)' previously defined here
+ 1920 | void send_daily_file(
+      |      ^~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:3:6: error: redefinition of 'void get_signal_strength()'
+    3 | void get_signal_strength() {
+      |      ^~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3229:6: note: 'void get_signal_strength()' previously defined here
+ 3229 | void get_signal_strength() {
+      |      ^~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:78:6: error: redefinition of 'void get_network()'
+   78 | void get_network() {
+      |      ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3300:6: note: 'void get_network()' previously defined here
+ 3300 | void get_network() {
+      |      ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:234:6: error: redefinition of 'void get_registration()'
+  234 | void get_registration() {
+      |      ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3456:6: note: 'void get_registration()' previously defined here
+ 3456 | void get_registration() {
+      |      ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:680:6: error: redefinition of 'void get_a7672s()'
+  680 | void get_a7672s() {
+      |      ^~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3798:6: note: 'void get_a7672s()' previously defined here
+ 3798 | void get_a7672s() {
+      |      ^~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:828:6: error: redefinition of 'void process_sms(char)'
+  828 | void process_sms(char msg_no) {
+      |      ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:3895:6: note: 'void process_sms(char)' previously defined here
+ 3895 | void process_sms(char msg_no) {
+      |      ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:943:6: error: redefinition of 'void prepare_and_send_status(char*)'
+  943 | void prepare_and_send_status(char *gsm_no) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4009:6: note: 'void prepare_and_send_status(char*)' previously defined here
+ 4009 | void prepare_and_send_status(char *gsm_no) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:1048:6: error: redefinition of 'void get_gps_coordinates()'
+ 1048 | void get_gps_coordinates() {
+      |      ^~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:4115:6: note: 'void get_gps_coordinates()' previously defined here
+ 4115 | void get_gps_coordinates() {
+      |      ^~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:423:6: error: redefinition of 'void flushSerialSIT()'
+  423 | void flushSerialSIT() {
+      |      ^~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:8:6: note: 'void flushSerialSIT()' previously defined here
+    8 | void flushSerialSIT() {
+      |      ^~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:535:6: error: redefinition of 'void sync_rtc_from_server_tm(const char*, bool)'
+  535 | void sync_rtc_from_server_tm(const char *payload, bool force) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:23:6: note: 'void sync_rtc_from_server_tm(const char*, bool)' previously defined here
+   23 | void sync_rtc_from_server_tm(const char *payload, bool force) {
+      |      ^~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:695:6: error: redefinition of 'void start_gprs()'
+  695 | void start_gprs() {
+      |      ^~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:693:6: note: 'void start_gprs()' previously defined here
+  693 | void start_gprs() {
+      |      ^~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:786:5: error: redefinition of 'int parseHttpDate(const char*, tm*)'
+  786 | int parseHttpDate(const char *dateStr, struct tm *tm) {
+      |     ^~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:782:5: note: 'int parseHttpDate(const char*, tm*)' previously defined here
+  782 | int parseHttpDate(const char *dateStr, struct tm *tm) {
+      |     ^~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:798:6: error: redefinition of 'void graceful_modem_shutdown()'
+  798 | void graceful_modem_shutdown() {
+      |      ^~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2667:6: note: 'void graceful_modem_shutdown()' previously defined here
+ 2667 | void graceful_modem_shutdown() {
+      |      ^~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:850:6: error: redefinition of 'void send_sms()'
+  850 | void send_sms() {
+      |      ^~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2711:6: note: 'void send_sms()' previously defined here
+ 2711 | void send_sms() {
+      |      ^~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:920:5: error: redefinition of 'int read_line(char*, char*, int, char)'
+  920 | int read_line(char *src, char *dest, int max_len, char delim_chr) {
+      |     ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:5211:5: note: 'int read_line(char*, char*, int, char)' previously defined here
+ 5211 | int read_line(char *src, char *dest, int max_len, char delim_chr) {
+      |     ^~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:949:6: error: redefinition of 'void convert_gmt_to_ist(tm*)'
+  949 | void convert_gmt_to_ist(struct tm *gmt_time) {
+      |      ^~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:5240:6: note: 'void convert_gmt_to_ist(tm*)' previously defined here
+ 5240 | void convert_gmt_to_ist(struct tm *gmt_time) {
+      |      ^~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:962:6: error: redefinition of 'void send_at_cmd(char*, char*, char*)'
+  962 | void send_at_cmd(char *cmd, char *check, char *spl) {
+      |      ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:5253:6: note: 'void send_at_cmd(char*, char*, char*)' previously defined here
+ 5253 | void send_at_cmd(char *cmd, char *check, char *spl) {
+      |      ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_http.ino:3:6: error: redefinition of 'void prepare_data_and_send()'
+    3 | void prepare_data_and_send() {
+      |      ^~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:802:6: note: 'void prepare_data_and_send()' previously defined here
+  802 | void prepare_data_and_send() {
+      |      ^~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_http.ino:763:6: error: redefinition of 'void send_http_data()'
+  763 | void send_http_data() {
+      |      ^~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:1469:6: note: 'void send_http_data()' previously defined here
+ 1469 | void send_http_data() {
+      |      ^~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_http.ino:1345:6: error: redefinition of 'void send_unsent_data()'
+ 1345 | void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
+      |      ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:1947:6: note: 'void send_unsent_data()' previously defined here
+ 1947 | void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
+      |      ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_http.ino:1711:5: error: redefinition of 'int send_at_cmd_data(char*, String, bool)'
+ 1711 | int send_at_cmd_data(char *payload, String response_arg, bool robust) {
+      |     ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2746:5: note: 'int send_at_cmd_data(char*, String, bool)' previously defined here
+ 2746 | int send_at_cmd_data(char *payload, String response_arg, bool robust) {
+      |     ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_http.ino:1998:6: error: redefinition of 'void store_current_unsent_data()'
+ 1998 | void store_current_unsent_data() {
+      |      ^~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs.ino:2982:6: note: 'void store_current_unsent_data()' previously defined here
+ 2982 | void store_current_unsent_data() {
+      |      ^~~~~~~~~~~~~~~~~~~~~~~~~
+Multiple libraries were found for "WiFi.h"
+  Used: /Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi
+  Not used: /Users/satishkripavasan/Documents/Arduino/libraries/WiFiEspAT
+
+[92mUsed library[0m            [92mVersion[0m [90mPath[0m
+[93mKeypad[0m                  3.1.1   [90m/Users/satishkripavasan/Documents/Arduino/libraries/Keypad-master[0m
+[93mLiquidCrystal I2C[0m       1.1.2   [90m/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C[0m
+[93mWire[0m                    3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Wire[0m
+[93mPreferences[0m             3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Preferences[0m
+[93mRTClib[0m                  2.1.4   [90m/Users/satishkripavasan/Documents/Arduino/libraries/RTClib[0m
+[93mAdafruit BusIO[0m          1.17.4  [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_BusIO[0m
+[93mSD[0m                      3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SD[0m
+[93mFS[0m                      3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/FS[0m
+[93mSPI[0m                     3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SPI[0m
+[93mSPIFFS[0m                  3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SPIFFS[0m
+[93mUpdate[0m                  3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Update[0m
+[93mWiFi[0m                    3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi[0m
+[93mNetworking[0m              3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Network[0m
+[93mHULP[0m                    2.0.1   [90m/Users/satishkripavasan/Documents/Arduino/libraries/HULP-master[0m
+[93mAdafruit BME280 Library[0m 2.3.0   [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_BME280_Library[0m
+[93mAdafruit Unified Sensor[0m 1.1.15  [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_Unified_Sensor[0m
+[93mESPmDNS[0m                 3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/ESPmDNS[0m
+[93mWebServer[0m               3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WebServer[0m
+[93mHash[0m                    3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Hash[0m
+
+[92mUsed platform[0m [92mVersion[0m [90mPath[0m
+[93mesp32:esp32[0m   3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6[0m
+Error during build: exit status 1
