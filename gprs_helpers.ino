@@ -223,8 +223,23 @@ bool try_activate_apn(const char *apn) {
     vTaskDelay(200 / portTICK_PERIOD_MS);
   }
 
+  flushSerialSIT(); // v5.79: Clear any "PB DONE" boot noise before command
   SerialSIT.println("AT+CGACT=1,1");
-  String response = waitForResponse("OK", 25000);
+  
+  // v5.79 Robust Response Wait: Filter async URCs (PB DONE, SMS DONE)
+  String response = "";
+  unsigned long start = millis();
+  while (millis() - start < 25000) {
+    if (SerialSIT.available()) {
+      String line = SerialSIT.readStringUntil('\n');
+      line.trim();
+      if (line.equalsIgnoreCase("OK")) { response = "OK"; break; }
+      if (line.indexOf("ERROR") != -1) { response = line; break; }
+    }
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+    esp_task_wdt_reset();
+  }
+  
   debugln("CGACT Resp: " + response); 
 
   if (response.indexOf("OK") != -1) {

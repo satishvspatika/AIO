@@ -171,10 +171,9 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
     if result.returncode == 0:
         print_success("Compilation successful")
         
-        # Find and copy binary from the specific build dir
-        binary_files = list(config_build_dir.glob("*.ino.bin"))
-        if binary_files:
-            binary = binary_files[0]
+        # Explicit binary file selection (matches v5.74 style resilience)
+        binary = config_build_dir / f"{SKETCH_DIR.name}.ino.bin"
+        if binary.exists():
             firmware_path = output_dir / "firmware.bin"
             shutil.copy(binary, firmware_path)
             
@@ -316,9 +315,9 @@ def main():
     if success_count > 0:
         # Get firmware version for the release directory
         import re
-        with open(GLOBALS_H, 'r') as f:
-            globals_content = f.read()
-        version_match = re.search(r'#define FIRMWARE_VERSION "([^"]+)"', globals_content)
+        with open(USER_CONFIG_H, 'r') as f:
+            config_content = f.read()
+        version_match = re.search(r'#define FIRMWARE_VERSION "([^"]+)"', config_content)
         firmware_version = version_match.group(1) if version_match else "UNKNOWN"
         
         # New Dynamic Base Path

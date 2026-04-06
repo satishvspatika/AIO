@@ -154,10 +154,10 @@ full_discovery:
 
     if (current_iccid.length() >= 6) {
       String prefix6 = current_iccid.substring(0, 6);
-      if (prefix6 == "899116" || prefix6 == "899110") {
+      if (prefix6 == "899116" || prefix6 == "899110" || prefix6 == "899145") {
         strcpy(apn_str, "airteliot.com");
         debugln("[APN] Airtel IoT/M2M SIM detected via ICCID prefix.");
-      } else if (prefix6 == "899145") {
+      } else {
         strcpy(apn_str, "airtelgprs.com");
         debugln("[APN] Airtel Commercial SIM detected via ICCID prefix.");
       }
@@ -363,12 +363,15 @@ void get_registration() {
     waitForResponse("OK", 1000);
     SerialSIT.println("AT+CPSMS=0"); // Disable Power Saving Mode
     waitForResponse("OK", 1000);
-    SerialSIT.println("AT+CNETLIGHT=0"); // Reset LED driver
-    waitForResponse("OK", 500);
-    SerialSIT.println("AT+CNETLIGHT=1"); // Ensure LED blinks
-    waitForResponse("OK", 1000);
     vTaskDelay(1000 / portTICK_PERIOD_MS); // Let it settle
   }
+
+  // v5.79: Restore v5.75 Netlight logic (Ensures pulse even if Fast-Tracked)
+  SerialSIT.println("AT+CNETLIGHT=0"); // Reset LED driver
+  waitForResponse("OK", 500);
+  SerialSIT.println("AT+CNETLIGHT=1"); // Ensure LED blinks
+  waitForResponse("OK", 500);
+
 
   while (!is_registered && (retries < no_of_retries)) {
     esp_task_wdt_reset();

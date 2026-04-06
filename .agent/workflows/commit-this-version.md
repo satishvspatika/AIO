@@ -2,7 +2,7 @@
 description: Formal process to commit a new version, build all configurations, and package the release.
 ---
 
-1. **Update Firmware Version**: Ensure `FIRMWARE_VERSION` in `globals.h` is incremented.
+1. **Update Firmware Version**: Ensure `FIRMWARE_VERSION` in `user_config.h` is incremented.
 2. **Review Changes**: Verify all modifications are correct and tested.
 3. **Execute Automated Release**:
    // turbo
@@ -11,7 +11,7 @@ description: Formal process to commit a new version, build all configurations, a
 This single command will:
 - Generate/Verify Release Notes
 - Commit code and tag the version
-- Build all 6 configurations
+- Build all 5 configurations
 - Package the release (ZIP)
 - Push to GitHub (Tags & Main)
 - Send the Release Email with attachments.

@@ -184,7 +184,7 @@ void rtcRead(void *pvParameters) {
     }
 
     esp_task_wdt_reset();
-    vTaskDelay(pdMS_TO_TICKS(5000)); // wait 5 seconds
+    vTaskDelay(pdMS_TO_TICKS(3000)); // wait 3 seconds (v5.78 Hardening: reduced from 5s to prevent WDT race)
   }
 }
 

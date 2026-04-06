@@ -23,6 +23,7 @@
  */
 
 #include "globals.h"
+// v5.78 BUILD SIGNATURE: 0xDEADBEEF (Hardening Revision A)
 #include <driver/adc.h>
 #include <rom/rtc.h>
 #include <esp_flash.h>
@@ -1056,95 +1057,8 @@ void setup() {
   print_reset_reason(rtc_get_reset_reason(0));
 #endif
 
-  // Firmware Update from SD Card
-  if (sd_card_ok && SD.exists("/firmware.bin")) {
-    bool needUpdate = true;
-
-    // 1. Check fw_version.txt if it exists
-    if (SD.exists("/fw_version.txt")) {
-      File vFile = SD.open("/fw_version.txt", FILE_READ);
-      if (vFile) {
-        String sd_ver = vFile.readStringUntil('\n');
-        sd_ver.trim();
-        vFile.close();
-
-        // v5.78 Hardening: Skip if identical (supports full UNIT_VER or simple FIRMWARE_VERSION)
-        if (sd_ver.equalsIgnoreCase(UNIT_VER) || sd_ver.equalsIgnoreCase(FIRMWARE_VERSION)) {
-          debugln("SD Version matches current firmware. Skipping update.");
-          needUpdate = false;
-        } else {
-          debugf("[OTA] Version difference detected: [%s] vs [%s]. Proceeding...\n", sd_ver.c_str(), UNIT_VER);
-        }
-      }
-    }
-
-    // 2. MD5 check
-    if (needUpdate) {
-      debugln("Found firmware.bin in SD Card... Verifying MD5...");
-      File firmware = SD.open("/firmware.bin", FILE_READ);
-      if (firmware) {
-        MD5Builder md5;
-        md5.begin();
-        md5.addStream(firmware, firmware.size());
-        md5.calculate();
-        String sd_md5 = md5.toString();
-        firmware.close();
-
-        if (SPIFFS.exists("/sd_fw_md5.txt")) {
-          File md5File = SPIFFS.open("/sd_fw_md5.txt", FILE_READ);
-          if (md5File) {
-            String stored_md5 = md5File.readStringUntil('\n');
-            stored_md5.trim();
-            md5File.close();
-            if (sd_md5.equalsIgnoreCase(stored_md5)) {
-              debugln("Firmware identical to last installed (MD5 match). "
-                      "Skipping.");
-              needUpdate = false;
-            }
-          }
-        }
-
-        if (needUpdate) {
-          // Perform Update
-          firmware = SD.open("/firmware.bin", FILE_READ);
-          if (firmware) {
-            debugln("Starting Firmware Update...");
-            Update.onProgress(progressCallBack);
-            if (Update.begin(firmware.size(), U_FLASH)) {
-              Update.writeStream(firmware);
-              if (Update.end()) {
-                debugln("Update finished! Storing MD5 and restarting...");
-                
-                // v5.75 Golden Fix: Force-Reset the OTA 'Ghost' Signpost
-                // This ensures the unit MUST boot into the new Slot 0 version.
-                const esp_partition_t *ota_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, "otadata");
-                if (ota_partition != NULL) {
-                    debugln("[OTA] Wiping Ghost Signpost (0xe000)...");
-                    esp_err_t erase_ret = esp_partition_erase_range(ota_partition, 0, ota_partition->size);
-                    if (erase_ret != ESP_OK) {
-                        debugf("[OTA] Ghost-Kill erase FAILED: %d. Boot may revert.\n", erase_ret);
-                    }
-                }
-
-                diag_fw_just_updated = true; // v5.76
-                File md5Write = SPIFFS.open("/sd_fw_md5.txt", FILE_WRITE);
-                if (md5Write) {
-                  md5Write.print(sd_md5);
-                  md5Write.close();
-                }
-                delay(1000);
-                ESP.restart();
-              } else {
-                debugln("Update failed!");
-                debugln(Update.getError());
-              }
-            }
-            firmware.close();
-          }
-        }
-      }
-    }
-  }
+  // v5.79 STRUCTURAL FIX: The SD OTA block was moved to Line 1700+ 
+  // after hardware (SD/SPIFFS) initialization is actually verified.
 
   if (SPIFFS.exists("/firmware.doc")) {
     String temp;
@@ -1538,6 +1452,7 @@ void progressCallBack(size_t currSize, size_t totalSize) {
     debugf2("CALLBACK:  Update process at %d of %d bytes...\n", currSize,
             totalSize);
   }
+  esp_task_wdt_reset(); // v5.79: Keep system alive during long flash writes
 }
 
 void initialize_hw() {
@@ -1723,6 +1638,89 @@ void initialize_hw() {
 #endif
 
   debugln("[BOOT] Hardware Initialized.");
+
+  // v5.79 FINAL STRUCTURAL FIX: Moved from Line 1060 to after SD Card initialization.
+  // This ensures the Hardware is actually ready before we check for firmware.
+  if (sd_card_ok && SD.exists("/firmware.bin")) {
+    bool needUpdate = true;
+    String sd_ver = ""; 
+
+    if (SD.exists("/fw_version.txt")) {
+      File vFile = SD.open("/fw_version.txt", FILE_READ);
+      if (vFile) {
+        sd_ver = vFile.readStringUntil('\n');
+        sd_ver.trim();
+        vFile.close();
+
+        if (sd_ver.equalsIgnoreCase(UNIT_VER) || sd_ver.equalsIgnoreCase(FIRMWARE_VERSION)) {
+          debugln("SD Version matches current firmware. Skipping update.");
+          needUpdate = false;
+        } else {
+          debugf("[OTA] Version difference: [%s] vs [%s]. Proceeding...\n", sd_ver.c_str(), UNIT_VER);
+        }
+      }
+    }
+
+    if (needUpdate) {
+      debugln("Found firmware.bin in SD... Verifying MD5...");
+      File firmware = SD.open("/firmware.bin", FILE_READ);
+      if (firmware) {
+        MD5Builder md5;
+        md5.begin();
+        md5.addStream(firmware, firmware.size());
+        md5.calculate();
+        String sd_md5 = md5.toString();
+        firmware.close();
+
+        if (SPIFFS.exists("/sd_fw_md5.txt")) {
+          File md5File = SPIFFS.open("/sd_fw_md5.txt", FILE_READ);
+          if (md5File) {
+            String stored_md5 = md5File.readStringUntil('\n');
+            stored_md5.trim();
+            md5File.close();
+            if (sd_md5.equalsIgnoreCase(stored_md5)) {
+              if (sd_ver.isEmpty()) {
+                debugln("Firmware identical (MD5 match, no version file). Skipping.");
+                needUpdate = false;
+              } else if (sd_ver.equalsIgnoreCase(UNIT_VER) || sd_ver.equalsIgnoreCase(FIRMWARE_VERSION)) {
+                debugln("Firmware identical (MD5 + Version match). Skipping.");
+                needUpdate = false;
+              } else {
+                debugln("MD5 match but Version MISMATCH. RE-FLASHING...");
+                needUpdate = true;
+              }
+            }
+          }
+        }
+
+        if (needUpdate) {
+          firmware = SD.open("/firmware.bin", FILE_READ);
+          if (firmware) {
+            debugln("Starting Firmware Update...");
+            Update.onProgress(progressCallBack);
+            if (Update.begin(firmware.size(), U_FLASH)) {
+              Update.writeStream(firmware);
+              if (Update.end()) {
+                debugln("Update finished! Storing MD5 and restarting...");
+                diag_fw_just_updated = true;
+                File md5Write = SPIFFS.open("/sd_fw_md5.txt", FILE_WRITE);
+                if (md5Write) {
+                  md5Write.print(sd_md5);
+                  md5Write.close();
+                }
+                delay(1000);
+                ESP.restart();
+              } else {
+                debugf("Update failed! Error: %s\n", Update.errorString());
+              }
+            }
+            firmware.close();
+          }
+        }
+      }
+    }
+  }
+
   last_activity_time = millis(); // v5.85: Trigger safety heartbeat starting now
 }
 

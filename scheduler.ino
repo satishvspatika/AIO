@@ -809,6 +809,7 @@ void scheduler(void *pvParameters) {
       rf_cls_yy = cur_year;
 
       // Find current sampleNo
+      // v5.79: Reverted to original Met-Day mapping (8:45 AM = Slot 1)
       sampleNo = record_hr * SAMPLES_PER_HOUR + record_min / MINUTES_PER_SAMPLE;
       sampleNo = (sampleNo + (MIDNIGHT_SAMPLE_NO + 1)) % (MAX_SAMPLE_NO + 1);
 
