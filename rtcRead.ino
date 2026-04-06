@@ -43,6 +43,7 @@ void rtcRead(void *pvParameters) {
 
       int read_retries = 0;
       while (read_retries < 3) {
+        esp_task_wdt_reset(); // v5.78 Hardening: Keep WDT happy during I2C contention
         Wire.beginTransmission(RTC_ADDRESS);
         Wire.write(0x00);
         byte err = Wire.endTransmission();
@@ -72,6 +73,7 @@ void rtcRead(void *pvParameters) {
 
       xSemaphoreGive(i2cMutex);
     } else {
+        esp_task_wdt_reset(); // Reset even if mutex was busy to prevent starvation reboots
         // v5.66: Reduced debug noise if mutex is busy (expected during UI/Sensor reads)
     }
 

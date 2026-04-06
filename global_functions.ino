@@ -196,7 +196,7 @@ void start_deep_sleep() {
   bool fsMutexTaken = (uxSemaphoreGetCount(fsMutex) == 0);
 
   if (schedulerBusy || gprs_started || httpInitiated || race_sync_invalid || health_in_progress || modemMutexTaken || fsMutexTaken) {
-      debugln("[PWR] 🚨 RACE PREVENTED: Activity detected during final shutdown. Aborting sleep to process task.");
+      debugln("[PWR] [CRIT] RACE PREVENTED: Activity detected during final shutdown. Aborting sleep to process task.");
       sleep_sequence_active = false; // [v5.77 Signal Reset]
       // Phase 10 Fix: Instead of a violent reboot, we just return. 
       // Hardware state (Modem/I2C power cut) must be restored by the task that took control.
@@ -413,7 +413,7 @@ void recoverI2CBus(bool alreadyLocked) {
     return;
   }
 
-  debugln("[I2C] 🚨 Bus hang detected! Attempting recovery...");
+  debugln("[I2C] [CRIT] Bus hang detected! Attempting recovery...");
 
   // End any existing Wire session
   Wire.end();
@@ -442,7 +442,7 @@ void recoverI2CBus(bool alreadyLocked) {
   }
 
   if (!recovered) {
-    debugln("[I2C] ❌ Recovery failed: SDA still stuck low!");
+    debugln("[I2C] [ERR] Recovery failed: SDA still stuck low!");
   } else {
     debugln("[I2C] ✅ Recovery successful.");
   }
@@ -697,9 +697,9 @@ void scanFileToMask(const char *fName, uint32_t *mask) {
       if (token) sNum = atoi(token);
       
       // ISSUE-H4 fix v5.65: Signal strength field position differs per SYSTEM type.
-      // SYSTEM 0 (RF):     sampleNo,date,time,instRF,cumRF,signal,bat     → field 5
-      // SYSTEM 1 (TWS):    sampleNo,date,time,temp,hum,ws,wd,signal,bat   → field 7
-      // SYSTEM 2 (TWS-RF): sampleNo,date,time,cumRF,temp,hum,ws,wd,signal,bat → field 8
+      // SYSTEM 0 (RF):     sampleNo,date,time,instRF,cumRF,signal,bat     [INFO] field 5
+      // SYSTEM 1 (TWS):    sampleNo,date,time,temp,hum,ws,wd,signal,bat   [INFO] field 7
+      // SYSTEM 2 (TWS-RF): sampleNo,date,time,cumRF,temp,hum,ws,wd,signal,bat [INFO] field 8
       // Previously hardcoded field 8 for all systems, causing SYSTEM 0 and 1
       // to read bat_val (e.g. 4) instead of signal (-111), silently marking
       // gap-filled records as "sent" and inflating the dashboard count.
@@ -785,9 +785,9 @@ float restoreRainfall(const char *fName) {
   if (lastLine.length() > 0) {
     // P0-A fix v5.65: Field layout differs per SYSTEM type.
     // SYSTEM 0 (RF):     sampleNo,date,time,inst_rf,CUM_RF,signal,bat
-    //   → cum_rf is at field index 4 (between 4th and 5th comma)
+    //   [INFO] cum_rf is at field index 4 (between 4th and 5th comma)
     // SYSTEM 2 (TWS-RF): sampleNo,date,time,CUM_RF,temp,hum,ws,wd,signal,bat
-    //   → cum_rf is at field index 3 (between 3rd and 4th comma)
+    //   [INFO] cum_rf is at field index 3 (between 3rd and 4th comma)
     // SYSTEM 1 (TWS): no rainfall — returns 0.0 safely via empty substring.
     // Previously ALL systems used field 3. On SYSTEM 0, field 3 = inst_rf,
     // so after a power cut the anchor was restored as e.g. 0.25mm not 12.75mm.

@@ -280,9 +280,9 @@ void scheduler(void *pvParameters) {
       // counter is now LOWER than before. This is usually a hardware
       // reset/fiddle, not a rollover. Instead of discarding the tips,
       // we assume it reset to 0, so the 'delta' is simply the new count.
-      // v5.65 fix: Threshold raised 65000→65535. 65535 is the only delta
+      // v5.65 fix: Threshold raised 65000[INFO]65535. 65535 is the only delta
       // value that is mathematically unreachable via normal 16-bit rollover
-      // (max legitimate rollover = 65535→0 = delta 1). The range 65000..65534
+      // (max legitimate rollover = 65535[INFO]0 = delta 1). The range 65000..65534
       // is also impossible for rain but is safely caught by the noise-surge
       // cap (> 5000) immediately below, making 65000 here redundant.
       if (rf_raw_delta >= 65535) {
@@ -308,7 +308,7 @@ void scheduler(void *pvParameters) {
       // (= 200mm/hr, beyond any recorded Indian rainfall event), the pin
       // is floating and ULP counted electrical noise. Discard as noise.
       if (rf_value > 50.0) {
-        debugf1("[Rain] ⚠️ Noise Storm: rf_count produced %.1fmm. "
+        debugf1("[Rain] [WARN] Noise Storm: rf_count produced %.1fmm. "
                 "Discarding (pin floating).\n",
                 rf_value);
         rf_value = 0.0;
@@ -1230,7 +1230,7 @@ void scheduler(void *pvParameters) {
           // load that as last_cumRF, ALL subsequent cumulations are wrong.
           // Cap at 300mm (a full extreme-monsoon day is ~200mm max).
           if (last_cumRF > 300.0) {
-            debugf1("[Rain] ⚠️ Corrupt last_cumRF=%.1f in SPIFFS. "
+            debugf1("[Rain] [WARN] Corrupt last_cumRF=%.1f in SPIFFS. "
                     "Resetting to 0.\n",
                     last_cumRF);
             last_cumRF = 0.0;
@@ -1859,7 +1859,7 @@ void scheduler(void *pvParameters) {
         // Pulse logic removed the need for holistic file2.close() here.
         // xSemaphoreGive handled at TRIGGER_HTTP
 
-        // 🚨 CRITICAL FIX: The mid-day sequence assumes gprs.ino handles
+        // [CRIT] CRITICAL FIX: The mid-day sequence assumes gprs.ino handles
         // unsent.txt for the *current* record (sampleNo). But if
         // skip_primary_http is true (like on fresh boot), gprs.ino completely
         // bypasses it. We MUST queue it here! Note: fsMutex is actively held
@@ -2214,7 +2214,7 @@ void scheduler(void *pvParameters) {
             if (fs_locked && file1) {
               file1.print(append_text);
             } else {
-              debugln("[SCHED] ⚠️ FS Mutex Timeout on gap-fill write. "
+              debugln("[SCHED] [WARN] FS Mutex Timeout on gap-fill write. "
                       "Skipping.");
             }
             if (sd_card_ok && sd1) {
@@ -2284,7 +2284,7 @@ void scheduler(void *pvParameters) {
             if (fs_locked && file1) {
               file1.print(append_text);
             } else {
-              debugln("[SCHED] ⚠️ FS Mutex Timeout on current-record write. "
+              debugln("[SCHED] [WARN] FS Mutex Timeout on current-record write. "
                       "Skipping.");
             }
             if (sd_card_ok && sd1)

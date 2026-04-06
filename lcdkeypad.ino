@@ -367,6 +367,7 @@ void lcdkeypad(void *pvParameters) {
 
     if (lcdkeypad_start == 0) {
       char wakeupKey = keypad.getKey();
+      bool verified_press = (wakeupKey != NO_KEY);
       
       // v5.68 Hardware Ghosting Fix: If the physical power switch for the LCD/Keypad is OFF,
       // the data pins will float and keypad.getKey() hallucinate random keys (like '6').
@@ -383,22 +384,19 @@ void lcdkeypad(void *pvParameters) {
         }
       }
 
-      if (wakeupKey != NO_KEY || digitalRead(27) == LOW) {
-        bool verified_press = true;
-        if (wakeupKey == NO_KEY && digitalRead(27) == LOW) {
-          // v5.85 P14: Reduced from 200ms for responsiveness
-          vTaskDelay(20 / portTICK_PERIOD_MS);
-          if (digitalRead(27) != LOW) {
-            verified_press = false; // Short spike detected
-          }
+        // v5.78 Hardening: Mask electrical "Ghost" presses during background GPRS cycles.
+        // If the scheduler is busy and the press didn't resolve to a physical key immediately,
+        // it is almost certainly a modem-induced voltage dip on the interrupt line.
+        if (verified_press && schedulerBusy && wakeupKey == NO_KEY) {
+           debugln("[UI] Masking electrical ghost-press during background GPRS task.");
+           verified_press = false; 
         }
-        
+
         if (verified_press) {
           wakeup_reason_is = ext0;
           savedWakeupKey = wakeupKey;
           debugf("[UI] Wakeup detected. Key: %c\n", (wakeupKey != NO_KEY ? wakeupKey : 'P'));
           delay(100); 
-        }
       }
     }
 
@@ -968,16 +966,9 @@ void lcdkeypad(void *pvParameters) {
                 if (ui_data[cur_fld_no].fieldType != eDisplayOnly && ui_data[cur_fld_no].fieldType != eLive) {
                    cur_mode = eEditOn;
                    if (cur_fld_no == FLD_STATION) {
-                      // UX Match v5.75: Pre-fill with the unpadded ID for editing
-                      const char *clean_id = station_name;
-                      if (strlen(station_name) == 6 && strncmp(station_name, "00", 2) == 0 && isDigitStr(station_name)) {
-                          clean_id = station_name + 2;
-                      }
-                      strncpy(input_buf, clean_id, 15);
-                      input_buf[15] = '\0';
-                      // Pad remaining space to clear previous entries
-                      int clen = strlen(input_buf);
-                      for(int i=clen; i<16; i++) input_buf[i] = ' ';
+                      // v5.78 Hardening: Reverted to v5.74 "Blank Slate" behavior. 
+                      // Field is cleared on entry to ensure intentional ID assignment.
+                      memset(input_buf, ' ', 16);
                       input_buf[16] = '\0';
                    } else {
                       strcpy(input_buf, ui_data[cur_fld_no].bottomRow);
@@ -986,34 +977,64 @@ void lcdkeypad(void *pvParameters) {
                 }
              } else {
                 if (cur_fld_no == FLD_STATION) {
-                   String trimmed = String(input_buf);
-                   trimmed.trim();
-                   
-                   // Fallback: If user accidentally hit SET on a completely blank screen
-                   if (trimmed.length() == 0) {
-                       trimmed = String(station_name);
-                   }
+                    String trimmed = String(input_buf);
+                    trimmed.trim();
 
-                    // v5.77 Hardened [UI-PAD]: Correct Padding Hierarchy (Mimic v5.75 display / Hardened backend)
+                    // Fallback: If user accidentally hit SET on a completely blank screen
+                    if (trimmed.length() == 0) {
+                        trimmed = String(station_name);
+                    }
+
+                    // v5.77 Hardened [UI-PAD]: Correct Padding Hierarchy
                     if (trimmed.length() == 4 && isDigitStr(trimmed.c_str())) {
                         char p_buf[16];
                         snprintf(p_buf, sizeof(p_buf), "00%s", trimmed.c_str());
                         trimmed = String(p_buf);
                     }
+
+                    // v5.78 Hardening: Detect ID change and trigger mandatory data wipe
+                    if (trimmed != String(station_name)) {
+                        debugln("[UI] Station ID Change Detected. Initiating Mandatory Data Wipe...");
+                        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+                            lcd.clear(); lcd.setCursor(0,0); lcd.print("ID CHANGED!");
+                            lcd.setCursor(0,1); lcd.print("WIPING DATA...");
+                            xSemaphoreGive(i2cMutex);
+                        }
+
+                        // Surgical Wipe & New ID persistence: Block the scheduler once
+                        // v5.70 pattern: Protect with fsMutex
+                        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+                            SPIFFS.remove("/unsent.txt"); 
+                            SPIFFS.remove("/ftpunsent.txt");
+                            SPIFFS.remove("/unsent_pointer.txt");
+                            // Also remove the old station-named log files to be 100% clean
+                            File root = SPIFFS.open("/"); 
+                            File file = root.openNextFile();
+                            while(file) {
+                                String n = file.name();
+                                if (n.endsWith(".txt") && !(n == "station.txt" || n == "rf_fw.txt" || n == "rf_res.txt")) {
+                                    SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
+                                }
+                                file.close(); file = root.openNextFile();
+                            }
+                            root.close();
+
+                            // v5.70: Save new identity while still holding the mutex for atomicity
+                            File f1 = SPIFFS.open("/station.txt", FILE_WRITE);
+                            if (f1) { f1.print(trimmed); f1.close(); }
+                            File f2 = SPIFFS.open("/station.doc", FILE_WRITE);
+                            if (f2) { f2.print(trimmed); f2.close(); }
+                            
+                            xSemaphoreGive(fsMutex);
+                        }
+                    }
+
                     strncpy(station_name, trimmed.c_str(), 15);
                     station_name[15] = '\0';
                     strcpy(ftp_station, station_name);
-                   // v5.60: Save to NVS, station.txt AND station.doc to prevent revert
+                   // NVS Save (Internal Flash)
                    Preferences prefs; prefs.begin("sys-config", false); 
                    prefs.putString("station", station_name); prefs.end();
-                   // v5.70: Protect station save with fsMutex
-                   if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-                      File f1 = SPIFFS.open("/station.txt", FILE_WRITE);
-                      if (f1) { f1.print(station_name); f1.close(); }
-                      File f2 = SPIFFS.open("/station.doc", FILE_WRITE);
-                      if (f2) { f2.print(station_name); f2.close(); }
-                      xSemaphoreGive(fsMutex);
-                   }
                    // Requirement: Acquire GPS whenever ID changes (eStartupGPS does GPS + Health)
                    portENTER_CRITICAL(&syncMux);
                    if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || 

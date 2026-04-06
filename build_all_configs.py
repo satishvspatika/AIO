@@ -13,11 +13,12 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
-# Configuration
+# --- DIRECTORY CONFIGURATION ---
 SKETCH_DIR = Path(__file__).parent
-GLOBALS_H = SKETCH_DIR / "user_config.h"
+USER_CONFIG_H = SKETCH_DIR / "user_config.h"
+GLOBALS_H = SKETCH_DIR / "globals.h"
 OUTPUT_BASE = SKETCH_DIR / "builds"
-BACKUP_GLOBALS = "/tmp/user_config.h.backup"
+BACKUP_CONFIG = SKETCH_DIR / "user_config.h.bak"
 
 # Build configurations: (SYSTEM, UNIT, output_name)
 CONFIGS = [
@@ -62,25 +63,26 @@ def print_error(text):
 def print_info(text):
     print(f"{Colors.YELLOW}→ {text}{Colors.NC}")
 
-def backup_globals():
-    """Backup original globals.h"""
-    print_info("Backing up globals.h...")
-    shutil.copy(GLOBALS_H, BACKUP_GLOBALS)
+def backup_config():
+    """Backup original user_config.h"""
+    print_info("Backing up user_config.h...")
+    shutil.copy(USER_CONFIG_H, BACKUP_CONFIG)
 
-def restore_globals():
-    """Restore original globals.h"""
-    print_info("Restoring original globals.h...")
-    shutil.copy(BACKUP_GLOBALS, GLOBALS_H)
+def restore_config():
+    """Restore original user_config.h"""
+    if BACKUP_CONFIG.exists():
+        print_info("Restoring original user_config.h...")
+        shutil.copy(BACKUP_CONFIG, USER_CONFIG_H)
 
-def update_globals(system, unit, disable_webserver=False):
-    """Update globals.h with new SYSTEM and UNIT values"""
+def update_config(system, unit, disable_webserver=False):
+    """Update user_config.h with new SYSTEM and UNIT values"""
     print_info(f"Configuring: SYSTEM={system}, UNIT={unit}" + (" [WebServer OFF]" if disable_webserver else ""))
     
-    # Restore backup first
-    shutil.copy(BACKUP_GLOBALS, GLOBALS_H)
+    # Restore backup first to get a clean slate
+    shutil.copy(BACKUP_CONFIG, USER_CONFIG_H)
     
     # Read file
-    with open(GLOBALS_H, 'r') as f:
+    with open(USER_CONFIG_H, 'r') as f:
         content = f.read()
     
     # Update SYSTEM
@@ -91,18 +93,6 @@ def update_globals(system, unit, disable_webserver=False):
     content = re.sub(r'#define UNIT_CFG "[^"]*"', f'#define UNIT_CFG "{unit}"', content)
 
     # Force DEBUG 0 for official builds
-    content = re.sub(r'#define DEBUG \d+', '#define DEBUG 0', content)
-
-    # Force TEST_HEALTH_DEFAULT 0 for official builds (daily report only, not every slot)
-    content = re.sub(r'#define TEST_HEALTH_DEFAULT \d+', '#define TEST_HEALTH_DEFAULT 0', content)
-
-    # Force ENABLE_HEALTH_REPORT 0 for official builds (Master switch off by default)
-    content = re.sub(r'#define ENABLE_HEALTH_REPORT\s+\d+', '#define ENABLE_HEALTH_REPORT 0', content)
-
-    # 4MB builds: disable WebServer to fit within 1.25MB slot
-    if disable_webserver:
-        content = re.sub(r'#define ENABLE_WEBSERVER \d+', '#define ENABLE_WEBSERVER 0', content)
-    
     # [BUILD-04] Optional Debug override:
     if "--enable-debug" in sys.argv:
         content = re.sub(r'#define DEBUG \d+', '#define DEBUG 1', content)
@@ -110,9 +100,19 @@ def update_globals(system, unit, disable_webserver=False):
     else:
         content = re.sub(r'#define DEBUG \d+', '#define DEBUG 0', content)
         print("  DEBUG set to: 0 (Official Production)")
+
+    # Force TEST_HEALTH_DEFAULT 0 for official builds
+    content = re.sub(r'#define TEST_HEALTH_DEFAULT \d+', '#define TEST_HEALTH_DEFAULT 0', content)
+
+    # Force ENABLE_HEALTH_REPORT 0 for official builds
+    content = re.sub(r'#define ENABLE_HEALTH_REPORT\s+\d+', '#define ENABLE_HEALTH_REPORT 0', content)
+
+    # 4MB builds: disable WebServer
+    if disable_webserver:
+        content = re.sub(r'#define ENABLE_WEBSERVER \d+', '#define ENABLE_WEBSERVER 0', content)
     
     # Write back
-    with open(GLOBALS_H, 'w') as f:
+    with open(USER_CONFIG_H, 'w') as f:
         f.write(content)
     
     print(f"  SYSTEM set to: {system}")
@@ -137,8 +137,8 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
     tagged_name = f"{output_name}_{flash_size}"
     print_header(f"Building: {tagged_name}")
 
-    # Update globals (disable WebServer for 4MB builds to fit within 1.25MB slot)
-    update_globals(system, unit, disable_webserver=(flash_size == "4mb"))
+    # Update user_config.h
+    update_config(system, unit, disable_webserver=(flash_size == "4mb"))
 
 
     # Create output directory
@@ -182,11 +182,11 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
             size_mb = size / (1024 * 1024)
             print_success(f"Binary exported: firmware.bin ({size_mb:.2f} MB)")
             
-            # Get firmware version from globals.h
+            # Get firmware version from user_config.h
             import re
-            with open(GLOBALS_H, 'r') as f:
-                globals_content = f.read()
-            version_match = re.search(r'#define FIRMWARE_VERSION "([^"]+)"', globals_content)
+            with open(USER_CONFIG_H, 'r') as f:
+                config_content = f.read()
+            version_match = re.search(r'#define FIRMWARE_VERSION "([^"]+)"', config_content)
             firmware_version = version_match.group(1) if version_match else "UNKNOWN"
             
             type_prefix = "TRG9" if system == 0 else ("TWS9" if system == 1 else "TWSRF9")
@@ -216,6 +216,16 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
             with open(fw_version_file, 'w') as f:
                 f.write(full_version)
             print_success(f"Version file created: fw_version.txt ({full_version})")
+
+            # [BUILD-05] POST-COMPILATION IDENTITY CHECK
+            # Verify that the generated version prefix matches the intended system type
+            expected_prefix = "TRG9" if system == 0 else ("TWS9" if system == 1 else "TWSRF9")
+            if not full_version.startswith(expected_prefix):
+                print_error(f"IDENTITY MISMATCH: Config intended for {expected_prefix} but got {full_version}!")
+                print_error("Build Aborted to prevent corrupted release package.")
+                return False
+            
+            print_success(f"Identity Verified: {full_version}")
             
             # Create info file
             info_file = output_dir / "build_info.txt"
@@ -274,8 +284,8 @@ def main():
         shutil.rmtree(OUTPUT_BASE)
     OUTPUT_BASE.mkdir(exist_ok=True)
     
-    # Backup globals.h
-    backup_globals()
+    # Backup user_config.h
+    backup_config()
     
     # Build all configurations × all flash variants
     success_count = 0
@@ -288,9 +298,13 @@ def main():
                 success_count += 1
             else:
                 fail_count += 1
+                # [BUILD-06] FAIL FAST: Stop build process if any config fails
+                restore_config() # Ensure user_config.h is restored before exit
+                print_error(f"\nBUILD ABORTED: {output_name}_{flash_size} failed. Check logs.")
+                sys.exit(1)
     
-    # Restore globals.h
-    restore_globals()
+    # Restore user_config.h
+    restore_config()
     
     # Summary
     print_header("Build Summary")
@@ -387,9 +401,9 @@ if __name__ == "__main__":
         sys.exit(main())
     except KeyboardInterrupt:
         print("\n\nBuild cancelled by user")
-        restore_globals()
+        restore_config()
         sys.exit(1)
     except Exception as e:
         print_error(f"Unexpected error: {e}")
-        restore_globals()
+        restore_config()
         sys.exit(1)

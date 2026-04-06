@@ -242,6 +242,15 @@ bool try_activate_apn(const char *apn) {
 }
 
 bool verify_bearer_or_recover() {
+  // v5.78 Hardening [P4]: Delay recovery if 15-min interval logging is active
+  if (sleep_sequence_active) {
+    debugln("[RECOVERY] Delaying bearer recovery for 10s to protect interval logging window...");
+    for (int i = 0; i < 10; i++) {
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      esp_task_wdt_reset();
+    }
+  }
+
   bearer_recovery_active = true; // Block UI/I2C tasks from interrupting
   flushSerialSIT();
 
@@ -290,7 +299,7 @@ bool verify_bearer_or_recover() {
         SerialSIT.println(rdp_cmd);
         String rdp_resp = waitForResponse("OK", 3000);
         // P1 fix v5.65: '"' + String(apn_str) is char+String = wrong!
-        // char '"' (ASCII 34) + String → appends integer 34, not a quote character.
+        // char '"' (ASCII 34) + String [INFO] appends integer 34, not a quote character.
         // Must use string literals for correct concatenation.
         String apn_check = "\"" + String(apn_str) + "\"";
         if (rdp_resp.indexOf(apn_check) == -1) {
@@ -599,7 +608,7 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
     return;
   }
 
-  // v5.46: Robust UTC → IST conversion handling all month/year/leap rollovers
+  // v5.46: Robust UTC [INFO] IST conversion handling all month/year/leap rollovers
   struct tm t_in = {0};
   t_in.tm_year = s_yy + 100; // years since 1900 (e.g., 2026 -> 126)
   t_in.tm_mon = s_mm - 1;    // months since January (0-11)
@@ -635,7 +644,7 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
   int srv_total_sec = s_hh * 3600 + s_mi * 60 + s_ss;
   int raw_drift = abs(srv_total_sec - rtc_total_sec);
   
-  // v5.66: 🚨 CRITICAL FIX - Handle Midnight Rollover!
+  // v5.66: [CRIT] CRITICAL FIX - Handle Midnight Rollover!
   // If Server=23:59:50 and RTC=00:00:10, drift is technically 20s, not 86380s.
   int drift = (raw_drift > 43200) ? (86400 - raw_drift) : raw_drift;
 
@@ -658,7 +667,7 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
   }
 
   // Apply correction to RTC
-  debugf("[RTC-Sync] Correcting RTC: %02d:%02d:%02d → %02d:%02d:%02d (drift "
+  debugf("[RTC-Sync] Correcting RTC: %02d:%02d:%02d [INFO] %02d:%02d:%02d (drift "
          "%ds)\n",
          current_hour, current_min, current_sec, s_hh, s_mi, s_ss, drift);
 
@@ -668,7 +677,7 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
     xSemaphoreGive(i2cMutex);
   }
 
-  // v5.66: 🚨 CRITICAL FIX - Update ALL globals immediately!
+  // v5.66: [CRIT] CRITICAL FIX - Update ALL globals immediately!
   // If the physical RTC battery died and it woke up in 1970, we MUST legally
   // update the current_day/year variables or else the rest of this waking cycle 
   // will create data filed under 1970 despite the physical RTC being fixed!
@@ -820,10 +829,10 @@ void graceful_modem_shutdown() {
       }
       xSemaphoreGive(modemMutex);
     } else {
-      debugln("[GPRS] ⚠️ modemMutex locked by running task. Skipping AT+CPOWD.");
+      debugln("[GPRS] [WARN] modemMutex locked by running task. Skipping AT+CPOWD.");
     }
   } else {
-    debugln("[GPRS] ⚠️ Session was unstable (reg fails). Hard Hardware "
+    debugln("[GPRS] [WARN] Session was unstable (reg fails). Hard Hardware "
             "Reset.");
   }
 

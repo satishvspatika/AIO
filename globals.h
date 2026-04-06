@@ -1,6 +1,8 @@
 #ifndef GATEWAY_GLOBALS_H
 #define GATEWAY_GLOBALS_H
 
+#include "user_config.h"
+
 // =========================================================================
 // PHASE 10 FIRMWARE MUTEX HIERARCHY (ABBA DEADLOCK PREVENTION):
 // To prevent permanent RTOS dual-core lockups, NEVER acquire semaphores
@@ -103,8 +105,6 @@ void recoverI2CBus(bool alreadyLocked = false);
 void pruneFile(const char *path, size_t limit, bool alreadyLocked = false);
 
 /************************************************************************************************/
-#include "user_config.h"
-
 extern char
     UNIT[15]; // (Initialized secretly in .ino via UNIT_CFG to avoid ODR issues)
 extern int test_health_every_slot;
@@ -211,35 +211,23 @@ extern unsigned long last_key_time;
 // record_length moved below
 extern int cur_file_found;
 #if DEBUG == 1
-#define debugln(...)                                                           \
-  do {                                                                         \
-    if (!ota_silent_mode && !bearer_recovery_active)                           \
-      Serial.println(__VA_ARGS__);                                             \
-  } while (0)
-#define debug(...)                                                             \
-  do {                                                                         \
-    if (!ota_silent_mode && !bearer_recovery_active)                           \
-      Serial.print(__VA_ARGS__);                                               \
-  } while (0)
-#define debugf1(...) debugf(__VA_ARGS__)
-#define debugf2(...) debugf(__VA_ARGS__)
-#define debugf3(...) debugf(__VA_ARGS__)
-#define debugf4(...) debugf(__VA_ARGS__)
-#define debugf5(...) debugf(__VA_ARGS__)
-#define debugf(a, ...)                                                         \
-  do {                                                                         \
-    if (!ota_silent_mode && !bearer_recovery_active)                           \
-      Serial.printf(a, ##__VA_ARGS__);                                         \
-  } while (0)
+  #define debug(...)         do { if(!ota_silent_mode && !bearer_recovery_active) Serial.print(__VA_ARGS__); } while (0)
+  #define debugln(...)       do { if(!ota_silent_mode && !bearer_recovery_active) Serial.println(__VA_ARGS__); } while (0)
+  #define debugf(fmt, ...)   do { if(!ota_silent_mode && !bearer_recovery_active) Serial.printf(fmt, ##__VA_ARGS__); } while (0)
+  #define debugf1(fmt, ...)  debugf(fmt, ##__VA_ARGS__)
+  #define debugf2(fmt, ...)  debugf(fmt, ##__VA_ARGS__)
+  #define debugf3(fmt, ...)  debugf(fmt, ##__VA_ARGS__)
+  #define debugf4(fmt, ...)  debugf(fmt, ##__VA_ARGS__)
+  #define debugf5(fmt, ...)  debugf(fmt, ##__VA_ARGS__)
 #else
-#define debug(...)
-#define debugln(...)
-#define debugf1(...)
-#define debugf2(...)
-#define debugf3(...)
-#define debugf4(...)
-#define debugf5(...)
-#define debugf(...)
+  #define debug(...)
+  #define debugln(...)
+  #define debugf(fmt, ...)
+  #define debugf1(fmt, ...)
+  #define debugf2(fmt, ...)
+  #define debugf3(fmt, ...)
+  #define debugf4(fmt, ...)
+  #define debugf5(fmt, ...)
 #endif
 
 // ENUMS
@@ -747,13 +735,3 @@ extern struct http_params httpSet[11];
 // Function Prototypes for Tasks defined in other files
 void scheduler(void *parameter);
 #endif
-
-// Unsent Data to be sent is :
-// 23,2027-07-16,14:30,0002.0,24.37,77.53,01.02,341,-114,04.2 Unsent Data to be
-// sent is : 23,2025-07-16,14:30,0001.5,00.00,00.00,00.00,000,-112,04.2
-
-// http_data format is
-// stn_no=99999&rec_time=2027-07-16,14:30&key=rfclimate5p13&rainfall=002.0&temp=24.37&humid=77.53&w_speed=01.02&w_dir=341&signal=-114&bat_volt=04.2&bat_volt2=04.2
-// - unsent good went through http_data format is
-// stn_no=99999&rec_time=2025-07-16,14:30&key=rfclimate5p13&rainfall=001.5&temp=00.00&humid=00.00&w_speed=00.00&w_dir=000&signal=-112&bat_volt=04.2&bat_volt2=04.2
-// - unsent did not go through

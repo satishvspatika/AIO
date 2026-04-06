@@ -430,7 +430,7 @@ void prepare_data_and_send() {
     // won't respond — they just waste 1-3 minutes of battery per cycle.
     //
     // New strategy: ONE clean HTTP stack re-init, ONE retry.
-    // If that fails → store to backlog immediately and sleep.
+    // If that fails [INFO] store to backlog immediately and sleep.
     // The 15-min wake cycle + backlog is the recovery mechanism.
     // ─────────────────────────────────────────────────────────────────────
 
@@ -881,6 +881,20 @@ void send_http_data() {
     // PROACTIVE: Force a hard shut if we've had consecutive HTTP failures
     // (learning)
     if (diag_consecutive_http_fails > 1) {
+      // v5.78 Hardening: Slot-Boundary Guard
+      // If we are within 10s of a 15-min boundary, defer reset to avoid scheduler race
+      int mins_into; int secs_into;
+      portENTER_CRITICAL(&rtcTimeMux);
+      mins_into = current_min % 15;
+      secs_into = current_sec;
+      portEXIT_CRITICAL(&rtcTimeMux);
+
+      if (mins_into == 14 && secs_into >= 50) {
+          debugln("[GPRS] Slot boundary imminent (T-10s). Deferring Bearer Nuke.");
+          vTaskDelay(12000 / portTICK_PERIOD_MS); // Wait for boundary to pass (10s + 2s buffer)
+          esp_task_wdt_reset();
+      }
+
       debugln(
           "[PROACTIVE] Consecutive failures detected. Forcing deep CIPSHUT...");
       SerialSIT.println("AT+CIPSHUT");
@@ -1039,7 +1053,7 @@ void send_http_data() {
       debugln("*********  Sending UNSENT data to main server... ***********");
       debugln();
 
-      // 🚨 CRITICAL FIX: If skip_primary_http was true, send_http_data() was
+      // [CRIT] CRITICAL FIX: If skip_primary_http was true, send_http_data() was
       // skipped and httpPostRequest is empty. Rebuild it locally so backlog has
       // a target!
       const char *domain = httpSet[http_no].serverName;
@@ -1774,7 +1788,7 @@ int send_at_cmd_data(char *payload, String response_arg, bool robust) {
   if (response.indexOf("200") == -1 && response.indexOf("201") == -1 &&
       response.indexOf("202") == -1) {
     // v5.45: Extract error code from +HTTPACTION: prefix ONLY.
-    // Old method searched the whole buffer from comma1→comma2, which picked
+    // Old method searched the whole buffer from comma1[INFO]comma2, which picked
     // up commas inside +CGEV: ME PDN ACT 8,0 URCs that rode in on the same
     // buffer, producing corrupt strings like "0\n\n+CGEV: ME PDN ACT 8" as
     // the code.

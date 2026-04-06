@@ -127,7 +127,7 @@ void gprs(void *pvParameters) {
           get_lat_long_date_time(universalNumber);
 
           // v5.74 FIX: Show explicit GPS result on LCD immediately after send
-          // Previously fell through to unified block with msg_sent==0 → "SEND FAILED"
+          // Previously fell through to unified block with msg_sent==0 [INFO] "SEND FAILED"
           // even when the SMS was actually delivered (BSNL 2G slow +CMGS confirmation).
           if (msg_sent) {
             // Show coordinates as confirmation
@@ -360,7 +360,7 @@ void gprs(void *pvParameters) {
 
           if (has_sensor_issue && !diag_sensor_fault_sent_today && current_hour != 11) {
               is_sensor_fault_trigger = true;
-              debugln("[Health] 🚨 Sensor issue detected! Triggering one-time fault report.");
+              debugln("[Health] [CRIT] Sensor issue detected! Triggering one-time fault report.");
           }
 
           if (is_health_time || is_ota_confirm || is_sensor_fault_trigger) {

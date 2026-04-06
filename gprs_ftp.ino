@@ -4,7 +4,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
   int modem_ftp_handle = 0; // Turner-Fix: Persistent handle scope to prevent leak (C-04)
   int saved_send_daily = send_daily; // Backup to prevent credential-loss on retry
   bool cid9_bounced = false; // Turner-Fix
-  // v7.70+: ABBA DEADLOCK FIX — Strictly enforce hierarchy: modemMutex → fsMutex
+  // v7.70+: ABBA DEADLOCK FIX — Strictly enforce hierarchy: modemMutex [INFO] fsMutex
   char put_buf[256] = {0}; 
   bool success = true; // v5.76.5 Protocol Armor Flag
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(20000)) != pdTRUE) {
@@ -142,7 +142,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
                                     handle_no = 0; // Mark as released
                                 }
                             } else {
-                                debugln("[FTP] ❌ FSWRITE failed to prompt (CONNECT). Aborting current attempt.");
+                                debugln("[FTP] [ERR] FSWRITE failed to prompt (CONNECT). Aborting current attempt.");
                                 if (handle_no > 0) {
                                     snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSCLOSE=%d", handle_no);
                                     SerialSIT.println(gprs_xmit_buf);
@@ -152,7 +152,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
                             }
                         } else {
                              // v5.76.7: Treat any other response (timeout/garbage) as failure
-                             debugln("[FTP] ❌ FSOPEN timeout or unrecognized error. Retrying.");
+                             debugln("[FTP] [ERR] FSOPEN timeout or unrecognized error. Retrying.");
                              success = false;
                         }
                     }
@@ -301,7 +301,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
                   SerialSIT.println(gprs_xmit_buf);
                   response = waitForResponse("CONNECT", 7000);
                   if (response.indexOf("PB DONE") != -1) {
-                      debugln("[FTP] 🚨 Reboot detected in retry. Aborting.");
+                      debugln("[FTP] [CRIT] Reboot detected in retry. Aborting.");
                       goto ftp_cleanup;
                   }
                   bool retry_write_ready = (response.indexOf("CONNECT") != -1 || response.indexOf(">") != -1);
@@ -332,7 +332,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
                     // v5.76.6: Final retry attempt concluded. Terminate loop regardless of result.
                     ftp_put_retries = 2; 
                   } else {
-                    debugln("[FTP] ❌ Retry FSWRITE failed. Aborting.");
+                    debugln("[FTP] [ERR] Retry FSWRITE failed. Aborting.");
                     rf.close();
                   }
                 }
@@ -521,7 +521,7 @@ bool isBufferSanityOK(uint8_t *buf, int len, int offset) {
   // 1. Check for UART Cross-talk Signature (uh@\b)
   if (len >= 4) {
     if (buf[0] == 0x75 && buf[1] == 0x68 && buf[2] == 0x40 && buf[3] == 0x08) {
-      Serial.println("[OTA] ❌ UART Cross-talk (0x75684008) DETECTED! Poisoned "
+      Serial.println("[OTA] [ERR] UART Cross-talk (0x75684008) DETECTED! Poisoned "
                      "chunk. Restarting...");
       return false;
     }
@@ -548,7 +548,7 @@ bool isBufferSanityOK(uint8_t *buf, int len, int offset) {
   // 3. Header specific checks for first chunk
   if (offset == 0) {
     if (buf[0] != 0xE9) {
-      Serial.printf("[OTA] ❌ Invalid Magic Byte: 0x%02X (Expected 0xE9)\n",
+      Serial.printf("[OTA] [ERR] Invalid Magic Byte: 0x%02X (Expected 0xE9)\n",
                     buf[0]);
       return false;
     }
@@ -562,7 +562,7 @@ bool isBufferSanityOK(uint8_t *buf, int len, int offset) {
       repeatCount++;
   }
   if (repeatCount > (len - 16)) { // 99.9% identical
-    Serial.printf("[OTA] ❌ Suspicious data (99%% repeating 0x%02X). Aborting "
+    Serial.printf("[OTA] [ERR] Suspicious data (99%% repeating 0x%02X). Aborting "
                   "chunk.\n",
                   buf[0]);
     return false;
@@ -875,7 +875,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
            (float)actual_downloaded * 100.0 / total_no_of_bytes);
 
     if (consecutive_fails >= 3) {
-      Serial.println("[OTA] 🚨 3 Consecutive chunk failures! Hard Hardware "
+      Serial.println("[OTA] [CRIT] 3 Consecutive chunk failures! Hard Hardware "
                      "Resetting Modem...");
       digitalWrite(26, LOW);
       vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -901,7 +901,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
     vTaskDelay(1000 / portTICK_PERIOD_MS);
 
     if (!verify_bearer_or_recover()) {
-      Serial.println("[OTA] ❌ Bearer Recovery Failed");
+      Serial.println("[OTA] [ERR] Bearer Recovery Failed");
       chunk_retries++;
       consecutive_fails++;
       if (chunk_retries > 30)
@@ -915,7 +915,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
 
     SerialSIT.println("AT+HTTPINIT");
     if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
-      Serial.println("[OTA] ⚠️ HTTPINIT Failed");
+      Serial.println("[OTA] [WARN] HTTPINIT Failed");
       chunk_retries++;
       consecutive_fails++;
       esp_task_wdt_reset();
@@ -954,7 +954,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
     }
 
     if (http_status != 200 && http_status != 206) {
-      Serial.printf("[OTA] ❌ HTTP Error: %d. Resetting session.\n",
+      Serial.printf("[OTA] [ERR] HTTP Error: %d. Resetting session.\n",
                     http_status);
       // Force re-init on next loop
       vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -1020,7 +1020,7 @@ void fetchFromHttpAndUpdate(char *fileName) {
     }
 
     if (got != safe_total) {
-      Serial.printf("[OTA] ❌ Read Timeout/Incomplete: got %d of %d\n", got,
+      Serial.printf("[OTA] [ERR] Read Timeout/Incomplete: got %d of %d\n", got,
                     safe_total);
       flushSerialSIT(); // Clear residual bytes from incomplete read
       chunk_retries++;

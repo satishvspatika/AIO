@@ -841,7 +841,7 @@ void setup() {
   // 1. Initial Load from Persistent Files
   if (SPIFFS.exists("/rf_fw.txt")) {
     File f = SPIFFS.open("/rf_fw.txt", FILE_READ);
-    if (f) { // EX2 FIX: Null handle returns "", toFloat()=0 → false data wipe!
+    if (f) { // EX2 FIX: Null handle returns "", toFloat()=0 [INFO] false data wipe!
       last_fw_res = f.readString().toFloat();
       f.close();
     } else {
@@ -1067,9 +1067,13 @@ void setup() {
         String sd_ver = vFile.readStringUntil('\n');
         sd_ver.trim();
         vFile.close();
-        if (sd_ver.equalsIgnoreCase(FIRMWARE_VERSION)) {
-          debugln("SD Version matches current version. Skipping.");
+
+        // v5.78 Hardening: Skip if identical (supports full UNIT_VER or simple FIRMWARE_VERSION)
+        if (sd_ver.equalsIgnoreCase(UNIT_VER) || sd_ver.equalsIgnoreCase(FIRMWARE_VERSION)) {
+          debugln("SD Version matches current firmware. Skipping update.");
           needUpdate = false;
+        } else {
+          debugf("[OTA] Version difference detected: [%s] vs [%s]. Proceeding...\n", sd_ver.c_str(), UNIT_VER);
         }
       }
     }
@@ -1209,11 +1213,17 @@ void setup() {
 #if (SYSTEM == 0) || (SYSTEM == 2)
       rf_count.val = 0;
       rf_value = 0;
+      total_rf_pulses_32 = 0;      // v5.78: Reset accumulator to prevent jump
+      last_raw_rf_count = 0;       // v5.78: Reset anchor to 0
+      last_sched_rf_pulses_32 = 0; // v5.78: Reset scheduler anchor
 #endif
 
 // TWS
 #if (SYSTEM == 1) || (SYSTEM == 2)
       wind_count.val = 0; // Making the count as 0
+      total_wind_pulses_32 = 0;      // v5.78: Reset accumulator to prevent jump
+      last_raw_wind_count = 0;       // v5.78: Reset anchor to 0
+      last_sched_wind_pulses_32 = 0; // v5.78: Reset scheduler anchor
 #endif
     }
   } else {
@@ -1230,7 +1240,7 @@ void setup() {
   if (SPIFFS.exists("/firmware.bin")) {
     if (!SPIFFS.exists("/firmware.ready")) {
       debugln(
-          "[OTA] ❌ Found partial firmware.bin without ready flag. Deleting.");
+          "[OTA] [ERR] Found partial firmware.bin without ready flag. Deleting.");
       SPIFFS.remove("/firmware.bin");
     } else {
       File firmware = SPIFFS.open("/firmware.bin");
@@ -1238,7 +1248,7 @@ void setup() {
         // v6.81: Verify Magic Byte (0xE9) before starting
         int firstByte = firmware.read();
         if (firstByte != 0xE9) {
-          debugf1("[OTA] ❌ CORRUPT! Magic byte is 0x%02X (Expected 0xE9). "
+          debugf1("[OTA] [ERR] CORRUPT! Magic byte is 0x%02X (Expected 0xE9). "
                   "Aborting.\n",
                   firstByte);
           firmware.close();
@@ -1383,7 +1393,7 @@ void setup() {
   bool skip_wd_task        = (diag_crash_count >= 3 && strncmp(diag_crash_task_rtc, "windDirectio",  15) == 0); // truncated to 15 chars
 
   if (diag_crash_count >= 3) {
-    debugf("[BOOT] ⚠️ CRASH LOOP GUARD: Task '%s' crashed %d times. Skipping task.\n",
+    debugf("[BOOT] [WARN] CRASH LOOP GUARD: Task '%s' crashed %d times. Skipping task.\n",
            diag_crash_task_rtc, diag_crash_count);
   }
 
@@ -1753,10 +1763,15 @@ void loop() {
   bool modemIsBusy = (uxSemaphoreGetCount(modemMutex) == 0);
   bool fsIsBusy = (uxSemaphoreGetCount(fsMutex) == 0);
 
+  // v5.85: Ghost-UI Safety Override
+  // If we woke up by TIMER (scheduled) and all communicating tasks are DONE, 
+  // we do not wait for the LCD to timeout (modem current noise can trigger it).
+  bool uiIsGhosting = (wakeup_reason_is != ext0 && lcdkeypad_start == 1 && (millis() > 60000));
+
   if ((millis() > min_awake_ms) &&
       safe_to_sleep_sync &&
       !modemIsBusy && !fsIsBusy &&
-      (lcdkeypad_start == 0) && (wifi_active == false) &&
+      (lcdkeypad_start == 0 || uiIsGhosting) && (wifi_active == false) &&
       (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false) && (health_in_progress == false) &&
       (snap_schedulerBusy == false) && (gprs_started == false || sync_mode == eHttpStop) &&
       (pending_manual_status == false) && (pending_manual_gps == false) &&
@@ -1782,13 +1797,15 @@ void loop() {
     // Double-check the system hasn't just woken up in the last microsecond
     vTaskDelay(50 / portTICK_PERIOD_MS);
     
-    // Phase 11 Fix: Re-evaluate the FULL gate, not just schedulerBusy,
-    // to catch any state changes during the 50ms yield (e.g. OTA started).
+    // v5.78 Hardening: Consolidate Ghost-UI detection (Modem noise on GPIO 27)
+    bool uiIsGhosting = (wakeup_reason_is != ext0 && lcdkeypad_start == 1 && millis() > 60000);
+
+    // v5.70: Catch any state changes during the 50ms yield (e.g. OTA started).
     bool sys_busy = false;
     portENTER_CRITICAL(&syncMux);
     bool race_sync_invalid = (sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled);
     sys_busy = (snap_schedulerBusy || (gprs_started && sync_mode != eHttpStop) || health_in_progress || __atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) || 
-                force_reboot || force_ota || ota_writing_active || lcdkeypad_start || (wakeup_reason_is == ext0) || 
+                force_reboot || force_ota || ota_writing_active || (lcdkeypad_start && !uiIsGhosting) || (wakeup_reason_is == ext0) || 
                 wifi_active || race_sync_invalid || 
                 pending_manual_status || pending_manual_gps || pending_manual_health);
     portEXIT_CRITICAL(&syncMux);
@@ -1804,8 +1821,15 @@ void loop() {
             ESP.restart();
         }
 
-        if (lcdkeypad_start == 0 && (awake_cap_reached || idle_cap_reached) && !too_close_to_slot) {
-            debugln("[PWR] SAFETY VALVE: Duty-Cycle Cap or Idle Timeout reached. Forcing Sleep...");
+        // v5.85: Ghost-UI Safety Override
+        // If we woke up by TIMER (scheduled) and all communicating tasks are DONE, 
+        // we should not let a 'ghost' LCD trigger (modem noise) keep the device awake 
+        // for the full 3-minute idle timeout. If it's been > 60s and tasks are stop, SHUT DOWN.
+        bool scheduled_wake = (wakeup_reason_is != ext0);
+        bool forced_sleep_allowed = scheduled_wake && safe_to_sleep_sync && (millis() > 60000);
+
+        if ((lcdkeypad_start == 0 || forced_sleep_allowed) && (awake_cap_reached || idle_cap_reached) && !too_close_to_slot) {
+            debugln("[PWR] SAFETY VALVE: Duty-Cycle Cap or Forced Scheduled Sleep reached. Forcing Sleep...");
             // Force-reset all blockers
             portENTER_CRITICAL(&syncMux);
             gprs_started = false;

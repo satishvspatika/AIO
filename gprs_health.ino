@@ -91,17 +91,24 @@ void get_network() {
   if (current_iccid != "" && String(cached_iccid) == current_iccid &&
       String(sim_number) != "NA") {
     debugln("[CACHE] Using cached carrier/number to save power.");
-    // APN still needs to be determined for the modem to connect
-    if (strstr(carrier, "Airtel"))
-      strcpy(apn_str, "airteliot.com");
-    else if (strstr(carrier, "Jio"))
+    // APN still needs to be determined based on carrier name (matching full_discovery logic)
+    if (strstr(carrier, "Airtel")) {
+      strcpy(apn_str, "airtelgprs.com"); // Safe consumer default
+      if (current_iccid.length() >= 6) {
+        String p6 = current_iccid.substring(0, 6);
+        if (p6 == "899116" || p6 == "899110") {
+          strcpy(apn_str, "airteliot.com");
+        }
+      }
+    } else if (strstr(carrier, "Jio")) {
       strcpy(apn_str, "jionet");
-    else if (strstr(carrier, "BSNL"))
+    } else if (strstr(carrier, "BSNL")) {
       strcpy(apn_str, "bsnlnet");
-    else if (strstr(carrier, "Vi"))
+    } else if (strstr(carrier, "Vi")) {
       strcpy(apn_str, "www");
-    else
-      strcpy(apn_str, "airteliot.com");
+    } else {
+      strcpy(apn_str, "airtelgprs.com"); // Reverted v5.74 safe default
+    }
 
     return; // SKIP the rest of discovery
   }
@@ -141,7 +148,20 @@ full_discovery:
   // Determine Carrier and APN
   if (strstr(r1, "airtel") || strstr(r2, "airtel")) {
     strcpy(carrier, "Airtel");
-    strcpy(apn_str, "airteliot.com");
+    // v5.78 Hardening: Standard Airtel 10-digit SIMs use airtelgprs.com 
+    // IoT/M2M SIMs (13-digit) use airteliot.com. We refine this via ICCID.
+    strcpy(apn_str, "airtelgprs.com"); 
+
+    if (current_iccid.length() >= 6) {
+      String prefix6 = current_iccid.substring(0, 6);
+      if (prefix6 == "899116" || prefix6 == "899110") {
+        strcpy(apn_str, "airteliot.com");
+        debugln("[APN] Airtel IoT/M2M SIM detected via ICCID prefix.");
+      } else if (prefix6 == "899145") {
+        strcpy(apn_str, "airtelgprs.com");
+        debugln("[APN] Airtel Commercial SIM detected via ICCID prefix.");
+      }
+    }
   } else if (strstr(r1, "jio") || strstr(r2, "jio")) {
     strcpy(carrier, "Jio");
     strcpy(apn_str, "jionet");
@@ -154,13 +174,16 @@ full_discovery:
     strcpy(apn_str, "www");
   } else {
     // Final tier: ICCID prefix-based detection (on-device fallback)
-    // Uses same prefix table as server-side get_carrier_from_iccid()
     if (current_iccid.length() >= 6) {
       String prefix6 = current_iccid.substring(0, 6);
       if (prefix6 == "899116" || prefix6 == "899110") {
         strcpy(carrier, "Airtel");
-        strcpy(apn_str, "airteliot.com");
-        debugln("[APN] ICCID Fallback: Airtel");
+        strcpy(apn_str, "airteliot.com"); // IoT/M2M Specific
+        debugln("[APN] ICCID Fallback: Airtel IoT");
+      } else if (prefix6 == "899145") {
+        strcpy(carrier, "Airtel");
+        strcpy(apn_str, "airtelgprs.com"); // Commercial/10-digit Specific
+        debugln("[APN] ICCID Fallback: Airtel Commercial");
       } else if (prefix6 == "899100") {
         strcpy(carrier, "BSNL");
         strcpy(apn_str, "bsnlnet");
@@ -175,12 +198,12 @@ full_discovery:
         debugln("[APN] ICCID Fallback: Vi");
       } else {
         strcpy(carrier, "SIM OK");
-        strcpy(apn_str, "airteliot.com");
-        debugln("[APN] ICCID Fallback: Unknown prefix, defaulting Airtel");
+        strcpy(apn_str, "airtelgprs.com");
+        debugln("[APN] ICCID Fallback: Unknown prefix, defaulting Airtel GPRS");
       }
     } else {
       strcpy(carrier, "SIM OK");
-      strcpy(apn_str, "airteliot.com");
+      strcpy(apn_str, "airtelgprs.com");
     }
   }
 
@@ -357,8 +380,8 @@ void get_registration() {
 
     // v5.45.6: 4G-AWARE REGISTRATION POLL
     // Strategy:
-    //   BSNL  → Uses CREG (2G) + CGREG (GPRS/3G). No LTE on BSNL.
-    //   Airtel/Jio → Uses CEREG (4G/LTE) first, then CREG fallback.
+    //   BSNL  [INFO] Uses CREG (2G) + CGREG (GPRS/3G). No LTE on BSNL.
+    //   Airtel/Jio [INFO] Uses CEREG (4G/LTE) first, then CREG fallback.
     //
     // CEREG=3 interpretation (THE FIX):
     //   +CEREG: 2,3         = LTE: Denied, no cell info visible. Truly
@@ -378,8 +401,8 @@ void get_registration() {
         r4 = resp4.substring(c4 + 1).toInt();
 
         // v5.45.6: Check for cell info after the stat field.
-        // +CEREG: 2,3,TAC,CID → has a second comma after the stat.
-        // +CEREG: 2,3         → no second comma. Truly no signal.
+        // +CEREG: 2,3,TAC,CID [INFO] has a second comma after the stat.
+        // +CEREG: 2,3         [INFO] no second comma. Truly no signal.
         if (r4 == 3) {
           int c4b = resp4.indexOf(',', c4 + 1); // comma after stat field
           bool has_cell_info = (c4b != -1);
@@ -415,7 +438,7 @@ void get_registration() {
     }
 
     // Determine overall registration status (4G preferred)
-    // r4 has already been normalized (Airtel ghost CEREG=3 → set to 0)
+    // r4 has already been normalized (Airtel ghost CEREG=3 [INFO] set to 0)
     if (r4 == 1 || r4 == 5) {
       registration = r4;
     } else if (r2 == 1 || r2 == 5) {
@@ -1423,21 +1446,21 @@ bool send_health_report(bool useJitter) {
       "%s}", // v7.92: Custom Feedback Block
       cleanStn, UNIT, SYSTEM, h_status, sensor_info,
       (diag_rtc_battery_ok ? 1 : 0), li_bat_val, solar_val, signal_lvl,
-      diag_net_data_count,          // net_cnt        → Tdy Sent (Live)
-      diag_http_success_count,      // http_suc_cnt   → Tdy HTTP
-      diag_http_retry_count,        // http_ret_cnt   → Tdy Backlogs
-      diag_ftp_success_count,       // ftp_suc_cnt    → Tdy Backlogs (FTP)
-      diag_net_data_count_prev,     // net_cnt_prev   → Ydy Sent
-      diag_pd_count_prev,           // prev_stored    → Ydy Stored
-      diag_http_success_count_prev, // http_suc_cnt_prev → Ydy HTTP
-      diag_http_retry_count_prev,   // http_ret_cnt_prev → Ydy Backlogs
-      diag_ftp_success_count_prev,  // ftp_suc_cnt_prev  → Ydy Backlogs (FTP)
+      diag_net_data_count,          // net_cnt        [INFO] Tdy Sent (Live)
+      diag_http_success_count,      // http_suc_cnt   [INFO] Tdy HTTP
+      diag_http_retry_count,        // http_ret_cnt   [INFO] Tdy Backlogs
+      diag_ftp_success_count,       // ftp_suc_cnt    [INFO] Tdy Backlogs (FTP)
+      diag_net_data_count_prev,     // net_cnt_prev   [INFO] Ydy Sent
+      diag_pd_count_prev,           // prev_stored    [INFO] Ydy Stored
+      diag_http_success_count_prev, // http_suc_cnt_prev [INFO] Ydy HTTP
+      diag_http_retry_count_prev,   // http_ret_cnt_prev [INFO] Ydy Backlogs
+      diag_ftp_success_count_prev,  // ftp_suc_cnt_prev  [INFO] Ydy Backlogs (FTP)
       diag_gprs_fails, diag_reg_fail_type, // reg_fails & reason
       diag_last_reset_reason,              // reset_reason
       spiffs_used, spiffs_total,           // spiffs_kb / spiffs_total_kb
       unsent_count,                        // unsent_count
       UNIT_VER, cached_iccid, carrier, gps_str,
-      diag_cdm_status, // cdm_sts → server evaluates CDM from this
+      diag_cdm_status, // cdm_sts [INFO] server evaluates CDM from this
       calib_report,    // calibration info
       diag_ndm_count, diag_pd_count, diag_http_present_fails,
       diag_http_cum_fails, get_total_backlogs(true), diag_modem_mutex_fails,
@@ -1499,7 +1522,7 @@ bool send_health_report(bool useJitter) {
 
     SerialSIT.println("AT+HTTPINIT");
     if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
-      debugln("[Health] ❌ HTTPINIT Failed. Bearer Nuke...");
+      debugln("[Health] [ERR] HTTPINIT Failed. Bearer Nuke...");
       SerialSIT.println("AT+CGACT=0,1");
       waitForResponse("OK", 5000);
       continue;
@@ -1692,13 +1715,13 @@ bool send_health_report(bool useJitter) {
           waitForResponse("OK", 1000);
           break; // Success exit
         } else {
-          debugln("[Health] ❌ HTTP Action Failed, Resp: " + act);
+          debugln("[Health] [ERR] HTTP Action Failed, Resp: " + act);
         }
       } else {
-        debugln("[Health] ❌ Data Load Timeout/Error");
+        debugln("[Health] [ERR] Data Load Timeout/Error");
       }
     } else {
-      debugln("[Health] ❌ DOWNLOAD Prompt Failed");
+      debugln("[Health] [ERR] DOWNLOAD Prompt Failed");
     }
 
     // Final cleanup before retry

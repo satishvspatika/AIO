@@ -35,8 +35,8 @@ void windDirection(void *pvParameters) {
     int spread = maxVal - minVal;
 
     // v5.67 Disconnection Detection using ADC spread:
-    // - A real sensor at 0° (North) always has slight noise → spread >= 2
-    // - A disconnected cable stuck at GND is perfectly flat → spread == 0 AND
+    // - A real sensor at 0° (North) always has slight noise [INFO] spread >= 2
+    // - A disconnected cable stuck at GND is perfectly flat [INFO] spread == 0 AND
     // mean == 0
     // - We require 30 consecutive flat-zero readings (~30 sec) before marking
     // as fault
@@ -58,12 +58,12 @@ void windDirection(void *pvParameters) {
     if (!wd_ok) {
       windDir = 0;
       if (prev_wd_ok) {
-        // Print ONCE when transitioning from connected → disconnected
+        // Print ONCE when transitioning from connected [INFO] disconnected
         debugln("[WD] Sensor disconnected (ADC=0, spread=0). Suppressing "
                 "further prints.");
       }
     } else {
-      // Smooth 0-4095 → 0-359 mapping
+      // Smooth 0-4095 [INFO] 0-359 mapping
       windDir = (tempWindDir * 360) / 4096;
       if (windDir > 359)
         windDir = 0; // Safety clamp
