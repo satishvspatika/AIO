@@ -284,11 +284,17 @@ void copyFilesFromSPIFFSToSD(const char *dirname) {
   File file = root.openNextFile();
   while (file) {
     esp_task_wdt_reset();
-    String fileName = file.name();
-    if (fileName.endsWith(".txt")) {
-      String destPath = fileName;
-      if (!fileName.startsWith("/")) {
-        destPath = "/" + fileName;
+    char fileName[64];
+    strncpy(fileName, file.name(), sizeof(fileName)-1);
+    fileName[sizeof(fileName)-1] = '\0';
+    
+    if (strstr(fileName, ".txt") != NULL) {
+      char destPath[80];
+      if (fileName[0] != '/') {
+        snprintf(destPath, sizeof(destPath), "/%s", fileName);
+      } else {
+        strncpy(destPath, fileName, sizeof(destPath)-1);
+        destPath[sizeof(destPath)-1] = '\0';
       }
 
       File sourceFile = SPIFFS.open(fileName, FILE_READ);
@@ -334,8 +340,11 @@ void removeFilesFromSPIFFS(const char *dirname) {
   File file = root.openNextFile();
   while (file) {
     esp_task_wdt_reset();
-    String fileName = file.name();
-    if (fileName.endsWith(".txt")) {
+    char fileName[64];
+    strncpy(fileName, file.name(), sizeof(fileName)-1);
+    fileName[sizeof(fileName)-1] = '\0';
+    
+    if (strstr(fileName, ".txt") != NULL) {
       debug("Deleting: ");
       debugln(fileName);
       SPIFFS.remove(fileName);
@@ -361,25 +370,27 @@ void delete_multiple_files(const char *station) {
   // v5.65 P1 Fix: Collect matching filenames into a buffer first. 
   // SPIFFS (and LittleFS) iterators can become invalid or skip entries 
   // if you remove files during an openNextFile() traversal.
-  String toDelete[48]; 
-  int found = 0;
-
   File file = root.openNextFile();
-  while (file && found < 48) {
+  while (file) {
     esp_task_wdt_reset();
-    String fName = file.name();
-    if (fName.indexOf(station) != -1) {
-      toDelete[found++] = fName;
+    char fName[64];
+    strncpy(fName, file.name(), sizeof(fName)-1);
+    fName[sizeof(fName)-1] = '\0';
+    
+    if (strstr(fName, station) != NULL) {
+      debugf1("[SPIFFS] Deleting matching file: %s\n", fName);
+      file.close(); // Close explicitly before removing
+      SPIFFS.remove(fName);
+      // v5.65 P1 Fix: After removal, iterator might be invalid on some systems.
+      // Re-opening root to resume safe traversal is more robust than collecting 48 Strings.
+      root.close();
+      root = SPIFFS.open("/"); 
+    } else {
+      file.close();
     }
-    file.close();
     file = root.openNextFile();
   }
   root.close();
-
-  for (int i = 0; i < found; i++) {
-    debugf1("[SPIFFS] Deleting matching file: %s\n", toDelete[i].c_str());
-    SPIFFS.remove(toDelete[i]);
-  }
   xSemaphoreGive(fsMutex);
 }
 
@@ -500,9 +511,11 @@ void loadGPS() {
   if (SPIFFS.exists("/gps_fix.txt")) {
     File file = SPIFFS.open("/gps_fix.txt", FILE_READ);
     if (file) {
-      String line = file.readString();
+      char line_buf[128];
+      int r = file.readBytes(line_buf, sizeof(line_buf) - 1);
+      line_buf[r] = '\0';
       file.close();
-      if (sscanf(line.c_str(), "%lf,%lf,%d,%d,%d", &lati, &longi, &gps_fix_dd,
+      if (sscanf(line_buf, "%lf,%lf,%d,%d,%d", &lati, &longi, &gps_fix_dd,
                  &gps_fix_mm, &gps_fix_yy) == 5) {
         debugf5("[GPS] Loaded from SPIFFS: %.6f,%.6f (Fix: %02d/%02d/%d)\n",
                 lati, longi, gps_fix_dd, gps_fix_mm, gps_fix_yy);
@@ -773,48 +786,60 @@ float restoreRainfall(const char *fName) {
   // Seek back up to 512 bytes from EOF to capture the last 1-2 lines
   int seekFrom = max(0, fSize - 512);
   f.seek(seekFrom);
-  String lastLine = "";
+  char lastLine[RECORD_LENGTH_TWSRF + 10] = {0};
+  char line_tmp[128];
   while (f.available()) {
-    String line = f.readStringUntil('\n');
-    line.trim();
-    if (line.length() > 20)
-      lastLine = line;
+    int r = f.readBytesUntil('\n', line_tmp, sizeof(line_tmp)-1);
+    line_tmp[r] = '\0';
+    trim_whitespace(line_tmp);
+    if (strlen(line_tmp) > 20) {
+      strncpy(lastLine, line_tmp, sizeof(lastLine)-1);
+      lastLine[sizeof(lastLine)-1] = '\0';
+    }
   }
   f.close();
 
-  if (lastLine.length() > 0) {
+  if (strlen(lastLine) > 0) {
     // P0-A fix v5.65: Field layout differs per SYSTEM type.
-    // SYSTEM 0 (RF):     sampleNo,date,time,inst_rf,CUM_RF,signal,bat
-    //   [INFO] cum_rf is at field index 4 (between 4th and 5th comma)
-    // SYSTEM 2 (TWS-RF): sampleNo,date,time,CUM_RF,temp,hum,ws,wd,signal,bat
-    //   [INFO] cum_rf is at field index 3 (between 3rd and 4th comma)
-    // SYSTEM 1 (TWS): no rainfall — returns 0.0 safely via empty substring.
-    // Previously ALL systems used field 3. On SYSTEM 0, field 3 = inst_rf,
-    // so after a power cut the anchor was restored as e.g. 0.25mm not 12.75mm.
-    int firstComma = lastLine.indexOf(',');
+    int firstComma = -1, secondComma = -1, thirdComma = -1, fourthComma = -1, fifthComma = -1;
+    const char *p = lastLine;
+    int comma_count = 0;
+    for(int i=0; p[i]; i++) {
+        if(p[i] == ',') {
+            comma_count++;
+            if(comma_count == 1) firstComma = i;
+            else if(comma_count == 2) secondComma = i;
+            else if(comma_count == 3) thirdComma = i;
+            else if(comma_count == 4) fourthComma = i;
+            else if(comma_count == 5) fifthComma = i;
+        }
+    }
+    
     if (firstComma == -1)
       return 0.0;
-    int secondComma = lastLine.indexOf(',', firstComma + 1);
-    if (secondComma == -1)
-      return 0.0;
-    int thirdComma = lastLine.indexOf(',', secondComma + 1);
-    if (thirdComma == -1)
-      return 0.0;
-
+    
+    char rfStr[16] = {0};
 #if SYSTEM == 0
     // For TRG: skip one more comma to land on cum_rf (field 4)
-    int fourthComma = lastLine.indexOf(',', thirdComma + 1);
-    if (fourthComma == -1)
-      return 0.0;
-    int fifthComma = lastLine.indexOf(',', fourthComma + 1);
-    String rfStr = lastLine.substring(fourthComma + 1, fifthComma);
+    if (fourthComma != -1 && fifthComma != -1) {
+        int len = fifthComma - (fourthComma + 1);
+        if(len > 0 && len < (int)sizeof(rfStr)) {
+            strncpy(rfStr, lastLine + fourthComma + 1, len);
+            rfStr[len] = '\0';
+        }
+    }
 #else
     // For SYSTEM 2 and SYSTEM 1: cum_rf (or placeholder) is at field 3
-    int fourthComma = lastLine.indexOf(',', thirdComma + 1);
-    String rfStr = lastLine.substring(thirdComma + 1, fourthComma);
+    if (thirdComma != -1 && fourthComma != -1) {
+        int len = fourthComma - (thirdComma + 1);
+        if(len > 0 && len < (int)sizeof(rfStr)) {
+            strncpy(rfStr, lastLine + thirdComma + 1, len);
+            rfStr[len] = '\0';
+        }
+    }
 #endif
-    rfStr.trim();
-    return rfStr.toFloat();
+    trim_whitespace(rfStr);
+    return (strlen(rfStr) > 0) ? atof(rfStr) : 0.0;
   }
   return 0.0;
 }

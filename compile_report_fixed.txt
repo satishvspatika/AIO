@@ -1,0 +1,151 @@
+--- Building for 8MB Flash ESP32 (Default) ---
+--- Using partition file: partitions.csv ---
+WARNING: library LiquidCrystal I2C claims to run on avr architecture(s) and may be incompatible with your current board which runs on esp32 architecture(s).
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino: In function 'void gprs(void*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino:246:7: error: continue statement not within a loop
+  246 |       continue;
+      |       ^~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino:259:13: error: continue statement not within a loop
+  259 |             continue; // Skip start_gprs()
+      |             ^~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino: At global scope:
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino:638:1: error: expected declaration before '}' token
+  638 | }
+      | ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino: In function 'void send_ftp_file(char*, bool, bool)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:289:86: error: 'modulePath' was not declared in this scope
+  289 |           snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSPUTFILE=\"%s\",1", modulePath);
+      |                                                                                      ^~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:501:80: error: 'modulePath' was not declared in this scope
+  501 |           snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+FSDEL=\"C:/%s\"", modulePath);
+      |                                                                                ^~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:141:30: error: label 'ftp_cleanup' used but not defined
+  141 |                         goto ftp_cleanup;
+      |                              ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino: At global scope:
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:513:3: error: expected declaration before '}' token
+  513 |   } // CLOSED: Correct function boundary for send_ftp_file
+      |   ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:515:1: error: 'ftp_cleanup' does not name a type
+  515 | ftp_cleanup:
+      | ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:538:3: error: expected unqualified-id before 'if'
+  538 |   if (weLockedFS) xSemaphoreGive(fsMutex);
+      |   ^~
+In file included from /Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/freertos/esp_additions/include/freertos/idf_additions.h:22,
+                 from /Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/freertos/FreeRTOS-Kernel/include/freertos/FreeRTOS.h:1533,
+                 from /Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/cores/esp32/Arduino.h:33,
+                 from /private/tmp/aio_build_8mb/sketch/AIO9_5.0.ino.cpp:1:
+/Users/satishkripavasan/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.6/include/freertos/FreeRTOS-Kernel/include/freertos/semphr.h:428:58: error: expected constructor, destructor, or type conversion before '(' token
+  428 | #define xSemaphoreGive( xSemaphore )    xQueueGenericSend( ( QueueHandle_t ) ( xSemaphore ), NULL, semGIVE_BLOCK_TIME, queueSEND_TO_BACK )
+      |                                                          ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:539:3: note: in expansion of macro 'xSemaphoreGive'
+  539 |   xSemaphoreGive(modemMutex);
+      |   ^~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:540:1: error: expected declaration before '}' token
+  540 | }
+      | ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino: In function 'void fetchFromHttpAndUpdate(char*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:802:35: error: request for member 'indexOf' in 'waitForResponse(((const char*)"OK"), 2000)', which is of non-class type 'bool'
+  802 |   if (waitForResponse("OK", 2000).indexOf("OK") == -1) {
+      |                                   ^~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:1107:42: error: request for member 'c_str' in 'Update.UpdateClass::errorString()', which is of non-class type 'const char*'
+ 1107 |                     Update.errorString().c_str());
+      |                                          ^~~~~
+In file included from /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/AIO9_5.0.ino:25:
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:1151:92: error: request for member 'c_str' in 'Update.UpdateClass::errorString()', which is of non-class type 'const char*'
+ 1151 |       debugf("[OTA] Update.end FAILED. Code: %d, Str: %s\n", errCode, Update.errorString().c_str());
+      |                                                                                            ^~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:219:104: note: in definition of macro 'debugf'
+  219 |   #define debugf(fmt, ...)   do { if(!ota_silent_mode && !bearer_recovery_active) Serial.printf(fmt, ##__VA_ARGS__); } while (0)
+      |                                                                                                        ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino: In function 'void copyFromSPIFFSToFS(char*)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_ftp.ino:1262:13: error: 'response' was not declared in this scope
+ 1262 |     debugln(response);
+      |             ^~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:218:98: note: in definition of macro 'debugln'
+  218 |   #define debugln(...)       do { if(!ota_silent_mode && !bearer_recovery_active) Serial.println(__VA_ARGS__); } while (0)
+      |                                                                                                  ^~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino: In function 'void get_a7672s()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:676:9: error: 'try_activate_apn' was not declared in this scope
+  676 |     if (try_activate_apn(apn_str)) {
+      |         ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:715:9: error: 'try_activate_apn' was not declared in this scope
+  715 |     if (try_activate_apn(primary_apn)) {
+      |         ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:743:9: error: 'try_activate_apn' was not declared in this scope
+  743 |     if (try_activate_apn(fallback_apns[i])) {
+      |         ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:777:7: error: 'try_activate_apn' was not declared in this scope
+  777 |   if (try_activate_apn(apn_str)) {
+      |       ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino: At global scope:
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:1016:1: error: expected declaration before '}' token
+ 1016 | }
+      | ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:418:7: error: expected declaration before '}' token
+  418 |       }
+      |       ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:419:7: error: expected unqualified-id before 'break'
+  419 |       break;
+      |       ^~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:420:5: error: expected declaration before '}' token
+  420 |     }
+      |     ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:421:15: error: expected constructor, destructor, or type conversion before '(' token
+  421 |     vTaskDelay(2000 / portTICK_PERIOD_MS);
+      |               ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:422:25: error: expected constructor, destructor, or type conversion before ';' token
+  422 |     esp_task_wdt_reset();
+      |                         ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:423:3: error: expected declaration before '}' token
+  423 |   }
+      |   ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:425:3: error: 'bearer_recovery_active' does not name a type
+  425 |   bearer_recovery_active = false;
+      |   ^~~~~~~~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:426:3: error: expected unqualified-id before 'return'
+  426 |   return false;
+      |   ^~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:427:1: error: expected declaration before '}' token
+  427 | }
+      | ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino: In function 'void graceful_modem_shutdown()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:854:17: error: a function-definition is not allowed here before '{' token
+  854 | void send_sms() {
+      |                 ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/windSpeed.ino:123:2: error: expected '}' at end of input
+  123 | }
+      |  ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:808:32: note: to match this '{'
+  808 | void graceful_modem_shutdown() {
+      |                                ^
+Multiple libraries were found for "WiFi.h"
+  Used: /Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi
+  Not used: /Users/satishkripavasan/Documents/Arduino/libraries/WiFiEspAT
+
+[92mUsed library[0m            [92mVersion[0m [90mPath[0m
+[93mKeypad[0m                  3.1.1   [90m/Users/satishkripavasan/Documents/Arduino/libraries/Keypad-master[0m
+[93mLiquidCrystal I2C[0m       1.1.2   [90m/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C[0m
+[93mWire[0m                    3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Wire[0m
+[93mPreferences[0m             3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Preferences[0m
+[93mRTClib[0m                  2.1.4   [90m/Users/satishkripavasan/Documents/Arduino/libraries/RTClib[0m
+[93mAdafruit BusIO[0m          1.17.4  [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_BusIO[0m
+[93mSD[0m                      3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SD[0m
+[93mFS[0m                      3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/FS[0m
+[93mSPI[0m                     3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SPI[0m
+[93mSPIFFS[0m                  3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SPIFFS[0m
+[93mUpdate[0m                  3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Update[0m
+[93mWiFi[0m                    3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi[0m
+[93mNetworking[0m              3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Network[0m
+[93mHULP[0m                    2.0.1   [90m/Users/satishkripavasan/Documents/Arduino/libraries/HULP-master[0m
+[93mAdafruit BME280 Library[0m 2.3.0   [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_BME280_Library[0m
+[93mAdafruit Unified Sensor[0m 1.1.15  [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_Unified_Sensor[0m
+[93mESPmDNS[0m                 3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/ESPmDNS[0m
+[93mWebServer[0m               3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WebServer[0m
+[93mHash[0m                    3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Hash[0m
+
+[92mUsed platform[0m [92mVersion[0m [90mPath[0m
+[93mesp32:esp32[0m   3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6[0m
+Error during build: exit status 1
+--- Compilation FAILED ---

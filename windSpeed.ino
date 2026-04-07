@@ -3,7 +3,6 @@
 
 void windSpeed(void *pvParameters) {
   esp_task_wdt_add(NULL);
-  String temp1;
   uint16_t pulseBuffer[BUFFER_SIZE];
   int bufferIndex = 0;
 

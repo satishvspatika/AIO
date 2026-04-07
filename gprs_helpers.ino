@@ -1,19 +1,18 @@
-
 #include "globals.h"
 
 // Needed for SerialSIT usage if not included
 extern HardwareSerial SerialSIT;
 // debugln/debug are macros in globals.h
-extern String waitForResponse(const char *expected, unsigned long timeout);
+extern bool waitForResponse(const char *expected, unsigned long timeout);
 
-void save_apn_config(String apn, String ccid) {
+void save_apn_config(const char* apn, const char* ccid) {
   if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
     File f = SPIFFS.open("/apn_config.txt", FILE_WRITE);
     if (f) {
       f.println(ccid);
       f.println(apn);
       f.close();
-      debugln("Saved APN Config: " + apn);
+      debugf("[FS] Saved APN Config: %s\n", apn);
     }
     xSemaphoreGive(fsMutex);
   } else {
@@ -21,7 +20,7 @@ void save_apn_config(String apn, String ccid) {
   }
 }
 
-bool load_apn_config(String current_ccid, char *target_apn, size_t max_len) {
+bool load_apn_config(const char* current_ccid, char *target_apn, size_t max_len) {
   if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) != pdTRUE) { // v5.72: Increased for heavy daily logs
     debugln("APN Load Failed: fsMutex Locked");
     return false;
@@ -70,64 +69,53 @@ bool load_apn_config(String current_ccid, char *target_apn, size_t max_len) {
   }
   apn_buf[i] = '\0';
 
-  f.close();
+  if (xSemaphoreGetMutexHolder(fsMutex) == xTaskGetCurrentTaskHandle()) {
+      xSemaphoreGive(fsMutex);
+  }
 
-  debug("Memory Check - Stored CCID: ");
-  debug(ccid_buf);
-  debug(" | Stored APN: ");
-  debugln(apn_buf);
-
-  // Convert to String only for comparison (safe short strings)
-  String stored_ccid_str = String(ccid_buf);
-  stored_ccid_str.trim();
-  String stored_apn_str = String(apn_buf);
-  stored_apn_str.trim();
-
-  // Validate CCID match
-  if (stored_ccid_str.length() > 5 &&
-      current_ccid.indexOf(stored_ccid_str) != -1 &&
-      stored_apn_str.length() > 0) {
-
-    // v5.65 CRITICAL FIX: Cross-check stored APN against current carrier.
-    // A stale cache (e.g. from a test with Airtel SIM) can store airteliot.com
-    // for a BSNL SIM's ICCID. If the carrier (set by get_network() via CSPN/COPS)
-    // disagrees with the stored APN, REJECT the cache and force fresh discovery.
+  // [HR-H02] Restore Prefix Matching: Use strstr for legacy compatibility.
+  // This ensures that cached ICCIDs with trailing spaces or different lengths still match.
+  if (strstr(current_ccid, ccid_buf) != NULL) {
+    strncpy(target_apn, apn_buf, max_len - 1);
+    target_apn[max_len - 1] = '\0';
+    
+    // [HR-H01] Carrier Guard: Protect SPIFFS.remove with fsMutex
     bool apn_carrier_mismatch = false;
-    if (strstr(carrier, "BSNL") && strstr(stored_apn_str.c_str(), "airtel")) {
+    if (strstr(carrier, "BSNL") != NULL && strstr(apn_buf, "airtel") != NULL) {
       apn_carrier_mismatch = true;
-    } else if (strstr(carrier, "Jio") && !strstr(stored_apn_str.c_str(), "jio")) {
-      apn_carrier_mismatch = true;
-    } else if ((strstr(carrier, "Airtel")) && strstr(stored_apn_str.c_str(), "bsnl")) {
+    } else if (strstr(carrier, "Jio") != NULL && strstr(apn_buf, "jio") == NULL) {
+         apn_carrier_mismatch = true; 
+    } else if (strstr(carrier, "Airtel") != NULL && strstr(apn_buf, "bsnl") != NULL) {
       apn_carrier_mismatch = true;
     }
 
     if (apn_carrier_mismatch) {
-      debugln("Smart APN: ⚠ MISMATCH — Stored APN conflicts with detected carrier. Ignoring cache.");
-      // Delete the stale file so it gets re-saved with the correct APN this cycle
-      SPIFFS.remove("/apn_config.txt");
-      xSemaphoreGive(fsMutex);
+      debugf("Smart APN: MISMATCH - Stored APN (%s) conflicts with carrier (%s). Ignoring cache.\n", apn_buf, carrier);
+      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+          SPIFFS.remove("/apn_config.txt");
+          xSemaphoreGive(fsMutex);
+      }
       return false;
     }
 
-    strncpy(target_apn, stored_apn_str.c_str(), max_len);
-    target_apn[max_len - 1] = '\0';
-    debugln("Smart APN: Match Found!");
-    xSemaphoreGive(fsMutex);
+    debugf("Smart APN: Match Found! APN: %s\n", target_apn);
     return true;
   }
+
   debugln("Smart APN: No Match.");
-  xSemaphoreGive(fsMutex);
   return false;
 }
 
-String get_ccid() {
+void get_ccid(char *out, size_t maxLen) {
+  if (!out || maxLen == 0) return;
+  out[0] = '\0';
+  
   flushSerialSIT();
-  String ccid = "";
-
+  
   // v7.11: Rule 23 - Verify SIM is ready before CCID fetch
   for (int i = 0; i < 5; i++) {
     SerialSIT.println("AT+CPIN?");
-    if (waitForResponse("READY", 2000).indexOf("READY") != -1)
+    if (waitForResponse("READY", 2000))
       break;
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
@@ -136,60 +124,57 @@ String get_ccid() {
   flushSerialSIT();
   vTaskDelay(200 / portTICK_PERIOD_MS);
   SerialSIT.println("AT+CICCID");
-  String response = waitForResponse("OK", 3000);
-  String resp = response;
-  debug("Raw CICCID Resp: ");
-  debugln(resp);
-
-  // Flexible Header Check: Look for either +CICCID: or +ICCID:
-  int startIdx = resp.indexOf("+CICCID:");
-  int headerLen = 8;
-  if (startIdx == -1) {
-    startIdx = resp.indexOf("+ICCID:");
-    headerLen = 7;
-  }
-
-  if (startIdx != -1) {
-    for (int i = startIdx + headerLen; i < resp.length(); i++) {
-      if (isdigit(resp[i]))
-        ccid += resp[i];
-      else if (ccid.length() > 0)
-        break;
-    }
+  if (waitForResponse("OK", 3000)) {
+     // Search in global modem_response_buf
+     const char* resp = modem_response_buf;
+     const char* hdr = strstr(resp, "+CICCID:");
+     int headerLen = 8;
+     if (hdr == NULL) {
+       hdr = strstr(resp, "+ICCID:");
+       headerLen = 7;
+     }
+     
+     if (hdr != NULL) {
+        int outIdx = 0;
+        const char* p = hdr + headerLen;
+        while (*p != '\0' && outIdx < (int)maxLen - 1) {
+            if (isdigit(*p)) out[outIdx++] = *p;
+            else if (outIdx > 0) break;
+            p++;
+        }
+        out[outIdx] = '\0';
+     }
   }
 
   // Attempt 2: Fallback to AT+CCID
-  if (ccid.length() < 10) {
-    ccid = ""; // Reset
+  if (strlen(out) < 10) {
+    out[0] = '\0';
     flushSerialSIT();
-    vTaskDelay(300 / portTICK_PERIOD_MS); // Extra settle time on stressed modem
+    vTaskDelay(300 / portTICK_PERIOD_MS);
     SerialSIT.println("AT+CCID");
-    // v5.53 fix: modem may respond with +ICCID: (not +CCID:) when stressed.
-    // Wait for "OK" to capture the full response regardless of URC prefix.
-    String response = waitForResponse("OK", 3000);
-    String resp = response;
-    debug("Raw CCID Resp: ");
-    debugln(resp);
-    // Check BOTH +CCID: and +ICCID: in the response
-    startIdx = resp.indexOf("+CCID:");
-    int hdLen2 = 6;
-    if (startIdx == -1) {
-      startIdx = resp.indexOf("+ICCID:");
-      hdLen2 = 7;
-    }
-    if (startIdx != -1) {
-      for (int i = startIdx + hdLen2; i < resp.length(); i++) {
-        if (isdigit(resp[i]))
-          ccid += resp[i];
-        else if (ccid.length() > 0)
-          break;
+    if (waitForResponse("OK", 3000)) {
+      const char* resp = modem_response_buf;
+      const char* hdr = strstr(resp, "+CCID:");
+      int headerLen = 6;
+      if (hdr == NULL) {
+        hdr = strstr(resp, "+ICCID:");
+        headerLen = 7;
+      }
+      if (hdr != NULL) {
+        int outIdx = 0;
+        const char* p = hdr + headerLen;
+        while (*p != '\0' && outIdx < (int)maxLen - 1) {
+            if (isdigit(*p)) out[outIdx++] = *p;
+            else if (outIdx > 0) break;
+            p++;
+        }
+        out[outIdx] = '\0';
       }
     }
   }
 
   debug("Final CCID parsed: ");
-  debugln(ccid);
-  return ccid;
+  debugln(out);
 }
 
 bool try_activate_apn(const char *apn) {
@@ -203,11 +188,12 @@ bool try_activate_apn(const char *apn) {
   // v5.70: Fix C-01 - Prevent redundant APN writes to modem flash to preserve endurance
   // We read the current definition for CID 1 and only update if it differs.
   SerialSIT.println("AT+CGDCONT?");
-  String current_apn_resp = waitForResponse("OK", 2000);
+  waitForResponse("OK", 2000);
+  const char* current_apn_resp = modem_response_buf;
   String target_apn_quoted = "\"" + String(apn) + "\"";
   
-  if (current_apn_resp.indexOf("+CGDCONT: 1,") != -1 && 
-     (current_apn_resp.indexOf(target_apn_quoted) != -1 || current_apn_resp.indexOf(apn) != -1)) {
+  if (strstr(current_apn_resp, "+CGDCONT: 1,") != NULL && 
+     (strstr(current_apn_resp, target_apn_quoted.c_str()) != NULL || strstr(current_apn_resp, apn) != NULL)) {
     debugln("[APN] Flash match found. Skipping redundant write.");
   } else {
     debugln("[APN] Flash mismatch or missing. Updating modem profile...");
@@ -227,27 +213,17 @@ bool try_activate_apn(const char *apn) {
   SerialSIT.println("AT+CGACT=1,1");
   
   // v5.79 Robust Response Wait: Filter async URCs (PB DONE, SMS DONE)
-  String response = "";
-  unsigned long start = millis();
-  while (millis() - start < 25000) {
-    if (SerialSIT.available()) {
-      String line = SerialSIT.readStringUntil('\n');
-      line.trim();
-      if (line.equalsIgnoreCase("OK")) { response = "OK"; break; }
-      if (line.indexOf("ERROR") != -1) { response = line; break; }
-    }
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-    esp_task_wdt_reset();
-  }
+  bool act_success = waitForResponse("OK", 25000);
   
-  debugln("CGACT Resp: " + response); 
+  debugf("[GPRS] CGACT Resp: %s\n", modem_response_buf); 
 
-  if (response.indexOf("OK") != -1) {
+  if (act_success) {
     // v5.70 Hardened [H-4 Fix]: Verify actual IP assigned — BSNL returns OK but 0.0.0.0
     vTaskDelay(500 / portTICK_PERIOD_MS);
     SerialSIT.println("AT+CGPADDR=1");
-    String ip_resp = waitForResponse("OK", 3000);
-    if (ip_resp.indexOf("0.0.0.0") != -1 || ip_resp.indexOf("+CGPADDR:") == -1) {
+    waitForResponse("OK", 3000);
+    const char* ip_resp = modem_response_buf;
+    if (strstr(ip_resp, "0.0.0.0") != NULL || strstr(ip_resp, "+CGPADDR:") == NULL) {
         debugln("[APN] CGACT OK but no valid IP (0.0.0.0). Treating as failure.");
         return false;
     }
@@ -274,53 +250,64 @@ bool verify_bearer_or_recover() {
   int check_cid = (active_cid > 0) ? active_cid : 1;
 
   SerialSIT.println("AT+CGACT?");
-  String cgact_resp = waitForResponse("OK", 3000);
+  waitForResponse("OK", 3000);
+  const char* cgact_resp = modem_response_buf;
 
   bool context_active = false;
   // Check for the specific CID that we configured
-  String cid_check = "+CGACT: " + String(check_cid) + ",1";
-  if (cgact_resp.indexOf(cid_check) != -1) {
+  char cid_check[20];
+  snprintf(cid_check, sizeof(cid_check), "+CGACT: %d,1", check_cid);
+  if (strstr(cgact_resp, cid_check) != NULL) {
     context_active = true;
   }
 
   // 2. If context is active, verify assigned IP is valid AND APN matches
   if (context_active) {
-    String paddr_cmd = "AT+CGPADDR=" + String(check_cid);
+    char paddr_cmd[32];
+    snprintf(paddr_cmd, sizeof(paddr_cmd), "AT+CGPADDR=%d", check_cid);
     SerialSIT.println(paddr_cmd);
-    String ip_resp = waitForResponse("OK", 3000);
+    waitForResponse("OK", 3000);
+    const char* ip_resp = modem_response_buf;
 
-    String paddr_prefix = "+CGPADDR: " + String(check_cid) + ",";
+    char paddr_prefix[20];
+    snprintf(paddr_prefix, sizeof(paddr_prefix), "+CGPADDR: %d,", check_cid);
     
     // v5.70: D-2 Hardened IP verification
-    String ip_str = "";
-    int prefix_idx = ip_resp.indexOf(paddr_prefix);
-    if (prefix_idx != -1) {
-        int comma_idx = ip_resp.indexOf(',', prefix_idx);
-        if (comma_idx != -1) {
-            ip_str = ip_resp.substring(comma_idx + 1);
-            ip_str.replace("\"", ""); // Remove quotes
-            ip_str.trim();
+    char ip_str[32] = {0};
+    const char* prefix_ptr = strstr(ip_resp, paddr_prefix);
+    if (prefix_ptr != NULL) {
+        const char* comma_ptr = strchr(prefix_ptr, ',');
+        if (comma_ptr != NULL) {
+            const char* p = comma_ptr + 1;
+            int outIdx = 0;
+            while (*p != '\0' && *p != '\r' && *p != '\n' && outIdx < (int)sizeof(ip_str) - 1) {
+                if (*p != '\"' && *p != ' ') ip_str[outIdx++] = *p;
+                p++;
+            }
+            ip_str[outIdx] = '\0';
         }
     }
 
-    bool ip_ok = (ip_str.length() >= 7 && ip_str.indexOf("0.0.0.0") == -1 && ip_str.indexOf(".") != -1);
+    bool ip_ok = (strlen(ip_str) >= 7 && strstr(ip_str, "0.0.0.0") == NULL && strstr(ip_str, ".") != NULL);
 
     if (ip_ok) {
-        debugf1("Bearer Check: OK (Assigned IP: %s)\n", ip_str.c_str());
+        debugf1("Bearer Check: OK (Assigned IP: %s)\n", ip_str);
       // v5.52: Extra check - is the APN actually what we expect?
       // Only check if we have a known target APN (avoids breaking new SIMs)
       if (strlen(apn_str) > 0) {
-        String rdp_cmd = "AT+CGCONTRDP=" + String(check_cid);
+        char rdp_cmd[32];
+        snprintf(rdp_cmd, sizeof(rdp_cmd), "AT+CGCONTRDP=%d", check_cid);
         SerialSIT.println(rdp_cmd);
-        String rdp_resp = waitForResponse("OK", 3000);
-        // P1 fix v5.65: '"' + String(apn_str) is char+String = wrong!
-        // char '"' (ASCII 34) + String [INFO] appends integer 34, not a quote character.
-        // Must use string literals for correct concatenation.
-        String apn_check = "\"" + String(apn_str) + "\"";
-        if (rdp_resp.indexOf(apn_check) == -1) {
+        waitForResponse("OK", 3000);
+        const char* rdp_resp = modem_response_buf;
+        
+        char apn_check[50];
+        snprintf(apn_check, sizeof(apn_check), "\"%s\"", apn_str);
+        if (strstr(rdp_resp, apn_check) == NULL) {
           debugln("Bearer Check: FAILED (APN Mismatch/Ghost Session). Force "
                   "re-activating...");
-          String deact_cmd = "AT+CGACT=0," + String(check_cid);
+          char deact_cmd[32];
+          snprintf(deact_cmd, sizeof(deact_cmd), "AT+CGACT=0,%d", check_cid);
           SerialSIT.println(deact_cmd);
           waitForResponse("OK", 3000);
           // Fall through to recovery with the correct apn_str
@@ -334,7 +321,8 @@ bool verify_bearer_or_recover() {
       debugln("Bearer Check: FAILED (Context Active but Invalid IP). "
               "Recovering...");
       // Context is active but no IP - deactivate cleanly
-      String deact_cmd = "AT+CGACT=0," + String(check_cid);
+      char deact_cmd[32];
+      snprintf(deact_cmd, sizeof(deact_cmd), "AT+CGACT=0,%d", check_cid);
       SerialSIT.println(deact_cmd);
       waitForResponse("OK", 2000);
     }
@@ -354,12 +342,15 @@ bearer_recovery: // Label used for ghost-session fallthrough
     bool is_registered = false;
     debugln("AG Recovery: Checking network registration before APN attempt...");
     for (int r = 0; r < 30; r++) { // 30 * 2s = 60s
+      esp_task_wdt_reset(); // Pet WDT during 60s cold attach scenario
       SerialSIT.println("AT+CREG?");
-      String creg = waitForResponse("OK", 2000);
-      // Registered: ,1 (home) or ,5 (roaming)
-      if (creg.indexOf(",1") != -1 || creg.indexOf(",5") != -1) {
-        is_registered = true;
-        break;
+      if (waitForResponse("OK", 2000)) {
+        const char* creg = modem_response_buf;
+        // Registered: ,1 (home) or ,5 (roaming)
+        if (strstr(creg, ",1") != NULL || strstr(creg, ",5") != NULL) {
+          is_registered = true;
+          break;
+        }
       }
       debugln("AG Recovery: Not registered yet, waiting...");
       vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -389,7 +380,8 @@ bearer_recovery: // Label used for ghost-session fallthrough
 
   // 4. Fallback: Query CCID and load stored APN from SPIFFS.
   debugln("AG Recovery: Runtime APN failed. Querying CCID...");
-  String ccid = get_ccid();
+  char ccid[25];
+  get_ccid(ccid, sizeof(ccid));
   char stored_apn[32] = {0}; // Turner-Fix: Expanded from 20 to 32 to support long IoT APNs
   if (load_apn_config(ccid, stored_apn, sizeof(stored_apn))) {
     debugf("AG Recovery: Trying stored APN -> %s\n", stored_apn);
@@ -414,8 +406,8 @@ bearer_recovery: // Label used for ghost-session fallthrough
   // v7.11: Wait for SIM Readiness after Radio Refresh
   debugln("AG Recovery: Waiting for SIM (CPIN) stability...");
   for (int i = 0; i < 5; i++) {
-    SerialSIT.println("AT+CPIN?");
-    if (waitForResponse("READY", 2000).indexOf("READY") != -1)
+    SerialSIT.println("AT");
+    if (waitForResponse("READY", 2000))
       break;
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
@@ -423,19 +415,19 @@ bearer_recovery: // Label used for ghost-session fallthrough
   // Wait for re-registration after radio refresh
   debugln("AG Recovery: Waiting for re-registration after refresh...");
   for (int r = 0; r < 10; r++) {
-    SerialSIT.println("AT+CREG?");
-    String creg = waitForResponse("OK", 2000);
-    if (creg.indexOf(",1") != -1 || creg.indexOf(",5") != -1) {
-      debugln("AG Recovery: Re-registered after refresh. Trying one last "
-              "activation...");
-      // Try activation again with runtime APN
-      if (strlen(apn_str) > 0) {
-        if (try_activate_apn(apn_str)) {
-          bearer_recovery_active = false;
-          return true;
+    if (waitForResponse("OK", 2000)) {
+      const char* creg = modem_response_buf;
+      if (strstr(creg, ",1") != NULL || strstr(creg, ",5") != NULL) {
+        debugln("AG Recovery: Re-registered after refresh. Trying one last activation...");
+        // Try activation again with runtime APN
+        if (strlen(apn_str) > 0) {
+          if (try_activate_apn(apn_str)) {
+            bearer_recovery_active = false;
+            return true;
+          }
         }
+        break;
       }
-      break;
     }
     vTaskDelay(2000 / portTICK_PERIOD_MS);
     esp_task_wdt_reset();
@@ -465,31 +457,37 @@ void flushSerialSIT() {
  * 
  * This resolves the 'Rejected' issue where the server rejects future-timed data.
  */
-void sync_rtc_from_http_header(const String& head) {
-  if (head.length() < 20) {
+void sync_rtc_from_http_header() {
+  const char *head = modem_response_buf;
+  if (strlen(head) < 20) {
     debugln("[RTC-Sync] Invalid header string passed.");
     return;
   }
   debugln("[RTC-Sync] Processing Server Header (IST Transition)...");
   
   // Standard HTTP Header Parsing
-  int dateIdx = head.indexOf("Date: ");
-  if (dateIdx == -1) {
+  const char* dateIdx = strstr(head, "Date: ");
+  if (dateIdx == NULL) {
     debugln("[RTC-Sync] Date header not found. Check modem logs.");
     return;
   }
   
   // Extract: "Wed, 01 Apr 2026 07:15:05 GMT"
-  String dateStr = head.substring(dateIdx + 6);
-  int endIdx = dateStr.indexOf('\r');
-  if (endIdx != -1) dateStr = dateStr.substring(0, endIdx);
-  dateStr.trim();
+  char dateStr[64];
+  const char* start = dateIdx + 6;
+  const char* end = strchr(start, '\r');
+  int len = (end != NULL) ? (end - start) : 0;
+  if(len <= 0 || len >= (int)sizeof(dateStr)) return;
+  
+  strncpy(dateStr, start, len);
+  dateStr[len] = '\0';
+  trim_whitespace(dateStr);
   
   int day, year, hour, min, sec;
   char monStr[4];
   
   // Skip weekday (e.g. "Wed, ") - move to first digit
-  const char* p = dateStr.c_str();
+  const char* p = dateStr;
   while (*p && !isdigit(*p)) p++; 
   
   if (sscanf(p, "%d %3s %d %d:%d:%d", &day, monStr, &year, &hour, &min, &sec) == 6) {
@@ -557,7 +555,6 @@ void sync_rtc_from_http_header(const String& head) {
   }
 }
 void sync_rtc_from_server_tm(const char *payload, bool force) {
-  String response;
   if (!payload)
     return;
 
@@ -717,7 +714,6 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
 }
 
 void start_gprs() {
-  String response;
   // Power ON GPRS
   digitalWrite(26, HIGH);               // Power on GPRS module
   vTaskDelay(500 / portTICK_PERIOD_MS); // v5.64: Reduced from 1s for fast-boot
@@ -725,9 +721,9 @@ void start_gprs() {
 
   // Active fast-polling for Modem Boot instead of a blind 10-second wait
   bool modem_ready = false;
-  for (int i = 0; i < 25; i++) {
+  for (int i = 0; i < 5; i++) {
     SerialSIT.println("AT");
-    if (waitForResponse("OK", 400).indexOf("OK") != -1) {
+    if (waitForResponse("OK", 400)) {
       modem_ready = true;
       debugf1("[GPRS] Modem ready in %d iterations!\n", i + 1);
       break;
@@ -745,13 +741,12 @@ void start_gprs() {
   debugln("[GPRS] Polling for SIM (CPIN)...");
   for (int i = 0; i < 10; i++) {
     SerialSIT.println("AT+CPIN?");
-    String cpin_resp = waitForResponse("+CPIN: READY", 1000);
-    if (cpin_resp.indexOf("+CPIN: READY") != -1) {
+    if (waitForResponse("+CPIN: READY", 1000)) {
       sim_ready = true;
       debugf1("[GPRS] SIM ready in %d ms!\n", (i + 1) * 1000);
       break;
     }
-    if (cpin_resp.indexOf("+CME ERROR") != -1) {
+    if (strstr(modem_response_buf, "+CME ERROR") != NULL) {
       debugln("[GPRS] SIM Error detected during polling.");
       break;
     }
@@ -784,15 +779,17 @@ void start_gprs() {
     // v5.85: P2 - Signal Fast-Track (Only on healthy known networks)
     if (last_http_ok && signal_lvl > -98 && strlen(carrier) > 0) {
         SerialSIT.println("AT+CSQ");
-        String r = waitForResponse("+CSQ", 1000);
-        int idx = r.indexOf("+CSQ: ");
-        if (idx != -1) {
-            int raw = r.substring(idx + 6).toInt();
-            if (raw > 0 && raw < 32) {
-                signal_strength = -113 + 2 * raw;
-                signal_lvl = signal_strength;
-                debugf("[GPRS] Fast-Track CSQ: %d dBm (carrier: %s)\n", signal_lvl, carrier);
-                goto skip_full_init;
+        if (waitForResponse("+CSQ", 1000)) {
+            const char* r = modem_response_buf;
+            const char* idx = strstr(r, "+CSQ: ");
+            if (idx != NULL) {
+                int raw = atoi(idx + 6);
+                if (raw > 0 && raw < 32) {
+                    signal_strength = -113 + 2 * raw;
+                    signal_lvl = signal_strength;
+                    debugf("[GPRS] Fast-Track CSQ: %d dBm (carrier: %s)\n", signal_lvl, carrier);
+                    goto skip_full_init;
+                }
             }
         }
     }
@@ -821,12 +818,6 @@ int parseHttpDate(const char *dateStr, struct tm *tm) {
 }
 void graceful_modem_shutdown() {
   if (!gprs_started && gprs_mode == eGprsInitial) {
-    debugln("[GPRS] Modem never started. Cutting power directly.");
-    digitalWrite(26, LOW);
-    return;
-  }
-
-  String response;
   // session_unstable = true only on ACTUAL failures (reg fails > 0).
   // eHttpStop / eSMSStop mean the session COMPLETED successfully.
   // v5.67: Removed erroneous (sync_mode == eHttpStop) from this condition.
@@ -836,7 +827,7 @@ void graceful_modem_shutdown() {
     debugln("[GPRS] Session clean. Attempting graceful shutdown...");
     if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
       SerialSIT.println("AT");
-      if (waitForResponse("OK", 500).indexOf("OK") != -1) {
+      if (waitForResponse("OK", 500)) {
         debugln("[GPRS] Modem alive. Closing network session gracefully...");
         SerialSIT.println("AT+CPOWD=1"); // Normal Power Down
         waitForResponse("NORMAL POWER DOWN", 8000); // Extended timeout for graceful detach
@@ -869,16 +860,11 @@ void graceful_modem_shutdown() {
   gprs_started = false;
   gprs_mode = eGprsSleepMode; // Prevent Ghost Restart during sleep entry
   portEXIT_CRITICAL(&syncMux);
+  }
 }
 
 void send_sms() {
-  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
-    debugln("[GPRS] Error: Modem Mutex Timeout - skipping SMS check");
-    sync_mode = eSMSStop; // v5.65 P2 Fix: Reset sync_mode to allow GPRS task to finalize
-    return;
-  }
-  
-  String response;
+  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
   vTaskDelay(500 /
              portTICK_PERIOD_MS); // TRG8-3.0.5g reduced from 1min to 500ms
   int msg_no;
@@ -898,51 +884,52 @@ void send_sms() {
   // AT+CMGD=1,3 = delete only READ+SENT messages. UNREAD messages are preserved
   // and will be processed on the next SMS check cycle.
   SerialSIT.println("AT+CMGD=1,3");
-  response = waitForResponse("OK", 5000);
+  waitForResponse("OK", 5000);
   debugln("Removed READ/SENT messages (UNREAD preserved)");
 
   portENTER_CRITICAL(&syncMux);
   sync_mode = eSMSStop;
   portEXIT_CRITICAL(&syncMux);
+
   xSemaphoreGive(modemMutex);
+  }
 }
 
 // REQUIRES: modemMutex held by caller (Not thread-safe due to static buffer)
-String waitForResponse(const char *expected, unsigned long timeout) {
+bool waitForResponse(const char *expected, unsigned long timeout) {
   // v5.80.1 defensive guard: waitForResponse uses a static buffer and MUST be protected by modemMutex
   configASSERT(xSemaphoreGetMutexHolder(modemMutex) == xTaskGetCurrentTaskHandle());
 
-  // v5.68 Stability Fix: Buffer UART in static char array
-  // dynamic String (response += c) to prevent massive heap fragmentation
-  // on long multi-kilobyte JSON HTTP reads.
-  static char buf[2048]; // Phase 5 Fix: Moved from Stack to Heap/BSS to stop Stack Overflows
-  memset(buf, 0, sizeof(buf));
+  // v6.0 Stability Fix: Use global fixed buffer to eliminate all heap jitter
+  // The modemMutex guarantees single-task access to modem_response_buf.
+  memset(modem_response_buf, 0, sizeof(modem_response_buf));
   int buf_idx = 0;
-  buf[0] = '\0'; // Initialize empty
+  modem_response_buf[0] = '\0'; 
   
   unsigned long startTime = millis();
 
   while ((millis() - startTime) < timeout) {
     vTaskDelay(1 / portTICK_PERIOD_MS);
-    esp_task_wdt_reset(); // Keep watchdog happy during long AT command waits
-    last_activity_time = millis(); // v5.85: Refresh safety heartbeat on every poll iteration
+    esp_task_wdt_reset(); 
+    last_activity_time = millis(); 
 
     while (SerialSIT.available()) {
       char c = SerialSIT.read();
       if (buf_idx < 2047) { // Prevent unbounded growth
-        buf[buf_idx++] = c;
-        buf[buf_idx] = '\0';
+        modem_response_buf[buf_idx++] = c;
+        modem_response_buf[buf_idx] = '\0';
       }
     }
 
-    // Use fast C-string search to avoid allocating intermediate Strings
-    if (strstr(buf, expected) != NULL) {
-      return String(buf); // Only allocate the String exactly ONCE on success
+    if (strstr(modem_response_buf, expected) != NULL) {
+      return true;
     }
   }
 
-  return String(buf); // Return whatever we caught on timeout
+  return false; 
 }
+
+
 
 int read_line(char *src, char *dest, int max_len, char delim_chr) {
   int i, j;

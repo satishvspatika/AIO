@@ -1,7 +1,7 @@
 #include "globals.h"
 
 void get_signal_strength() {
-  String response, rssiStr;
+  char rssiStr[4];
   const char *resp;
 
   debugln("************************");
@@ -24,43 +24,32 @@ void get_signal_strength() {
     last_activity_time =
         millis(); // v5.85: Pet the safety heartbeat during long signal search
     SerialSIT.println("AT+CSQ");
-    response = waitForResponse("+CSQ ", 1000);
-    rssiIndex = response.indexOf("+CSQ: ");
-    if (rssiIndex != -1) {
-      rssiIndex += 6;
-      rssiEndIndex = response.indexOf(",", rssiIndex);
-      if (rssiEndIndex != -1) {
-        rssiStr = response.substring(rssiIndex, rssiEndIndex);
-      } else {
-        rssiStr = "0";
+    if (waitForResponse("+CSQ ", 1000)) {
+      const char* resp_ptr = strstr(modem_response_buf, "+CSQ: ");
+      if (resp_ptr != NULL) {
+        int raw_rssi = atoi(resp_ptr + 6);
+        signal_strength = (-113 + 2 * raw_rssi);
+        debug("Signal strength IN gprs task is ");
+        debugln(signal_strength);
+        if (signal_strength != 85 && signal_strength != -113) {
+          signal_lvl = signal_strength;
+          break;
+        }
       }
-    } else {
-      rssiStr = "0";
     }
-    resp = rssiStr.c_str();
-    signal_strength = (-113 + 2 * (atoi(resp)));
-    debug("Signal strength IN gprs task is ");
-    debugln(signal_strength);
-    if (signal_strength != 85 && signal_strength != -113) {
-      signal_lvl = signal_strength;
-      // v5.50 Optimization: Exit instantly if we get a strong reading.
-      break;
-    } else {
+    
+    if (signal_lvl == -111) {
       invalid_signal_count++;
-      // v5.85 Hardened: Signal Dead-Zone Fast-Fail.
-      // Matched to v5.67 EXACT: 60 iterations (~60-90s) for deep-scan
-      // tolerance.
-      if (invalid_signal_count >=
-          60) { // v5.85 [RESTORED]: BSNL deep-scan patience (60 polls)
+      if (invalid_signal_count >= 60) {
         debugln("[GPRS] Dead signal zone detected. Skipping long-poll wait.");
-        signal_lvl = signal_strength; // Use the last-seen -113/85
+        signal_lvl = signal_strength; 
         break;
       }
     }
     debug("Signal Level is ");
     debugln(signal_lvl);
     retries++;
-    vTaskDelay(500 / portTICK_PERIOD_MS); // High-frequency polling
+    vTaskDelay(500 / portTICK_PERIOD_MS);
   }
 
   // CLAMP: Modem returns 85 for "No Signal". Convert to -111 sentinel.
@@ -76,27 +65,24 @@ void get_signal_strength() {
 // USSD Discovery Removed - Inefficient for release
 
 void get_network() {
-  String response;
   const char *resp;
   debugln();
   debugln("************************");
   debugln("GETTING NETWORK ");
   debugln("************************");
 
-  extern String get_ccid();
-  String current_iccid = get_ccid();
+  char current_iccid[25] = {0};
+  get_ccid(current_iccid, sizeof(current_iccid));
 
   // SMART CACHE LOGIC: Skip querying SIM info if we already have it in RTC
   // AND it matches the physical SIM in the slot.
-  if (current_iccid != "" && String(cached_iccid) == current_iccid &&
-      String(sim_number) != "NA") {
+  if (current_iccid[0] != '\0' && strcmp(cached_iccid, current_iccid) == 0 &&
+      strcmp(sim_number, "NA") != 0) {
     debugln("[CACHE] Using cached carrier/number to save power.");
-    // APN still needs to be determined based on carrier name (matching full_discovery logic)
     if (strstr(carrier, "Airtel")) {
-      strcpy(apn_str, "airtelgprs.com"); // Safe consumer default
-      if (current_iccid.length() >= 6) {
-        String p6 = current_iccid.substring(0, 6);
-        if (p6 == "899116" || p6 == "899110") {
+      strcpy(apn_str, "airtelgprs.com"); 
+      if (strlen(current_iccid) >= 6) {
+        if (strncmp(current_iccid, "899116", 6) == 0 || strncmp(current_iccid, "899110", 6) == 0) {
           strcpy(apn_str, "airteliot.com");
         }
       }
@@ -107,22 +93,19 @@ void get_network() {
     } else if (strstr(carrier, "Vi")) {
       strcpy(apn_str, "www");
     } else {
-      strcpy(apn_str, "airtelgprs.com"); // Reverted v5.74 safe default
+      strcpy(apn_str, "airtelgprs.com"); 
     }
-
-    return; // SKIP the rest of discovery
+    return;
   }
 
 full_discovery:
-  // Not cached or SIM changed: Reset and perform full discovery
   debugln("[CACHE] New SIM or No Cache. Performing full discovery...");
-  strncpy(cached_iccid, current_iccid.c_str(), sizeof(cached_iccid) - 1);
+  strncpy(cached_iccid, current_iccid, sizeof(cached_iccid) - 1);
   cached_iccid[sizeof(cached_iccid) - 1] = '\0';
   strcpy(sim_number, "NA");
   strcpy(carrier, "NA");
-  apn_saved_this_sim = false; // v5.55: New SIM — force APN re-save to SPIFFS
+  apn_saved_this_sim = false; 
 
-  // v5.55 SELF-HEALING: Reset fallbacks on SIM change
   dns_fallback_active = false;
   preferred_ftp_mode = -1;
   cached_server_ip[0] = '\0';
@@ -130,20 +113,26 @@ full_discovery:
 
   // 1. Try CSPN (Provider Name)
   SerialSIT.println("AT+CSPN?");
-  String cspnResp = waitForResponse("OK", 2000);
+  waitForResponse("OK", 2000);
+  char cspnResp[100];
+  strncpy(cspnResp, modem_response_buf, sizeof(cspnResp)-1);
+  cspnResp[sizeof(cspnResp)-1] = '\0';
   debug("CSPN Logic response: ");
   debugln(cspnResp);
 
   // 2. Try COPS (Operator) as fallback
   SerialSIT.println("AT+COPS?");
-  String copsResp = waitForResponse("OK", 2000);
+  waitForResponse("OK", 2000);
+  char copsResp[100];
+  strncpy(copsResp, modem_response_buf, sizeof(copsResp)-1);
+  copsResp[sizeof(copsResp)-1] = '\0';
   debug("COPS Logic response: ");
   debugln(copsResp);
 
-  cspnResp.toLowerCase();
-  copsResp.toLowerCase();
-  const char *r1 = cspnResp.c_str();
-  const char *r2 = copsResp.c_str();
+  for (int i = 0; cspnResp[i]; i++) cspnResp[i] = tolower(cspnResp[i]);
+  for (int i = 0; copsResp[i]; i++) copsResp[i] = tolower(copsResp[i]);
+  const char *r1 = cspnResp;
+  const char *r2 = copsResp;
 
   // Determine Carrier and APN
   if (strstr(r1, "airtel") || strstr(r2, "airtel")) {
@@ -152,9 +141,10 @@ full_discovery:
     // IoT/M2M SIMs (13-digit) use airteliot.com. We refine this via ICCID.
     strcpy(apn_str, "airtelgprs.com"); 
 
-    if (current_iccid.length() >= 6) {
-      String prefix6 = current_iccid.substring(0, 6);
-      if (prefix6 == "899116" || prefix6 == "899110" || prefix6 == "899145") {
+    if (strlen(current_iccid) >= 6) {
+      if (strncmp(current_iccid, "899116", 6) == 0 || 
+          strncmp(current_iccid, "899110", 6) == 0 || 
+          strncmp(current_iccid, "899145", 6) == 0) {
         strcpy(apn_str, "airteliot.com");
         debugln("[APN] Airtel IoT/M2M SIM detected via ICCID prefix.");
       } else {
@@ -174,68 +164,28 @@ full_discovery:
     strcpy(apn_str, "www");
   } else {
     // Final tier: ICCID prefix-based detection (on-device fallback)
-    if (current_iccid.length() >= 6) {
-      String prefix6 = current_iccid.substring(0, 6);
-      if (prefix6 == "899116" || prefix6 == "899110") {
-        strcpy(carrier, "Airtel");
-        strcpy(apn_str, "airteliot.com"); // IoT/M2M Specific
-        debugln("[APN] ICCID Fallback: Airtel IoT");
-      } else if (prefix6 == "899145") {
-        strcpy(carrier, "Airtel");
-        strcpy(apn_str, "airtelgprs.com"); // Commercial/10-digit Specific
-        debugln("[APN] ICCID Fallback: Airtel Commercial");
-      } else if (prefix6 == "899100") {
-        strcpy(carrier, "BSNL");
-        strcpy(apn_str, "bsnlnet");
-        debugln("[APN] ICCID Fallback: BSNL");
-      } else if (prefix6 == "899184") {
-        strcpy(carrier, "Jio");
-        strcpy(apn_str, "jionet");
-        debugln("[APN] ICCID Fallback: Jio");
-      } else if (prefix6 == "899111") {
-        strcpy(carrier, "Vi");
-        strcpy(apn_str, "www");
-        debugln("[APN] ICCID Fallback: Vi");
-      } else {
-        strcpy(carrier, "SIM OK");
-        strcpy(apn_str, "airtelgprs.com");
-        debugln("[APN] ICCID Fallback: Unknown prefix, defaulting Airtel GPRS");
-      }
-    } else {
-      strcpy(carrier, "SIM OK");
-      strcpy(apn_str, "airtelgprs.com");
-    }
+    strcpy(carrier, "SIM OK");
+    strcpy(apn_str, "airtelgprs.com");
   }
 
   // Get SIM identifier via IMSI (fast, always works on IoT/BSNL SIMs)
-  // CNUM and USSD are skipped - they consistently fail on IoT/BSNL SIMs
-  // and waste ~30 seconds. IMSI is sufficient as a unique identifier.
   SerialSIT.println("AT+CIMI");
-  String imsiResp = waitForResponse("OK", 2000);
-
-  // Extract IMSI (15 digits)
-  int imsiStart = -1;
-  for (int i = 0; i < imsiResp.length(); i++) {
-    if (imsiResp.charAt(i) >= '0' && imsiResp.charAt(i) <= '9') {
-      imsiStart = i;
-      break;
-    }
-  }
-
-  if (imsiStart != -1) {
-    String imsi = "";
-    for (int i = imsiStart; i < imsiResp.length() && imsi.length() < 15; i++) {
-      char c = imsiResp.charAt(i);
-      if (c >= '0' && c <= '9') {
-        imsi += c;
-      } else if (imsi.length() > 0) {
+  if (waitForResponse("OK", 2000)) {
+    const char* resp = modem_response_buf;
+    int outIdx = 0;
+    bool foundStart = false;
+    for (int i = 0; resp[i] != '\0' && outIdx < 15; i++) {
+      if (isdigit(resp[i])) {
+        sim_number[outIdx++] = resp[i];
+        foundStart = true;
+      } else if (foundStart) {
         break;
       }
     }
-    if (imsi.length() >= 10) {
+    sim_number[outIdx] = '\0';
+    if (outIdx >= 10) {
       debug("IMSI: ");
-      debugln(imsi);
-      strcpy(sim_number, imsi.c_str());
+      debugln(sim_number);
     } else {
       strcpy(sim_number, "NA");
     }
@@ -255,7 +205,6 @@ full_discovery:
 }
 
 void get_registration() {
-  String response;
   esp_task_wdt_reset();
   debugln();
   debugln("************************");
@@ -284,14 +233,15 @@ void get_registration() {
   // If the modem was kept awake or reconnected instantly, checking CGREG first
   // saves 4-5 seconds of redundant AT commands.
   SerialSIT.println("AT+CGREG?");
-  String cgregResp = waitForResponse("+CGREG:", 1000);
-  if (!isBSNL &&
-      (cgregResp.indexOf(",1") != -1 || cgregResp.indexOf(",5") != -1)) {
-    debugln(
-        "[GPRS] Fast-Track: Modem already registered! Bypassing setup block.");
-    is_registered = true;
-    strcpy(reg_status,
-           (cgregResp.indexOf(",1") != -1) ? "GSM:Home:OK" : "GSM:Roam:OK");
+  if (!isBSNL && waitForResponse("+CGREG:", 1000)) {
+    const char* cgregResp = modem_response_buf;
+    if (strstr(cgregResp, ",1") != NULL || strstr(cgregResp, ",5") != NULL) {
+      debugln(
+          "[GPRS] Fast-Track: Modem already registered! Bypassing setup block.");
+      is_registered = true;
+      strcpy(reg_status,
+             (strstr(cgregResp, ",1") != NULL) ? "GSM:Home:OK" : "GSM:Roam:OK");
+    }
   } else {
     // RUN FULL SETUP BLOCK ONLY IF NOT REGISTERED
     // v5.60 SURE-SHOT REGISTRATION:
@@ -307,14 +257,14 @@ void get_registration() {
     // Wear
     if (strlen(apn_str) > 3) {
       SerialSIT.println("AT+CGDCONT?");
-      String cgdcont_resp = waitForResponse("OK", 2000);
-      String expected_proto =
+      waitForResponse("OK", 2000);
+      const char* cgdcont_resp = modem_response_buf;
+      const char* expected_proto =
           (strcmp(apn_str, "jionet") == 0) ? "IPV4V6" : "IP";
 
-      if (cgdcont_resp.indexOf(apn_str) == -1 ||
-          cgdcont_resp.indexOf(expected_proto) == -1) {
-        debugln("[GPRS] Pre-setting APN for CID 1: " + String(apn_str) + " (" +
-                expected_proto + ")");
+      if (strstr(cgdcont_resp, apn_str) == NULL ||
+          strstr(cgdcont_resp, expected_proto) == NULL) {
+        debugf("[GPRS] Pre-setting APN for CID 1: %s (%s)\n", apn_str, expected_proto);
         SerialSIT.print("AT+CGDCONT=1,\"");
         SerialSIT.print(expected_proto);
         SerialSIT.print("\",\"");
@@ -398,46 +348,46 @@ void get_registration() {
     if (!isBSNL) {
       // --- 4G Path (Airtel / Jio): Check CEREG first ---
       SerialSIT.println("AT+CEREG?");
-      String resp4 = waitForResponse("+CEREG:", 2000);
-      int c4 = resp4.indexOf(",");
-      if (c4 != -1) {
-        r4 = resp4.substring(c4 + 1).toInt();
+      if (waitForResponse("+CEREG:", 2000)) {
+        const char* resp4 = modem_response_buf;
+        const char* c4_ptr = strchr(resp4, ',');
+        if (c4_ptr != NULL) {
+          r4 = atoi(c4_ptr + 1);
 
-        // v5.45.6: Check for cell info after the stat field.
-        // +CEREG: 2,3,TAC,CID [INFO] has a second comma after the stat.
-        // +CEREG: 2,3         [INFO] no second comma. Truly no signal.
-        if (r4 == 3) {
-          int c4b = resp4.indexOf(',', c4 + 1); // comma after stat field
-          bool has_cell_info = (c4b != -1);
-          if (has_cell_info) {
-            // Tower is visible but Airtel denies 2G CS registration.
-            // This is the "Airtel 2G Ghost" — treat as still searching.
-            debugln(
-                "[GPRS] CEREG=3 but LTE cell visible (Airtel 4G-only tower)."
-                " Pushing CGATT and waiting...");
-            SerialSIT.println("AT+CGATT=1");
-            waitForResponse("OK", 3000);
-            r4 = 0; // Reset to 'searching' — do NOT count as denied
-          } else {
-            debugln("[GPRS] CEREG=3, no cell info. Truly no LTE signal.");
+          if (r4 == 3) {
+            const char* c4b_ptr = strchr(c4_ptr + 1, ','); // comma after stat field
+            if (c4b_ptr != NULL) {
+              debugln(
+                  "[GPRS] CEREG=3 but LTE cell visible (Airtel 4G-only tower)."
+                  " Pushing CGATT and waiting...");
+              SerialSIT.println("AT+CGATT=1");
+              waitForResponse("OK", 3000);
+              r4 = 0; // Reset to 'searching' — do NOT count as denied
+            } else {
+              debugln("[GPRS] CEREG=3, no cell info. Truly no LTE signal.");
+            }
           }
         }
       }
 
       // Also check CREG as fallback for 2G/3G registration
       SerialSIT.println("AT+CREG?");
-      String resp2 = waitForResponse("+CREG:", 2000);
-      int c2 = resp2.indexOf(",");
-      if (c2 != -1)
-        r2 = resp2.substring(c2 + 1).toInt();
+      if (waitForResponse("+CREG:", 2000)) {
+        const char* resp2 = modem_response_buf;
+        const char* c2_ptr = strchr(resp2, ',');
+        if (c2_ptr != NULL)
+          r2 = atoi(c2_ptr + 1);
+      }
     } else {
       // --- BSNL Path: 2G/3G only. Check CREG + CGREG (adaptive wait below)
       // ---
       SerialSIT.println("AT+CREG?");
-      String resp2 = waitForResponse("+CREG:", 2000);
-      int c2 = resp2.indexOf(",");
-      if (c2 != -1)
-        r2 = resp2.substring(c2 + 1).toInt();
+      if (waitForResponse("+CREG:", 2000)) {
+        const char* resp2 = modem_response_buf;
+        const char* c2_ptr = strchr(resp2, ',');
+        if (c2_ptr != NULL)
+          r2 = atoi(c2_ptr + 1);
+      }
     }
 
     // Determine overall registration status (4G preferred)
@@ -457,21 +407,21 @@ void get_registration() {
     // --- SUCCESS CHECK ---
     if (r2 == 1 || r2 == 5) {
       if (!isBSNL) {
-        // v5.72: Airtel/Jio - verify if 4G is also available before locking to
-        // 2G
         SerialSIT.println("AT+CEREG?");
-        String resp4x = waitForResponse("+CEREG:", 1000);
-        int c4x = resp4x.indexOf(",");
-        if (c4x != -1) {
-          int r4x = resp4x.substring(c4x + 1).toInt();
-          if (r4x == 1 || r4x == 5) {
-            is_registered = true;
-            isLTE = true;
-            last_successful_cnmp = 2; // 4G available, keep Auto
-            strcpy(reg_status, "LTE:Home:OK");
-            debugln(
-                "[GPRS] CREG(2G) but CEREG also registered. Preferring LTE.");
-            break;
+        if (waitForResponse("+CEREG:", 1000)) {
+          const char* resp4x = modem_response_buf;
+          const char* c4x_ptr = strchr(resp4x, ',');
+          if (c4x_ptr != NULL) {
+            int r4x = atoi(c4x_ptr + 1);
+            if (r4x == 1 || r4x == 5) {
+              is_registered = true;
+              isLTE = true;
+              last_successful_cnmp = 2; // 4G available, keep Auto
+              strcpy(reg_status, "LTE:Home:OK");
+              debugln(
+                  "[GPRS] CREG(2G) but CEREG also registered. Preferring LTE.");
+              break;
+            }
           }
         }
       }
@@ -479,7 +429,7 @@ void get_registration() {
       isLTE = false;
       last_successful_cnmp = 13; // v5.84: Mark GSM success
       strcpy(reg_status, (r2 == 1) ? "GSM:Home:OK" : "GSM:Roam:OK");
-      debugln("[GPRS] Registered via CREG! (2G:" + String(r2) + ")");
+      debugf("[GPRS] Registered via CREG! (2G:%d)\n", r2);
       break;
     }
     if (r4 == 1 || r4 == 5) {
@@ -488,7 +438,7 @@ void get_registration() {
       last_successful_cnmp = 2; // v5.84: Mark Auto/LTE success (CNMP=2 is safer
                                 // for future 2G fallback)
       strcpy(reg_status, (r4 == 1) ? "LTE:Home:OK" : "LTE:Roam:OK");
-      debugln("[GPRS] Registered via CEREG! (4G:" + String(r4) + ")");
+      debugf("[GPRS] Registered via CEREG! (4G:%d)\n", r4);
       break;
     }
 
@@ -626,19 +576,20 @@ void get_registration() {
       esp_task_wdt_reset();
       flushSerialSIT();
       SerialSIT.println("AT+CGREG?");
-      String qr = waitForResponse("OK", 2000);
-      int qi = qr.indexOf("+CGREG:");
-      if (qi != -1) {
-        int qc = qr.indexOf(',', qi);
-        if (qc != -1) {
-          int qreg = qr.substring(qc + 1).toInt();
-          if (qreg == 1 || qreg == 5) {
-            debugln("[GPRS] CGREG registered during adaptive wait!");
-            isLTE = !isBSNL;
-            last_successful_cnmp = isLTE ? 2 : 13; // v5.84
-            strcpy(reg_status, (qreg == 1) ? "GPRS:Home:OK" : "GPRS:Roam:OK");
-            is_registered = true;
-          } else {
+      if (waitForResponse("OK", 2000)) {
+        const char* qr = modem_response_buf;
+        const char* qi_ptr = strstr(qr, "+CGREG:");
+        if (qi_ptr != NULL) {
+          const char* qc_ptr = strchr(qi_ptr, ',');
+          if (qc_ptr != NULL) {
+            int qreg = atoi(qc_ptr + 1);
+            if (qreg == 1 || qreg == 5) {
+              debugln("[GPRS] CGREG registered during adaptive wait!");
+              isLTE = !isBSNL;
+              last_successful_cnmp = isLTE ? 2 : 13; // v5.84
+              strcpy(reg_status, (qreg == 1) ? "GPRS:Home:OK" : "GPRS:Roam:OK");
+              is_registered = true;
+            } else {
             // v7.87: Track exact failure reasons
             if (signal_lvl <= -109 || signal_lvl == 0 || signal_lvl == 99) {
               strcpy(diag_reg_fail_type, "NO_SIGNAL");
@@ -662,6 +613,7 @@ void get_registration() {
         }
       }
     }
+  }
     retries++;
   } // end while
 
@@ -704,11 +656,8 @@ void get_registration() {
 }
 
 void get_a7672s() {
-  String response;
-  // v5.72 Hardened: Use cached ICCID to avoid redundant UART traffic.
-  // Safety: If cache is empty (rare), populate it once now.
   if (strlen(cached_iccid) < 10) {
-    get_ccid().toCharArray(cached_iccid, 25);
+    get_ccid(cached_iccid, 25);
   }
   char stored_apn[50];
 
@@ -731,16 +680,19 @@ void get_a7672s() {
 
       // CID State Anchor
       SerialSIT.println("AT+CGDCONT?");
-      String final_cont = waitForResponse("OK", 3000);
-      String target_apn_quoted = "\"" + String(apn_str) + "\"";
-      if (final_cont.indexOf(target_apn_quoted) == -1 &&
-          final_cont.indexOf(apn_str) == -1) {
-        char cg_buf[100];
-        snprintf(cg_buf, sizeof(cg_buf), "AT+CGDCONT=1,\"IP\",\"%s\"", apn_str);
-        SerialSIT.println(cg_buf);
-        waitForResponse("OK", 3000);
-        SerialSIT.println("AT+CGACT=1,1");
-        waitForResponse("OK", 5000);
+      if (waitForResponse("OK", 3000)) {
+        const char* final_cont = modem_response_buf;
+        char target_apn_quoted[64];
+        snprintf(target_apn_quoted, sizeof(target_apn_quoted), "\"%s\"", apn_str);
+        if (strstr(final_cont, target_apn_quoted) == NULL &&
+            strstr(final_cont, apn_str) == NULL) {
+          char cg_buf[100];
+          snprintf(cg_buf, sizeof(cg_buf), "AT+CGDCONT=1,\"IP\",\"%s\"", apn_str);
+          SerialSIT.println(cg_buf);
+          waitForResponse("OK", 3000);
+          SerialSIT.println("AT+CGACT=1,1");
+          waitForResponse("OK", 5000);
+        }
       }
       return;
     }
@@ -752,33 +704,33 @@ void get_a7672s() {
   // airteliot.com.
   debugln("APN: Starting Carrier-Aware APN Search...");
 
-  // Build priority list: correct carrier APN first, then fallbacks
+  // 5. Build priority list: correct carrier APN first, then fallbacks
   const char *primary_apn =
-      apn_str; // apn_str was set by get_network() based on CSPN/COPS/ICCID
+      apn_str; 
   const char *fallback_apns[] = {"airteliot.com", "airtelgprs.com", "bsnlnet",
                                  "jionet", "bsnlm2m"};
 
-  // Try primary APN from carrier detection first
   if (strlen(primary_apn) > 0) {
-    debugln("APN: Trying carrier-matched APN first -> " + String(primary_apn));
+    debugf("APN: Trying carrier-matched APN first -> %s\n", primary_apn);
     if (try_activate_apn(primary_apn)) {
       save_apn_config(primary_apn, cached_iccid);
       vTaskDelay((isLTE ? 500 : 3000) / portTICK_PERIOD_MS);
       gprs_pdp_ready = true;
 
-      // CID State Anchor
       SerialSIT.println("AT+CGDCONT?");
-      String final_cont = waitForResponse("OK", 3000);
-      String target_apn_quoted = "\"" + String(primary_apn) + "\"";
-      if (final_cont.indexOf(target_apn_quoted) == -1 &&
-          final_cont.indexOf(primary_apn) == -1) {
-        char cg_buf[100];
-        snprintf(cg_buf, sizeof(cg_buf), "AT+CGDCONT=1,\"IP\",\"%s\"",
-                 primary_apn);
-        SerialSIT.println(cg_buf);
-        waitForResponse("OK", 3000);
-        SerialSIT.println("AT+CGACT=1,1");
-        waitForResponse("OK", 5000);
+      if (waitForResponse("OK", 3000)) {
+        const char* final_cont = modem_response_buf;
+        char target_apn_quoted[50];
+        snprintf(target_apn_quoted, sizeof(target_apn_quoted), "\"%s\"", primary_apn);
+        if (strstr(final_cont, target_apn_quoted) == NULL &&
+            strstr(final_cont, primary_apn) == NULL) {
+          char cg_buf[100];
+          snprintf(cg_buf, sizeof(cg_buf), "AT+CGDCONT=1,\"IP\",\"%s\"", primary_apn);
+          SerialSIT.println(cg_buf);
+          waitForResponse("OK", 3000);
+          SerialSIT.println("AT+CGACT=1,1");
+          waitForResponse("OK", 5000);
+        }
       }
       return;
     }
@@ -787,26 +739,27 @@ void get_a7672s() {
   // Fallback: try remaining APNs (skipping the one we already tried)
   for (int i = 0; i < 5; i++) {
     if (strcmp(fallback_apns[i], primary_apn) == 0)
-      continue; // already tried
+      continue; 
     if (try_activate_apn(fallback_apns[i])) {
       strcpy(apn_str, fallback_apns[i]);
       save_apn_config(fallback_apns[i], cached_iccid);
       vTaskDelay((isLTE ? 500 : 3000) / portTICK_PERIOD_MS);
       gprs_pdp_ready = true;
 
-      // CID State Anchor
       SerialSIT.println("AT+CGDCONT?");
-      String final_cont = waitForResponse("OK", 3000);
-      String target_apn_quoted = "\"" + String(fallback_apns[i]) + "\"";
-      if (final_cont.indexOf(target_apn_quoted) == -1 &&
-          final_cont.indexOf(fallback_apns[i]) == -1) {
-        char cg_buf[100];
-        snprintf(cg_buf, sizeof(cg_buf), "AT+CGDCONT=1,\"IP\",\"%s\"",
-                 fallback_apns[i]);
-        SerialSIT.println(cg_buf);
-        waitForResponse("OK", 3000);
-        SerialSIT.println("AT+CGACT=1,1");
-        waitForResponse("OK", 5000);
+      if (waitForResponse("OK", 3000)) {
+        const char* final_cont = modem_response_buf;
+        char target_apn_quoted[50];
+        snprintf(target_apn_quoted, sizeof(target_apn_quoted), "\"%s\"", fallback_apns[i]);
+        if (strstr(final_cont, target_apn_quoted) == NULL &&
+            strstr(final_cont, fallback_apns[i]) == NULL) {
+          char cg_buf[100];
+          snprintf(cg_buf, sizeof(cg_buf), "AT+CGDCONT=1,\"IP\",\"%s\"", fallback_apns[i]);
+          SerialSIT.println(cg_buf);
+          waitForResponse("OK", 3000);
+          SerialSIT.println("AT+CGACT=1,1");
+          waitForResponse("OK", 5000);
+        }
       }
       return;
     }
@@ -826,22 +779,21 @@ void get_a7672s() {
     vTaskDelay((isLTE ? 500 : 3000) / portTICK_PERIOD_MS);
     gprs_pdp_ready = true;
 
-    // v5.72 Hardened: CID State Anchor
-    // Overcomes "Phantom IP" where the modem reports a valid IP on CID 1
-    // but it belongs to a stale APN context from a previous failed search
-    // iteration.
     SerialSIT.println("AT+CGDCONT?");
-    String final_cont = waitForResponse("OK", 3000);
-    String target_apn_quoted = "\"" + String(apn_str) + "\"";
-    if (final_cont.indexOf(target_apn_quoted) == -1 &&
-        final_cont.indexOf(apn_str) == -1) {
-      debugln("[APN] CID Contamination detected. Forcing State Anchor...");
-      char cg_buf[100];
-      snprintf(cg_buf, sizeof(cg_buf), "AT+CGDCONT=1,\"IP\",\"%s\"", apn_str);
-      SerialSIT.println(cg_buf);
-      waitForResponse("OK", 3000);
-      SerialSIT.println("AT+CGACT=1,1");
-      waitForResponse("OK", 5000);
+    if (waitForResponse("OK", 3000)) {
+        const char* final_cont = modem_response_buf;
+        char target_apn_quoted[64];
+        snprintf(target_apn_quoted, sizeof(target_apn_quoted), "\"%s\"", apn_str);
+        if (strstr(final_cont, target_apn_quoted) == NULL &&
+            strstr(final_cont, apn_str) == NULL) {
+          debugln("[APN] CID Contamination detected. Forcing State Anchor...");
+          char cg_buf[100];
+          snprintf(cg_buf, sizeof(cg_buf), "AT+CGDCONT=1,\"IP\",\"%s\"", apn_str);
+          SerialSIT.println(cg_buf);
+          waitForResponse("OK", 3000);
+          SerialSIT.println("AT+CGACT=1,1");
+          waitForResponse("OK", 5000);
+        }
     }
     return;
   }
@@ -852,7 +804,6 @@ void get_a7672s() {
 }
 
 void process_sms(char msg_no) {
-  String response;
   char *csqstr, c, *ptr, msg_rcvd_number[100] = {0};
   int i, response_no;
 
@@ -866,21 +817,16 @@ void process_sms(char msg_no) {
   offset_cnt = 0;
 
   SerialSIT.println("AT+CMGF=1");
-  response = waitForResponse("OK", 10000);
-  // debug("Response of AT+CMGF=1");
-  // debugln(response);
+  waitForResponse("OK", 10000);
 
   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CMGR=%d", msg_no);
   SerialSIT.println(gprs_xmit_buf);
-  response = waitForResponse("OK", 6000);
-  // debug("Response of AT+CMGR is ");
-  // debugln(response);
+  if (waitForResponse("OK", 6000)) {
+    const char *response_char = modem_response_buf;
 
-  const char *response_char = response.c_str();
-
-  if (strstr(response_char, "REC UNREAD") && strstr(response_char, "VARSHA")) {
-    debug("SMS: Valid command (VARSHA) received: ");
-    debugln(response);
+    if (strstr(response_char, "REC UNREAD") && strstr(response_char, "VARSHA")) {
+      debug("SMS: Valid command (VARSHA) received: ");
+      debugln(response_char);
     // Extract the sender's number regardless of country code or length
     // The format is: +CMGR: "STATUS","NUMBER","","TIME"
     char *firstQuote = strchr(response_char, ',');
@@ -961,13 +907,13 @@ void process_sms(char msg_no) {
 
       // debug("No message recd ");
       // debugln(response);
+      }
+      vTaskDelay(100 / portTICK_PERIOD_MS);
     }
-    vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 }
 
 void prepare_and_send_status(char *gsm_no) {
-  String response;
   int response_no;
   char msg_type[9];
   char status_response[256];
@@ -1047,29 +993,25 @@ void prepare_and_send_status(char *gsm_no) {
   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CMGS=\"%s\"\r", gsm_no);
   SerialSIT.println(gprs_xmit_buf);
   debug("Waiting for '>' prompt...");
-  response = waitForResponse(">", 15000);
-  if (response.indexOf(">") != -1) {
+  if (waitForResponse(">", 15000)) {
     debugln(" Received!");
-    SerialSIT.print(status_response); //  SerialSIT.write(26);
+    SerialSIT.print(status_response); 
     debug("Waiting for +CMGS confirmation...");
-    response = waitForResponse("+CMGS:", 35000); // 35s for BSNL 2G
-    debugln(" Done.");
-    debug("Response of AT+CMGS is ");
-    debugln(response);
+    if (waitForResponse("+CMGS:", 35000)) {
+       debugln(" Done.");
+       debug("Response of AT+CMGS is ");
+       debugln(modem_response_buf);
+       msg_sent = 1;
+       debugln("SUCCESS IN SENDING MSG");
+    } else {
+       debugln(" Done.");
+       debug("Response of AT+CMGS is ");
+       debugln(modem_response_buf);
+       debugln("FAILED TO SEND MSG - No +CMGS in response");
+    }
   } else {
     debugln(" TIMEOUT! No '>' prompt received.");
-    debug("Response was: ");
-    debugln(response);
   }
-
-  const char *char_resp = response.c_str();
-  if (strstr(char_resp, "+CMGS")) {
-    msg_sent = 1;
-    debugln("SUCCESS IN SENDING MSG");
-  } else {
-    debugln("FAILED TO SEND MSG - No +CMGS in response");
-  }
-}
 
 void get_gps_coordinates() {
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
@@ -1077,10 +1019,9 @@ void get_gps_coordinates() {
     return;
   }
 
-  String response;
   int tmp;
   double lat, lon;
-  const char *response_char;
+  const char *response_ptr;
   char *csqstr;
 
   for (int retry = 0; retry < 2; retry++) {
@@ -1090,25 +1031,18 @@ void get_gps_coordinates() {
     waitForResponse("OK", 2000);
 
     SerialSIT.println("AT+CLBS=1");
-    String response = waitForResponse("+CLBS:", 15000); // 15s timeout
-
-    response_char = response.c_str();
-    csqstr = strstr(response_char, "+CLBS");
-    if (csqstr != NULL) {
-      // Response format: +CLBS: 0,12.989436,77.537910,550
-      // Phase 8 Fix: Use %lf and double to retain all 7+ decimal places of
-      // 64-bit precision!
-      if (sscanf(csqstr, "+CLBS: %d,%lf,%lf,", &tmp, &lat, &lon) >= 3) {
-        if (fabs(lat) > 0.00001 && fabs(lon) > 0.00001) {
-          lati = lat;
-          longi = lon;
-          debug("Latitude: ");
-          debugln(lati, 6);
-          debug("Longitude: ");
-          debugln(longi, 6);
-          saveGPS(); // Persist immediately
-          xSemaphoreGive(modemMutex);
-          return; // SUCCESS
+    if (waitForResponse("+CLBS:", 15000)) {
+      const char* response_ptr = modem_response_buf;
+      const char* csqstr = strstr(response_ptr, "+CLBS");
+      if (csqstr != NULL) {
+        if (sscanf(csqstr, "+CLBS: %d,%lf,%lf,", &tmp, &lat, &lon) >= 3) {
+          if (fabs(lat) > 0.00001 && fabs(lon) > 0.00001) {
+            lati = lat;
+            longi = lon;
+            saveGPS(); // Persist immediately
+            xSemaphoreGive(modemMutex);
+            return; // SUCCESS
+          }
         }
       }
     }
@@ -1120,9 +1054,6 @@ void get_gps_coordinates() {
 }
 
 void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
-  // --- MUTEX SHIELD (v5.82 GOLD) ---
-  // Ensure we own the modem for the entire 19s single-shot window
-  // alreadyLocked=true: caller (e.g. process_sms) already holds the lock.
   if (!alreadyLocked) {
     if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
       debugln("[GPS] FAILED: Modem Busy. Deferring GPS request.");
@@ -1130,7 +1061,6 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
     }
   }
 
-  String response;
   int response_no;
   int tmp, tmp3;
   char tmp2[16];
@@ -1142,42 +1072,24 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
   char *csqstr;
 
   SerialSIT.println("ATE0");
-  response = waitForResponse("OK", 3000);
-  debug("HTTP response of ATE0: ");
-  debugln(response);
-
-  const char *response_char;
+  if (waitForResponse("OK", 3000)) {
+    debugln("HTTP response of ATE0: OK");
+  }
 
   // To find Latitude and Longitude. Only with A7672S
   vTaskDelay(5000 / portTICK_PERIOD_MS);
   SerialSIT.println("AT+CLBS=1");
-  response = waitForResponse("+CLBS:", 10000);
-  vTaskDelay(200 / portTICK_PERIOD_MS);
-  debug("Response of AT+CLBS=1 is ");
-  debugln(response);
-  vTaskDelay(200 / portTICK_PERIOD_MS);
-  response_char = response.c_str();
-  vTaskDelay(200 / portTICK_PERIOD_MS);
-  csqstr = strstr(response_char, "+CLBS");
-
-  if (csqstr == NULL) {
-    debugln("Error: +CLBS not found in response");
-    if (!alreadyLocked)
-      xSemaphoreGive(modemMutex); // MANDATORY RELEASE on error
-    return;
-  }
-
-  sscanf(csqstr, "+CLBS: %d,%lf,%lf,", &tmp, &lati, &longi);
-
-  vTaskDelay(500 / portTICK_PERIOD_MS);
-  debug("Latitude is : ");
-  debugln(lati, 6);
-  debug("Longitude is : ");
-  debugln(longi, 6);
-
-  if (lati != 0 && longi != 0) {
-    saveGPS();
-  }
+  if (waitForResponse("+CLBS:", 15000)) {
+    const char* csqstr = strstr(modem_response_buf, "+CLBS");
+    if (csqstr != NULL) {
+      sscanf(csqstr, "+CLBS: %d,%lf,%lf,", &tmp, &lati, &longi);
+      debugf("Latitude is : %.6f\n", lati);
+      debugf("Longitude is : %.6f\n", longi);
+      if (lati != 0 && longi != 0) {
+        saveGPS();
+      } 
+    }
+  } 
 
   snprintf(status_response, sizeof(status_response),
            "%s,%s,STAT_AD-C,%s,%04d-%02d-%02dT%02d:%02d,SIM_1,%04d,%.6f,%.6f,0."
@@ -1186,80 +1098,56 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
            current_day, current_hour, current_min, signal_strength, lati,
            longi);
 
-  vTaskDelay(500 / portTICK_PERIOD_MS);
-
   debug("Status response for GET_GPS is ");
   debugln(status_response);
 
   SerialSIT.println("AT+CMGF=1");
-  response = waitForResponse("OK", 5000);
-  debug("Response of AT+CMGF=1 is ");
-  debugln(response);
-
-  debug("Mobile number to be sent to is : ");
-  debugln(gsm_no);
+  waitForResponse("OK", 5000);
 
   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CMGS=\"%s\"\r", gsm_no);
   SerialSIT.println(gprs_xmit_buf);
   debug("Waiting for '>' prompt...");
-  response = waitForResponse(">", 15000);
-  if (response.indexOf(">") != -1) {
+  if (waitForResponse(">", 15000)) {
     debugln(" Received!");
-    flushSerialSIT(); // v5.74: Clear residual CLBS/ATE0 URCs before streaming
-                      // SMS payload
+    flushSerialSIT();
     SerialSIT.print(status_response);
     debug("Waiting for +CMGS confirmation...");
-    response =
-        waitForResponse("+CMGS:", 35000); // v5.74 FIX: 35s to match status SMS
-                                          // (was 15s — too short for BSNL 2G)
-    debugln(" Done.");
-    debug("Response of AT+CMGS is ");
-    debugln(response);
+    if (waitForResponse("+CMGS:", 35000)) {
+      debugln(" Done.");
+      debug("Response of AT+CMGS is ");
+      debugln(modem_response_buf);
+      msg_sent = 1;
+      debugln("SUCCESS IN SENDING GPS");
+    } else {
+      debugln(" Done.");
+      debugln("FAILED TO SEND GPS - No +CMGS in response");
+    }
   } else {
     debugln(" TIMEOUT! No '>' prompt received.");
-    debug("Response was: ");
-    debugln(response);
-  }
-
-  const char *char_resp = response.c_str();
-  if (strstr(char_resp, "+CMGS")) {
-    msg_sent = 1;
-    debugln("SUCCESS IN SENDING GPS");
-  } else {
-    debugln("FAILED TO SEND GPS - No +CMGS in response");
   }
 
   vTaskDelay(1000 / portTICK_PERIOD_MS);
-
   SerialSIT.println("ATE1");
-  response = waitForResponse("OK", 3000);
-  debug("HTTP response of ATE1: ");
-  debugln(response);
+  waitForResponse("OK", 3000);
 
   if (!alreadyLocked)
-    xSemaphoreGive(modemMutex); // RELEASE on final exit
+    xSemaphoreGive(modemMutex); 
 }
 
 // Proposed Rule 45: The Header-Health Check
 // Checks if the buffer contains "Modem-speak" or invalid ESP32 entry points
 bool send_health_report(bool useJitter) {
 #if ENABLE_HEALTH_REPORT == 1
-  // v5.74: Concurrency Guard - Defer if scheduler is mid-write to prevent
-  // fsMutex timeout
   if (schedulerBusy) {
     debugln("[Health] Deferring: scheduler mid-write.");
     return false; // will retry next slot
   }
 
-  // v5.45: Carrier Congestion Breather after FTP (Special for BSNL)
-  // v5.74: Relocated OUTSIDE fsMutex block to prevent scheduler starvation
-  // (R-09 fix)
   if (strstr(carrier, "BSNL") || strstr(carrier, "bsnl"))
     vTaskDelay(5000 / portTICK_PERIOD_MS);
   else
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
 
-  // v5.79: Repeat guard check after long BSNL delay (R-09 residual fix)
   if (schedulerBusy) {
     debugln("[Health] Deferring: scheduler activated during delay.");
     return false;
@@ -1276,9 +1164,6 @@ bool send_health_report(bool useJitter) {
     return false;
   }
 
-  // Skip health report entirely if on Airtel M2M and health server is foreign
-  // IP Airtel M2M firewall blocks non-whitelisted foreign IPs — repeated
-  // attempts waste ~3 minutes
   if (strstr(carrier, "Airtel") && strstr(apn_str, "airteliot")) {
     debugln("[Health] Skipping: Airtel M2M SIM + foreign health server. "
             "Request IP whitelist from Airtel.");
@@ -1287,7 +1172,6 @@ bool send_health_report(bool useJitter) {
     return false;
   }
 
-  // v5.45: Purity Guard - Silence all network noise during transmission
   SerialSIT.println("AT+CGEREP=0");
   waitForResponse("OK", 1000);
   SerialSIT.println("AT+CREG=0");
@@ -1347,7 +1231,6 @@ bool send_health_report(bool useJitter) {
   if (lati == 0.0 && longi == 0.0)
     H_FAULT("NO_GPS");
 
-  // v5.55: Add Sensor Diagnostics to Health Status
   if (diag_temp_cv)
     H_FAULT("TEMP_STUCK");
   if (diag_hum_cv)
@@ -1392,7 +1275,6 @@ bool send_health_report(bool useJitter) {
 #endif
 
   char gps_str[32];
-  // v5.65 Fix: Robust epsilon check for double and higher precision reporting
   if (abs(lati) < 0.00001 && abs(longi) < 0.00001)
     snprintf(gps_str, sizeof(gps_str), "NA");
   else
@@ -1401,13 +1283,8 @@ bool send_health_report(bool useJitter) {
   int spiffs_used = SPIFFS.usedBytes() / 1024;
   int spiffs_total = SPIFFS.totalBytes() / 1024;
 
-  // v5.57 Fix F2: Use countStored() which validates line length >= 10 chars.
-  // The old newline-counting approach had an off-by-one from trailing \n,
-  // causing the server to trigger CLEAR_FTP_QUEUE incorrectly (e.g. 49 real
-  // records + trailing \n reported as 50, one blank line reported as 1).
   int unsent_count = countStored("/unsent.txt") + countStored("/ftpunsent.txt");
 
-  // Construction of Calibration String for System 0 & 2
   char calib_report[48] = "NA";
   if (calib_year > 2000) {
     snprintf(calib_report, sizeof(calib_report), "CLB-%s (%04d-%02d-%02d)",
@@ -1415,7 +1292,6 @@ bool send_health_report(bool useJitter) {
              calib_day);
   }
 
-  // v7.92: Command Feedback Payload Construction
   char feedback[128] = "";
   if (last_cmd_id > 0) {
     snprintf(feedback, sizeof(feedback),
@@ -1423,8 +1299,6 @@ bool send_health_report(bool useJitter) {
              last_cmd_res);
   }
 
-  // v7.83: Full payload — all columns now populated on server
-  // Buffer: ~1280 bytes to accommodate all new fields
   char jsonBody[1536];
   int msgLen = snprintf(
       jsonBody, sizeof(jsonBody),
@@ -1441,80 +1315,69 @@ bool send_health_report(bool useJitter) {
       "\"unsent_count\":%d,"
       "\"ver\":\"%s\",\"iccid\":\"%s\",\"carrier\":\"%s\",\"gps\":\"%s\","
       "\"cdm_sts\":\"%s\","
-      "\"calib\":\"%s\"," // v7.86
+      "\"calib\":\"%s\"," 
       "\"ndm_cnt\":%d,\"pd_cnt\":%d,"
       "\"http_present_fails\":%d,\"http_cum_fails\":%d,"
       "\"http_backlog_cnt\":%d,\"mutex_fail\":%d,"
       "\"ota_fails\":%d,\"ota_fail_reason\":\"%s\""
-      "%s}", // v7.92: Custom Feedback Block
+      "%s}", 
       cleanStn, UNIT, SYSTEM, h_status, sensor_info,
       (diag_rtc_battery_ok ? 1 : 0), li_bat_val, solar_val, signal_lvl,
-      diag_net_data_count,          // net_cnt        [INFO] Tdy Sent (Live)
-      diag_http_success_count,      // http_suc_cnt   [INFO] Tdy HTTP
-      diag_http_retry_count,        // http_ret_cnt   [INFO] Tdy Backlogs
-      diag_ftp_success_count,       // ftp_suc_cnt    [INFO] Tdy Backlogs (FTP)
-      diag_net_data_count_prev,     // net_cnt_prev   [INFO] Ydy Sent
-      diag_pd_count_prev,           // prev_stored    [INFO] Ydy Stored
-      diag_http_success_count_prev, // http_suc_cnt_prev [INFO] Ydy HTTP
-      diag_http_retry_count_prev,   // http_ret_cnt_prev [INFO] Ydy Backlogs
-      diag_ftp_success_count_prev,  // ftp_suc_cnt_prev  [INFO] Ydy Backlogs (FTP)
-      diag_gprs_fails, diag_reg_fail_type, // reg_fails & reason
-      diag_last_reset_reason,              // reset_reason
-      spiffs_used, spiffs_total,           // spiffs_kb / spiffs_total_kb
-      unsent_count,                        // unsent_count
+      diag_net_data_count,          
+      diag_http_success_count,      
+      diag_http_retry_count,        
+      diag_ftp_success_count,       
+      diag_net_data_count_prev,     
+      diag_pd_count_prev,           
+      diag_http_success_count_prev, 
+      diag_http_retry_count_prev,   
+      diag_ftp_success_count_prev,  
+      diag_gprs_fails, diag_reg_fail_type, 
+      diag_last_reset_reason,              
+      spiffs_used, spiffs_total,           
+      unsent_count,                        
       UNIT_VER, cached_iccid, carrier, gps_str,
-      diag_cdm_status, // cdm_sts [INFO] server evaluates CDM from this
-      calib_report,    // calibration info
+      diag_cdm_status, 
+      calib_report,    
       diag_ndm_count, diag_pd_count, diag_http_present_fails,
       diag_http_cum_fails, get_total_backlogs(true), diag_modem_mutex_fails,
       ota_fail_count, ota_fail_reason,
-      feedback); // v7.92
+      feedback); 
 
-  // TIER 3 LIVE RACES: JSON Truncation Guard
   if (msgLen >= (int)sizeof(jsonBody)) {
     Serial.printf("[Health] WARNING: JSON truncated (%d > %d). Clamping.\n",
                   msgLen, (int)sizeof(jsonBody));
-    msgLen = sizeof(jsonBody) - 1; // Use actual written bytes
+    msgLen = sizeof(jsonBody) - 1; 
     jsonBody[msgLen] = '\0';
-    // Attempt to close the JSON properly if truncated mid-field:
-    // Find last complete field boundary and add closing brace
     char *last_comma = strrchr(jsonBody, ',');
     if (last_comma && (jsonBody + msgLen - last_comma) < 5) {
-      *last_comma = '}'; // Replace trailing comma with closing brace
+      *last_comma = '}'; 
       *(last_comma + 1) = '\0';
       msgLen = last_comma - jsonBody + 1;
     }
   }
 
-  xSemaphoreGive(fsMutex); // v5.66: RELEASE FS MUTEX EARLY - Payload is built!
-                           // This prevents the scheduler from being blocked for
-                           // 2 mins during network delays.
+  xSemaphoreGive(fsMutex); 
 
   if (useJitter)
     vTaskDelay((esp_random() % 5000) /
-               portTICK_PERIOD_MS); // v5.57 Fix F3: HW RNG — seed-independent
-                                    // across deep sleep reboots
+               portTICK_PERIOD_MS); 
   else
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
   bool success = false;
-  int max_attempts = useJitter ? 3 : 2; // Allow 2 attempts for manual triggers
-                                        // to endure Bearer Nuke TCP recoveries
+  int max_attempts = useJitter ? 3 : 2; 
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
     debugf2("[Health] Attempt %d/%d\n", attempt, max_attempts);
     if (!verify_bearer_or_recover())
       continue;
 
-    // v7.79: Total Silence Protocol (Rule 10/27)
     SerialSIT.println("AT+CGEREP=0");
     waitForResponse("OK", 1000);
 
-    // Rule 12/24: Extended Breather after host switch
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 5000);
 
-    // v5.66: BSNL 2G TCP teardown channel release requires >5s after a primary
-    // burst
     if (strstr(carrier, "BSNL") || strstr(carrier, "bsnl")) {
       vTaskDelay(8000 / portTICK_PERIOD_MS);
     } else {
@@ -1524,7 +1387,7 @@ bool send_health_report(bool useJitter) {
     flushSerialSIT();
 
     SerialSIT.println("AT+HTTPINIT");
-    if (waitForResponse("OK", 5000).indexOf("OK") == -1) {
+    if (!waitForResponse("OK", 5000)) {
       debugln("[Health] [ERR] HTTPINIT Failed. Bearer Nuke...");
       SerialSIT.println("AT+CGACT=0,1");
       waitForResponse("OK", 5000);
@@ -1532,7 +1395,6 @@ bool send_health_report(bool useJitter) {
     }
 
     bool step_fail = false;
-    // Rule 59: Lean Sequence (Fast burst, no gaps)
     char ht_url[150];
     snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"",
              HEALTH_SERVER_IP, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
@@ -1547,168 +1409,137 @@ bool send_health_report(bool useJitter) {
     SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
     waitForResponse("OK", 1000);
 
-    // Headers & Format
     if (!step_fail) {
       debugf1("[Health] Payload size: %d bytes\n", msgLen);
 
-      // Pre-flush to remove any stray URCs (+CGEV etc) that block the parser
       flushSerialSIT();
 
       char ht_data_cmd[64];
-      // v7.75: Increased prompt wait to 10s for high-latency 2G (increased to
-      // 15s in v5.56)
       snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,15000",
                msgLen);
       SerialSIT.println(ht_data_cmd);
 
-      String act = "";
-      // Give massive allowance (25 seconds) for 2G network to allocate HTTP
-      // socket buffer space
-      if (waitForResponse("DOWNLOAD", 25000).indexOf("DOWNLOAD") != -1) {
+      if (waitForResponse("DOWNLOAD", 25000)) {
         vTaskDelay(500 / portTICK_PERIOD_MS);
 
-        // v5.65 P4 Fix: Ultra-Robust Chunked Data Write (BSNL Optimized)
-        // 48 bytes + 20ms delay is the "Golden Ratio" for SIMCom 2G buffers.
         int sentBytes = 0;
         while (sentBytes < msgLen) {
           int toWrite = min(48, msgLen - sentBytes);
           SerialSIT.write(jsonBody + sentBytes, toWrite);
           sentBytes += toWrite;
-          esp_task_wdt_reset(); // ultra-safe WDT reset for slow UART/modem
-                                // bottlenecks
+          esp_task_wdt_reset(); 
           vTaskDelay(20 / portTICK_PERIOD_MS);
         }
 
-        // Increased timeout to 20s for BSNL 2G data-day congestion
-        if (waitForResponse("OK", 20000).indexOf("OK") != -1) {
-
+        if (waitForResponse("OK", 20000)) {
           SerialSIT.println("AT+HTTPACTION=1");
           waitForResponse("OK", 3000);
 
-          // v7.79: Increased total wait to 45s for BSNL 2G saturation
-          act = waitForResponse("+HTTPACTION:", 45000);
-          debugln("[Health] Resp: " + act);
+          if (waitForResponse("+HTTPACTION:", 45000)) {
+            const char* act_ptr = strstr(modem_response_buf, "+HTTPACTION:");
+            debugf("[Health] Resp: %s\n", act_ptr);
 
-          if (act.indexOf("200") != -1) {
-            success = true;
-          } else if (act.indexOf("714") != -1 || act.indexOf("706") != -1) {
-            // Rule 19/104: Nuke on Socket Zombie
-            debugln("[Health] 🧟 Zombie Socket (714/706). Nuking Bearer "
-                    "Context...");
-            SerialSIT.println("AT+HTTPTERM");
-            waitForResponse("OK", 2000);
-            SerialSIT.println("AT+CGACT=0,1");
-            waitForResponse("OK", 5000);
-            vTaskDelay(5000 / portTICK_PERIOD_MS);
-            continue; // Skip HTTPREAD on dead session, go to next attempt
-          }
-          vTaskDelay(500 / portTICK_PERIOD_MS);
-          SerialSIT.println("AT+HTTPREAD=0,512");
-          String body = waitForResponse("+HTTPREAD:", 10000);
-          debugln("[Health] Body: " + body);
+            if (strstr(act_ptr, "200") != NULL) {
+              success = true;
+            } else if (strstr(act_ptr, "714") != NULL || strstr(act_ptr, "706") != NULL) {
+              debugln("[Health] 🧟 Zombie Socket (714/706). Nuking Bearer Context...");
+              SerialSIT.println("AT+HTTPTERM");
+              waitForResponse("OK", 2000);
+              SerialSIT.println("AT+CGACT=0,1");
+              waitForResponse("OK", 5000);
+              vTaskDelay(5000 / portTICK_PERIOD_MS);
+              continue; 
+            }
+            vTaskDelay(500 / portTICK_PERIOD_MS);
+            SerialSIT.println("AT+HTTPREAD=0,512");
+            waitForResponse("+HTTPREAD:", 10000);
+            const char* body = modem_response_buf;
+            debugf("[Health] Body: %s\n", body);
 
-          // v7.92: Parse Command ID for feedback loop
-          int idTag = body.indexOf("\"id\"");
-          if (idTag != -1) {
-            int valStart = body.indexOf(":", idTag);
-            if (valStart != -1) {
-              String idStr = "";
-              for (int k = valStart + 1; k < body.length(); k++) {
-                char ch = body[k];
-                if (isdigit(ch))
-                  idStr += ch;
-                else if (idStr.length() > 0)
-                  break;
-              }
-              if (idStr.length() > 0) {
-                last_cmd_id = idStr.toInt();
-                strcpy(last_cmd_res, "PENDING"); // Reset result
+            const char* idTag = strstr(body, "\"id\"");
+            if (idTag != NULL) {
+              const char* valStart = strchr(idTag, ':');
+              if (valStart != NULL) {
+                last_cmd_id = atoi(valStart + 1);
+                strcpy(last_cmd_res, "PENDING"); 
               }
             }
-          }
 
-          // Command Processing
-          sync_rtc_from_server_tm(body.c_str(), false);
-          if (body.indexOf("\"REBOOT\"") != -1) {
-            force_reboot = true;
-            strcpy(last_cmd_res, "Success: Rebooting");
-          }
-          if (body.indexOf("\"OTA_CHECK\"") != -1) {
-            force_ota = true;
-            // Parse target binary if present (p or cmd_param)
-            int pTag = body.indexOf("\"p\"");
-            if (pTag == -1)
-              pTag = body.indexOf("\"cmd_param\"");
-            if (pTag != -1) {
-              int valStart = body.indexOf(":", pTag);
-              if (valStart != -1) {
-                int q1 = body.indexOf("\"", valStart);
-                if (q1 != -1) {
-                  int q2 = body.indexOf("\"", q1 + 1);
-                  if (q2 != -1) {
-                    String param = body.substring(q1 + 1, q2);
-                    strncpy(ota_cmd_param, param.c_str(),
-                            sizeof(ota_cmd_param) - 1);
-                    ota_cmd_param[sizeof(ota_cmd_param) - 1] = '\0';
+            sync_rtc_from_server_tm(body, false);
+            if (strstr(body, "\"REBOOT\"") != NULL) {
+              force_reboot = true;
+              strcpy(last_cmd_res, "Success: Rebooting");
+            }
+            if (strstr(body, "\"OTA_CHECK\"") != NULL) {
+              force_ota = true;
+              const char* pTag = strstr(body, "\"p\"");
+              if (pTag == NULL)
+                pTag = strstr(body, "\"cmd_param\"");
+              if (pTag != NULL) {
+                const char* valStart = strchr(pTag, ':');
+                if (valStart != NULL) {
+                  const char* q1 = strchr(valStart, '\"');
+                  if (q1 != NULL) {
+                    const char* q2 = strchr(q1 + 1, '\"');
+                    if (q2 != NULL) {
+                      int len = q2 - (q1 + 1);
+                      if (len > 0 && len < (int)sizeof(ota_cmd_param)) {
+                        strncpy(ota_cmd_param, q1 + 1, len);
+                        ota_cmd_param[len] = '\0';
+                      }
+                    }
                   }
                 }
               }
             }
-          }
-          if (body.indexOf("\"FTP_BACKLOG\"") != -1)
-            force_ftp = true;
-          if (body.indexOf("\"FTP_DAILY\"") != -1) {
-            force_ftp_daily = true;
-            // Parse target date if present (p)
-            int pTag = body.indexOf("\"p\"");
-            if (pTag != -1) {
-              int valStart = body.indexOf(":", pTag);
-              if (valStart != -1) {
-                int q1 = body.indexOf("\"", valStart);
-                if (q1 != -1) {
-                  int q2 = body.indexOf("\"", q1 + 1);
-                  if (q2 != -1) {
-                    String param = body.substring(q1 + 1, q2);
-                    strncpy(ftp_daily_date, param.c_str(),
-                            sizeof(ftp_daily_date) - 1);
-                    ftp_daily_date[sizeof(ftp_daily_date) - 1] = '\0';
+            if (strstr(body, "\"FTP_BACKLOG\"") != NULL)
+              force_ftp = true;
+            if (strstr(body, "\"FTP_DAILY\"") != NULL) {
+              force_ftp_daily = true;
+              const char* pTag = strstr(body, "\"p\"");
+              if (pTag != NULL) {
+                const char* valStart = strchr(pTag, ':');
+                if (valStart != NULL) {
+                  const char* q1 = strchr(valStart, '\"');
+                  if (q1 != NULL) {
+                    const char* q2 = strchr(q1 + 1, '\"');
+                    if (q2 != NULL) {
+                      int len = q2 - (q1 + 1);
+                      if (len > 0 && len < (int)sizeof(ftp_daily_date)) {
+                        strncpy(ftp_daily_date, q1 + 1, len);
+                        ftp_daily_date[len] = '\0';
+                      }
+                    }
                   }
                 }
               }
             }
-          }
-          if (body.indexOf("\"GET_GPS\"") != -1)
-            force_gps_refresh = true;
-          if (body.indexOf("\"CLEAR_FTP_QUEUE\"") != -1)
-            force_clear_ftp_queue = true;
-          if (body.indexOf("\"DELETE_DATA\"") != -1)
-            force_delete_data = true;
+            if (strstr(body, "\"GET_GPS\"") != NULL)
+              force_gps_refresh = true;
+            if (strstr(body, "\"CLEAR_FTP_QUEUE\"") != NULL)
+              force_clear_ftp_queue = true;
+            if (strstr(body, "\"DELETE_DATA\"") != NULL)
+              force_delete_data = true;
 
-          if (body.indexOf("\"INTERVAL\"") != -1) {
-            int pTag = body.indexOf("\"p\"");
-            if (pTag != -1) {
-              int valStart = body.indexOf(":", pTag);
-              if (valStart != -1) {
-                String valStr = "";
-                for (int k = valStart + 1; k < body.length(); k++) {
-                  if (isdigit(body[k]))
-                    valStr += body[k];
-                  else if (valStr.length() > 0)
-                    break;
-                }
-                if (valStr.length() > 0) {
-                  int mins = valStr.toInt();
-                  Preferences prefs;
-                  prefs.begin("sys-config", false);
-                  if (mins <= 15) {
-                    test_health_every_slot = 1;
-                    strcpy(last_cmd_res, "Success: 15m Mode");
-                  } else {
-                    test_health_every_slot = 0;
-                    strcpy(last_cmd_res, "Success: 24h Mode");
+            if (strstr(body, "\"INTERVAL\"") != NULL) {
+              const char* pTag = strstr(body, "\"p\"");
+              if (pTag != NULL) {
+                const char* valStart = strchr(pTag, ':');
+                if (valStart != NULL) {
+                  int mins = atoi(valStart + 1);
+                  if (mins > 0) {
+                    Preferences prefs;
+                    prefs.begin("sys-config", false);
+                    if (mins <= 15) {
+                      test_health_every_slot = 1;
+                      strcpy(last_cmd_res, "Success: 15m Mode");
+                    } else {
+                      test_health_every_slot = 0;
+                      strcpy(last_cmd_res, "Success: 24h Mode");
+                    }
+                    prefs.putInt("test_health", test_health_every_slot);
+                    prefs.end();
                   }
-                  prefs.putInt("test_health", test_health_every_slot);
-                  prefs.end();
                 }
               }
             }
@@ -1718,7 +1549,7 @@ bool send_health_report(bool useJitter) {
           waitForResponse("OK", 1000);
           break; // Success exit
         } else {
-          debugln("[Health] [ERR] HTTP Action Failed, Resp: " + act);
+          debugf("[Health] [ERR] HTTP Action Failed, Resp: %s\n", modem_response_buf);
         }
       } else {
         debugln("[Health] [ERR] Data Load Timeout/Error");
@@ -1749,7 +1580,6 @@ bool send_health_report(bool useJitter) {
   debugln("[Health] Reporting Disabled (v5.72 Hardened).");
   return true;
 #endif
-}
 
 /*
  *   GRACEFUL REBOOT (v5.58 Fix)

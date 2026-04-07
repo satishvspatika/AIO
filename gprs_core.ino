@@ -2,13 +2,12 @@
 
 int active_cid = 1;      // Default to 1
 bool http_ready = false; // v5.42: Track if HTTPINIT succeeded for this cycle
-static String content = ""; // Phase 5 Fix: Scoped locally to GPRS core to prevent Core 1 cross-contamination
 
 // Helper to clear UART buffer to prevent stale data contamination between tasks
 void gprs(void *pvParameters) {
   esp_task_wdt_add(NULL);
   static int target_fld = FLD_SEND_STATUS; // v5.50: Moved to top for sequential queue scope
-  String response;
+  uint32_t last_activity_time = millis(); // Refresh safety heartbeat
 
   for (;;) {
     esp_task_wdt_reset();
@@ -44,32 +43,31 @@ void gprs(void *pvParameters) {
       else if (mode_snap == eGPSStart) pending_manual_gps = false;
       else if (mode_snap == eHealthStart) pending_manual_health = false;
 
-      if (gprs_mode == eGprsInitial) {
-        debugln("[GPRS] Manual Trigger: Initiating Power On...");
-        strcpy(ui_data[target_fld].bottomRow, "GPRS POWER ON...");
+      // [HR-C01/M01] Final Hardening: Take modemMutex ONCE for the entire manual trigger sequence.
+      // This protects Power-On, Signal Fetch, and Transmission as a single atomic unit.
+      if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
         
-        // v5.82 FIX: Wrap manual trigger in modemMutex to prevent SerialSIT contention with RTC resync tasks
-        if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-            start_gprs();
-            xSemaphoreGive(modemMutex);
+        if (gprs_mode == eGprsInitial) {
+          debugln("[GPRS] Manual Trigger: Initiating Power On...");
+          strcpy(ui_data[target_fld].bottomRow, "GPRS POWER ON...");
+          start_gprs();
+          
+          if (gprs_mode != eGprsSignalOk) {
+            debugln("[GPRS] Initialization failed. Aborting trigger.");
+            strcpy(ui_data[target_fld].bottomRow, "NETWORK ERROR   ");
+            show_now = 1;
+            xSemaphoreGive(modemMutex); 
+            vTaskDelay(3000 / portTICK_PERIOD_MS);
+            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+            show_now = 1;
+            portENTER_CRITICAL(&syncMux);
+            sync_mode = eSMSStop;
+            portEXIT_CRITICAL(&syncMux);
+            continue; 
+          }
         }
-        debugf2("Start_GPRS done. gprs_mode=%d sync_mode=%d\n", gprs_mode,
-                sync_mode);
 
-        // If start_gprs failed, don't proceed
-        if (gprs_mode != eGprsSignalOk) {
-          debugln("[GPRS] Initialization failed. Aborting trigger.");
-          strcpy(ui_data[target_fld].bottomRow, "NETWORK ERROR   ");
-          show_now = 1;
-          vTaskDelay(3000 / portTICK_PERIOD_MS);
-          strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-          show_now = 1;
-          portENTER_CRITICAL(&syncMux);
-          sync_mode = eSMSStop;
-          portEXIT_CRITICAL(&syncMux);
-          continue; // Skip to next loop iteration
-        }
-      }
+      // v5.82: The mutex taken above at Line 53 is STILL HELD here! 
 
       if (gprs_mode == eGprsSignalOk) {
         strcpy(ui_data[target_fld].bottomRow, "CONNECTING...");
@@ -82,9 +80,6 @@ void gprs(void *pvParameters) {
           get_registration();
           get_a7672s();
 
-          // v5.68 User Request: SEPARATE 'GET GPS' and 'HEALTH' from 'SEND STATUS'
-          // We no longer block the LCD interface for 3 minutes trying to send HTTP health 
-          // or waiting for physical GPS satellite locks just to send an SMS text!
           strcpy(ui_data[target_fld].bottomRow, "SENDING SMS...  ");
           vTaskDelay(2000 / portTICK_PERIOD_MS);
           
@@ -95,6 +90,8 @@ void gprs(void *pvParameters) {
           } else {
             strcpy(ui_data[target_fld].bottomRow, "SMS FAILED      ");
           }
+           xSemaphoreGive(modemMutex); // RELEASE LOCK AFTER SUCCESS/FAIL
+        }
           show_now = 1;
           vTaskDelay(3000 / portTICK_PERIOD_MS);
           strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
@@ -107,11 +104,6 @@ void gprs(void *pvParameters) {
           }
         } else if (mode_snap == eGPSStart) {
           debugln("[GPRS] Keypad Triggered GPS Send");
-
-          // v5.74 FIX: Skip redundant re-init if modem is already registered.
-          // Calling get_signal_strength/network/registration again when already
-          // on-network takes 2-4 mins on BSNL 2G, freezing LCD at "SENDING...".
-          // Only re-verify if signal_strength is unknown/stale.
           if (signal_strength <= -110) {
             strcpy(ui_data[target_fld].bottomRow, "SEEK SIGNAL...  ");
             show_now = 1;
@@ -123,14 +115,10 @@ void gprs(void *pvParameters) {
 
           strcpy(ui_data[target_fld].bottomRow, "GETTING GPS...  ");
           show_now = 1;
-          vTaskDelay(500 / portTICK_PERIOD_MS); // Let LCD render before blocking call
+          vTaskDelay(500 / portTICK_PERIOD_MS); 
           get_lat_long_date_time(universalNumber);
 
-          // v5.74 FIX: Show explicit GPS result on LCD immediately after send
-          // Previously fell through to unified block with msg_sent==0 [INFO] "SEND FAILED"
-          // even when the SMS was actually delivered (BSNL 2G slow +CMGS confirmation).
           if (msg_sent) {
-            // Show coordinates as confirmation
             snprintf(ui_data[target_fld].bottomRow, 17, "%0.3f,%0.3f", lati, longi);
           } else {
             strcpy(ui_data[target_fld].bottomRow, "SMS SEND FAILED ");
@@ -139,8 +127,6 @@ void gprs(void *pvParameters) {
           vTaskDelay(4000 / portTICK_PERIOD_MS);
           strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
           show_now = 1;
-          // msg_sent already reflects actual result — unified block will NOT override
-          // (it is guarded by target_fld == FLD_SEND_GPS which we handle above)
 
           if (mode_snap == eGPSStart) {
             portENTER_CRITICAL(&syncMux);
@@ -172,95 +158,68 @@ void gprs(void *pvParameters) {
           } else {
             strcpy(ui_data[target_fld].bottomRow, "GPS FAILED      ");
           }
-          vTaskDelay(2000 /
-                     portTICK_PERIOD_MS); // Allow user to see coordinates
+          vTaskDelay(2000 / portTICK_PERIOD_MS); 
 
 #if ENABLE_HEALTH_REPORT == 1
-          if (target_fld == FLD_SEND_HEALTH) {
-             strcpy(ui_data[target_fld].bottomRow, "SENDING HEALTH..");
-             show_now = 1;
-          }
-          bool health_ok = send_health_report(false); // Manual: No Jitter
+            if (target_fld == FLD_SEND_HEALTH) {
+               strcpy(ui_data[target_fld].bottomRow, "SENDING HEALTH..");
+               show_now = 1;
+            }
+            bool health_ok = send_health_report(false); // Manual: No Jitter
 
-          // v5.75 Fix [M-02]: Always clear health_in_progress after manual call.
-          // Without this, early exits (schedulerBusy, mutex timeout) leave the flag
-          // set, blocking deep sleep for the full 4.5-minute safety valve period.
-          portENTER_CRITICAL(&syncMux);
-          health_in_progress = false;
-          portEXIT_CRITICAL(&syncMux);
+            portENTER_CRITICAL(&syncMux);
+            health_in_progress = false;
+            portEXIT_CRITICAL(&syncMux);
 
-          if (target_fld == FLD_SEND_HEALTH) {
-             if (health_ok) strcpy(ui_data[target_fld].bottomRow, "HEALTH SUCCESS! ");
-             else strcpy(ui_data[target_fld].bottomRow, "HEALTH FAILED   ");
-             show_now = 1;
-             vTaskDelay(3000 / portTICK_PERIOD_MS);
-             strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-             show_now = 1;
-          }
+            if (target_fld == FLD_SEND_HEALTH) {
+               if (health_ok) strcpy(ui_data[target_fld].bottomRow, "HEALTH SUCCESS! ");
+               else strcpy(ui_data[target_fld].bottomRow, "HEALTH FAILED   ");
+               show_now = 1;
+               vTaskDelay(3000 / portTICK_PERIOD_MS);
+             }
 #else
-          debugln("[Health] Startup send skipped (disabled).");
+            debugln("[Health] Startup send skipped (disabled).");
 #endif
-          portENTER_CRITICAL(&syncMux);
-          sync_mode = eSMSStop;
-          portEXIT_CRITICAL(&syncMux);
-          msg_sent = 1; // Mark block as handled so it doesn't print "SEND FAILED"
-        }
-
-        // Unified result display for Manual Triggers
-        if (msg_sent == 1) {
-          if (target_fld == FLD_SEND_GPS) {
-            snprintf(ui_data[target_fld].bottomRow, 17, "%0.3f,%0.3f", lati, longi);
-            show_now = 1;
-            vTaskDelay(4000 / portTICK_PERIOD_MS);
-            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-            show_now = 1;
-          } else if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
-            strcpy(ui_data[target_fld].bottomRow, "SENT SUCCESS    ");
-            show_now = 1;
-            vTaskDelay(3000 / portTICK_PERIOD_MS);
-            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-            show_now = 1;
-          }
-        } else {
-          if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
-            strcpy(ui_data[target_fld].bottomRow, "SEND FAILED     ");
-            show_now = 1;
-            vTaskDelay(3000 / portTICK_PERIOD_MS);
-            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-            show_now = 1;
-          }
-        }
+        } // Close targets (GPS, Health, etc)
         
-        show_now = 1; // Trigger UI refresh
-        vTaskDelay(5000 / portTICK_PERIOD_MS); // Wait for user to read
+        xSemaphoreGive(modemMutex); // Release lock after transmission attempt
+      }
 
-        // After showing result, revert to idle state
-        if (target_fld == FLD_SEND_GPS || target_fld == FLD_SEND_STATUS) {
+      // [HR-C01] Unified Result Display (Ensures LCD updates after modem/mutex release)
+      if (msg_sent == 1) {
+        if (target_fld == FLD_SEND_GPS) {
+          snprintf(ui_data[target_fld].bottomRow, 17, "%0.3f,%0.3f", lati, longi);
+          show_now = 1;
+          vTaskDelay(4000 / portTICK_PERIOD_MS);
           strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+          show_now = 1;
+        } else if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
+          strcpy(ui_data[target_fld].bottomRow, "SENT SUCCESS    ");
+          show_now = 1;
+          vTaskDelay(3000 / portTICK_PERIOD_MS);
+          strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+          show_now = 1;
         }
-        
-        msg_sent = 0; // Reset for next trigger
-        show_now = 1;
-
       } else {
-        debugln("[GPRS] Cannot send SMS/GPS: SIM Error or No Network");
-        memset(ui_data[target_fld].bottomRow, 0,
-               sizeof(ui_data[target_fld].bottomRow));
-        strcpy(ui_data[target_fld].bottomRow, "NETWORK ERROR   ");
-        show_now = 1;
-        vTaskDelay(3000 / portTICK_PERIOD_MS);
-        memset(ui_data[target_fld].bottomRow, 0,
-               sizeof(ui_data[target_fld].bottomRow));
-        strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-        show_now = 1;
-        if (mode_snap == eSMSStart || mode_snap == eGPSStart ||
-            mode_snap == eStartupGPS || mode_snap == eHealthStart) {
-          portENTER_CRITICAL(&syncMux);
-          sync_mode = eSMSStop;
-          portEXIT_CRITICAL(&syncMux);
+        // If msg_sent is 0, check if we should show failure (excluding auto-tasks)
+        if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
+            // Note: If gprs_mode was never SignalOk, this provides feedback
+            if (strlen(ui_data[target_fld].bottomRow) == 0 || strstr(ui_data[target_fld].bottomRow, "CONNECTED")) {
+                 strcpy(ui_data[target_fld].bottomRow, "SEND FAILED     ");
+            }
+            show_now = 1;
+            vTaskDelay(3000 / portTICK_PERIOD_MS);
+            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+            show_now = 1;
         }
       }
-    }
+      
+      show_now = 1; // Trigger UI refresh
+
+      portENTER_CRITICAL(&syncMux);
+      sync_mode = eSMSStop;
+      portEXIT_CRITICAL(&syncMux);
+    } // Close manual trigger block (Line 35)
 
     if (!rtcReady) {
       vTaskDelay(5000 / portTICK_PERIOD_MS);

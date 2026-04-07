@@ -10,14 +10,13 @@ WARNING: library LiquidCrystal I2C claims to run on avr architecture(s) and may 
  1096 |     if (strcmp(UNIT_VER, last_fw_ver)) {
       |                          ^~~~~~~~~~~
       |                          last_fw_res
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino: In function 'void gprs(void*)':
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino:236:9: error: 'else' without a previous 'if'
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino: At global scope:
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino:236:9: error: expected unqualified-id before 'else'
   236 |       } else {
       |         ^~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino:247:13: error: 'mode_snap' was not declared in this scope
-  247 |         if (mode_snap == eSMSStart || mode_snap == eGPSStart ||
-      |             ^~~~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino: At global scope:
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino:254:5: error: expected declaration before '}' token
+  254 |     }
+      |     ^
 /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_core.ino:256:5: error: expected unqualified-id before 'if'
   256 |     if (!rtcReady) {
       |     ^~
@@ -117,148 +116,48 @@ In file included from /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN
 /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:218:98: note: in definition of macro 'debugln'
   218 |   #define debugln(...)       do { if(!ota_silent_mode && !bearer_recovery_active) Serial.println(__VA_ARGS__); } while (0)
       |                                                                                                  ^~~~~~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino: In function 'void get_network()':
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:167:7: error: 'else' without a previous 'if'
-  167 |     } else {
-      |       ^~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino: At global scope:
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:174:3: error: 'SerialSIT' does not name a type; did you mean 'Serial'?
-  174 |   SerialSIT.println("AT+CIMI");
-      |   ^~~~~~~~~
-      |   Serial
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:175:3: error: expected unqualified-id before 'if'
-  175 |   if (waitForResponse("OK", 2000)) {
-      |   ^~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:194:5: error: expected unqualified-id before 'else'
-  194 |   } else {
-      |     ^~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:217:30: error: expected unqualified-id before 'do'
-  217 |   #define debug(...)         do { if(!ota_silent_mode && !bearer_recovery_active) Serial.print(__VA_ARGS__); } while (0)
-      |                              ^~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:197:3: note: in expansion of macro 'debug'
-  197 |   debug("Service Provider APN is ");
-      |   ^~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:217:112: error: expected unqualified-id before 'while'
-  217 |   #define debug(...)         do { if(!ota_silent_mode && !bearer_recovery_active) Serial.print(__VA_ARGS__); } while (0)
-      |                                                                                                                ^~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:197:3: note: in expansion of macro 'debug'
-  197 |   debug("Service Provider APN is ");
-      |   ^~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:218:30: error: expected unqualified-id before 'do'
-  218 |   #define debugln(...)       do { if(!ota_silent_mode && !bearer_recovery_active) Serial.println(__VA_ARGS__); } while (0)
-      |                              ^~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:198:3: note: in expansion of macro 'debugln'
-  198 |   debugln(apn_str);
-      |   ^~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:218:114: error: expected unqualified-id before 'while'
-  218 |   #define debugln(...)       do { if(!ota_silent_mode && !bearer_recovery_active) Serial.println(__VA_ARGS__); } while (0)
-      |                                                                                                                  ^~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:198:3: note: in expansion of macro 'debugln'
-  198 |   debugln(apn_str);
-      |   ^~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:217:30: error: expected unqualified-id before 'do'
-  217 |   #define debug(...)         do { if(!ota_silent_mode && !bearer_recovery_active) Serial.print(__VA_ARGS__); } while (0)
-      |                              ^~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:199:3: note: in expansion of macro 'debug'
-  199 |   debug("Carrier: ");
-      |   ^~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:217:112: error: expected unqualified-id before 'while'
-  217 |   #define debug(...)         do { if(!ota_silent_mode && !bearer_recovery_active) Serial.print(__VA_ARGS__); } while (0)
-      |                                                                                                                ^~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:199:3: note: in expansion of macro 'debug'
-  199 |   debug("Carrier: ");
-      |   ^~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:218:30: error: expected unqualified-id before 'do'
-  218 |   #define debugln(...)       do { if(!ota_silent_mode && !bearer_recovery_active) Serial.println(__VA_ARGS__); } while (0)
-      |                              ^~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:200:3: note: in expansion of macro 'debugln'
-  200 |   debugln(carrier);
-      |   ^~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:218:114: error: expected unqualified-id before 'while'
-  218 |   #define debugln(...)       do { if(!ota_silent_mode && !bearer_recovery_active) Serial.println(__VA_ARGS__); } while (0)
-      |                                                                                                                  ^~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:200:3: note: in expansion of macro 'debugln'
-  200 |   debugln(carrier);
-      |   ^~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:217:30: error: expected unqualified-id before 'do'
-  217 |   #define debug(...)         do { if(!ota_silent_mode && !bearer_recovery_active) Serial.print(__VA_ARGS__); } while (0)
-      |                              ^~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:201:3: note: in expansion of macro 'debug'
-  201 |   debug("Number: ");
-      |   ^~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:217:112: error: expected unqualified-id before 'while'
-  217 |   #define debug(...)         do { if(!ota_silent_mode && !bearer_recovery_active) Serial.print(__VA_ARGS__); } while (0)
-      |                                                                                                                ^~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:201:3: note: in expansion of macro 'debug'
-  201 |   debug("Number: ");
-      |   ^~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:218:30: error: expected unqualified-id before 'do'
-  218 |   #define debugln(...)       do { if(!ota_silent_mode && !bearer_recovery_active) Serial.println(__VA_ARGS__); } while (0)
-      |                              ^~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:202:3: note: in expansion of macro 'debugln'
-  202 |   debugln(sim_number);
-      |   ^~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:218:114: error: expected unqualified-id before 'while'
-  218 |   #define debugln(...)       do { if(!ota_silent_mode && !bearer_recovery_active) Serial.println(__VA_ARGS__); } while (0)
-      |                                                                                                                  ^~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:202:3: note: in expansion of macro 'debugln'
-  202 |   debugln(sim_number);
-      |   ^~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:218:30: error: expected unqualified-id before 'do'
-  218 |   #define debugln(...)       do { if(!ota_silent_mode && !bearer_recovery_active) Serial.println(__VA_ARGS__); } while (0)
-      |                              ^~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:203:3: note: in expansion of macro 'debugln'
-  203 |   debugln();
-      |   ^~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/globals.h:218:114: error: expected unqualified-id before 'while'
-  218 |   #define debugln(...)       do { if(!ota_silent_mode && !bearer_recovery_active) Serial.println(__VA_ARGS__); } while (0)
-      |                                                                                                                  ^~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:203:3: note: in expansion of macro 'debugln'
-  203 |   debugln();
-      |   ^~~~~~~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:204:3: error: expected unqualified-id before 'if'
-  204 |   if (!strcmp(apn_str, "bsnlnet")) {
-      |   ^~
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:207:1: error: expected declaration before '}' token
-  207 | }
-      | ^
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino: In function 'void get_registration()':
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:657:19: error: a function-definition is not allowed here before '{' token
-  657 | void get_a7672s() {
-      |                   ^
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:805:31: error: a function-definition is not allowed here before '{' token
-  805 | void process_sms(char msg_no) {
-      |                               ^
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:1016:28: error: a function-definition is not allowed here before '{' token
- 1016 | void get_gps_coordinates() {
-      |                            ^
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:1056:63: error: a function-definition is not allowed here before '{' token
- 1056 | void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino: In function 'void get_a7672s()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:676:9: error: 'try_activate_apn' was not declared in this scope
+  676 |     if (try_activate_apn(apn_str)) {
+      |         ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:715:9: error: 'try_activate_apn' was not declared in this scope
+  715 |     if (try_activate_apn(primary_apn)) {
+      |         ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:743:9: error: 'try_activate_apn' was not declared in this scope
+  743 |     if (try_activate_apn(fallback_apns[i])) {
+      |         ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:777:7: error: 'try_activate_apn' was not declared in this scope
+  777 |   if (try_activate_apn(apn_str)) {
+      |       ^~~~~~~~~~~~~~~~
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino: In function 'void process_sms(char)':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:915:44: error: a function-definition is not allowed here before '{' token
+  915 | void prepare_and_send_status(char *gsm_no) {
+      |                                            ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino: In function 'bool verify_bearer_or_recover()':
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:439:23: error: a function-definition is not allowed here before '{' token
+  439 | void flushSerialSIT() {
+      |                       ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:460:34: error: a function-definition is not allowed here before '{' token
+  460 | void sync_rtc_from_http_header() {
+      |                                  ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:557:63: error: a function-definition is not allowed here before '{' token
+  557 | void sync_rtc_from_server_tm(const char *payload, bool force) {
       |                                                               ^
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:1139:41: error: a function-definition is not allowed here before '{' token
- 1139 | bool send_health_report(bool useJitter) {
-      |                                         ^
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:8:57: error: a function-definition is not allowed here before '{' token
-    8 | void save_apn_config(const char* apn, const char* ccid) {
-      |                                                         ^
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:23:82: error: a function-definition is not allowed here before '{' token
-   23 | bool load_apn_config(const char* current_ccid, char *target_apn, size_t max_len) {
-      |                                                                                  ^
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:109:41: error: a function-definition is not allowed here before '{' token
-  109 | void get_ccid(char *out, size_t maxLen) {
-      |                                         ^
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:180:40: error: a function-definition is not allowed here before '{' token
-  180 | bool try_activate_apn(const char *apn) {
-      |                                        ^
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:235:33: error: a function-definition is not allowed here before '{' token
-  235 | bool verify_bearer_or_recover() {
-      |                                 ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:716:19: error: a function-definition is not allowed here before '{' token
+  716 | void start_gprs() {
+      |                   ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:807:55: error: a function-definition is not allowed here before '{' token
+  807 | int parseHttpDate(const char *dateStr, struct tm *tm) {
+      |                                                       ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:819:32: error: a function-definition is not allowed here before '{' token
+  819 | void graceful_modem_shutdown() {
+      |                                ^
 /Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/windSpeed.ino:123:2: error: expected '}' at end of input
   123 | }
       |  ^
-/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_health.ino:209:25: note: to match this '{'
-  209 | void get_registration() {
-      |                         ^
+/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/gprs_helpers.ino:235:33: note: to match this '{'
+  235 | bool verify_bearer_or_recover() {
+      |                                 ^
 Multiple libraries were found for "WiFi.h"
   Used: /Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi
   Not used: /Users/satishkripavasan/Documents/Arduino/libraries/WiFiEspAT
@@ -288,4 +187,3 @@ Multiple libraries were found for "WiFi.h"
 [93mesp32:esp32[0m   3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6[0m
 Error during build: exit status 1
 --- Compilation FAILED ---
-❌ Compilation failed. Aborting flash.

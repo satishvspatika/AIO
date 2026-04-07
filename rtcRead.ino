@@ -15,8 +15,7 @@ byte data[7];
 void rtcRead(void *pvParameters) {
 
   esp_task_wdt_add(NULL);
-  String response;
-  memset(signature, 0, sizeof(signature)); // Phase 14: Replaced hardcoded [16]=0 to dynamically protect string lengths
+  memset(signature, 0, sizeof(signature)); 
 
   rtcReady = false;
   timeSyncRequired = true;
@@ -189,7 +188,6 @@ void rtcRead(void *pvParameters) {
 }
 
 void resync_time() {
-  String response;
   int response_no;
   int tmp, tmp3;
   char tmp2[16];
@@ -224,13 +222,12 @@ void resync_time() {
     start_gprs();
     esp_task_wdt_reset();
     SerialSIT.println("ATE0");
-    response = waitForResponse("OK", 3000);
-    debug("HTTP response of ATE0: ");
-    debugln(response);
+    waitForResponse("OK", 3000);
+    debugf("[RTC] AT Response: %s\n", modem_response_buf);
 
     vTaskDelay(5000 / portTICK_PERIOD_MS); 
     SerialSIT.println("AT+CLBS=4");
-    response = waitForResponse("+CLBS:", 10000);
+    waitForResponse("+CLBS:", 10000);
     xSemaphoreGive(modemMutex);
   } else {
     debugln("[RTC] Error: Modem Mutex Timeout - deferring resync");
@@ -249,10 +246,8 @@ void resync_time() {
   }
   
   vTaskDelay(200 / portTICK_PERIOD_MS);
-  debug("Response of AT+CLBS=4 is ");
-  debugln(response);
-  vTaskDelay(200 / portTICK_PERIOD_MS);
-  response_char = response.c_str();
+  // v5.82 Platinum: Enhanced parsing for multi-format CLBS (+CLBS: 0,lat,lon,alt,YY/MM/DD,HH:MM:SS)
+  response_char = modem_response_buf;
   vTaskDelay(200 / portTICK_PERIOD_MS);
   csqstr = strstr(response_char, "+CLBS");
 

@@ -92,7 +92,7 @@ void graceful_modem_shutdown();
 void start_deep_sleep();
 void flushSerialSIT();
 bool verify_bearer_or_recover();
-int send_at_cmd_data(char *payload, String response_arg, bool robust);
+int send_at_cmd_data(char *payload, bool robust);
 void get_signal_strength();
 void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
                        bool *hasUnresolvedNDM);
@@ -196,6 +196,9 @@ extern SemaphoreHandle_t modemMutex;
 extern SemaphoreHandle_t fsMutex;
 extern volatile bool gprs_pdp_ready;
 extern RTC_DS1307 rtc;
+extern char modem_response_buf[2048]; // v6.0 Zero-Heap GPRS Buffer
+extern char gprs_payload[1280];       // v6.0 Transmission Payload Buffer
+extern int gprs_payload_len;
 
 extern portMUX_TYPE timerMux0;
 extern portMUX_TYPE timerMux1;
@@ -305,6 +308,8 @@ extern RTC_DATA_ATTR int last_cmd_id;
 extern RTC_DATA_ATTR char last_cmd_res[64];
 extern char cur_file[32], unsent_file[32], new_file[32], temp_file[50];
 extern char station_name[16];
+extern char last_fw_ver[20];
+
 extern char chip_id[13];
 extern char calib_state[5], calib_text[40], calib_content[16];
 extern char ftpunsent_file[50];
@@ -597,7 +602,7 @@ void previous_date(int *Cd, int *Cm, int *Cy);
 void get_p_file_info(char *pfn, int *pdd, int *pmm, int *pyy);
 void get_c_file_info(char *cfn, int *cdd, int *cmm, int *cyy);
 void getTimeSnapshot(struct tm *timeinfo); // v5.79: Hardened Time Sync
-int send_at_cmd_data(char *payload, String response_arg, bool robust);
+int send_at_cmd_data(char *payload, bool robust);
 void send_http_data();
 bool send_health_report(bool useJitter = true);
 void send_unsent_data();
@@ -613,8 +618,9 @@ void sync_rtc_from_http_header();
 // I2C Protection (v5.49)
 
 // MODEM / GPRS
-String waitForResponse(const char *expected, unsigned long timeout);
+bool waitForResponse(const char *expected, unsigned long timeout);
 void disableWDT();
+void trim_whitespace(char *str);
 void saveYearToSPIFFS(int year);
 void configure_sensors_for_awake();
 void configure_sensors_for_sleep();
@@ -646,11 +652,12 @@ void power_cut_modem_shutdown();
 // (prototype above at line 90)
 
 // GPRS Helpers (gprs_helpers.ino)
-String get_ccid();
-bool load_apn_config(String current_ccid, char *target_apn, size_t max_len);
-bool try_activate_apn(const char *apn);
+void get_ccid(char *out, size_t maxLen);
+bool load_apn_config(const char* current_ccid, char *target_apn, size_t max_len);
+void save_apn_config(const char* apn, const char* ccid);
 bool verify_bearer_or_recover();
-void save_apn_config(String apn, String ccid);
+bool try_activate_apn(const char *apn);
+
 
 /*
  *   Structure
