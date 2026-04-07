@@ -30,9 +30,42 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
 
   bool fileExists = false;
   bool ftp_started = false; // v5.70 Hardened: [N-8] Guard cleanup drain on skipped files
+
+  // v5.85.1: Proactive SPIFFS Orphan Cleanup - Before FTP starts, sweep old staging files
+  const char *pattern = strstr(UNIT, "SPATIKA") ? ".swd" : ".kwd";
+  String kwdFiles[12]; 
+  int kwdCount = 0;
+  
   if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      File rootDir = SPIFFS.open("/");
+      if (rootDir) {
+          File f = rootDir.openNextFile();
+          while (f && kwdCount < 12) {
+              String n = String(f.name()); 
+              f.close();
+              String fullPath = n.startsWith("/") ? n : ("/" + n);
+              // Add to delete list if it ends with pattern AND is not the file we are currently trying to send
+              if (n.endsWith(pattern) && fullPath != String(fileName)) {
+                  kwdFiles[kwdCount++] = fullPath;
+              }
+              f = rootDir.openNextFile();
+          }
+          rootDir.close();
+      }
+      
+      // Now check if our actual target file exists
       fileExists = SPIFFS.exists(fileName);
       xSemaphoreGive(fsMutex);
+  }
+
+  // Delete outside the main mutex hold, taking it individually for each file
+  // This prevents blocking out the scheduler task for 500ms+ during cleanup
+  for (int i = 0; i < kwdCount; i++) {
+      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+          SPIFFS.remove(kwdFiles[i]);
+          debugf("[FTP] Purged orphaned staging file: %s\n", kwdFiles[i].c_str());
+          xSemaphoreGive(fsMutex);
+      }
   }
 
   if (fileExists) {
@@ -636,14 +669,9 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
   
   // v5.75 BSNL Active Mode Hardening (Moved to post-start)
   debugf("[FTP] Configuring mode (%d)...\n", transMode);
-  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSCFG=\"transmode\",%d", transMode);
+  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSCFG=\"TRANSMODE\",%d", transMode);
   SerialSIT.println(gprs_xmit_buf);
-  if (waitForResponse("OK", 3000).indexOf("OK") == -1) {
-      debugln("[FTP] Lowercase transmode failed. Trying UPPERCASE...");
-      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSCFG=\"TRANSMODE\",%d", transMode);
-      SerialSIT.println(gprs_xmit_buf);
-      waitForResponse("OK", 3000);
-  }
+  waitForResponse("OK", 3000);
   SerialSIT.println("AT+CFTPSCFG=\"type\",I");
   waitForResponse("OK", 3000);
   SerialSIT.println("AT+CMEE=1");
@@ -651,36 +679,28 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
 
 
   // v5.76.6: DNS Resilience - Fresh retry per call. 
-  bool dns_failed_this_session = false; 
   char targetAddress[64];
   strcpy(targetAddress, ftpServer); // Default to the domain string
 
-  if (dns_failed_this_session) {
-      debugln("[FTP] Using Insurance IP (DNS Skip)...");
-      if (strstr(ftpServer, "spatika.net")) strcpy(targetAddress, "89.32.144.163"); // Dota DMC (Standard)
-      else if (strstr(ftpServer, "ksndmc.net")) strcpy(targetAddress, "27.34.245.70"); // Current Live KSNDMC
-  } else {
-      debugln("[FTP] Warming up DNS...");
-      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CDNSGIP=\"%s\"", ftpServer);
-      SerialSIT.println(gprs_xmit_buf);
-      // v5.76.3: Reduced timeout to 12s for faster transition
-      response = waitForResponse("+CDNSGIP:", 12000); 
-      if (response.indexOf("+CDNSGIP: 1") != -1) {
-          int first_q = response.indexOf("\",\"");
-          int second_q = response.indexOf("\"", first_q + 3);
-          if (first_q != -1 && second_q != -1) {
-              String resolved = response.substring(first_q + 3, second_q);
-              if (resolved.length() > 6) {
-                  strcpy(targetAddress, resolved.c_str());
-                  debugf("[FTP] DNS Resolved: %s\n", targetAddress);
-              }
+  debugln("[FTP] Warming up DNS...");
+  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CDNSGIP=\"%s\"", ftpServer);
+  SerialSIT.println(gprs_xmit_buf);
+  // v5.76.3: Reduced timeout to 12s for faster transition
+  response = waitForResponse("+CDNSGIP:", 12000); 
+  if (response.indexOf("+CDNSGIP: 1") != -1) {
+      int first_q = response.indexOf("\",\"");
+      int second_q = response.indexOf("\"", first_q + 3);
+      if (first_q != -1 && second_q != -1) {
+          String resolved = response.substring(first_q + 3, second_q);
+          if (resolved.length() > 6) {
+              strcpy(targetAddress, resolved.c_str());
+              debugf("[FTP] DNS Resolved: %s\n", targetAddress);
           }
-      } else {
-          debugln("[FTP] DNS Failed. Switching to Insurance IP.");
-          dns_failed_this_session = true; // Cache the failure
-          if (strstr(ftpServer, "spatika.net")) strcpy(targetAddress, "89.32.144.163");
-          else if (strstr(ftpServer, "ksndmc.net")) strcpy(targetAddress, "27.34.245.70");
       }
+  } else {
+      debugln("[FTP] DNS Failed. Switching to Insurance IP.");
+      if (strstr(ftpServer, "spatika.net")) strcpy(targetAddress, "89.32.144.163");
+      else if (strstr(ftpServer, "ksndmc.net")) strcpy(targetAddress, "27.34.245.70");
   }
 
   // Pre-login settling delay

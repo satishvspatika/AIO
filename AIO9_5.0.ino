@@ -1587,11 +1587,16 @@ void initialize_hw() {
             String n = String(f.name());
             if (n.endsWith(".kwd") || n.endsWith(".swd")) {
                 kwd_count++;
-                if (kwd_count > 3) {
+                if (kwd_count > 1) { // v5.85.1: Remove all but 1; pre-FTP sweep catches the last one
                    f.close();
                    SPIFFS.remove("/" + n);
                    debugln("[FS] Emergency Boot Purge: " + n);
                 } else f.close();
+            } else if (n.length() == 17 && n.indexOf("_20") == 4 && n.endsWith(".txt")) {
+                // v5.85.2: [Legacy Purge] - Clean old 4-digit ID logs that linger in upgraded units
+                f.close();
+                SPIFFS.remove("/" + n);
+                debugln("[FS] Legacy Migration Purge: " + n);
             } else f.close();
             f = rootDir.openNextFile();
         }
@@ -1722,6 +1727,7 @@ void initialize_hw() {
   }
 
   last_activity_time = millis(); // v5.85: Trigger safety heartbeat starting now
+  last_key_time = millis(); // v5.79: Prevent UI ghosting on first session
 }
 
 void loop() {
@@ -1764,7 +1770,14 @@ void loop() {
   // v5.85: Ghost-UI Safety Override
   // If we woke up by TIMER (scheduled) and all communicating tasks are DONE, 
   // we do not wait for the LCD to timeout (modem current noise can trigger it).
-  bool uiIsGhosting = (wakeup_reason_is != ext0 && lcdkeypad_start == 1 && (millis() > 60000));
+  // v5.79: Hardened Ghost-UI logic to check recently-pressed keys (last_key_time) 
+  // AND protect active manual tasks (Calibration, Manual Syncs, OTA).
+  bool manualTaskActive;
+  portENTER_CRITICAL(&syncMux);
+  manualTaskActive = (pending_manual_status || pending_manual_gps || pending_manual_health || force_ota || ota_writing_active || (calib_flag == 1));
+  portEXIT_CRITICAL(&syncMux);
+
+  bool uiIsGhosting = (wakeup_reason_is != ext0 && lcdkeypad_start == 1 && !manualTaskActive && (millis() - last_key_time > 60000) && (millis() > 60000));
 
   if ((millis() > min_awake_ms) &&
       safe_to_sleep_sync &&
@@ -1796,7 +1809,8 @@ void loop() {
     vTaskDelay(50 / portTICK_PERIOD_MS);
     
     // v5.78 Hardening: Consolidate Ghost-UI detection (Modem noise on GPIO 27)
-    bool uiIsGhosting = (wakeup_reason_is != ext0 && lcdkeypad_start == 1 && millis() > 60000);
+    // v5.79: check for last_key_time and protect calibration to survive non-interactive sessions
+    bool uiIsGhosting = (wakeup_reason_is != ext0 && lcdkeypad_start == 1 && !manualTaskActive && (millis() - last_key_time > 60000) && millis() > 60000);
 
     // v5.70: Catch any state changes during the 50ms yield (e.g. OTA started).
     bool sys_busy = false;
@@ -1824,7 +1838,7 @@ void loop() {
         // we should not let a 'ghost' LCD trigger (modem noise) keep the device awake 
         // for the full 3-minute idle timeout. If it's been > 60s and tasks are stop, SHUT DOWN.
         bool scheduled_wake = (wakeup_reason_is != ext0);
-        bool forced_sleep_allowed = scheduled_wake && safe_to_sleep_sync && (millis() > 60000);
+        bool forced_sleep_allowed = scheduled_wake && safe_to_sleep_sync && !manualTaskActive && (millis() - last_key_time > 60000) && (millis() > 60000);
 
         if ((lcdkeypad_start == 0 || forced_sleep_allowed) && (awake_cap_reached || idle_cap_reached) && !too_close_to_slot) {
             debugln("[PWR] SAFETY VALVE: Duty-Cycle Cap or Forced Scheduled Sleep reached. Forcing Sleep...");

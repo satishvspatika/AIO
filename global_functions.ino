@@ -1325,6 +1325,8 @@ float get_calibrated_battery_voltage() {
 }
 
 void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
+  // v5.85.1 Hardened: fsMutex is NOT recursive. If alreadyLocked is true,
+  // the caller MUST already hold the lock and we MUST NOT attempt to take it again.
   if (!alreadyLocked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
     debugln("[SPIFFS] pruneFile Mutex Timeout: skipping.");
     return;

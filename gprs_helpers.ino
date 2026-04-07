@@ -909,6 +909,9 @@ void send_sms() {
 
 // REQUIRES: modemMutex held by caller (Not thread-safe due to static buffer)
 String waitForResponse(const char *expected, unsigned long timeout) {
+  // v5.80.1 defensive guard: waitForResponse uses a static buffer and MUST be protected by modemMutex
+  configASSERT(xSemaphoreGetMutexHolder(modemMutex) == xTaskGetCurrentTaskHandle());
+
   // v5.68 Stability Fix: Buffer UART in static char array
   // dynamic String (response += c) to prevent massive heap fragmentation
   // on long multi-kilobyte JSON HTTP reads.

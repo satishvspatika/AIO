@@ -458,6 +458,10 @@ void prepare_data_and_send() {
         xSemaphoreGive(serialMutex);
       }
 
+      // v5.85.1: Invalidate false freshness - Bearer is dead
+      last_http_ok = false;
+      last_http_ok_slot = -1;
+
       dns_fallback_active =
           false; // v5.72: Clear fallback cache to force fresh DNS next slot
 

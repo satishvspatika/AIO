@@ -206,12 +206,12 @@ void resync_time() {
   portENTER_CRITICAL(&syncMux);
   health_in_progress = true; // [H-01] Guard and Mark busy inside same critical section
   sync_mode = eHttpTrigger;
+  signal_strength = 0;       // v5.85.1: Zeroed inside syncMux to prevent Core 0/1 race
+  signal_lvl = 0;
   portEXIT_CRITICAL(&syncMux);
 
-  signal_strength = 0;
-  signal_lvl = 0;
   strcpy(reg_status, "NA");
-  
+
   // H-NEW-1: Wrapped in critical section to prevent sleep gate race
   portENTER_CRITICAL(&syncMux);
   gprs_started = true;

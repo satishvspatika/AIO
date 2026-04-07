@@ -87,6 +87,7 @@ void scheduler(void *pvParameters) {
     int slot_min = 0, slot_hr = 0;
     int current_sample_idx = 0, minutes_into_interval = 0;
     bool is_valid_window = false, is_fresh_boot_entry = false;
+    bool snap_timeSyncRequired = false; // v5.85.1: Atomic snapshot for condition invariant
     float totalWindPulses = 0.0, temp_read = 0.0, hum_read = 0.0;
     float check_temp = 0.0, check_hum = 0.0;
     float avgPulsesPerSecond = 0.0;
@@ -166,11 +167,16 @@ void scheduler(void *pvParameters) {
     // Check for Fresh Boot entry override
     is_fresh_boot_entry = (wakeup_reason_is == 0); // PowerOn
 
+    // v5.85.1: Atomic snapshot for compound condition invariant
+    portENTER_CRITICAL(&syncMux);
+    snap_timeSyncRequired = timeSyncRequired;
+    portEXIT_CRITICAL(&syncMux);
+
     if (current_sample_idx != last_processed_sample_idx &&
         (is_valid_window ||
          is_fresh_boot_entry) && // Allow entry if fresh boot, to handle "Late
                                  // Boot" sleep logic
-        timeSyncRequired == false &&
+        snap_timeSyncRequired == false &&
         (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false)) {
 
       // Turner-Fix: Atomic protection for sync_mode
@@ -1346,16 +1352,14 @@ void scheduler(void *pvParameters) {
         if (li_bat_val < 3.4f && li_bat_val > 0.5f) {
           debugln("[PWR] CRITICAL: Battery too low for flash write. Aborting "
                   "to prevent brownout/corruption.");
-          signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
-          data_writing_initiated = 0;
           portENTER_CRITICAL(&syncMux);
+          signal_strength = SIGNAL_STRENGTH_MISSING_DATA; // Protected inside syncMux
           schedulerBusy = false;
-          portEXIT_CRITICAL(&syncMux);
-          xSemaphoreGive(fsMutex);
-          fs_locked = false;
-          portENTER_CRITICAL(&syncMux);
           sync_mode = eHttpStop;
           portEXIT_CRITICAL(&syncMux);
+          data_writing_initiated = 0;
+          xSemaphoreGive(fsMutex);
+          fs_locked = false;
           goto TRIGGER_HTTP;
         }
 
@@ -1399,14 +1403,14 @@ void scheduler(void *pvParameters) {
           } else {
             debugln("[SPIFFS] FATAL: Could not locate old logs. System files "
                     "dominating storage. Aborting write.");
-            signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
-            data_writing_initiated = 0;
-            xSemaphoreGive(fsMutex); // Orphaned Give C-01 (Path A)
-            fs_locked = false;
             portENTER_CRITICAL(&syncMux);
+            signal_strength = SIGNAL_STRENGTH_MISSING_DATA; // Protected inside syncMux
             schedulerBusy = false; // v5.72: Critical exit protection
             sync_mode = eHttpStop;
             portEXIT_CRITICAL(&syncMux);
+            data_writing_initiated = 0;
+            xSemaphoreGive(fsMutex); // Orphaned Give C-01 (Path A)
+            fs_locked = false;
             goto TRIGGER_HTTP;
           }
           prune_attempts++;
