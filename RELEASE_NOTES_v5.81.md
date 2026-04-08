@@ -46,6 +46,14 @@ Version 5.81 represents a massive culmination of structural audits, memory optim
 *   **Issue:** Low-volume stations could have a single "orphan" record sit in the backlog indefinitely if it never reached the >2 record threshold for a 3-hourly push.
 *   **Resolution:** Implemented a "Daily Drain" at **08:45 AM**. During this morning window, the threshold is bypassed, guaranteeing that even a single backlog record is cleared every 24 hours without an SMS command.
 
+### 9. UI "Priority Interrupt" Logic (v5.82)
+*   **Issue:** Manual keypad requests (`SEND_STATUS`, `SEND LAT/LONG`) made while the modem was busy would previously result in a "PLEASE WAIT" hang that never cleared.
+*   **Resolution:** Implemented **Pending Request Promotion**. Requests made during busy cycles are now queued and automatically "picked up" the instant the current cycle finishes.
+
+### 10. SMS Fortress & Mutex Forwarding
+*   **Issue:** SMS-triggered commands (OTA, FTP, GPS) could previously deadlock if triggered while the modem lock was already held.
+*   **Resolution:** Standardized the **`alreadyLocked`** pattern across all modem functions (`prepare_and_send_status`, `get_lat_long_date_time`, `fetchFromHttpAndUpdate`, `copyFromSPIFFSToFS`). Deadlocks are now mathematically eliminated from the command path.
+
 ---
 
 ## 🛡️ Long-Term Stability Validation
@@ -53,3 +61,4 @@ Version 5.81 represents a massive culmination of structural audits, memory optim
 *   **Buffer Capping**: Verified 0 unsafe `sprintf` and unbounded `strcpy` commands. Bounds checked dynamically using `snprintf`.
 *   **SD Card Endurance**: Verified "Leave-and-Forget" mode: updates via `.bin` will correctly write MD5 hashes and Version identifiers dynamically to deep `SPIFFS`, ensuring firmware never loops/reflashes recursively when the SD card remains docked for decades of CSV backups. 
 *   **I2C Boot Stability**: Deep Sleep reset protocols functionally verified to boot securely via ESP32 `setup()`, guaranteeing pure state initialization across multiplexers and BME/HDC chips.
+*   **UI Resilience**: Added a robust 3-second recovery handler in `gprs_core.ino` for modem-busy states, preventing the UI from staying stuck in "PLEASE WAIT".
