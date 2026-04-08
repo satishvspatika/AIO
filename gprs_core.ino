@@ -32,6 +32,19 @@ void gprs(void *pvParameters) {
     }
 
     // --- MANUAL TRIGGERS (Keypad) ---
+    // v5.82: Pending Request Promotion (Ensures 'PLEASE WAIT' requests are picked up when idle)
+    if (mode_snap == eSyncModeInitial || mode_snap == eSMSStop || 
+        mode_snap == eHttpStop || mode_snap == eExceptionHandled) {
+      if (pending_manual_status || pending_manual_gps || pending_manual_health) {
+        portENTER_CRITICAL(&syncMux);
+        if (pending_manual_status) sync_mode = eSMSStart;
+        else if (pending_manual_gps) sync_mode = eGPSStart;
+        else if (pending_manual_health) sync_mode = eHealthStart;
+        mode_snap = sync_mode; // Update local snap to trigger the handler below
+        portEXIT_CRITICAL(&syncMux);
+      }
+    }
+
     if (mode_snap == eSMSStart || mode_snap == eGPSStart ||
         mode_snap == eStartupGPS || mode_snap == eHealthStart) {
       target_fld = (mode_snap == eSMSStart) ? FLD_SEND_STATUS :
