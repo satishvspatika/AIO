@@ -758,11 +758,13 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
   return 0;
 }
 
-void fetchFromHttpAndUpdate(char *fileName) {
-  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(30000)) != pdTRUE) {
-    debugln("[OTA] Error: Modem Mutex Timeout - deferring download");
-    diag_modem_mutex_fails++;
-    return;
+void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked) {
+  if (!alreadyLocked) {
+    if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(30000)) != pdTRUE) {
+      debugln("[OTA] Error: Modem Mutex Timeout - deferring download");
+      diag_modem_mutex_fails++;
+      return;
+    }
   }
   ota_silent_mode = true; // Rule 50: Silence sensor tasks before modem reconfiguration
   int handle_no;
@@ -832,7 +834,8 @@ void fetchFromHttpAndUpdate(char *fileName) {
     debugf("[OTA] HEAD failed. Status: %s\n", modem_response_buf);
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 2000);
-    xSemaphoreGive(modemMutex);
+    if (!alreadyLocked)
+       xSemaphoreGive(modemMutex);
     return;
   }
 
@@ -1194,18 +1197,22 @@ void fetchFromHttpAndUpdate(char *fileName) {
   }
 
   debugln("[OTA] Done.");
-  xSemaphoreGive(modemMutex);
+  if (!alreadyLocked)
+    xSemaphoreGive(modemMutex);
 }
 
-void copyFromSPIFFSToFS(char *dateFile) {
-  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
-    debugln("[FS] Error: Modem Mutex Timeout - deferring copy");
-    diag_modem_mutex_fails++;
-    return;
+void copyFromSPIFFSToFS(char *dateFile, bool alreadyLocked) {
+  if (!alreadyLocked) {
+    if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
+      debugln("[FS] Error: Modem Mutex Timeout - deferring copy");
+      diag_modem_mutex_fails++;
+      return;
+    }
   }
   if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
     debugln("[FS] Error: SPIFFS Mutex Timeout - deferring copy");
-    xSemaphoreGive(modemMutex); // RELEASE MODEM MUTEX
+    if (!alreadyLocked)
+      xSemaphoreGive(modemMutex); // RELEASE MODEM MUTEX
     return;
   }
   
@@ -1384,7 +1391,8 @@ void copyFromSPIFFSToFS(char *dateFile) {
     debugln("File not found");
   }
   xSemaphoreGive(fsMutex); // v5.66 BUGFIX: Was missing on the success path!
-  xSemaphoreGive(modemMutex);
+  if (!alreadyLocked)
+    xSemaphoreGive(modemMutex);
 }
 
 /*

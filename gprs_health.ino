@@ -898,7 +898,7 @@ void process_sms(char msg_no) {
                    d1);
           debug(" Date is ");
           debugln(requestedDate);
-          copyFromSPIFFSToFS(requestedDate); // temp1 is date
+          copyFromSPIFFSToFS(requestedDate, true); // temp1 is date
         }
       }
     } else if (strstr(response_char, "SET_FW_FNAME")) {
@@ -910,7 +910,7 @@ void process_sms(char msg_no) {
             1) { // +CCLK: \"23/08/01,09:54:35+00\"
           debug("Firmware file is ");
           debugln(temp1);
-          fetchFromHttpAndUpdate(temp1);
+          fetchFromHttpAndUpdate(temp1, true);
         }
       }
 

@@ -619,8 +619,8 @@ void start_gprs();
 void send_sms();
 void process_sms(char msg_no);
 int setup_ftp(int transMode = 0);
-void fetchFromHttpAndUpdate(char *fileName);
-void copyFromSPIFFSToFS(char *dateFile);
+void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked = false);
+void copyFromSPIFFSToFS(char *dateFile, bool alreadyLocked = false);
 void loadGPS();
 void sync_rtc_from_http_header();
 // I2C Protection (v5.49)
