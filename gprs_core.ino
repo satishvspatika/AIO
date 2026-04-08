@@ -83,7 +83,7 @@ void gprs(void *pvParameters) {
           strcpy(ui_data[target_fld].bottomRow, "SENDING SMS...  ");
           vTaskDelay(2000 / portTICK_PERIOD_MS);
           
-          prepare_and_send_status(universalNumber);
+          prepare_and_send_status(universalNumber, true);
 
           if (msg_sent) {
             strcpy(ui_data[target_fld].bottomRow, "SMS SUCCESS     ");
@@ -116,7 +116,7 @@ void gprs(void *pvParameters) {
           strcpy(ui_data[target_fld].bottomRow, "GETTING GPS...  ");
           show_now = 1;
           vTaskDelay(500 / portTICK_PERIOD_MS); 
-          get_lat_long_date_time(universalNumber);
+          get_lat_long_date_time(universalNumber, true);
 
           if (msg_sent) {
             snprintf(ui_data[target_fld].bottomRow, 17, "%0.3f,%0.3f", lati, longi);

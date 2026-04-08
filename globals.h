@@ -652,7 +652,7 @@ void get_signal_strength();
 void get_network();
 void get_registration();
 void get_a7672s();
-void prepare_and_send_status(char *number);
+void prepare_and_send_status(char *number, bool alreadyLocked = false);
 void get_lat_long_date_time(char *number, bool alreadyLocked = false);
 void store_current_unsent_data();
 void get_gps_coordinates();

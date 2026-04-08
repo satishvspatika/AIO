@@ -876,7 +876,7 @@ void process_sms(char msg_no) {
     msg_body += offset_cnt;
 
     if (strstr(response_char, "GET_STATUS")) {
-      prepare_and_send_status(msg_rcvd_number);
+      prepare_and_send_status(msg_rcvd_number, true);
       vTaskDelay(1000 / portTICK_PERIOD_MS);
     } else if (strstr(response_char, "GET_GPS")) {
       get_lat_long_date_time(msg_rcvd_number,
@@ -924,7 +924,21 @@ void process_sms(char msg_no) {
   }
 }
 
-void prepare_and_send_status(char *gsm_no) {
+void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
+  if (!alreadyLocked) {
+    if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
+      debugln("[SMS] FAILED: Modem Busy. Deferring Status request.");
+      // Find the active LCD field to show busy status
+      for (int i = 0; i < FLD_COUNT; i++) {
+        if (i == FLD_SEND_STATUS || i == FLD_SEND_HEALTH) {
+          strcpy(ui_data[i].bottomRow, "MODEM BUSY      ");
+          show_now = 1;
+        }
+      }
+      return;
+    }
+  }
+
   int response_no;
   char msg_type[9];
   char status_response[256];
@@ -1006,6 +1020,7 @@ void prepare_and_send_status(char *gsm_no) {
   debug("Waiting for '>' prompt...");
   if (waitForResponse(">", 15000)) {
     debugln(" Received!");
+    flushSerialSIT(); // v5.81: Ensure clean UART pipe for Ctrl+Z termination
     SerialSIT.print(status_response); 
     debug("Waiting for +CMGS confirmation...");
     if (waitForResponse("+CMGS:", 35000)) {
@@ -1023,6 +1038,9 @@ void prepare_and_send_status(char *gsm_no) {
   } else {
     debugln(" TIMEOUT! No '>' prompt received.");
   }
+
+  if (!alreadyLocked)
+    xSemaphoreGive(modemMutex);
 }
 
 void get_gps_coordinates() {
@@ -1069,6 +1087,8 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
   if (!alreadyLocked) {
     if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
       debugln("[GPS] FAILED: Modem Busy. Deferring GPS request.");
+      strcpy(ui_data[FLD_SEND_GPS].bottomRow, "MODEM BUSY      ");
+      show_now = 1;
       return;
     }
   }

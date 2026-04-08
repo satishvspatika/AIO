@@ -1467,7 +1467,7 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
           unsent_cnt, snap_hr, snap_mi, scheduled_slot ? "YES" : "NO",
           morning_cleanup ? "YES" : "NO");
   bool should_push =
-      (unsent_cnt > 2); // v5.75: Testing: Trigger FTP if records > 2
+      (unsent_cnt > 2) || (unsent_cnt > 0 && morning_cleanup); // v5.81: Daily Drain phase phase phase phase phase phase phase phase (Summary truncated)
 
   if (signal_lvl > -95 && (should_push || force_ftp) &&
       SPIFFS.exists(ftpunsent_file)) {

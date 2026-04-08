@@ -42,6 +42,10 @@ Version 5.81 represents a massive culmination of structural audits, memory optim
 *   **Issue:** Manual diagnostics triggers previously possessed undefined sleep routes if the scheduler was asleep.
 *   **Resolution:** Firing a manual trigger now securely routes `sync_mode = eHttpStop` from within the interrupt lock, commanding instantaneous board sleep after data dispatch rather than waiting 15 minutes.
 
+### 8. Daily Backlog Drain (Orphan Recovery)
+*   **Issue:** Low-volume stations could have a single "orphan" record sit in the backlog indefinitely if it never reached the >2 record threshold for a 3-hourly push.
+*   **Resolution:** Implemented a "Daily Drain" at **08:45 AM**. During this morning window, the threshold is bypassed, guaranteeing that even a single backlog record is cleared every 24 hours without an SMS command.
+
 ---
 
 ## 🛡️ Long-Term Stability Validation
