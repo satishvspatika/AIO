@@ -186,6 +186,15 @@ void gprs(void *pvParameters) {
       } // Close gprs_mode == eGprsSignalOk
       } else {
         debugln("[GPRS] Error: Modem Mutex Timeout during manual trigger!");
+        strcpy(ui_data[target_fld].bottomRow, "MODEM BUSY      ");
+        show_now = 1;
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
+        strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+        show_now = 1;
+        
+        portENTER_CRITICAL(&syncMux);
+        sync_mode = eSMSStop; // Reset state to unlock UI
+        portEXIT_CRITICAL(&syncMux);
       } // Close xSemaphoreTake(modemMutex)
 
       // [HR-C01] Unified Result Display (Ensures LCD updates after modem/mutex release)
