@@ -3,6 +3,7 @@
 
 void windSpeed(void *pvParameters) {
   esp_task_wdt_add(NULL);
+  String temp1;
   uint16_t pulseBuffer[BUFFER_SIZE];
   int bufferIndex = 0;
 
@@ -13,11 +14,10 @@ void windSpeed(void *pvParameters) {
     if (SPIFFS.exists("/prevWindSpeed.txt")) {
       File fileTemp5 = SPIFFS.open("/prevWindSpeed.txt", FILE_READ);
       if (fileTemp5) {
-        // v5.81 Surgical: Replace String with zero-heap char buffer read
-        size_t bytesRead = fileTemp5.readBytesUntil('\n', prevWindSpeedAvg_str, sizeof(prevWindSpeedAvg_str)-1);
-        prevWindSpeedAvg_str[bytesRead] = '\0';
+        temp1 = fileTemp5.readStringUntil('\n');
+        strcpy(prevWindSpeedAvg_str, temp1.c_str());
         fileTemp5.close();
-        debugf("[FS] Loaded Prev Wind Speed Avg: %s\n", prevWindSpeedAvg_str);
+        debugln("Loaded Prev Wind Speed Avg: " + String(prevWindSpeedAvg_str));
       }
     }
     xSemaphoreGive(fsMutex);

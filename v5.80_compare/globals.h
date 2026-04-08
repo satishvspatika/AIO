@@ -76,15 +76,7 @@ enum BME_Type { BME_UNKNOWN, BME_280 };
 
 extern volatile bool
     ota_silent_mode; // Rule 43: OTA/debug silence flag (used by debug macros)
-// v5.81: Multi-Core Control Flags (volatile to prevent compiler optimization across tasks)
 extern volatile bool bearer_recovery_active;
-extern RTC_DATA_ATTR volatile bool low_bat_mode_active;
-extern volatile bool gprs_started; 
-extern volatile bool gprs_active;
-extern volatile bool timeSyncRequired;
-extern volatile bool schedulerBusy;
-extern volatile bool ota_silent_mode;
-extern volatile bool ota_writing_active;
 extern volatile uint32_t last_activity_time; // v5.85: Safety Heartbeat Timer
 
 // SAFETY BUFFER: Reserve 512 bytes at the start of RTC Memory to prevent
@@ -100,7 +92,7 @@ void graceful_modem_shutdown();
 void start_deep_sleep();
 void flushSerialSIT();
 bool verify_bearer_or_recover();
-int send_at_cmd_data(char *payload, bool robust);
+int send_at_cmd_data(char *payload, String response_arg, bool robust);
 void get_signal_strength();
 void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
                        bool *hasUnresolvedNDM);
@@ -204,9 +196,6 @@ extern SemaphoreHandle_t modemMutex;
 extern SemaphoreHandle_t fsMutex;
 extern volatile bool gprs_pdp_ready;
 extern RTC_DS1307 rtc;
-extern char modem_response_buf[2048]; // v6.0 Zero-Heap GPRS Buffer
-extern char gprs_payload[1280];       // v6.0 Transmission Payload Buffer
-extern int gprs_payload_len;
 
 extern portMUX_TYPE timerMux0;
 extern portMUX_TYPE timerMux1;
@@ -316,8 +305,6 @@ extern RTC_DATA_ATTR int last_cmd_id;
 extern RTC_DATA_ATTR char last_cmd_res[64];
 extern char cur_file[32], unsent_file[32], new_file[32], temp_file[50];
 extern char station_name[16];
-extern char last_fw_ver[20];
-
 extern char chip_id[13];
 extern char calib_state[5], calib_text[40], calib_content[16];
 extern char ftpunsent_file[50];
@@ -393,7 +380,7 @@ extern RTC_DATA_ATTR int
     last_unsent_sampleNo; // v5.72: Dedup guard for unsent.txt
 extern RTC_DATA_ATTR int gprs_2g_slots_count;
 extern RTC_DATA_ATTR int low_bat_skip_count;
-extern RTC_DATA_ATTR volatile int diag_http_zombie_count;
+extern RTC_DATA_ATTR bool low_bat_mode_active;
 extern RTC_DATA_ATTR bool
     backfill_done; // v5.72 Hardened: Architecture fix for Health TX reporting
 
@@ -610,7 +597,7 @@ void previous_date(int *Cd, int *Cm, int *Cy);
 void get_p_file_info(char *pfn, int *pdd, int *pmm, int *pyy);
 void get_c_file_info(char *cfn, int *cdd, int *cmm, int *cyy);
 void getTimeSnapshot(struct tm *timeinfo); // v5.79: Hardened Time Sync
-int send_at_cmd_data(char *payload, bool robust);
+int send_at_cmd_data(char *payload, String response_arg, bool robust);
 void send_http_data();
 bool send_health_report(bool useJitter = true);
 void send_unsent_data();
@@ -626,9 +613,8 @@ void sync_rtc_from_http_header();
 // I2C Protection (v5.49)
 
 // MODEM / GPRS
-bool waitForResponse(const char *expected, unsigned long timeout);
+String waitForResponse(const char *expected, unsigned long timeout);
 void disableWDT();
-void trim_whitespace(char *str);
 void saveYearToSPIFFS(int year);
 void configure_sensors_for_awake();
 void configure_sensors_for_sleep();
@@ -638,7 +624,6 @@ void copyFile(const char *sourcePath, const char *destPath,
 void flushSerialSIT();
 bool copyFile_legacy(String fileName);
 void validate_ulp_counters();
-int read_line_to_buf(File &f, char *buf, size_t max_len);
 int read_line(char *src, char *dest, int max_len, char delim_chr);
 void parse_and_convert_clbs_response(const char *response, int year1,
                                      int month1, int day1, int hour1,
@@ -661,12 +646,11 @@ void power_cut_modem_shutdown();
 // (prototype above at line 90)
 
 // GPRS Helpers (gprs_helpers.ino)
-void get_ccid(char *out, size_t maxLen);
-bool load_apn_config(const char* current_ccid, char *target_apn, size_t max_len);
-void save_apn_config(const char* apn, const char* ccid);
-bool verify_bearer_or_recover();
+String get_ccid();
+bool load_apn_config(String current_ccid, char *target_apn, size_t max_len);
 bool try_activate_apn(const char *apn);
-
+bool verify_bearer_or_recover();
+void save_apn_config(String apn, String ccid);
 
 /*
  *   Structure

@@ -47,13 +47,9 @@ volatile bool force_reboot = false;
 volatile bool force_ota = false;
 volatile bool force_gps_refresh =
     false; // v7.59: Server-requested GPS re-acquire
-volatile bool force_clear_ftp_queue = false;
-volatile bool force_delete_data = false;
-
-// --- v5.81 DEFINITIVE SYMBOL SEAL ---
-bool send_health_report();
-int send_at_cmd_data(char *payload, bool robust);
-
+volatile bool force_clear_ftp_queue =
+    false; // v7.59: Server-requested FTP backlog clear
+volatile bool force_delete_data = false; // v7.94: Server-requested Factory Reset
 volatile bool ota_writing_active = false;
 volatile bool ota_silent_mode = false; // Rule 43
 volatile bool bearer_recovery_active = false;
@@ -130,9 +126,6 @@ char ht_data[80] = "";
  // v5.75: apn_str and carrier relocated to block below with 32-char expansion
  
  char reg_status[16] = "";
-char modem_response_buf[2048] = {0}; // v6.0 Fixed Modem Response Buffer
-char gprs_payload[1280] = {0};       // v6.0 Transmission Payload Buffer
-int gprs_payload_len = 0;
 char *reg_status_ptr = NULL;
 char reg_val[3] = "";
 char rssi_resp[10] = "";
@@ -341,8 +334,7 @@ RTC_DATA_ATTR int last_successful_cnmp = 2; // v5.84: 2=Auto, 13=GSM, 38=LTE
 RTC_DATA_ATTR bool last_http_ok = false;    // v5.84: Skip IP check if last slot worked
 RTC_DATA_ATTR int gprs_2g_slots_count = 0; // v5.84: Self-recovering 'Peeking' for LTE
 RTC_DATA_ATTR int low_bat_skip_count = 0;   // v5.85: P6 - counts skipped slots
-RTC_DATA_ATTR volatile bool low_bat_mode_active = false; // v5.85: Tracking flag
-RTC_DATA_ATTR volatile int diag_http_zombie_count = 0;    // REL-C01: Missing Definition Fixed 
+RTC_DATA_ATTR bool low_bat_mode_active = false; // v5.85: Tracking flag
 // --- End RTC Definitions ---
 
 // --- UI & Server Configurations (v5.65 ODR Fix) ---
@@ -584,12 +576,11 @@ void setup() {
   // Pre-load essential system data: Try NVS (Preferences) first for robustness
   Preferences prefs;
   prefs.begin("sys-config", false); // Read-Write mode
-  char nvs_station[16] = {0};
-  size_t nvs_len = prefs.getString("station", nvs_station, sizeof(nvs_station)-1);
+  String nvs_station = prefs.getString("station", "");
 
-  if (nvs_len > 0) {
-    trim_whitespace(nvs_station); // v5.63: Strip LCD UI padding spaces
-    strncpy(station_name, nvs_station, sizeof(station_name) - 1);
+  if (nvs_station.length() > 0) {
+    nvs_station.trim(); // v5.63: Strip LCD UI padding spaces
+    strncpy(station_name, nvs_station.c_str(), sizeof(station_name) - 1);
     station_name[sizeof(station_name) - 1] = '\0';
 
     // Requirement: if it's numeric "00XXXX", treat as "XXXX"
@@ -609,11 +600,9 @@ void setup() {
     if (SPIFFS.exists("/station.doc")) {
       File fileTemp = SPIFFS.open("/station.doc", FILE_READ);
       if (fileTemp) {
-        char temp_buf[32];
-        int r = fileTemp.readBytesUntil('\n', temp_buf, sizeof(temp_buf)-1);
-        temp_buf[r] = '\0';
-        trim_whitespace(temp_buf); // v5.63
-        strncpy(station_name, temp_buf, sizeof(station_name) - 1);
+        String temp = fileTemp.readStringUntil('\n');
+        temp.trim(); // v5.63: Strip LCD UI padding spaces
+        strncpy(station_name, temp.c_str(), sizeof(station_name) - 1);
         station_name[sizeof(station_name) - 1] = '\0';
 
         if (strlen(station_name) == 6 && isDigitStr(station_name) &&
@@ -633,12 +622,10 @@ void setup() {
     } else if (SPIFFS.exists("/station.txt")) {
       File fileTemp = SPIFFS.open("/station.txt", FILE_READ);
       if (fileTemp) {
-         char temp_buf[32];
-         int r = fileTemp.readBytesUntil('\n', temp_buf, sizeof(temp_buf)-1);
-         temp_buf[r] = '\0';
-         trim_whitespace(temp_buf);
-         strncpy(station_name, temp_buf, sizeof(station_name) - 1);
-         station_name[sizeof(station_name) - 1] = '\0';
+        String temp = fileTemp.readStringUntil('\n');
+        temp.trim(); // v5.63: Strip LCD UI padding spaces
+        strncpy(station_name, temp.c_str(), sizeof(station_name) - 1);
+        station_name[sizeof(station_name) - 1] = '\0';
 
         if (strlen(station_name) == 6 && isDigitStr(station_name) &&
             strncmp(station_name, "00", 2) == 0) {
@@ -677,16 +664,13 @@ void setup() {
   prefs.end(); // Close sys-config
   prefs.begin("ota-track", false);
   ota_fail_count = prefs.getInt("fail_cnt", 0);
-  char last_reason[64] = {0};
-  prefs.getString("fail_res", last_reason, sizeof(last_reason)-1);
-  strncpy(ota_fail_reason, last_reason, sizeof(ota_fail_reason) - 1);
+  String last_reason = prefs.getString("fail_res", "NONE");
+  strncpy(ota_fail_reason, last_reason.c_str(), sizeof(ota_fail_reason) - 1);
   ota_fail_reason[sizeof(ota_fail_reason) - 1] = '\0';
 
-  char last_ver[32] = {0};
-  prefs.getString("last_ver", last_ver, sizeof(last_ver)-1);
-  if (last_ver[0] == '\0') strcpy(last_ver, FIRMWARE_VERSION);
-
-  if (strcmp(last_ver, FIRMWARE_VERSION) != 0) {
+  String last_ver =
+      prefs.getString("last_ver", FIRMWARE_VERSION);
+  if (last_ver != FIRMWARE_VERSION) {
     debugln("[BOOT] Version Change! Clearing OTA Fail counters.");
     ota_fail_count = 0;
     strcpy(ota_fail_reason, "NONE");
@@ -712,12 +696,10 @@ void setup() {
     if (SD.exists("/station.doc")) {
       File fileTemp = SD.open("/station.doc", FILE_READ);
       if (fileTemp) {
-        char temp_buf[32];
-        int r = fileTemp.readBytesUntil('\n', temp_buf, sizeof(temp_buf)-1);
-        temp_buf[r] = '\0';
-        trim_whitespace(temp_buf);
-        if (strlen(temp_buf) > 0) {
-          strncpy(station_name, temp_buf, sizeof(station_name) - 1);
+        String temp = fileTemp.readStringUntil('\n');
+        temp.trim();
+        if (temp.length() > 0) {
+          strncpy(station_name, temp.c_str(), sizeof(station_name) - 1);
           station_name[sizeof(station_name) - 1] = '\0';
 
           if (strlen(station_name) == 6 && isDigitStr(station_name) &&
@@ -727,7 +709,8 @@ void setup() {
             strcpy(station_name, t);
           }
           strcpy(ftp_station, station_name);
-          debugf("[BOOT] Loaded Station ID from SD: %s\n", station_name);
+          debug("Loaded Station ID from SD: ");
+          debugln(station_name);
 
           // Save to NVS and SPIFFS for future boots
           // Re-open NVS here (prefs.end() was called above)
@@ -768,7 +751,7 @@ void setup() {
       station_name[sizeof(station_name) - 1] = '\0';
       strncpy(ftp_station, station_name, sizeof(ftp_station) - 1);
       ftp_station[sizeof(ftp_station) - 1] = '\0';
-      debugf("[BOOT] Canonical ID Enforced: %s\n", station_name);
+      debugln("[BOOT] Canonical ID Enforced: " + String(station_name));
   }
 
   // --- Proactive Station Data Migration (REVERSED for 6-Digit Hardening) ---
@@ -796,10 +779,8 @@ void setup() {
   if (SPIFFS.exists("/signature.txt")) {
     File fileTemp1 = SPIFFS.open("/signature.txt", FILE_READ);
     if (fileTemp1) {
-      char sig_buf[48];
-      int r = fileTemp1.readBytesUntil('\n', sig_buf, sizeof(sig_buf)-1);
-      sig_buf[r] = '\0';
-      strcpy(signature, sig_buf);
+      String temp1 = fileTemp1.readStringUntil('\n');
+      strcpy(signature, temp1.c_str());
       sscanf(signature, "%d-%d-%d,%d:%d", &last_recorded_yy, &last_recorded_mm,
              &last_recorded_dd, &last_recorded_hr, &last_recorded_min);
       fileTemp1.close();
@@ -827,11 +808,9 @@ void setup() {
   if (SPIFFS.exists("/station_alt.txt")) {
     File altF = SPIFFS.open("/station_alt.txt", FILE_READ);
     if (altF) {
-      char alt_buf[16];
-      int r = altF.readBytes(alt_buf, sizeof(alt_buf)-1);
-      alt_buf[r] = '\0';
-      float loaded_alt = atof(alt_buf);
+      float loaded_alt = altF.readString().toFloat();
       void loadGPS();
+      void sync_rtc_from_http_header(String& head); // v5.75: Pre-captured header sync
       altF.close();
       if (loaded_alt >= 0.0 && loaded_alt <= 5000.0) {
         station_altitude_m = loaded_alt;
@@ -859,8 +838,6 @@ void setup() {
   float active_res = 0.5; // Final resolved resolution
   float last_fw_res = 0;  // Last known code hardcode
   float user_res = 0;     // Last saved UI/active resolution
-char last_fw_ver[20];
-
 
   // 1. Initial Load from Persistent Files
   if (SPIFFS.exists("/rf_fw.txt")) {
@@ -883,11 +860,8 @@ char last_fw_ver[20];
 
   if (SPIFFS.exists("/rf_res.txt")) {
     File f = SPIFFS.open("/rf_res.txt", FILE_READ);
-    if (f) {
-      char res_buf[16];
-      int r = f.readBytes(res_buf, sizeof(res_buf)-1);
-      res_buf[r] = '\0';
-      user_res = atof(res_buf);
+    if (f) { // EX2 FIX: same pattern as rf_fw.txt
+      user_res = f.readString().toFloat();
       f.close();
     } else {
       user_res = DEFAULT_RF_RESOLUTION;
@@ -1087,22 +1061,21 @@ char last_fw_ver[20];
   // after hardware (SD/SPIFFS) initialization is actually verified.
 
   if (SPIFFS.exists("/firmware.doc")) {
-    char last_fw_ver[32] = {0};
+    String temp;
 
     File verTemp = SPIFFS.open("/firmware.doc", FILE_READ);
     if (!verTemp) {
       debugln("Failed to open firmware.doc for reading");
     } else { // v7.67: Guard against null file dereference
-      char temp_buf[64];
-      int r = verTemp.readBytesUntil('\n', temp_buf, sizeof(temp_buf)-1);
-      temp_buf[r] = '\0';
-      trim_whitespace(temp_buf);
-      strncpy(last_fw_ver, temp_buf, sizeof(last_fw_ver)-1);
+      temp = verTemp.readStringUntil('\n');
       verTemp.close();
+      temp.trim();
     }
-    if (strcmp(UNIT_VER, last_fw_ver)) {
-      debugf("[BOOT] Firmware in SPIFFS: %s\n", last_fw_ver);
-      debugf("[BOOT] Current binary: %s\n", UNIT_VER);
+    if (strcmp(UNIT_VER, temp.c_str())) {
+      debug("Firmware in SPIFFs file is ");
+      debugln(temp.c_str());
+      debug("Firmware in current firmware is ");
+      debugln(UNIT_VER);
       debugln("Updating firmware.doc to current version ...");
       debugln();
       File verTemp1 = SPIFFS.open("/firmware.doc", FILE_WRITE);
@@ -1116,19 +1089,20 @@ char last_fw_ver[20];
       debugln(UNIT_VER);
       
       // v5.67: Differentiate between a simple OTA patch and a cross-architecture flash
-      const char *p1 = strrchr(UNIT_VER, '-');
-      const char *p2 = strrchr(last_fw_ver, '-');
+      // (e.g. changing from TWS to TWS-RF where the CSV structures physically change)
+      int lastDash1 = String(UNIT_VER).lastIndexOf('-');
+      int lastDash2 = temp.lastIndexOf('-');
       bool isCrossFlash = true;
-      if (p1 && p2) {
-          int len1 = p1 - UNIT_VER;
-          int len2 = p2 - last_fw_ver;
-          if (len1 == len2 && strncmp(UNIT_VER, last_fw_ver, len1) == 0) {
+      if (lastDash1 > 0 && lastDash2 > 0) {
+          String prefix1 = String(UNIT_VER).substring(0, lastDash1);
+          String prefix2 = temp.substring(0, lastDash2);
+          if (prefix1 == prefix2) {
               isCrossFlash = false;
           }
       }
 
       if (isCrossFlash) {
-          debugln("[OTA] CROSS-FLASH DETECTED (Different config type). Automating factory wipe...");
+          debugln("[OTA] CROSS-FLASH DETECTED (Different config type). Automating factory wipe to prevent CSV parsing crashes...");
           SPIFFS.remove("/unsent.txt");
           SPIFFS.remove("/unsent_pointer.txt");
           SPIFFS.remove("/ftpunsent.txt");
@@ -1136,17 +1110,10 @@ char last_fw_ver[20];
           File root = SPIFFS.open("/"); 
           File file = root.openNextFile();
           while(file) {
-              char n[64];
-              strncpy(n, file.name(), sizeof(n)-1); n[sizeof(n)-1] = '\0';
-              if (!(strcmp(n, "station.txt") == 0 || strcmp(n, "rf_fw.txt") == 0 || 
-                    strcmp(n, "station.doc") == 0 || strcmp(n, "rf_res.txt") == 0 || 
-                    strcmp(n, "firmware.doc") == 0)) {
-                  debugf("[OTA] Removing incompatible structure: %s\n", n);
-                  char full_path[128];
-                  if (n[0] == '/') strncpy(full_path, n, sizeof(full_path)-1);
-                  else snprintf(full_path, sizeof(full_path), "/%s", n);
-                  full_path[sizeof(full_path)-1] = '\0';
-                  SPIFFS.remove(full_path);
+              String n = file.name();
+              if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt" || n == "firmware.doc")) {
+                  debug("Removing incompatible structure: "); debugln(n);
+                  SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
               }
               file.close(); file = root.openNextFile();
           }
@@ -1223,10 +1190,8 @@ char last_fw_ver[20];
           diag_fw_just_updated = true;
           delay(2000);
         } else {
-          char err_buf[128];
-          strncpy(err_buf, Update.errorString(), sizeof(err_buf) - 1);
-          err_buf[sizeof(err_buf) - 1] = '\0';
-          debugf1("[OTA] Update FAILED in setup: %s\n", err_buf);
+          String err = Update.errorString();
+          debugf1("[OTA] Update FAILED in setup: %s\n", err.c_str());
 
           // Dump first 32 bytes and last 32 bytes for debugging
           firmware.seek(0);
@@ -1246,7 +1211,7 @@ char last_fw_ver[20];
           p.begin("ota-track", false);
           int cnt = p.getInt("fail_cnt", 0) + 1;
           p.putInt("fail_cnt", cnt);
-          p.putString("fail_res", err_buf);
+          p.putString("fail_res", err);
           p.end();
         }
 
@@ -1619,33 +1584,19 @@ void initialize_hw() {
     if (rootDir) {
         File f = rootDir.openNextFile();
         while(f) {
-            char n[64];
-            strncpy(n, f.name(), sizeof(n)-1); n[sizeof(n)-1] = '\0';
-            int nLen = strlen(n);
-
-            if (strstr(n, ".kwd") != NULL || strstr(n, ".swd") != NULL) {
+            String n = String(f.name());
+            if (n.endsWith(".kwd") || n.endsWith(".swd")) {
                 kwd_count++;
-                if (kwd_count > 1) { // v5.85.1: Remove all but 1
+                if (kwd_count > 1) { // v5.85.1: Remove all but 1; pre-FTP sweep catches the last one
                    f.close();
-                   char full_path[128];
-                   if (n[0] == '/') strncpy(full_path, n, sizeof(full_path)-1);
-                   else snprintf(full_path, sizeof(full_path), "/%s", n);
-                   full_path[sizeof(full_path)-1] = '\0';
-                   SPIFFS.remove(full_path);
-                   debugf("[FS] Emergency Boot Purge: %s\n", n);
+                   SPIFFS.remove("/" + n);
+                   debugln("[FS] Emergency Boot Purge: " + n);
                 } else f.close();
-            } else if (nLen >= 17 && (strcmp(n + nLen - 4, ".txt") == 0)) {
-                // [HR-M02] Precise Migration Purge: Only target legacy 4-digit ID logs
-                int offset = (n[0] == '/') ? 1 : 0;
-                if (nLen == (17 + offset) && strncmp(n + offset + 4, "_20", 3) == 0) {
-                    f.close();
-                    char full_path[128];
-                    if (n[0] == '/') strncpy(full_path, n, sizeof(full_path)-1);
-                    else snprintf(full_path, sizeof(full_path), "/%s", n);
-                    full_path[sizeof(full_path)-1] = '\0';
-                    SPIFFS.remove(full_path);
-                    debugf("[FS] Legacy Migration Purge: %s\n", n);
-                } else f.close();
+            } else if (n.length() == 17 && n.indexOf("_20") == 4 && n.endsWith(".txt")) {
+                // v5.85.2: [Legacy Purge] - Clean old 4-digit ID logs that linger in upgraded units
+                f.close();
+                SPIFFS.remove("/" + n);
+                debugln("[FS] Legacy Migration Purge: " + n);
             } else f.close();
             f = rootDir.openNextFile();
         }
@@ -1697,37 +1648,20 @@ void initialize_hw() {
   // This ensures the Hardware is actually ready before we check for firmware.
   if (sd_card_ok && SD.exists("/firmware.bin")) {
     bool needUpdate = true;
-    char sd_ver[64] = {0};   // v5.81 Fix: Expanded scope for healing logic
-    char sd_md5[64] = {0};
+    String sd_ver = ""; 
 
     if (SD.exists("/fw_version.txt")) {
       File vFile = SD.open("/fw_version.txt", FILE_READ);
       if (vFile) {
-        int r = vFile.readBytesUntil('\n', sd_ver, sizeof(sd_ver) - 1);
-        sd_ver[r] = '\0';
-        trim_whitespace(sd_ver);
+        sd_ver = vFile.readStringUntil('\n');
+        sd_ver.trim();
         vFile.close();
 
-        if (strcasecmp(sd_ver, UNIT_VER) == 0 || strcasecmp(sd_ver, FIRMWARE_VERSION) == 0) {
+        if (sd_ver.equalsIgnoreCase(UNIT_VER) || sd_ver.equalsIgnoreCase(FIRMWARE_VERSION)) {
           debugln("SD Version matches current firmware. Skipping update.");
           needUpdate = false;
         } else {
-          if (SPIFFS.exists("/sd_fw_ver.txt")) {
-            File svFile = SPIFFS.open("/sd_fw_ver.txt", FILE_READ);
-            if (svFile) {
-              char spiffs_ver[64];
-              int r2 = svFile.readBytesUntil('\n', spiffs_ver, sizeof(spiffs_ver) - 1);
-              spiffs_ver[r2] = '\0';
-              trim_whitespace(spiffs_ver);
-              svFile.close();
-              if (strcasecmp(spiffs_ver, sd_ver) == 0) {
-                debugln("[OTA] Version already flashed (SPIFFS guard). Skipping.");
-                needUpdate = false;
-              }
-            }
-          }
-          if (needUpdate)
-            debugf("[OTA] Version difference detected. Proceeding...\n");
+          debugf("[OTA] Version difference: [%s] vs [%s]. Proceeding...\n", sd_ver.c_str(), UNIT_VER);
         }
       }
     }
@@ -1740,28 +1674,24 @@ void initialize_hw() {
         md5.begin();
         md5.addStream(firmware, firmware.size());
         md5.calculate();
-        strncpy(sd_md5, md5.toString().c_str(), sizeof(sd_md5) - 1);
-        sd_md5[sizeof(sd_md5) - 1] = '\0';
+        String sd_md5 = md5.toString();
         firmware.close();
 
         if (SPIFFS.exists("/sd_fw_md5.txt")) {
           File md5File = SPIFFS.open("/sd_fw_md5.txt", FILE_READ);
           if (md5File) {
-            char stored_md5[64];
-            int r3 = md5File.readBytesUntil('\n', stored_md5, sizeof(stored_md5) - 1);
-            stored_md5[r3] = '\0';
-            trim_whitespace(stored_md5);
+            String stored_md5 = md5File.readStringUntil('\n');
+            stored_md5.trim();
             md5File.close();
-            if (strcasecmp(sd_md5, stored_md5) == 0) {
-              // MD5 match: Usually skip, but REL-M02: Recover healing path
-              if (strlen(sd_ver) == 0) {
+            if (sd_md5.equalsIgnoreCase(stored_md5)) {
+              if (sd_ver.isEmpty()) {
                 debugln("Firmware identical (MD5 match, no version file). Skipping.");
                 needUpdate = false;
-              } else if (strcasecmp(sd_ver, UNIT_VER) == 0 || strcasecmp(sd_ver, FIRMWARE_VERSION) == 0) {
+              } else if (sd_ver.equalsIgnoreCase(UNIT_VER) || sd_ver.equalsIgnoreCase(FIRMWARE_VERSION)) {
                 debugln("Firmware identical (MD5 + Version match). Skipping.");
                 needUpdate = false;
               } else {
-                debugln("MD5 match but Version MISMATCH. REL-M02: RE-FLASHING for system healing...");
+                debugln("MD5 match but Version MISMATCH. RE-FLASHING...");
                 needUpdate = true;
               }
             }
@@ -1776,21 +1706,12 @@ void initialize_hw() {
             if (Update.begin(firmware.size(), U_FLASH)) {
               Update.writeStream(firmware);
               if (Update.end()) {
-                debugln("Update finished! Storing MD5+Version and restarting...");
+                debugln("Update finished! Storing MD5 and restarting...");
                 diag_fw_just_updated = true;
-                // Store MD5 so next boot skips if binary unchanged
                 File md5Write = SPIFFS.open("/sd_fw_md5.txt", FILE_WRITE);
                 if (md5Write) {
                   md5Write.print(sd_md5);
                   md5Write.close();
-                }
-                // v5.81 Fix: Also store the flashed version string so version
-                // check at line 1706 is reliable even if MD5 write above fails.
-                // Without this, a SPIFFS full condition causes infinite reflash loop.
-                File verWrite = SPIFFS.open("/sd_fw_ver.txt", FILE_WRITE);
-                if (verWrite) {
-                  verWrite.print(sd_ver);
-                  verWrite.close();
                 }
                 delay(1000);
                 ESP.restart();

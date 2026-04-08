@@ -5,22 +5,6 @@
   #include "esp_adc_cal.h"
 #endif
 
-// v5.63: Trim leading and trailing whitespace in-place
-void trim_whitespace(char *str) {
-  if (!str) return;
-  // Trim trailing
-  int len = strlen(str);
-  while (len > 0 && (str[len-1] == ' ' || str[len-1] == '\t' || str[len-1] == '\r' || str[len-1] == '\n')) {
-    str[--len] = '\0';
-  }
-  // Trim leading
-  char *start = str;
-  while (*start == ' ' || *start == '\t') start++;
-  if (start != str) {
-    memmove(str, start, len - (start - str) + 1);
-  }
-}
-
 void start_deep_sleep() {
     sleep_sequence_active = true; // [v5.77 Signal] Block background syncs
     // v5.75: Self-Healing Maintenance — Reset crash guard on 'Golden Path' success.
@@ -300,17 +284,11 @@ void copyFilesFromSPIFFSToSD(const char *dirname) {
   File file = root.openNextFile();
   while (file) {
     esp_task_wdt_reset();
-    char fileName[64];
-    strncpy(fileName, file.name(), sizeof(fileName)-1);
-    fileName[sizeof(fileName)-1] = '\0';
-    
-    if (strstr(fileName, ".txt") != NULL) {
-      char destPath[80];
-      if (fileName[0] != '/') {
-        snprintf(destPath, sizeof(destPath), "/%s", fileName);
-      } else {
-        strncpy(destPath, fileName, sizeof(destPath)-1);
-        destPath[sizeof(destPath)-1] = '\0';
+    String fileName = file.name();
+    if (fileName.endsWith(".txt")) {
+      String destPath = fileName;
+      if (!fileName.startsWith("/")) {
+        destPath = "/" + fileName;
       }
 
       File sourceFile = SPIFFS.open(fileName, FILE_READ);
@@ -356,11 +334,8 @@ void removeFilesFromSPIFFS(const char *dirname) {
   File file = root.openNextFile();
   while (file) {
     esp_task_wdt_reset();
-    char fileName[64];
-    strncpy(fileName, file.name(), sizeof(fileName)-1);
-    fileName[sizeof(fileName)-1] = '\0';
-    
-    if (strstr(fileName, ".txt") != NULL) {
+    String fileName = file.name();
+    if (fileName.endsWith(".txt")) {
       debug("Deleting: ");
       debugln(fileName);
       SPIFFS.remove(fileName);
@@ -386,27 +361,25 @@ void delete_multiple_files(const char *station) {
   // v5.65 P1 Fix: Collect matching filenames into a buffer first. 
   // SPIFFS (and LittleFS) iterators can become invalid or skip entries 
   // if you remove files during an openNextFile() traversal.
+  String toDelete[48]; 
+  int found = 0;
+
   File file = root.openNextFile();
-  while (file) {
+  while (file && found < 48) {
     esp_task_wdt_reset();
-    char fName[64];
-    strncpy(fName, file.name(), sizeof(fName)-1);
-    fName[sizeof(fName)-1] = '\0';
-    
-    if (strstr(fName, station) != NULL) {
-      debugf1("[SPIFFS] Deleting matching file: %s\n", fName);
-      file.close(); // Close explicitly before removing
-      SPIFFS.remove(fName);
-      // v5.65 P1 Fix: After removal, iterator might be invalid on some systems.
-      // Re-opening root to resume safe traversal is more robust than collecting 48 Strings.
-      root.close();
-      root = SPIFFS.open("/"); 
-    } else {
-      file.close();
+    String fName = file.name();
+    if (fName.indexOf(station) != -1) {
+      toDelete[found++] = fName;
     }
+    file.close();
     file = root.openNextFile();
   }
   root.close();
+
+  for (int i = 0; i < found; i++) {
+    debugf1("[SPIFFS] Deleting matching file: %s\n", toDelete[i].c_str());
+    SPIFFS.remove(toDelete[i]);
+  }
   xSemaphoreGive(fsMutex);
 }
 
@@ -527,11 +500,9 @@ void loadGPS() {
   if (SPIFFS.exists("/gps_fix.txt")) {
     File file = SPIFFS.open("/gps_fix.txt", FILE_READ);
     if (file) {
-      char line_buf[128];
-      int r = file.readBytes(line_buf, sizeof(line_buf) - 1);
-      line_buf[r] = '\0';
+      String line = file.readString();
       file.close();
-      if (sscanf(line_buf, "%lf,%lf,%d,%d,%d", &lati, &longi, &gps_fix_dd,
+      if (sscanf(line.c_str(), "%lf,%lf,%d,%d,%d", &lati, &longi, &gps_fix_dd,
                  &gps_fix_mm, &gps_fix_yy) == 5) {
         debugf5("[GPS] Loaded from SPIFFS: %.6f,%.6f (Fix: %02d/%02d/%d)\n",
                 lati, longi, gps_fix_dd, gps_fix_mm, gps_fix_yy);
@@ -802,60 +773,48 @@ float restoreRainfall(const char *fName) {
   // Seek back up to 512 bytes from EOF to capture the last 1-2 lines
   int seekFrom = max(0, fSize - 512);
   f.seek(seekFrom);
-  char lastLine[RECORD_LENGTH_TWSRF + 10] = {0};
-  char line_tmp[128];
+  String lastLine = "";
   while (f.available()) {
-    int r = f.readBytesUntil('\n', line_tmp, sizeof(line_tmp)-1);
-    line_tmp[r] = '\0';
-    trim_whitespace(line_tmp);
-    if (strlen(line_tmp) > 20) {
-      strncpy(lastLine, line_tmp, sizeof(lastLine)-1);
-      lastLine[sizeof(lastLine)-1] = '\0';
-    }
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() > 20)
+      lastLine = line;
   }
   f.close();
 
-  if (strlen(lastLine) > 0) {
+  if (lastLine.length() > 0) {
     // P0-A fix v5.65: Field layout differs per SYSTEM type.
-    int firstComma = -1, secondComma = -1, thirdComma = -1, fourthComma = -1, fifthComma = -1;
-    const char *p = lastLine;
-    int comma_count = 0;
-    for(int i=0; p[i]; i++) {
-        if(p[i] == ',') {
-            comma_count++;
-            if(comma_count == 1) firstComma = i;
-            else if(comma_count == 2) secondComma = i;
-            else if(comma_count == 3) thirdComma = i;
-            else if(comma_count == 4) fourthComma = i;
-            else if(comma_count == 5) fifthComma = i;
-        }
-    }
-    
+    // SYSTEM 0 (RF):     sampleNo,date,time,inst_rf,CUM_RF,signal,bat
+    //   [INFO] cum_rf is at field index 4 (between 4th and 5th comma)
+    // SYSTEM 2 (TWS-RF): sampleNo,date,time,CUM_RF,temp,hum,ws,wd,signal,bat
+    //   [INFO] cum_rf is at field index 3 (between 3rd and 4th comma)
+    // SYSTEM 1 (TWS): no rainfall — returns 0.0 safely via empty substring.
+    // Previously ALL systems used field 3. On SYSTEM 0, field 3 = inst_rf,
+    // so after a power cut the anchor was restored as e.g. 0.25mm not 12.75mm.
+    int firstComma = lastLine.indexOf(',');
     if (firstComma == -1)
       return 0.0;
-    
-    char rfStr[16] = {0};
+    int secondComma = lastLine.indexOf(',', firstComma + 1);
+    if (secondComma == -1)
+      return 0.0;
+    int thirdComma = lastLine.indexOf(',', secondComma + 1);
+    if (thirdComma == -1)
+      return 0.0;
+
 #if SYSTEM == 0
     // For TRG: skip one more comma to land on cum_rf (field 4)
-    if (fourthComma != -1 && fifthComma != -1) {
-        int len = fifthComma - (fourthComma + 1);
-        if(len > 0 && len < (int)sizeof(rfStr)) {
-            strncpy(rfStr, lastLine + fourthComma + 1, len);
-            rfStr[len] = '\0';
-        }
-    }
+    int fourthComma = lastLine.indexOf(',', thirdComma + 1);
+    if (fourthComma == -1)
+      return 0.0;
+    int fifthComma = lastLine.indexOf(',', fourthComma + 1);
+    String rfStr = lastLine.substring(fourthComma + 1, fifthComma);
 #else
     // For SYSTEM 2 and SYSTEM 1: cum_rf (or placeholder) is at field 3
-    if (thirdComma != -1 && fourthComma != -1) {
-        int len = fourthComma - (thirdComma + 1);
-        if(len > 0 && len < (int)sizeof(rfStr)) {
-            strncpy(rfStr, lastLine + thirdComma + 1, len);
-            rfStr[len] = '\0';
-        }
-    }
+    int fourthComma = lastLine.indexOf(',', thirdComma + 1);
+    String rfStr = lastLine.substring(thirdComma + 1, fourthComma);
 #endif
-    trim_whitespace(rfStr);
-    return (strlen(rfStr) > 0) ? atof(rfStr) : 0.0;
+    rfStr.trim();
+    return rfStr.toFloat();
   }
   return 0.0;
 }
@@ -1114,40 +1073,63 @@ void markFileAsDelivered(const char *fileName, bool alreadyLocked) {
        strstr(fileName, "ftpunsent") != NULL);
 
   while (f.available()) {
-    esp_task_wdt_reset(); 
-    vTaskDelay(pdMS_TO_TICKS(1)); 
-    
-    char line_buf[128];
-    int l = f.readBytesUntil('\n', line_buf, sizeof(line_buf) - 1);
-    line_buf[l] = '\0';
-    trim_whitespace(line_buf); // v5.81 Surgical: Hardened trim
-
-    if (strlen(line_buf) < 10)
+    esp_task_wdt_reset(); // v7.67: Prevent WDT on huge backlog files
+    vTaskDelay(pdMS_TO_TICKS(1)); // Phase 7 Fix: Native RTOS yield
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() < 10)
       continue;
 
     int sNum = -1;
-    int d_year = current_year, d_month = current_month, d_day = current_day;
+    int d_year = current_year, d_month = current_month,
+        d_day = current_day; // Default if unparseable
 
     if (isFtpFile) {
-      char *semi1 = strchr(line_buf, ';');
-      if (!semi1) continue;
+      // v5.65 P5 Fix: Robust FTP Parser (Handles both Date,Time and Date;Time)
+      // Format: stnId;YYYY-MM-DD;HH:MM;... OR stnId;YYYY-MM-DD,HH:MM;...
+      int semi1 = line.indexOf(';');
+      if (semi1 == -1) continue;
       
-      int h, m;
-      // Parse Date/Time: YYYY-MM-DD;HH:MM (Handles both ; and , separators)
-      if (sscanf(semi1 + 1, "%d-%d-%d", &d_year, &d_month, &d_day) == 3) {
-         char *timePart = strpbrk(semi1 + 11, ";,"); // Find separator after date
-         if (timePart && sscanf(timePart + 1, "%d:%d", &h, &m) == 2) {
-            sNum = (h * 60 + m) / 15;
-         }
+      // Date starts at semi1 + 1
+      String sDate = line.substring(semi1 + 1, semi1 + 11); // "YYYY-MM-DD"
+      if (sDate.length() == 10 && sDate.indexOf('-') != -1) {
+        d_year = sDate.substring(0, 4).toInt();
+        d_month = sDate.substring(5, 7).toInt();
+        d_day = sDate.substring(8, 10).toInt();
+      } else {
+        continue;
       }
+
+      // Find Time: It follows the date after 1 char (separator)
+      char sep = line.charAt(semi1 + 11);
+      if (sep == ',' || sep == ';') {
+          String timeStr = line.substring(semi1 + 12, semi1 + 17); // "HH:MM"
+          int colonIdx = timeStr.indexOf(':');
+          if (colonIdx != -1) {
+              int h = timeStr.substring(0, colonIdx).toInt();
+              int m = timeStr.substring(colonIdx + 1).toInt();
+              int raw = h * 4 + m / 15;
+              sNum = (raw + 61) % 96;
+          }
+      }
+      
+      if (sNum == -1) continue; // Final safety
     } else {
       // CSV format: sampleNo,YYYY-MM-DD,HH:MM,...
-      if (sscanf(line_buf, "%d,%d-%d-%d", &sNum, &d_year, &d_month, &d_day) < 4) {
-         continue;
+      int commaIdx = line.indexOf(',');
+      if (commaIdx == -1)
+        continue;
+      sNum = line.substring(0, commaIdx).toInt();
+      int comma2 = line.indexOf(',', commaIdx + 1);
+      if (comma2 != -1) {
+        String sDate = line.substring(commaIdx + 1, comma2);
+        if (sDate.length() >= 10) {
+          d_year = sDate.substring(0, 4).toInt();
+          d_month = sDate.substring(5, 7).toInt();
+          d_day = sDate.substring(8, 10).toInt();
+        }
       }
     }
-    
-    if (sNum < 0 || sNum > 95) continue;
 
     if (sNum >= 0 && sNum <= 95) {
       // v5.49 Build 5: STRICT DATE VERIFICATION
@@ -1301,10 +1283,8 @@ int get_total_backlogs(bool force = false) {
       if (i == 0) {
         File ptrFile = SPIFFS.open("/unsent_pointer.txt", FILE_READ);
         if (ptrFile) {
-          char pBuf[32];
-          int r = ptrFile.readBytes(pBuf, sizeof(pBuf) - 1);
-          pBuf[r] = '\0';
-          long ptrVal = atol(pBuf);
+          String pStr = ptrFile.readString();
+          long ptrVal = pStr.toInt();
           if (ptrVal > 0 && ptrVal < (long)f.size()) {
             f.seek(ptrVal);
           }

@@ -14,7 +14,7 @@ void scheduler(void *pvParameters) {
       get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
   float hum_output = 0.0; // v5.79: Global function scope for goto safety
 
-  if (!wifi_active && !__atomic_load_n(&gprs_started, __ATOMIC_ACQUIRE)) {
+  if (!wifi_active && !gprs_started) {
     int solar_raw;
     if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw) == ESP_OK) {
       solar = solar_raw;
@@ -66,13 +66,13 @@ void scheduler(void *pvParameters) {
   // RTC RAM variables now at globals.h
 
   // Initialize sensor strings to prevent empty fields in records
-  snprintf(inst_temp, sizeof(inst_temp), "000.0");
-  snprintf(inst_hum, sizeof(inst_hum), "000.0");
-  snprintf(avg_wind_speed, sizeof(avg_wind_speed), "00.00");
-  snprintf(inst_wd, sizeof(inst_wd), "000");
-  snprintf(inst_rf, sizeof(inst_rf), "000.00");
-  snprintf(cum_rf, sizeof(cum_rf), "000.00");
-  snprintf(ftpcum_rf, sizeof(ftpcum_rf), "00.00");
+  strcpy(inst_temp, "000.0");
+  strcpy(inst_hum, "000.0");
+  strcpy(avg_wind_speed, "00.00");
+  strcpy(inst_wd, "000");
+  strcpy(inst_rf, "000.00");
+  strcpy(cum_rf, "000.00");
+  strcpy(ftpcum_rf, "00.00");
 
   // Minimal yield to allow sensor tasks to begin before first loop iteration.
   vTaskDelay(
@@ -265,7 +265,7 @@ void scheduler(void *pvParameters) {
           get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
       bat_val = li_bat_val;
       snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
-      if (!wifi_active && !__atomic_load_n(&gprs_started, __ATOMIC_ACQUIRE)) {
+      if (!wifi_active && !gprs_started) {
         int solar_raw_slot;
         if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw_slot) ==
             ESP_OK) {
@@ -432,7 +432,7 @@ void scheduler(void *pvParameters) {
               "[PWR] Survival Mode window: Allowing periodic modem attempt.");
         }
       } else {
-        __atomic_store_n(&low_bat_mode_active, false, __ATOMIC_RELEASE);
+        low_bat_mode_active = false;
         low_bat_skip_count = 0;
       }
 
@@ -3044,9 +3044,7 @@ void scheduler(void *pvParameters) {
 #endif
             file5.print(append_text);
             file5.close();
-            snprintf(reg_status, sizeof(reg_status), "NA");
-            strncpy(diag_cdm_status, "PENDING", sizeof(diag_cdm_status) - 1);
-            diag_cdm_status[sizeof(diag_cdm_status) - 1] = '\0';
+            strcpy(diag_cdm_status, "PENDING"); // Mark CDM as ready to send
           }
           xSemaphoreGive(fsMutex);
         }
@@ -3059,6 +3057,7 @@ void scheduler(void *pvParameters) {
 
 #if DEBUG == 1
       // SPIFFS
+      //              String content;
       snprintf(cur_file, sizeof(cur_file), "/%s_%04d%02d%02d.txt", station_name,
                rf_cls_yy, rf_cls_mm,
                rf_cls_dd); // this is done earlier also, but now @
@@ -3079,11 +3078,9 @@ void scheduler(void *pvParameters) {
                                 ? fsize - (record_length * 5)
                                 : 0;
               file3.seek(seekPos);
-              char tail_buf[512];
-              int r = file3.readBytes(tail_buf, sizeof(tail_buf) - 1);
-              tail_buf[r] = '\0';
+              String tail = file3.readString();
               debugln("   ... [Tail Content] ...");
-              debug(tail_buf); // Combined print via macro (Rule 43)
+              debug(tail); // Combined print via macro (Rule 43)
               debugln("-----------------------");
             }
             file3.close();
@@ -3108,18 +3105,16 @@ void scheduler(void *pvParameters) {
           int fsize = sd3.size();
           debug(" | Size: ");
           debugln(fsize);
-            if (fsize > 0) {
-              int seekPos = (sd3.size() > (record_length * 5))
-                                ? sd3.size() - (record_length * 5)
-                                : 0;
-              sd3.seek(seekPos);
-              char tail_buf[512];
-              int r = sd3.readBytes(tail_buf, sizeof(tail_buf) - 1);
-              tail_buf[r] = '\0';
-              debugln("   ... [Tail Content] ...");
-              debug(tail_buf); 
-              debugln("-----------------------");
-            }
+          if (fsize > 0) {
+            int seekPos = (sd3.size() > (record_length * 5))
+                              ? sd3.size() - (record_length * 5)
+                              : 0;
+            sd3.seek(seekPos);
+            String tail = sd3.readString();
+            debugln("   ... [Tail Content] ...");
+            debug(tail); // Combined print via macro (Rule 43)
+            debugln("-----------------------");
+          }
           sd3.close();
         } else {
           debugln(" | Failed to open");
@@ -3137,11 +3132,9 @@ void scheduler(void *pvParameters) {
             if (file4.size() > 0) {
               int seekPos = (file4.size() > 500) ? file4.size() - 500 : 0;
               file4.seek(seekPos);
-              char tail_buf[512];
-              int r = file4.readBytes(tail_buf, sizeof(tail_buf) - 1);
-              tail_buf[r] = '\0';
+              String tail = file4.readString();
               debugln("   ... [Tail Content] ...");
-              debug(tail_buf);
+              debug(tail);
               debugln("-----------------------");
             }
             file4.close();
@@ -3162,11 +3155,9 @@ void scheduler(void *pvParameters) {
             if (file4.size() > 0) {
               int seekPos = (file4.size() > 500) ? file4.size() - 500 : 0;
               file4.seek(seekPos);
-              char tail_buf[512];
-              int r = file4.readBytes(tail_buf, sizeof(tail_buf) - 1);
-              tail_buf[r] = '\0';
+              String tail = file4.readString();
               debugln("   ... [Tail Content] ...");
-              debug(tail_buf);
+              debug(tail);
               debugln("-----------------------");
             }
             file4.close();

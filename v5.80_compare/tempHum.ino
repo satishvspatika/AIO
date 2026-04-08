@@ -118,7 +118,7 @@ void tempHum(void *pvParameters) {
 
             // Simple In-place Median (5 elements)
             auto get_med = [](float* b) {
-              float s[5]; memcpy(s, b, 5 * sizeof(float)); 
+              float s[5]; memcpy(s, b, 20); // 5 * 4 bytes
               for(int i=0; i<4; i++) for(int j=0; j<4-i; j++) 
                 if(s[j]>s[j+1]) { float t=s[j]; s[j]=s[j+1]; s[j+1]=t; }
               return s[2];
