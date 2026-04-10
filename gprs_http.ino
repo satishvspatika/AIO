@@ -1,6 +1,7 @@
 #include "globals.h"
 
 void prepare_data_and_send() {
+
   // v5.65 P0: Range guard for server configuration index
   if (http_no < 0 || http_no >= (int)(sizeof(httpSet) / sizeof(httpSet[0]))) {
     debugf("[HTTP] FATAL: http_no out of range (%d). Aborting send.\n", http_no);
@@ -9,11 +10,9 @@ void prepare_data_and_send() {
 
   esp_task_wdt_reset();
 
-  if (strlen(gprs_payload) < 10 && data_mode == eUnsentData) {
-    debugln("[HTTP] Skip: Record too short/Empty — advancing pointer without counting as sent.");
-    success_count = 2;
-    return;
-  }
+  // v5.83: If we are in backlog mode, the buffer was ALREADY filled by gprs_core
+  // so we skip the early-return check and let the loop process it.
+  // if (strlen(gprs_payload) < 10 && data_mode == eUnsentData) { ... }
 
   // v5.65: Guard against unconfigured UNIT string (http_no == -1).
   // Without this, httpSet[-1] or httpSet[11+] causes memory corruption.
@@ -52,6 +51,10 @@ void prepare_data_and_send() {
   }
 
   if (data_mode == eCurrentData || data_mode == eClosingData) {
+    // v5.83 Hardening: Zero out the payload buffer BEFORE file read
+    // to prevent stale RAM data from leaking if a file read fails.
+    memset(gprs_payload, 0, sizeof(gprs_payload));
+
     if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
       File file1 = SPIFFS.open(temp_file, FILE_READ);
       if (file1) {
@@ -64,7 +67,6 @@ void prepare_data_and_send() {
         int seek_back = (record_length * 3);
         s = (s > (size_t)seek_back) ? (s - seek_back) : 0;
         
-        memset(gprs_payload, 0, sizeof(gprs_payload)); // Purge stale RAM records
         file1.seek(s);
 
         if (s > 0) {
@@ -354,6 +356,32 @@ void prepare_data_and_send() {
   debug("http_data format is ");
   debugln(http_data);
   debugln();
+
+  // v5.83 Elite Polish: Only audit DNS if the endpoint is a domain name
+  bool is_domain = false;
+  const char *srvStr = httpSet[http_no].serverName;
+  for (int d = 0; srvStr[d] != '\0'; d++) {
+    if (isalpha(srvStr[d])) {
+      is_domain = true;
+      break;
+    }
+  }
+
+  if (is_domain) {
+    debugln("[DNS] Auditing resolution stack...");
+    SerialSIT.println("AT+CDNSCFG?");
+    waitForResponse("OK", 2000);
+    if (strstr(modem_response_buf, "0.0.0.0") != NULL || strstr(modem_response_buf, "127.0.0.1") != NULL) {
+        debugln("[DNS] Invalid DNS detected. Forcing Refresh to 8.8.8.8...");
+        SerialSIT.println("AT+CDNSCFG=\"8.8.8.8\",\"8.8.4.4\"");
+        waitForResponse("OK", 1000);
+        
+        // Only settle when DNS was actually changed
+        debugln("[GPRS] Allowing network stack 2s to stabilize after DNS refresh...");
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+    }
+  }
+
   // v5.63: Selective Mode Logic (Airtel/Jio Backlog Optimization)
   bool isAirtelOrJio = (strstr(carrier, "Airtel") != nullptr ||
                         strstr(carrier, "Jio") != nullptr);
@@ -1304,6 +1332,13 @@ void send_http_data() {
                   "pointer ...");
           SPIFFS.remove(unsent_file);
           SPIFFS.remove("/unsent_pointer.txt");
+          
+          // v5.83 Ghost Backlog Fix:
+          // 1. Reset pointer in memory immediately to prevent re-writing stale index
+          unsent_pointer_count = 0;
+          // 2. Allow SPIFFS index 1s to finalize changes before Deep Sleep cuts power
+          debugln("[FS] Waiting 1s for Storage Commit...");
+          vTaskDelay(1000 / portTICK_PERIOD_MS);
         }
         xSemaphoreGive(fsMutex);
       }
@@ -1815,11 +1850,24 @@ int send_at_cmd_data(char *payload, bool robust) {
 
     if (strstr(response, "706") != NULL || strstr(response, "713") != NULL ||
         strstr(response, "714") != NULL || strstr(response, "601") != NULL) {
+      
       diag_http_zombie_count++;
       debugf("HTTP Zombie Error (%s). Count: %d/3. Clean stack requested.\n", diag_http_fail_reason, diag_http_zombie_count);
+      
       SerialSIT.println("AT+HTTPTERM");
       waitForResponse("OK", 2000);
-      
+
+      // v5.82 Surgical Hardening (Phase 4):
+      // On legacy boards, a 706 TCP Zombie often requires an immediate stack reset
+      // rather than waiting for 3 fails.
+      debugln("[CRIT] TCP Zombie detected. Nuking bearer for fresh IP...");
+      SerialSIT.println("AT+CIPSHUT");
+      waitForResponse("SHUT OK", 3000);
+      SerialSIT.println("AT+CGACT=0,1");
+      waitForResponse("OK", 1000);
+      http_ready = false; // Housekeeping: State follows destroyed stack
+      vTaskDelay(2000 / portTICK_PERIOD_MS); 
+
       if (diag_http_zombie_count >= 3) {
          debugln("[CRIT] Persistent Zombie detected. Triggering Radio Refresh...");
          diag_http_zombie_count = 0;

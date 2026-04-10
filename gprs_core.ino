@@ -7,7 +7,7 @@ bool http_ready = false; // v5.42: Track if HTTPINIT succeeded for this cycle
 void gprs(void *pvParameters) {
   esp_task_wdt_add(NULL);
   static int target_fld = FLD_SEND_STATUS; // v5.50: Moved to top for sequential queue scope
-  uint32_t last_activity_time = millis(); // Refresh safety heartbeat
+  last_activity_time = millis(); // Refresh safety heartbeat
 
   for (;;) {
     esp_task_wdt_reset();
@@ -630,10 +630,16 @@ void gprs(void *pvParameters) {
       } else {
         debugln("[GPRS] No queued commands. Allowing sleep.");
         portENTER_CRITICAL(&syncMux);
-        sync_mode = eHttpStop;
+        sync_mode = eHttpStop; // Set success flag for sleep audit
         gprs_started = false;
         portEXIT_CRITICAL(&syncMux);
         __atomic_store_n(&httpInitiated, false, __ATOMIC_RELEASE);
+        
+        // v5.83 Hardening: Clear success flag after 2s so it doesn't linger as 'Stale'
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        portENTER_CRITICAL(&syncMux);
+        if (sync_mode == eHttpStop) sync_mode = eSyncModeInitial;
+        portEXIT_CRITICAL(&syncMux);
       }
     } else if (sync_mode == eHttpStop) {
         // v5.85: GPRS Zombie Fix. 

@@ -74,16 +74,13 @@ enum HDC_Type { // Sensor type enum
 
 enum BME_Type { BME_UNKNOWN, BME_280 };
 
-extern volatile bool
-    ota_silent_mode; // Rule 43: OTA/debug silence flag (used by debug macros)
+extern volatile bool ota_silent_mode;
 // v5.81: Multi-Core Control Flags (volatile to prevent compiler optimization across tasks)
 extern volatile bool bearer_recovery_active;
 extern RTC_DATA_ATTR volatile bool low_bat_mode_active;
-extern volatile bool gprs_started; 
 extern volatile bool gprs_active;
 extern volatile bool timeSyncRequired;
 extern volatile bool schedulerBusy;
-extern volatile bool ota_silent_mode;
 extern volatile bool ota_writing_active;
 extern volatile uint32_t last_activity_time; // v5.85: Safety Heartbeat Timer
 
@@ -205,7 +202,7 @@ extern SemaphoreHandle_t fsMutex;
 extern volatile bool gprs_pdp_ready;
 extern RTC_DS1307 rtc;
 extern char modem_response_buf[2048]; // v6.0 Zero-Heap GPRS Buffer
-extern char gprs_payload[1280];       // v6.0 Transmission Payload Buffer
+extern char gprs_payload[2048];       // v6.0 Transmission Payload Buffer (Standardized v5.82 (Golden Master))
 extern int gprs_payload_len;
 
 extern portMUX_TYPE timerMux0;
@@ -285,7 +282,7 @@ extern int temp_sampleNo, temp_day, temp_month, temp_year, temp_hr, temp_min,
 extern volatile int data_writing_initiated;
 extern int time_to_deepsleep;
 // Common
-extern char UNIT_VER[20], STATION_TYPE[10], NETWORK[15];
+extern char UNIT_VER[32], STATION_TYPE[10], NETWORK[15];
 extern char universalNumber[20];
 // --- Process Control Flags (v5.66 ODR Pass) ---
 extern HDC_Type hdcType;
@@ -305,7 +302,7 @@ extern volatile bool force_ota;
 extern volatile bool force_gps_refresh;
 extern volatile bool force_clear_ftp_queue;
 extern volatile bool force_delete_data;
-extern volatile bool ota_writing_active;
+// v5.87: ota_writing_active deduplicated (defined at line 84)
 extern char hw_tag; // v5.75: Passive hardware/VFS health tag
 extern bool
     http_ready; // v5.42: Tracks HTTPINIT success; defined in gprs_core.ino
@@ -316,7 +313,10 @@ extern RTC_DATA_ATTR int last_cmd_id;
 extern RTC_DATA_ATTR char last_cmd_res[64];
 extern char cur_file[32], unsent_file[32], new_file[32], temp_file[50];
 extern char station_name[16];
-extern char last_fw_ver[20];
+extern char last_fw_ver[32]; // v5.87: Standardized to [32]
+extern char ftp_station[16];  // v5.86: RESTORED
+extern char last_logged[16];  // v5.86: RESTORED
+extern size_t len;            // v5.86: RESTORED
 
 extern char chip_id[13];
 extern char calib_state[5], calib_text[40], calib_content[16];
@@ -347,10 +347,10 @@ extern char append_text[160], store_text[160], ftpappend_text[160];
 extern int cur_mode;
 extern int cur_fld_no;
 extern int
-    last_lcd_state; // v5.70: Fix mysterious visibility issue in lcdkeypad.ino
-extern char ftp_station[16];
-extern size_t len;
-extern char last_logged[16];
+    last_lcd_state; // v5.70: Fix mysterious visibility issue
+extern char signature[20]; // 2023-02-23,11:15
+extern char present_topRow[17];
+extern char present_bottomRow[17]; // v5.86: Standardized grouping
 extern char http_data[350];
 extern char sample_cum_rf[10], sample_inst_rf[10], sample_temp[10],
     sample_hum[10], sample_avgWS[10], sample_WD[10], sample_bat[10],
@@ -470,8 +470,7 @@ extern RTC_DATA_ATTR int health_last_sent_hour;
 extern RTC_DATA_ATTR int health_last_sent_day;
 extern RTC_DATA_ATTR bool diag_fw_just_updated;
 extern RTC_DATA_ATTR bool rtc_daily_sync_done;
-
-extern int badReads;
+// v5.85: badReads relocated to main process block
 
 // ULP Memory Map (Manual offsets to ensure hardware reachability)
 #define U_RF_COUNT 512
@@ -545,7 +544,7 @@ extern RTC_DATA_ATTR int last_recorded_yy;
 extern RTC_DATA_ATTR int last_recorded_hr;
 extern RTC_DATA_ATTR int last_recorded_min;
 
-extern char signature[20]; // 2023-02-23,11:15
+// v5.87: signature deduplicated (defined at line 348)
 extern volatile bool rtcTimeChanged;
 extern RTC_DATA_ATTR bool signature_valid;
 extern RTC_DATA_ATTR bool pending_manual_status;
@@ -583,13 +582,12 @@ void bmeTask(void *pvParameters);
 void windSpeed(void *pvParameters);
 void windDirection(void *pvParameters);
 // Task Handles (for stack monitoring and state tracking)
-// --- Core Task & Communication Handles ---
+// --- Core Task & Communication Handles (v5.85 Definitive Block) ---
 extern TaskHandle_t scheduler_h, gprs_h, lcdkeypad_h, rtcRead_h;
-extern TaskHandle_t tempHum_h, bmeTask_h, windSpeed_h, windDirection_h;
-extern TaskHandle_t webServer_h;
-extern volatile bool gprs_started;
+extern TaskHandle_t tempHum_h, bmeTask_h, windSpeed_h, windDirection_h, webServer_h;
+extern volatile bool gprs_started; 
 extern int badReads;
-extern int active_cid;
+extern int active_cid; // v5.85 Fix: Restored cross-file visibility
 extern portMUX_TYPE
     syncMux; // v5.70: Cross-core atomic protection for sync_mode
 
@@ -725,11 +723,7 @@ extern ui_data_t ui_data[FLD_COUNT]; // definition moved to AIO9_5.0.ino
 
 // esp_now_peer_info_t peerInfo; // Removed - ESP-NOW disabled (v5.40+)
 
-extern TaskHandle_t webServer_h;
 void webServer(void *pvParameters);
-
-extern char present_topRow[17];
-extern char present_bottomRow[17];
 
 struct http_params {
   char serverName[64];

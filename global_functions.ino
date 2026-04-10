@@ -80,6 +80,17 @@ void start_deep_sleep() {
 
   WiFi.disconnect();
   // LCD power cut deferred to end of function to protect I2C bus
+  
+  // v5.83 FINAL AUDIT: "Dead Man's Switch"
+  // Re-verify that NO new upload cycle has started during the shutdown preparation.
+  portENTER_CRITICAL(&syncMux);
+  int final_sync = sync_mode;
+  portEXIT_CRITICAL(&syncMux);
+  if (final_sync != eHttpStop && final_sync != eSyncModeInitial && final_sync != eSMSStop && final_sync != eExceptionHandled) {
+     debugln("[PWR] [CRIT] New cycle started during shutdown! Aborting Power-Cut.");
+     sleep_sequence_active = false;
+     return; // Emergency Abort
+  }
 
   // Ensure GPRS is shut down gracefully ALWAYS before cutting power
   esp_task_wdt_reset();

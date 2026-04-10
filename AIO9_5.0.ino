@@ -54,19 +54,12 @@ volatile bool force_delete_data = false;
 bool send_health_report();
 int send_at_cmd_data(char *payload, bool robust);
 
-volatile bool ota_writing_active = false;
-volatile bool ota_silent_mode = false; // Rule 43
+// v5.83 Fix: Consensus System State (Standardized sizes & proper init)
+volatile bool ota_silent_mode = false;
 volatile bool bearer_recovery_active = false;
-                                       // v6.88
-char ota_cmd_param[128] = "";
-RTC_DATA_ATTR int last_cmd_id = 0;
-RTC_DATA_ATTR char last_cmd_res[64] = "N/A";
-int ota_fail_count = 0;
-char ota_fail_reason[48] = "NONE";
-volatile bool health_in_progress = false;
-TaskHandle_t lcdkeypad_h; // UI
-TaskHandle_t tempHum_h;
-volatile uint32_t last_activity_time = 0; // v5.85: Safety Heartbeat Timer
+volatile bool gprs_active = false; 
+volatile uint32_t last_activity_time = 0; 
+char last_fw_ver[32] = {0}; 
 
 // v5.66: Core System State (Moved from globals.h)
 volatile int sync_mode = eSyncModeInitial;
@@ -99,7 +92,7 @@ volatile int s = 0, fileSize = 0;       // cross-task file-size helpers
 int delay_val = 10000; // Default delay before starting GPRS(Moved from globals.h)
 
 // v5.66: System & Power Variables (Moved from globals.h)
-char UNIT_VER[20] = ""; 
+char UNIT_VER[32] = ""; // v5.83 Fix: Standardized to [32]
 char NETWORK[15] = ""; 
 char STATION_TYPE[10] = "";
 char universalNumber[20] = "";
@@ -131,7 +124,7 @@ char ht_data[80] = "";
  
  char reg_status[16] = "";
 char modem_response_buf[2048] = {0}; // v6.0 Fixed Modem Response Buffer
-char gprs_payload[1280] = {0};       // v6.0 Transmission Payload Buffer
+char gprs_payload[2048] = {0};       // v6.0 Transmission Payload Buffer (Standardized v5.82 (Golden Master))
 int gprs_payload_len = 0;
 char *reg_status_ptr = NULL;
 char reg_val[3] = "";
@@ -211,9 +204,19 @@ RTC_DATA_ATTR uint8_t ulp_code_reserve[512] = {0}; // Moved from globals.h (Bug#
 bool webServerStarted = false;
 volatile bool wifi_active = false;
 unsigned long last_wifi_activity_time = 0;
-volatile bool timeSyncRequired = true;
+volatile bool timeSyncRequired = true; // v5.83 Fix: Restored logic-trigger
 volatile bool httpInitiated = false;
 volatile bool schedulerBusy = false;
+volatile bool gprs_started = false;    // v5.83: Relocated here to consolidate
+volatile bool ota_writing_active = false;
+volatile bool health_in_progress = false; // v5.82 (Golden Master): Restored missing gate
+int ota_fail_count = 0;
+char ota_fail_reason[48] = "NONE";
+char ota_cmd_param[128] = "";
+RTC_DATA_ATTR int last_cmd_id = 0;
+RTC_DATA_ATTR char last_cmd_res[64] = "N/A";
+TaskHandle_t lcdkeypad_h; // v5.82 (Golden Master): Restored handles
+TaskHandle_t tempHum_h;
 // --- End Global Definitions ---
 
 // --- RTC Persistent Definitions (v5.65 ODR Fix) ---
@@ -433,7 +436,6 @@ int send_daily = 0;
 int cur_mode = 0;
 int cur_fld_no = 0;
 int last_lcd_state = 0; // v5.70 Final: Global UI state tracker
-volatile bool gprs_started = false;
 int badReads = 0;
 int prev_wind_count = 0;
 char pres_str[20] = "NA";
@@ -831,7 +833,7 @@ void setup() {
       int r = altF.readBytes(alt_buf, sizeof(alt_buf)-1);
       alt_buf[r] = '\0';
       float loaded_alt = atof(alt_buf);
-      void loadGPS();
+      loadGPS(); // v5.83 Fix: Corrected typo (was no-op declaration)
       altF.close();
       if (loaded_alt >= 0.0 && loaded_alt <= 5000.0) {
         station_altitude_m = loaded_alt;
@@ -859,7 +861,7 @@ void setup() {
   float active_res = 0.5; // Final resolved resolution
   float last_fw_res = 0;  // Last known code hardcode
   float user_res = 0;     // Last saved UI/active resolution
-char last_fw_ver[20];
+    // v5.83: Using global last_fw_ver[32] for RF documentation
 
 
   // 1. Initial Load from Persistent Files
@@ -1087,7 +1089,7 @@ char last_fw_ver[20];
   // after hardware (SD/SPIFFS) initialization is actually verified.
 
   if (SPIFFS.exists("/firmware.doc")) {
-    char last_fw_ver[32] = {0};
+    // v5.83: Using standardized global last_fw_ver[32]
 
     File verTemp = SPIFFS.open("/firmware.doc", FILE_READ);
     if (!verTemp) {
@@ -1792,6 +1794,12 @@ void initialize_hw() {
                   verWrite.print(sd_ver);
                   verWrite.close();
                 }
+                // v5.83 Field Hardening: Rename with deletion fallback to guarantee break of re-flash loop
+                if (!SD.rename("/firmware.bin", "/firmware.done")) {
+                  debugln("[OTA] WARN: Could not rename firmware.bin — deleting to prevent re-flash loop");
+                  SD.remove("/firmware.bin");
+                }
+                
                 delay(1000);
                 ESP.restart();
               } else {

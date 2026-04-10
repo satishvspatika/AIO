@@ -717,48 +717,89 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
 }
 
 void start_gprs() {
-  // Power ON GPRS
-  digitalWrite(26, HIGH);               // Power on GPRS module
-  vTaskDelay(500 / portTICK_PERIOD_MS); // v5.64: Reduced from 1s for fast-boot
-  debugln("[GPRS] Waiting for active UART...");
-
-  // Active fast-polling for Modem Boot instead of a blind 10-second wait
-  // v5.80 restore: 15 iterations × 400ms = 6s patience (BSNL slow boot)
-  bool modem_ready = false;
-  for (int i = 0; i < 15; i++) {
-    SerialSIT.println("AT");
-    if (waitForResponse("OK", 400)) {
-      modem_ready = true;
-      debugf1("[GPRS] Modem ready in %d iterations!\n", i + 1);
-      break;
-    }
-    vTaskDelay(400 / portTICK_PERIOD_MS);
-  }
-
-  if (!modem_ready) {
-    debugln("[GPRS] AT Timeout, trying CPIN anyway...");
-  }
-  // PROACTIVE SIM POLLING: Instead of a blind 2-second wait, poll for SIM
-  // readiness. This allows us to proceed as soon as the SIM is ready, saving
-  // significant active power.
   bool sim_ready = false;
-  debugln("[GPRS] Polling for SIM (CPIN)...");
-  for (int i = 0; i < 10; i++) {
-    SerialSIT.println("AT+CPIN?");
-    if (waitForResponse("+CPIN: READY", 1000)) {
-      sim_ready = true;
-      debugf1("[GPRS] SIM ready in %d ms!\n", (i + 1) * 1000);
-      break;
+  
+  // v5.82 Surgical Hardening: Retry with Hard Reset if first boot fails
+  for (int attempt = 0; attempt < 2; attempt++) {
+    // Power ON GPRS
+    digitalWrite(26, HIGH);               // Power on GPRS module
+    // v5.83 Optimization: 3s on first cold boot, 500ms on retry (caps already charged)
+    vTaskDelay((attempt == 0 ? 3000 : 500) / portTICK_PERIOD_MS); 
+    
+    if (attempt > 0) debugln("[GPRS] RETRY: Hardware Resetting Modem (Attempt 2)...");
+    else debugln("[GPRS] Waiting for active UART...");
+
+    bool modem_ready = false;
+    for (int i = 0; i < 15; i++) {
+      SerialSIT.println("AT");
+      if (waitForResponse("OK", 500)) {
+        modem_ready = true;
+        debugf1("[GPRS] Modem ready in %d iterations!\n", i + 1);
+        break;
+      }
+      vTaskDelay(500 / portTICK_PERIOD_MS);
     }
-    if (strstr(modem_response_buf, "+CME ERROR") != NULL) {
-      debugln("[GPRS] SIM Error detected during polling.");
-      break;
+
+    if (!modem_ready) {
+      debugln("[GPRS] AT Timeout, performing GPIO 26 Hard Reset...");
+      digitalWrite(26, LOW); // Physical Power Cut
+      vTaskDelay(5000 / portTICK_PERIOD_MS); // Ensure full discharge
+      continue; 
     }
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+
+    if (modem_ready) {
+      SerialSIT.println("AT+CMEE=2"); // v5.82 Diagnostic: Enable verbose error messages
+      waitForResponse("OK", 500);
+      vTaskDelay(500 / portTICK_PERIOD_MS); // Brief settle
+    }
+
+    // PROACTIVE SIM POLLING
+    debugln("[GPRS] Polling for SIM (CPIN)...");
+    for (int i = 0; i < 10; i++) {
+      esp_task_wdt_reset(); // v5.83: Prevent WDT trigger during long recovery windows
+      SerialSIT.println("AT+CPIN?");
+      if (waitForResponse("+CPIN: READY", 1000)) {
+        sim_ready = true;
+        // Note: Actual loop duration is approx (i+1)*3000ms including delays
+        debugf1("[GPRS] SIM ready in %d ms!\n", (i+1)*3000); 
+        break;
+      }
+      
+      if (strstr(modem_response_buf, "+CME ERROR") != NULL) {
+        debugf("[GPRS] SIM Error Detail: %s\n", modem_response_buf);
+        
+        // v5.82 Surgical Recovery: If "SIM failure" (13) is detected, try software re-trigger
+        if (strstr(modem_response_buf, "SIM failure") != NULL) {
+           debugln("[GPRS] Detected Protocol Lock. Attempting Software Interface Reset (CFUN 0/1)...");
+           SerialSIT.println("AT+CFUN=0");
+           waitForResponse("OK", 2000);
+           vTaskDelay(2000 / portTICK_PERIOD_MS);
+           SerialSIT.println("AT+CFUN=1");
+           waitForResponse("OK", 2000);
+           vTaskDelay(2000 / portTICK_PERIOD_MS);
+           // The loop will continue and try AT+CPIN? again naturally
+        } else {
+           debugln("[GPRS] Triggering hard reset recovery...");
+           break; 
+        }
+      }
+      vTaskDelay(2000 / portTICK_PERIOD_MS); 
+    }
+
+    if (sim_ready) break; // Success! Exit retry loop
+
+    // If we reach here, we are alive (UART OK) but SIM failed. 
+    // Do one hard reset retry before giving up.
+    if (attempt == 0) {
+       digitalWrite(26, LOW);
+       vTaskDelay(5000 / portTICK_PERIOD_MS); // Ensure full discharge
+    }
   }
 
-  SerialSIT.println("ATE0"); // Echo OFF to prevent parsing races
-  waitForResponse("OK", 500);
+  if (sim_ready) {
+    SerialSIT.println("ATE0"); // Echo OFF to prevent parsing races
+    waitForResponse("OK", 500);
+  }
 
   if (!sim_ready) {
     diag_consecutive_sim_fails++;
