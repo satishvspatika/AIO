@@ -212,7 +212,9 @@ void prepare_data_and_send() {
              sizeof(ui_data[FLD_SEND_STATUS].bottomRow), "YES ?           ");
     snprintf(ui_data[FLD_LAST_LOGGED].bottomRow,
              sizeof(ui_data[FLD_LAST_LOGGED].bottomRow), "NO DATA YET");
+    portENTER_CRITICAL(&syncMux);
     sync_mode = eHttpStop;
+    portEXIT_CRITICAL(&syncMux);
     success_count = 0;
     return;
   }
@@ -2263,7 +2265,9 @@ void store_current_unsent_data() {
   }
 #endif
 
+  portENTER_CRITICAL(&syncMux);
   sync_mode = eHttpStop;
+  portEXIT_CRITICAL(&syncMux);
   vTaskDelay(300 / portTICK_PERIOD_MS);
 }
 

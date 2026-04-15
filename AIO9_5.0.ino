@@ -60,6 +60,9 @@ volatile bool bearer_recovery_active = false;
 volatile bool gprs_active = false; 
 volatile uint32_t last_activity_time = 0; 
 char last_fw_ver[32] = {0}; 
+char chip_id[13] = "";
+RTC_DATA_ATTR int health_last_sent_day = -1;
+RTC_DATA_ATTR int health_last_sent_hour = -1;
 
 // v5.66: Core System State (Moved from globals.h)
 volatile int sync_mode = eSyncModeInitial;
@@ -76,7 +79,6 @@ char unsent_file[32] = "";
 char new_file[32] = "";
 char temp_file[50] = "";
 char station_name[16] = "";
-char chip_id[13] = "";
 char calib_state[5] = "";
 char calib_text[40] = "";
 char calib_content[16] = "";
@@ -310,10 +312,8 @@ RTC_DATA_ATTR int preferred_ftp_mode = -1;
 RTC_DATA_ATTR bool healer_reboot_in_progress = false;
 RTC_DATA_ATTR char diag_crash_task_rtc[16] = ""; // v5.74: Task name that triggered last stack overflow
 RTC_DATA_ATTR int diag_crash_count = 0;           // v5.74: Consecutive crashes of the same task
-
-RTC_DATA_ATTR int health_last_sent_hour = -1;
-RTC_DATA_ATTR int health_last_sent_day = -1;
 RTC_DATA_ATTR bool diag_fw_just_updated = false;
+bool diag_fw_version_changed = false; // v5.87: Gating for UI settings persistence
 RTC_DATA_ATTR bool rtc_daily_sync_done = false;
 
 RTC_DATA_ATTR int current_year = 0, current_month = 0, current_day = 0, current_hour = 0,
@@ -556,7 +556,7 @@ void setup() {
       health_last_sent_day = -1;      // v5.52 LOOP-6 FIX: Reset health persistence
       health_last_sent_hour = -1;
 
-      // v7.94: Clear physical ULP counters too
+      // v7.94: Clear physical ULP counters too (Atomic Word Alignment Guaranteed)
       rf_count.val = 0;
       wind_count.val = 0;
       calib_count.val = 0;
@@ -690,6 +690,7 @@ void setup() {
 
   if (strcmp(last_ver, FIRMWARE_VERSION) != 0) {
     debugln("[BOOT] Version Change! Clearing OTA Fail counters.");
+    diag_fw_version_changed = true;
     ota_fail_count = 0;
     strcpy(ota_fail_reason, "NONE");
     prefs.putInt("fail_cnt", 0);
@@ -883,49 +884,65 @@ void setup() {
     } // EX4 FIX
   }
 
-  if (SPIFFS.exists("/rf_res.txt")) {
-    File f = SPIFFS.open("/rf_res.txt", FILE_READ);
-    if (f) {
-      char res_buf[16];
-      int r = f.readBytes(res_buf, sizeof(res_buf)-1);
-      res_buf[r] = '\0';
-      user_res = atof(res_buf);
-      f.close();
-    } else {
-      user_res = DEFAULT_RF_RESOLUTION;
+  // v5.88: Try NVS first (immune to SPIFFS wipes), then fall back to SPIFFS.
+  {
+    Preferences rfPrefs;
+    rfPrefs.begin("sys-config", true); // Read-only
+    float nvs_rf_res = rfPrefs.getFloat("rf_res", -1.0f);
+    rfPrefs.end();
+    if (nvs_rf_res > 0.01f) {
+      user_res = nvs_rf_res;
+      debug("[BOOT] RF Resolution loaded from NVS: ");
+      debugln(user_res);
     }
-  } else {
-    user_res = DEFAULT_RF_RESOLUTION;
-    File f = SPIFFS.open("/rf_res.txt", FILE_WRITE);
-    if (f) {
-      f.print(DEFAULT_RF_RESOLUTION);
-      f.close();
-    } // EX4 FIX
   }
 
-  // 2. Scenario Resolution
-  if (fabs(DEFAULT_RF_RESOLUTION - last_fw_res) > 0.01) {
-    debugln("!!! FIRMWARE HARDCODE UPDATE DETECTED !!!");
-    active_res = DEFAULT_RF_RESOLUTION;
-    rf_res_changed = true;
-    File f1 = SPIFFS.open("/rf_fw.txt", FILE_WRITE);
-    if (f1) {
-      f1.print(DEFAULT_RF_RESOLUTION);
-      f1.close();
-    } // EX4 FIX
-    File f2 = SPIFFS.open("/rf_res.txt", FILE_WRITE);
-    if (f2) {
-      f2.print(DEFAULT_RF_RESOLUTION);
-      f2.close();
-    } // EX4 FIX
+  // Fall back to SPIFFS only if NVS had no valid value
+  if (user_res <= 0.01f) {
+    if (SPIFFS.exists("/rf_res.txt")) {
+      File f = SPIFFS.open("/rf_res.txt", FILE_READ);
+      if (f) {
+        char res_buf[16];
+        int r = f.readBytes(res_buf, sizeof(res_buf)-1);
+        res_buf[r] = '\0';
+        user_res = atof(res_buf);
+        f.close();
+        debug("[BOOT] RF Resolution loaded from SPIFFS: ");
+        debugln(user_res);
+      } else {
+        user_res = DEFAULT_RF_RESOLUTION;
+      }
+    } else {
+      user_res = DEFAULT_RF_RESOLUTION;
+      File f = SPIFFS.open("/rf_res.txt", FILE_WRITE);
+      if (f) {
+        f.print(DEFAULT_RF_RESOLUTION);
+        f.close();
+      } // EX4 FIX
+    }
+  }
+
+  // 2. Scenario Resolution: Always trust the user's saved preference.
+  // Only fall back to DEFAULT_RF_RESOLUTION if no valid user value exists.
+  // v5.87 Fix: Removed version-change override that was incorrectly wiping user's
+  // 0.25mm setting every time a new firmware binary was flashed (version bump triggered it).
+  if (user_res >= 0.01f) {
+    active_res = user_res; // User's saved choice always wins
   } else {
-    active_res = user_res;
-    rf_res_changed = false;
+    active_res = DEFAULT_RF_RESOLUTION; // First boot or corrupted file: use compile-time default
+  }
+  rf_res_changed = false;
+
+  // Update rf_fw.txt to track current compile-time default (for cross-flash detection only)
+  {
+    File f1 = SPIFFS.open("/rf_fw.txt", FILE_WRITE);
+    if (f1) { f1.print(DEFAULT_RF_RESOLUTION); f1.close(); }
   }
 
   RF_RESOLUTION = active_res; // Apply to system
   debug("Active RF Resolution: ");
   debugln(RF_RESOLUTION);
+
 
   // UNIT VERSION
 
@@ -1450,9 +1467,13 @@ void setup() {
   }
 #endif
 
-  if (wired == 1 && !skip_lcd_task) {
-    xTaskCreatePinnedToCore(lcdkeypad, "lcdkeypadTask", 6144, NULL, 2,
-                            &lcdkeypad_h, 0); // Core 0
+  if (wired == 1 && !skip_lcd_task) {  // v5.87 Hardening: [H-01] Snappy-UI Priority Elevation
+  // Elevating UI to Priority 3 ensures button-response is NEVER delayed by
+  // Modem MD5/TLS background processing (Priority 2).
+  if (xTaskCreatePinnedToCore(lcdkeypad, "lcdkeypadTask", 6144, NULL, 3,
+                              &lcdkeypad_h, 0) != pdPASS) {
+      debugln("[BOOT] [ERR] lcdkeypadTask creation failed.");
+  }
     if (wakeup_reason_is != timer) {
       digitalWrite(32, HIGH);
       delay(100);
@@ -1565,7 +1586,10 @@ void initialize_hw() {
 
   bool spiffs_mounted = false;
   uint32_t chip_size = ESP.getFlashChipSize();
-  char hw_tag = (chip_size == 16*1024*1024) ? 'X' : ((chip_size == 8*1024*1024) ? 'H' : 'L');
+  // v5.88 Fix: Do NOT re-declare hw_tag here — that shadows the global and leaves
+  // the LCD's hw_tag stuck at ' ' (shown as '.' on display) when SPIFFS fails.
+  // Write directly to the global declared in AIO9_5.0.ino line 339.
+  hw_tag = (chip_size == 16*1024*1024) ? 'X' : ((chip_size == 8*1024*1024) ? 'H' : 'L');
 
   for (int i = 0; i < 3; i++) {
     // v5.75: Hardened Label-Based Mount (Dynamic VFS)
@@ -1584,11 +1608,7 @@ void initialize_hw() {
     hw_tag = '!';
   } else {
     debugln("[BOOT] SPIFFS: OK");
-    
-    // v5.75: Secret Hardware Tag (Passive indicator)
-    // Injected into the FLD_DELETE_DATA heading (Far-right column 15)
-    snprintf(ui_data[FLD_DELETE_DATA].topRow, sizeof(ui_data[FLD_DELETE_DATA].topRow), "DELETE DATA?   %c", hw_tag);
-    
+
     // v6.03: Atomic Recovery - Restore stranded .tmp files from power-fail
     if (!SPIFFS.exists("/gps_fix.txt") && SPIFFS.exists("/gps_fix.tmp")) {
         SPIFFS.rename("/gps_fix.tmp", "/gps_fix.txt");
@@ -1654,6 +1674,11 @@ void initialize_hw() {
         rootDir.close();
     }
   }
+
+  // v5.88 Fix: Always update the DELETE DATA label, regardless of SPIFFS health.
+  // Shows 'H' (healthy 8MB), 'X' (16MB), 'L' (4MB), or '!' (SPIFFS failed/repair needed)
+  snprintf(ui_data[FLD_DELETE_DATA].topRow, sizeof(ui_data[FLD_DELETE_DATA].topRow),
+           "DELETE DATA?   %c", hw_tag);
 
   SPI.begin(18, 19, 23, 5);
   if (!SD.begin(5, SPI, 2000000)) {

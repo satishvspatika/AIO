@@ -1,14 +1,19 @@
+import os
 
-def check_braces(filename):
-    level = 0
+files = [f for f in os.listdir('.') if f.endswith('.ino') or f.endswith('.cpp') or f.endswith('.h')]
+files.sort()
+
+total_open = 0
+total_close = 0
+
+for filename in files:
     with open(filename, 'r') as f:
-        for i, line in enumerate(f, 1):
-            if i > 90: break
-            for char in line:
-                if char == '{':
-                    level += 1
-                elif char == '}':
-                    level -= 1
-            print(f"[{filename}] Line {i} Level: {level}")
+        content = f.read()
+        open_b = content.count('{')
+        close_b = content.count('}')
+        if open_b != close_b:
+            print(f"{filename}: {{={open_b}, }}={close_b} DIFF={open_b - close_b}")
+        total_open += open_b
+        total_close += close_b
 
-check_braces('gprs_ftp.ino')
+print(f"TOTAL: {{={total_open}, }}={total_close} DIFF={total_open - total_close}")

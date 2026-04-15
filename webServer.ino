@@ -943,9 +943,8 @@ void handleDisconnect() {
 
 void handleData() {
   String json = "{";
-  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
-    json += "\"time\": \"" + String(current_hour) + ":" + String(current_min) +
-            "\"";
+  // v5.87 Hardening: [M-01] Ghost-Lock Removal (Read-Only Global Access)
+  json += "\"time\": \"" + String(current_hour) + ":" + String(current_min) + "\"";
 
 #if SYSTEM == 0
     json += ", \"rf_inst\": " + String((float)rf_count.val * RF_RESOLUTION, 2);
@@ -969,7 +968,6 @@ void handleData() {
             ", \"humidity\": " + String(humidity, 1) +
             ", \"windSpeed\": " + String(cur_wind_speed, 2) +
             ", \"windDir\": " + String(windDir);
-    // #5: Only include pressure if BME280 is detected and reading valid data
     if (bmeType != BME_UNKNOWN && pressure > 300.0) {
       json += ", \"pressure\": " + String(pressure, 2) +
               ", \"mslp\": " + String(sea_level_pressure, 2);
@@ -978,10 +976,10 @@ void handleData() {
 
     unsigned long elapsed = millis() - last_wifi_activity_time;
     long left = (elapsed < 180000) ? (180000 - elapsed) / 1000 : 0;
+    json += ", \"status\": \"READY\"";
     json += ", \"wifi_left\": " + String(left);
 
-    xSemaphoreGive(i2cMutex);
-  }
+    // Lock removed in v5.87 to prevent UI lag
   json += "}";
   server.send(200, "application/json", json);
 }

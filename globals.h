@@ -122,8 +122,7 @@ extern float RF_RESOLUTION;
 #define I2C_SCL 22
 #define I2C_TIMEOUT_MS 2000 // I2C hardware timeout (2 seconds)
 #define I2C_MUTEX_WAIT_TIME                                                    \
-  2500 // Mutex wait time (slightly longer than I2C timeout to prevent premature
-       // timeout)
+  800 // v5.84: Reduced from 2500 to 800 to prevent UI stalls during I2C hangs
 #define uS_TO_S_FACTOR                                                         \
   1000000 /* Conversion factor for micro seconds to seconds */
 

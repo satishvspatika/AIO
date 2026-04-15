@@ -229,6 +229,9 @@ void refresh_sensor_data() {
   else if (cur_fld_no == FLD_AVG_WS) snprintf(ui_data[FLD_AVG_WS].bottomRow, 17, "%0.2f", cur_avg_wind_speed);
   else if (cur_fld_no == FLD_WIND_DIR) snprintf(ui_data[FLD_WIND_DIR].bottomRow, 17, "%03d", (int)windDir);
   else if (cur_fld_no == FLD_PRESSURE) snprintf(ui_data[FLD_PRESSURE].bottomRow, 17, "%0.1f", pressure);
+  else if (cur_fld_no == FLD_RF_RES) {
+    snprintf(ui_data[FLD_RF_RES].bottomRow, 17, "%0.2f", RF_RESOLUTION);
+  }
   else if (cur_fld_no == FLD_RF_ML) {
     float live_rf = (float)rf_count.val * RF_RESOLUTION;
     snprintf(ui_data[FLD_RF_ML].bottomRow, 17, "%06.2f", live_rf);
@@ -732,19 +735,37 @@ void lcdkeypad(void *pvParameters) {
                 cur_mode = eEditOff;
               }
             } else if (rf_res_edit_state == 2) {
-              // Apply user's edited value before saving
-              float new_res = atof(input_buf);
-              if (new_res == 0.25f || new_res == 0.50f) {
+              // v5.88 Fix: Use tolerance-based comparison instead of exact float equality.
+              // atof() returns double; converting to float can cause a bit-mismatch with
+              // 0.25f/0.50f literals even though both are exactly representable in IEEE 754.
+              // fabs() check is immune to this truncation issue.
+              float new_res = (float)atof(input_buf);
+              bool valid_res = (fabsf(new_res - 0.25f) < 0.01f) || (fabsf(new_res - 0.50f) < 0.01f);
+              if (valid_res) {
+                // Snap to exact value to avoid any residual imprecision
+                new_res = (fabsf(new_res - 0.25f) < 0.01f) ? 0.25f : 0.50f;
                 RF_RESOLUTION = new_res;
+                debugf("[RF_RES] Applying new resolution: %.2f\n", new_res);
+                // Save to SPIFFS
+                if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                  File f = SPIFFS.open("/rf_res.txt", FILE_WRITE);
+                  if (f) { f.print(new_res, 2); f.close(); debugln("[RF_RES] Saved to SPIFFS"); }
+                  else { debugln("[RF_RES] ERROR: Failed to open rf_res.txt for writing!"); }
+                  xSemaphoreGive(fsMutex);
+                } else {
+                  debugln("[RF_RES] ERROR: fsMutex timeout during save!");
+                }
+                // Also save to NVS as a bulletproof backup
+                Preferences rfPrefs;
+                rfPrefs.begin("sys-config", false);
+                rfPrefs.putFloat("rf_res", new_res);
+                rfPrefs.end();
+                debugln("[RF_RES] Saved to NVS");
+              } else {
+                debugf("[RF_RES] Rejected invalid input: '%s' (parsed: %.4f)\n", input_buf, new_res);
               }
-              // v5.70: Protect resolution save with fsMutex
-              if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-                File f = SPIFFS.open("/rf_res.txt", FILE_WRITE);
-                if (f) { f.print(RF_RESOLUTION); f.close(); }
-                xSemaphoreGive(fsMutex);
-              }
-              // Requirement: Wipe all data and reboot after resolution change
-              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+              // Wipe + reboot: only run if value was valid
+              if (valid_res && xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
                  lcd.clear(); lcd.print("RES CHANGED!");
                  vTaskDelay(1000/portTICK_PERIOD_MS);
                  lcd.clear(); lcd.print("WIPING DATA...");
@@ -758,7 +779,13 @@ void lcdkeypad(void *pvParameters) {
                     File file = root.openNextFile();
                     while(file) {
                        String n = file.name();
-                       if (!(n == "station.txt" || n == "rf_fw.txt" || n == "station.doc" || n == "rf_res.txt")) { // Exclude res configuration too
+                       // v5.85 Surgical Fix: Account for leading slash in SPIFFS filenames (Issue: Protection Bypass)
+                       bool isCritical = (n == "station.txt" || n == "/station.txt" || 
+                                         n == "rf_fw.txt" || n == "/rf_fw.txt" || 
+                                         n == "station.doc" || n == "/station.doc" || 
+                                         n == "rf_res.txt" || n == "/rf_res.txt");
+                       
+                       if (!isCritical) {
                          debug("Removing: "); debugln(n);
                          SPIFFS.remove(n.startsWith("/") ? n : "/" + n);
                        }
@@ -923,12 +950,14 @@ void lcdkeypad(void *pvParameters) {
                          if (SYSTEM == 0) {
                             float irf, crf; sscanf(line, "%*d,%*[^,],%*[^,],%f,%f", &irf, &crf);
                             if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                               lcd.clear();
                                lcd.setCursor(0,0); lcd.print("CUM_RF:"); lcd.setCursor(0,1); lcd.print(crf,2);
                                xSemaphoreGive(i2cMutex);
                             }
                          } else if (SYSTEM == 1) {
                             sscanf(line, "%*d,%*[^,],%*[^,],%f,%f,%f,%d", &tf, &hf, &af, &wf);
                             if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                               lcd.clear();
                                lcd.setCursor(0,0); char b1[17]; snprintf(b1,17,"T:%-4.1f H:%-4.1f",tf,hf); lcd.print(b1);
                                lcd.setCursor(0,1); char b2[17]; snprintf(b2,17,"AWS:%-4.1f WD:%-d",af,wf); lcd.print(b2);
                                xSemaphoreGive(i2cMutex);
@@ -936,6 +965,7 @@ void lcdkeypad(void *pvParameters) {
                          } else if (SYSTEM == 2) {
                             sscanf(line, "%*d,%*[^,],%*[^,],%f,%f,%f,%f,%d", &rf, &tf, &hf, &af, &wf);
                             if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                               lcd.clear();
                                lcd.setCursor(0,0); char b1[17]; snprintf(b1,17,"R:%-3.1f T:%-4.1f",rf,tf); lcd.print(b1);
                                lcd.setCursor(0,1); char b2[17]; snprintf(b2,17,"H:%-2.0f AWS:%-4.1f",hf,af); lcd.print(b2);
                                xSemaphoreGive(i2cMutex);
@@ -1058,7 +1088,7 @@ void lcdkeypad(void *pvParameters) {
                       portENTER_CRITICAL(&rtcTimeMux);
                        current_day = dd; current_month = mm; current_year = yy;
                        portEXIT_CRITICAL(&rtcTimeMux);
-                      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+                      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
                          rtc.adjust(DateTime(current_year, current_month, current_day, current_hour, current_min, 0));
                          xSemaphoreGive(i2cMutex);
                       }
@@ -1069,7 +1099,7 @@ void lcdkeypad(void *pvParameters) {
                       portENTER_CRITICAL(&rtcTimeMux);
                        current_hour = hh; current_min = mi;
                        portEXIT_CRITICAL(&rtcTimeMux);
-                      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+                      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
                          rtc.adjust(DateTime(current_year, current_month, current_day, current_hour, current_min, 0));
                          record_hr = current_hour;
                          record_min = (current_min / 15) * 15;

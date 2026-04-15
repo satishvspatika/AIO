@@ -620,11 +620,11 @@ void get_registration() {
               snprintf(diag_reg_fail_type, sizeof(diag_reg_fail_type),
                        "UNKNOWN(%d)", qreg);
             }
+            }
           }
         }
       }
     }
-  }
     retries++;
   } // end while
 

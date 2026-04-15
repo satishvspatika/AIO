@@ -3203,8 +3203,13 @@ void scheduler(void *pvParameters) {
         // HTTP/Sleep
         {
           int manual_wait_timeout = 0;
-          while ((sync_mode == eSMSStart || sync_mode == eGPSStart ||
-                  sync_mode == eHealthStart || sync_mode == eStartupGPS) &&
+          int snap_sync_mode;
+          portENTER_CRITICAL(&syncMux);
+          snap_sync_mode = sync_mode;
+          portEXIT_CRITICAL(&syncMux);
+
+          while ((snap_sync_mode == eSMSStart || snap_sync_mode == eGPSStart ||
+                  snap_sync_mode == eHealthStart || snap_sync_mode == eStartupGPS) &&
                  manual_wait_timeout < 150) {
             if (manual_wait_timeout % 10 == 0) {
               debugln("Waiting for Manual Task (SMS/GPS) to finish...");
@@ -3212,6 +3217,10 @@ void scheduler(void *pvParameters) {
             vTaskDelay(1000 / portTICK_PERIOD_MS);
             manual_wait_timeout++;
             esp_task_wdt_reset();
+            // v5.86 Correction: [H-02] Refresh snapshot under lock
+            portENTER_CRITICAL(&syncMux);
+            snap_sync_mode = sync_mode;
+            portEXIT_CRITICAL(&syncMux);
           }
         }
 

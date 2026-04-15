@@ -297,54 +297,85 @@ void set_wakeup_reason() {
 }
 
 void copyFilesFromSPIFFSToSD(const char *dirname) {
-  if (!sd_card_ok) return; // Phase 7 Fix: Stop VFS File Handle Leaks
-  File root = SPIFFS.open(dirname);
-  if (!root) {
-    debugln("Failed to open directory");
+  if (!sd_card_ok) {
+    debugln("[SD] [ERR] SD Card not ready. Aborting copy.");
     return;
   }
-  if (!root.isDirectory()) {
-    debugln("Not a directory");
+  
+  File root = SPIFFS.open(dirname);
+  if (!root || !root.isDirectory()) {
+    debugln("[SD] [ERR] Failed to open source directory");
+    if (root) root.close();
     return;
   }
 
+  int successCount = 0;
+  int failCount = 0;
   File file = root.openNextFile();
   while (file) {
     esp_task_wdt_reset();
-    char fileName[64];
-    strncpy(fileName, file.name(), sizeof(fileName)-1);
-    fileName[sizeof(fileName)-1] = '\0';
     
-    if (strstr(fileName, ".txt") != NULL) {
-      char destPath[80];
-      if (fileName[0] != '/') {
-        snprintf(destPath, sizeof(destPath), "/%s", fileName);
-      } else {
-        strncpy(destPath, fileName, sizeof(destPath)-1);
-        destPath[sizeof(destPath)-1] = '\0';
-      }
+    // v5.87 Hardening: [C-01] Mutex-Interleaving
+    // We take the lock for EACH file to allow the scheduler to sneak in a log write.
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
+      const char* fileName = file.name();
+      size_t fileSize = file.size();
 
-      File sourceFile = SPIFFS.open(fileName, FILE_READ);
-      File destFile;
-      if (sd_card_ok) {
-        destFile = SD.open(destPath, FILE_WRITE);
-      }
-
-      if (sourceFile && destFile) {
-        debug("Copying: ");
-        debugln(fileName);
-        uint8_t buffer[512];
-        while (sourceFile.available()) {
-          size_t bytesRead = sourceFile.read(buffer, sizeof(buffer));
-          destFile.write(buffer, bytesRead);
+      if (strstr(fileName, ".txt") != NULL) {
+        char destPath[80];
+        if (fileName[0] != '/') {
+          snprintf(destPath, sizeof(destPath), "/%s", fileName);
+        } else {
+          strncpy(destPath, fileName, sizeof(destPath)-1);
+          destPath[sizeof(destPath)-1] = '\0';
         }
-        destFile.close();
-        sourceFile.close();
+
+        debugf("[SD] Copying: %s (%d bytes)\n", fileName, (int)fileSize);
+
+        File destFile = SD.open(destPath, FILE_WRITE);
+        if (destFile) {
+          if (fileSize > 0) {
+            uint8_t buffer[512];
+            size_t totalWritten = 0;
+            while (file.available()) {
+              size_t bytesRead = file.read(buffer, sizeof(buffer));
+              size_t written = destFile.write(buffer, bytesRead);
+              totalWritten += written;
+              esp_task_wdt_reset(); // Keep watchdog happy during large file streams
+              if (written != bytesRead) {
+                debugf("[SD] [ERR] Write mismatch! Read: %d, Wrote: %d\n", (int)bytesRead, (int)written);
+                break;
+              }
+            }
+            destFile.close();
+            if (totalWritten == fileSize) {
+              debugf("[SD] ✅ Success: %d bytes transferred\n", (int)totalWritten);
+              successCount++;
+            } else {
+              debugf("[SD] ⚠️ Incomplete: %d/%d bytes written\n", (int)totalWritten, (int)fileSize);
+              failCount++;
+            }
+          } else {
+            debugln("[SD] Skipping empty file.");
+            destFile.close();
+            successCount++;
+          }
+        } else {
+          debugf("[SD] [ERR] Failed to create %s on SD\n", destPath);
+          failCount++;
+        }
       }
+      xSemaphoreGive(fsMutex);
+      vTaskDelay(20 / portTICK_PERIOD_MS); // v5.87: Breathe delay for the scheduler
+    } else {
+      debugln("[SD] [ERR] FS Mutex Busy. Skipping file to prevent UI stall.");
     }
-    file.close(); // v5.49 Build 5: FIX LEAK
+    
+    file.close(); 
     file = root.openNextFile();
   }
+  root.close();
+  debugf("[SD] Bulk Copy Finished. Success: %d, Fail: %d\n", successCount, failCount);
 }
 
 void removeFilesFromSPIFFS(const char *dirname) {
@@ -1425,13 +1456,15 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
     f.close();
     SPIFFS.remove(path);
     
-    // v5.75 FIX: [M-02] SPIFFS Metadata Delay
-    // On worn partitions, an immediate rename can fail. Give the VFS 50ms to breathe.
+    // v5.86 Correction: [C-01] Mutex Restoration
+    // We only release the mutex during the delay if we aren't already locked by the caller.
+    // Releasing a caller's lock violates the ownership contract and stalls the station.
     esp_task_wdt_reset();
-    if (!alreadyLocked) xSemaphoreGive(fsMutex);
+    if (!alreadyLocked) xSemaphoreGive(fsMutex); 
     vTaskDelay(50 / portTICK_PERIOD_MS);
-    if (!alreadyLocked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
-        debugln("[SPIFFS] pruneFile retry-Take failed. Mutex already released.");
+    
+    if (!alreadyLocked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
+        debugln("[SPIFFS] pruneFile: FAILED to retake mutex after VFS delay!");
         return; 
     }
     

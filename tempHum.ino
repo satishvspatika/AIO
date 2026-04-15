@@ -27,7 +27,7 @@ void tempHum(void *pvParameters) {
       if (readHDC(t_raw, h_raw)) {
         failCount = 0; // Success
         // v5.49: Atomic update of both variables under a single mutex lock
-        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
             pdTRUE) {
           // Temperature Logic: Winter-hardened range (-39 to +85)
           // v5.65 fix: Exactly -40.0C is often a result of raw=0 (bus failure).
@@ -80,7 +80,7 @@ void tempHum(void *pvParameters) {
           debugln("[HDC] Sensor disconnected during runtime.");
           hdcType = HDC_UNKNOWN;
         }
-        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
             pdTRUE) {
           temperature = 0.0;
           humidity = 0.0;
@@ -91,7 +91,7 @@ void tempHum(void *pvParameters) {
       }
     } else {
       // SENSOR MISSING: Enforce 0.0 and NA
-      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
           pdTRUE) {
         temperature = 0.0;
         humidity = 0.0;
@@ -194,7 +194,8 @@ uint16_t readRegister16(uint8_t reg) {
   uint16_t result = 0xFFFF;
   static int failCount = 0;
 
-  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+  // v5.84 Surgical Fix: Reduced timeout to 1000ms to prevent UI stalls
+  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
     Wire.beginTransmission(HDC_ADDR);
     Wire.write(reg);
     byte err = Wire.endTransmission(false);
@@ -209,7 +210,8 @@ uint16_t readRegister16(uint8_t reg) {
       debugf3("[I2C] Read Reg 0x%02X Error: %d, FailCount: %d\n", reg, err,
               failCount);
       if (failCount > 5) {
-        recoverI2CBus(); // Attempt to unstick the bus
+        // v5.84 Hardened: Pass true as alreadyLocked to prevent recovery deadlock
+        recoverI2CBus(true); 
         failCount = 0;
       }
     }
@@ -231,7 +233,7 @@ bool initHDC() {
     debugln("[HDC] Init: SUCCESS (HDC1080)");
 
     // Configure HDC1080 for 14-bit Temp & Hum
-    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
         pdTRUE) {
       Wire.beginTransmission(HDC_ADDR);
       Wire.write(0x02); // Config register
@@ -255,7 +257,7 @@ bool initHDC() {
     debugln("[HDC] Init: SUCCESS (HDC2022)");
 
     // Configure HDC2022 for 14-bit resolution & manual trigger mode
-    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) ==
         pdTRUE) {
       Wire.beginTransmission(HDC_ADDR);
       Wire.write(0x1A); // Measurement Configuration Register
@@ -277,7 +279,7 @@ bool readHDC(float &tempC, float &humidity) {
     return false;
 
   // Start measurement
-  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
     Wire.beginTransmission(HDC_ADDR);
     if (hdcType == HDC_1080) {
       Wire.write(0x00); // Trigger temp + hum
@@ -298,7 +300,7 @@ bool readHDC(float &tempC, float &humidity) {
     vTaskDelay(20 / portTICK_PERIOD_MS); // Wait for measurement
 
     // Re-acquire the I2C bus to pull the final datagram
-    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) != pdTRUE) {
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
       return false;
     }
 
