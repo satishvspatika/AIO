@@ -5,9 +5,13 @@ from app.database import SessionLocal
 from app.models import CommandQueue, StationSettings, HealthReport
 from pydantic import BaseModel
 from typing import List
-
 router = APIRouter()
 
+class BulkDeleteRecords(BaseModel):
+    ids: List[int]
+
+class BulkDeleteStations(BaseModel):
+    stn_ids: List[str]
 
 def get_db():
     db = SessionLocal()
@@ -73,13 +77,17 @@ def toggle_ota_lock(stn_id: str, db: Session = Depends(get_db)):
     return RedirectResponse(url=f"/station/{stn_id}")
 
 
-@router.post("/delete/{stn_id}")
-def delete_station(stn_id: str, db: Session = Depends(get_db)):
-    from app.models import HealthReport
-    db.query(HealthReport).filter_by(stn_id=stn_id).delete()
-    db.query(CommandQueue).filter_by(stn_id=stn_id).delete()
-    db.commit()
-    return RedirectResponse(url="/dashboard")
+@router.post("/delete/bulk-stations")
+def delete_bulk_stations(payload: BulkDeleteStations, db: Session = Depends(get_db)):
+    try:
+        db.query(HealthReport).filter(HealthReport.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
+        db.query(CommandQueue).filter(CommandQueue.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
+        db.commit()
+        return {"status": "ok", "deleted": len(payload.stn_ids)}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"status": "err", "msg": str(e)}
 
 @router.post("/delete-category/{stn_id}/{unit_type}/{system}")
 def delete_station_category(stn_id: str, unit_type: str, system: int, db: Session = Depends(get_db)):
@@ -99,21 +107,17 @@ def delete_record(report_id: int, db: Session = Depends(get_db)):
         return RedirectResponse(url=f"/station/{stn_id}")
     return RedirectResponse(url="/dashboard")
 
-class BulkDeleteRecords(BaseModel):
-    ids: List[int]
-
-class BulkDeleteStations(BaseModel):
-    stn_ids: List[str]
-
 @router.post("/delete/bulk-records")
 def delete_bulk_records(payload: BulkDeleteRecords, db: Session = Depends(get_db)):
     db.query(HealthReport).filter(HealthReport.id.in_(payload.ids)).delete(synchronize_session=False)
     db.commit()
     return {"status": "ok", "deleted": len(payload.ids)}
 
-@router.post("/delete/bulk-stations")
-def delete_bulk_stations(payload: BulkDeleteStations, db: Session = Depends(get_db)):
-    db.query(HealthReport).filter(HealthReport.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
-    db.query(CommandQueue).filter(CommandQueue.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
+
+@router.post("/delete/{stn_id}")
+def delete_station(stn_id: str, db: Session = Depends(get_db)):
+    from app.models import HealthReport
+    db.query(HealthReport).filter_by(stn_id=stn_id).delete()
+    db.query(CommandQueue).filter_by(stn_id=stn_id).delete()
     db.commit()
-    return {"status": "ok", "deleted": len(payload.stn_ids)}
+    return RedirectResponse(url="/dashboard")

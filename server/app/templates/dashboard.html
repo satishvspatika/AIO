@@ -331,10 +331,10 @@
                 if (data.status === 'ok') {
                     window.location.reload();
                 } else {
-                    alert('Error deleting stations');
+                    alert('Error deleting stations. Details: ' + (data.msg || 'Unknown error'));
                 }
             })
-            .catch(err => alert("Failed to communicate with server."));
+            .catch(err => alert("Failed to communicate with server: " + err));
     };
 </script>
 

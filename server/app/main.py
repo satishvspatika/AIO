@@ -68,7 +68,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.url.path.endswith("/ota") and "station" in request.url.path:
             is_supervisor_action = True
             
-        if is_supervisor_action and user and user["role"] != "supervisor":
+        role = user.get("role") if user else None
+        if user and not role:
+            # Backwards-compatibility for older sessions
+            from app.auth import USERS
+            role = USERS.get(user.get("username"), {}).get("role", "normal")
+            
+        if is_supervisor_action and user and role != "supervisor":
             from fastapi.responses import HTMLResponse
             return HTMLResponse("<h1>403 Forbidden</h1><p>Supervisor privileges required.</p>", status_code=403)
 

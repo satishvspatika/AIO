@@ -769,11 +769,17 @@ void scheduler(void *pvParameters) {
       // first record after boat. Subsequent 15-min intervals should be logged
       // even if the reset reason '12' persists in memory.
       if (is_fresh_boot && !fresh_boot_check_done) {
+#if DEMO_MODE == 1
+        debugln("[DEMO] Fast-Track: Initializing record for immediate transmission...");
+        data_writing_initiated = 1;
+        skip_primary_http = false;
+#else
         debugln("Fresh boot detected. Skipping primary upload for sensor "
                 "stabilization (queueing to Backlog).");
         data_writing_initiated =
             1;                    // v5.68: MUST be 1 so it writes to unsent.txt
         skip_primary_http = true; // ...but blocks real-time upload
+#endif
         dns_fallback_active = false;
         preferred_ftp_mode = -1;
         fresh_boot_check_done = true; // DO NOT SKIP NEXT TIME
@@ -790,10 +796,17 @@ void scheduler(void *pvParameters) {
       debugln();
 
       // v7.87: Boundary-Safe Timestamp Logic
+#if DEMO_MODE == 1
+      // v5.85: Force "Live" time for Demo Mode (Don't snap to 15m)
+      r_m = cur_min;
+      r_h = cur_hr;
+      debugln("[DEMO] Fast-Track: Using real-time for immediate Demo upload.");
+#else
       // If we are at exactly 10:45, we want to record "10:30" (the start of the
       // slot).
       r_m = (cur_min / 15) * 15;
       r_h = cur_hr;
+#endif
 
       /*
             if (current_min % 15 == 0) {
@@ -1076,7 +1089,12 @@ void scheduler(void *pvParameters) {
         debug("Last sample No stored: ");
         debugln(last_sampleNo);
 
+#if DEMO_MODE == 1
+        // v5.85: Allow duplicate samples in Demo Mode for rapid-fire testing
+        if (false) {
+#else
         if (last_sampleNo == sampleNo) {
+#endif
           debugln("Duplicate sample detected (RF). Data already logged.");
           data_writing_initiated = 0;
           skip_primary_http = true; // No need to hit server with a duplicate
@@ -1148,7 +1166,12 @@ void scheduler(void *pvParameters) {
         debugln(last_sampleNo);
 
         // CHECK FOR DUPLICATE SAMPLE
+#if DEMO_MODE == 1
+        // v5.85: Allow duplicate samples in Demo Mode for rapid-fire testing
+        if (false) {
+#else
         if (last_sampleNo == sampleNo) {
+#endif
           debugln("Duplicate sample detected (TWS). Data already logged for "
                   "this interval.");
           data_writing_initiated = 0;

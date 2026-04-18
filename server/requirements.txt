@@ -4,3 +4,4 @@ sqlalchemy
 python-multipart
 jinja2
 aiofiles>=0.7.0
+pycryptodome

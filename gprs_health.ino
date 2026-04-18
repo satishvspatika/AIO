@@ -50,7 +50,9 @@ void get_signal_strength() {
       }
     }
     debug("Signal Level is ");
-    debugln(signal_lvl);
+    debug(signal_lvl);
+    if (signal_lvl <= -108) debug(" [CRITICAL - MOVE ANTENNA]");
+    debugln();
     retries++;
     vTaskDelay(500 / portTICK_PERIOD_MS);
   }
@@ -250,6 +252,9 @@ void get_registration() {
     // v5.60 SURE-SHOT REGISTRATION:
     SerialSIT.println("AT+CFUN=1"); // Full functionality
     waitForResponse("OK", 1000);
+    // v5.85: Radio-Level MTU Clamp (Ensure SSL Handshake packets survive carrier fragmentation)
+    SerialSIT.println("AT+CIPMSSDS=1300"); 
+    waitForResponse("OK", 500);
     SerialSIT.println("AT+CGDCONT=8,\"IP\",\"\""); // Kill CID 8 side-channel
     waitForResponse("OK", 1000);
     SerialSIT.println("AT+CGDCONT=9,\"IP\",\"\""); // Kill CID 9 side-channel
@@ -288,8 +293,13 @@ void get_registration() {
       gprs_2g_slots_count = 0;
 
     initial_cnmp = last_successful_cnmp;
+#if DEMO_MODE == 1
+    // v5.85 Demo: Always prioritize LTE (38) first to ensure SSL speed. 
+    // EXEMPTION: BSNL rarely has LTE; do NOT force mode 38 on BSNL as it blocks registration.
+    if (registration == 0 && !isBSNL) initial_cnmp = 38;
+#endif
     if (gprs_2g_slots_count > 96 ||
-        (initial_cnmp != 13 && initial_cnmp != 38)) {
+        (initial_cnmp != 13 && initial_cnmp != 38 && initial_cnmp != 2)) {
       initial_cnmp = 2; // Force rescan or safe default
       if (gprs_2g_slots_count > 96)
         gprs_2g_slots_count = 0;
@@ -430,10 +440,20 @@ void get_registration() {
       }
       is_registered = true;
       isLTE = false;
-      last_successful_cnmp = 13; // v5.84: Mark GSM success
-      strcpy(reg_status, (r2 == 1) ? "GSM:Home:OK" : "GSM:Roam:OK");
-      debugf("[GPRS] Registered via CREG! (2G:%d)\n", r2);
-      break;
+
+#if DEMO_MODE == 1
+      if (retries < 15 && !isBSNL) {
+        debugln("[GPRS] Demo Mode: Ignoring 2G Successful registration, strictly hunting for 4G...");
+        is_registered = false;
+      }
+#endif
+
+      if (is_registered) {
+        last_successful_cnmp = 2; // Keep Auto
+        strcpy(reg_status, (r2 == 1) ? "GSM:Home:OK" : "GSM:Roam:OK");
+        debugf("[GPRS] Registered via CREG! (2G:%d)\n", r2);
+        break;
+      }
     }
     if (r4 == 1 || r4 == 5) {
       is_registered = true;
@@ -481,9 +501,14 @@ void get_registration() {
           // BSNL 4G (Mode 38) is virtually non-existent; hunting for it wastes
           // battery/time.
           if (initial_cnmp != 13) {
+#if DEMO_MODE == 1
+            debugln("[GPRS] Demo Mode: Bypassing BSNL 2G Lock (Staying Auto)...");
+            SerialSIT.println("AT+CNMP=2");
+#else
             debugln(
                 "[GPRS] BSNL Tier1 @ iter5: Locking to GSM-only (CNMP=13)...");
             SerialSIT.println("AT+CNMP=13");
+#endif
           } else {
             debugln("[GPRS] BSNL Tier1 @ iter5: Already in GSM-only. Forcing "
                     "fresh scan (COPS=0)...");
@@ -492,9 +517,14 @@ void get_registration() {
         } else {
           // v5.84 Airtel/Jio Strategy: Toggle Mode if stalled.
           if (initial_cnmp != 13) {
+#if DEMO_MODE == 1
+            debugln("[GPRS] Demo Mode: Bypassing GSM Fallback (Staying Auto)...");
+            SerialSIT.println("AT+CNMP=2");
+#else
             debugln("[GPRS] Tier1 @ iter5: Auto mode stalled. Fallback to "
                     "GSM-only (CNMP=13)...");
             SerialSIT.println("AT+CNMP=13");
+#endif
           } else {
             debugln("[GPRS] Tier1 @ iter5: GSM-only stalled. Peeking Auto "
                     "(CNMP=2)...");
@@ -542,10 +572,15 @@ void get_registration() {
           waitForResponse("OK", 3000);
         } else {
           // v5.84 Airtel/Jio Tier 3: Force LTE-Only mode
-          debugln(
-              "[GPRS] Tier3 @ iter15: Testing LTE-Only Mode (AT+CNMP=38)...");
-          SerialSIT.println("AT+CNMP=38");
-          waitForResponse("OK", 2000);
+          if (retries >= 15 && !isBSNL) {
+            debugln(
+                "[GPRS] Tier3 @ iter15: Testing LTE-Only Mode (AT+CNMP=38)...");
+            SerialSIT.println("AT+CNMP=38");
+          } else {
+            // v5.85: Force Auto-Mode (2) for BSNL or early retries
+            SerialSIT.println("AT+CNMP=2"); 
+          }
+          waitForResponse("OK", 1000);
           SerialSIT.println("AT+COPS=0");
           esp_task_wdt_reset();
           waitForResponse("OK", 5000);
@@ -560,10 +595,13 @@ void get_registration() {
         SerialSIT.println("AT+CNMP=2"); // Auto (LTE+GSM)
         waitForResponse("OK", 1000);
         SerialSIT.println("AT+COPS=0"); // Auto operator
-        esp_task_wdt_reset();
-        waitForResponse("OK", 5000);    // Reduced from 10s to stay in window
-        SerialSIT.println("AT+CGATT=1");
-        waitForResponse("OK", 3000);
+        SerialSIT.println("AT+CGREG?");
+        waitForResponse("OK", 1000);
+        
+        // v5.85 Final v10: Early TCP Segment Clamping (MTU Hardening)
+        // Clamping to 1300 prevents SSL handshake fragmentation on high-latency links
+        SerialSIT.println("AT+CIPMSSDS=1300");
+        waitForResponse("OK", 1000);
       }
     }
 
@@ -595,9 +633,20 @@ void get_registration() {
           if (qc_ptr != NULL) {
             int qreg = atoi(qc_ptr + 1);
             if (qreg == 1 || qreg == 5) {
+#if DEMO_MODE == 1
+              if (retries < 15 && !isBSNL) {
+                // Strictly hunt for CEREG (LTE). Skip CGREG (2G/3G) success.
+                debugln("[GPRS] Demo: CGREG Success, but strictly hunting for 4G (LTE)...");
+                continue; 
+              }
+#endif
               debugln("[GPRS] CGREG registered during adaptive wait!");
               isLTE = !isBSNL;
+#if DEMO_MODE == 1
+              last_successful_cnmp = 2; // Always prefer Auto in Demo
+#else
               last_successful_cnmp = isLTE ? 2 : 13; // v5.84
+#endif
               strcpy(reg_status, (qreg == 1) ? "GPRS:Home:OK" : "GPRS:Roam:OK");
               is_registered = true;
             } else {

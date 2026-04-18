@@ -7,13 +7,13 @@
  * ========================================================================= */
 
 // --- 1. CORE SYSTEM IDENTITY ---
-#define SYSTEM 0                // 0: TRG, 1: TWS, 2: TWS-RF Addon
+#define SYSTEM 0              // 0: TRG, 1: TWS, 2: TWS-RF Addon
 #define UNIT_CFG "KSNDMC_TRG" // Exact station network name:
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 
-#define FIRMWARE_VERSION "5.83"
+#define FIRMWARE_VERSION "5.84"
 
 #define ENABLE_HEALTH_REPORT                                                   \
   0 // Master Switch: Enable automated device health reporting
@@ -47,5 +47,14 @@
 
 // Note: Secure keys (SEC_*) and FTP passwords (FTP_PASS_*) have been moved
 // to secrets.h for security. Do not add plain-text secrets back here.
+
+// --- 6. DEMO MODE ---
+#define DEMO_MODE                                                              \
+  1 // Set to 1 to enable AES encryption and reroute to Contabo Server
+#define DEMO_AES_KEY "1234567890123456" // 16-byte key for AES-128-ECB
+// Paste your ngrok HTTPS URL below when demoing HTTPS capabilities.
+// Example: "https://your-tunnel.ngrok-free.app/demo_ksndmc"
+#define DEMO_HTTPS_URL                                                         \
+  "https://account-surround-dreamlike.ngrok-free.dev/demo_ksndmc"
 
 #endif // USER_CONFIG_H

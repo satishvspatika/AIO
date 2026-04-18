@@ -110,7 +110,7 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
                 "pct":           int((converted / total_seen * 100)) if total_seen > 0 else 0,
             })
 
-        return templates.TemplateResponse("summary.html", {
+        return templates.TemplateResponse(request=request, name="summary.html", context= {
             "request": request,
             "groups":  groups,
         })
@@ -121,4 +121,4 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
 @router.get("/help")
 async def help_page(request: Request):
     """Static help and legend page."""
-    return templates.TemplateResponse("help.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="help.html", context= {"request": request})

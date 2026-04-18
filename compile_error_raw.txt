@@ -1,3 +1,4 @@
-WARNING: library LiquidCrystal I2C claims to run on avr architecture(s) and may be incompatible with your current board which runs on esp32 architecture(s).
-Sketch uses 1257503 bytes (95%) of program storage space. Maximum is 1310720 bytes.
-Global variables use 54580 bytes (16%) of dynamic memory, leaving 273100 bytes for local variables. Maximum is 327680 bytes.
+--- Building for 8MB Flash ESP32 (Default) ---
+--- Using partition file: partitions.csv ---
+./compile.sh: line 47: arduino-cli: command not found
+--- Compilation FAILED ---

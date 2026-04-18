@@ -44,6 +44,11 @@
 #include <esp_wifi.h>
 #include <hulp_arduino.h>
 
+#if DEMO_MODE == 1
+#include <mbedtls/aes.h>
+#include <mbedtls/base64.h>
+#endif
+
 #include "esp_adc_cal.h"
 
 float get_calibrated_battery_voltage();
@@ -57,6 +62,7 @@ float get_calibrated_battery_voltage();
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 
 // v5.66: Proper RTC attribute definition for ESP32.
@@ -592,7 +598,13 @@ extern portMUX_TYPE
 
 void rtcRead(void *pvParameters);
 
+#include <rom/rtc.h>
+
 // Function Prototypes
+void progressCallBack(size_t currSize, size_t totalSize);
+void print_reset_reason(RESET_REASON reason);
+void ULP_COUNTING(uint32_t us);
+void get_chip_id();
 void initialize_hw();
 bool initBME();
 void set_rtc_time();

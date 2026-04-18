@@ -149,10 +149,15 @@ void start_deep_sleep() {
       gpio_deep_sleep_hold_en();
   }
 
+  int sleep_seconds;
+#if DEMO_MODE == 1
+  // v5.85: Force 120s (2 min) sleep for high-frequency Demo telemetry
+  sleep_seconds = 120;
+  debugln("[DEMO] Fast-Track: Shortened sleep (120s) active.");
+#else
   // Calculate time to sleep to target the NEXT exact 15-minute boundary
   // We calculate in SECONDS for precision using the live hardware read
   int next_boundary_min = ((live_min / 15) + 1) * 15;
-  int sleep_seconds;
 
   // Handle hour rollover (e.g., 59 minutes -> next hour at 0 minutes)
   // v7.89: Reverted to +30s offset for maximum stability.
@@ -162,6 +167,7 @@ void start_deep_sleep() {
     sleep_seconds =
         (next_boundary_min * 60) - (live_min * 60 + live_sec) + 15; // v5.65 fix
   }
+#endif
 
   // Safety bounds: 1 minute minimum, 20 minutes maximum
   if (sleep_seconds < 60) {

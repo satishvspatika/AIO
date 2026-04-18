@@ -316,3 +316,45 @@ async def health(request: Request, db: Session = Depends(get_db)):
             media_type="application/json",
             headers={"Content-Length": str(len(content))}
         )
+
+@router.post("/demo_ksndmc")
+async def demo_ksndmc(request: Request):
+    try:
+        body = await request.body()
+        body_str = body.decode("utf-8")
+        print(f"[DEMO] Raw Body received: {body_str}")
+
+        # Safely extract payload manually to prevent `parse_qs` from destroying Base64 `+` signs!
+        payload = ""
+        if "payload=" in body_str:
+            payload = body_str.split("payload=")[1].strip()
+        if not payload:
+            return Response("Missing payload", status_code=400)
+            
+        import base64
+        from Crypto.Cipher import AES
+        from Crypto.Util.Padding import unpad
+        
+        DEMO_KEY = b"1234567890123456"
+        encrypted_bytes = base64.b64decode(payload)
+        cipher = AES.new(DEMO_KEY, AES.MODE_ECB)
+        decrypted_padded_bytes = cipher.decrypt(encrypted_bytes)
+        try:
+            decrypted_bytes = unpad(decrypted_padded_bytes, AES.block_size, style='pkcs7')
+            decrypted_str = decrypted_bytes.decode('utf-8')
+        except Exception:
+            # Fallback if no padding was used
+            decrypted_str = decrypted_padded_bytes.decode('utf-8')
+        
+        print("\n" + "="*55)
+        print("    🔒 DEMO: AES-128 RECEIVED VIA HTTPS(TLS) TUNNEL")
+        print("="*55)
+        print(f"Encrypted (Base64) : {payload}")
+        print("-" * 50)
+        print(f"Decrypted (AES-128): {decrypted_str}")
+        print("="*50 + "\n")
+        
+        return Response("SUCCESS: AES-128 DECRYPTED OVER HTTPS TUNNEL\n", status_code=200)
+    except Exception as e:
+        print(f"[DEMO] Error in decryption: {e}")
+        return Response(f"Error: {e}", status_code=500)

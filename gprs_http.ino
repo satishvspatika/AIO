@@ -1,10 +1,12 @@
 #include "globals.h"
 
 void prepare_data_and_send() {
+  // int success_count = 0; // v5.85: REMOVED SHADOWING - Use global success_count
+  bool tcp_zombie = false;
 
   // v5.65 P0: Range guard for server configuration index
   if (http_no < 0 || http_no >= (int)(sizeof(httpSet) / sizeof(httpSet[0]))) {
-    debugf("[HTTP] FATAL: http_no out of range (%d). Aborting send.\n", http_no);
+    debugf("[HTTPS] FATAL: http_no out of range (%d). Aborting send.\n", http_no);
     return;
   }
 
@@ -19,9 +21,9 @@ void prepare_data_and_send() {
   // http_no = -1 is set by setup() when UNIT doesn't match any known branch.
   const int httpSet_count = (int)(sizeof(httpSet) / sizeof(httpSet[0]));
   if (http_no < 0 || http_no >= httpSet_count) {
-    debugln("[HTTP] FATAL: http_no out of range. UNIT/SYSTEM not configured!");
+    debugln("[HTTPS] FATAL: http_no out of range. UNIT/SYSTEM not configured!");
     debugln(
-        "[HTTP] Check UNIT and SYSTEM defines in globals.h. Aborting send.");
+        "[HTTPS] Check UNIT and SYSTEM defines in globals.h. Aborting send.");
     success_count = 0;
     return;
   }
@@ -122,7 +124,7 @@ void prepare_data_and_send() {
                    &temp_sampleNo, &temp_year, &temp_month, &temp_day, &temp_hr,
                    &temp_min, &temp_instrf, &temp_crf, &temp_sig, &temp_bat);
   if (res < 10) {
-    debugln("[HTTP] ERROR: sscanf parse failed (TRG). Skipping record.");
+    debugln("[HTTPS] ERROR: sscanf parse failed (TRG). Skipping record.");
     success_count = 2;
     return;
   }
@@ -134,7 +136,7 @@ void prepare_data_and_send() {
       &temp_sampleNo, &temp_year, &temp_month, &temp_day, &temp_hr, &temp_min,
       &temp_temp, &temp_hum, &temp_avg_ws, &temp_dir, &temp_sig, &temp_bat);
   if (res < 12) {
-    debugln("[HTTP] ERROR: sscanf parse failed (TWS). Skipping record.");
+    debugln("[HTTPS] ERROR: sscanf parse failed (TWS). Skipping record.");
     success_count = 2;
     return;
   }
@@ -147,7 +149,7 @@ void prepare_data_and_send() {
                    &temp_min, &temp_crf, &temp_temp, &temp_hum, &temp_avg_ws,
                    &temp_dir, &temp_sig, &temp_bat);
   if (res < 13) {
-    debugln("[HTTP] ERROR: sscanf parse failed (TWS-RF). Skipping record.");
+    debugln("[HTTPS] ERROR: sscanf parse failed (TWS-RF). Skipping record.");
     success_count = 2;
     return;
   }
@@ -206,7 +208,7 @@ void prepare_data_and_send() {
   // show a clear LCD message so the user knows the unit is in fresh-start mode.
   if (temp_year == 0) {
     debugln(
-        "[HTTP] ⚠ Bogus date detected (year=0). Skipping HTTP — fresh "
+        "[HTTPS] ⚠ Bogus date detected (year=0). Skipping HTTP — fresh "
         "start or DELETE DATA reboot. Waiting for first valid 15-min slot.");
     snprintf(ui_data[FLD_SEND_STATUS].bottomRow,
              sizeof(ui_data[FLD_SEND_STATUS].bottomRow), "YES ?           ");
@@ -355,9 +357,56 @@ void prepare_data_and_send() {
   }
 #endif
 
+#if DEMO_MODE == 1 && SYSTEM == 0
+  if (strstr(UNIT, "KSNDMC_TRG")) {
+      debugln("\n==========================================");
+      debugln("  🔒 DEMO: AES-128 + HTTPS(TLS) ACTIVE");
+      debugln("==========================================");
+      debug("Original  : ");
+      debugln(http_data);
+      
+      size_t len = strlen(http_data);
+      size_t padded_len = ((len / 16) + 1) * 16;
+      unsigned char padded_input[padded_len];
+      memset(padded_input, 0, padded_len);
+      memcpy(padded_input, http_data, len);
+      
+      // PKCS#7 padding
+      unsigned char pad_val = padded_len - len;
+      for(size_t i = len; i < padded_len; i++) {
+          padded_input[i] = pad_val;
+      }
+      
+      mbedtls_aes_context aes;
+      mbedtls_aes_init(&aes);
+      mbedtls_aes_setkey_enc(&aes, (const unsigned char*)DEMO_AES_KEY, 128);
+      
+      unsigned char encrypted[padded_len];
+      for (size_t i = 0; i < padded_len; i += 16) {
+          mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, padded_input + i, encrypted + i);
+      }
+      mbedtls_aes_free(&aes);
+      
+      size_t b64_len = 0;
+      mbedtls_base64_encode(NULL, 0, &b64_len, encrypted, padded_len);
+      unsigned char b64_output[b64_len + 1];
+      mbedtls_base64_encode(b64_output, sizeof(b64_output), &b64_len, encrypted, padded_len);
+      b64_output[b64_len] = '\0';
+      
+      snprintf(http_data, sizeof(http_data), "payload=%s", (char*)b64_output);
+      debug("Encrypted : ");
+      debugln(http_data);
+      debugln("========================================\n");
+  } else {
+      debug("http_data format is ");
+      debugln(http_data);
+      debugln();
+  }
+#else
   debug("http_data format is ");
   debugln(http_data);
   debugln();
+#endif
 
   // v5.83 Elite Polish: Only audit DNS if the endpoint is a domain name
   bool is_domain = false;
@@ -391,21 +440,24 @@ void prepare_data_and_send() {
   if (isAirtelOrJio && data_mode == eUnsentData) {
     // M2M SIM backlog: Skip Fast, jump straight to Robust.
     // Fast always times out on M2M SIMs after a session rebuild/zombie state.
-    debugln("[HTTP] Airtel/Jio backlog: using Robust direct.");
+    debugln("[HTTPS] Airtel/Jio backlog: using Robust direct.");
     success_count = send_at_cmd_data(http_data, true);
   } else {
     // Current data (all carriers) or Backlog for BSNL: Fast -> Fast -> Robust
     success_count = send_at_cmd_data(http_data, false);
+    if (success_count == -1) goto fail_handling; // v12: Atomic Abort
+    
     if (success_count == 0) {
-      debugln("[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt "
-              "2)...");
+      debugln("[HTTPS] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt 2)...");
       vTaskDelay(2000 / portTICK_PERIOD_MS);
       success_count = send_at_cmd_data(http_data, false);
+      if (success_count == -1) goto fail_handling; // v12: Atomic Abort
+
       if (success_count == 0) {
-        debugln("[HTTP] 2nd Attempt (Fast) also failed. Falling back to Robust "
-                "method...");
+        debugln("[HTTPS] 2nd Attempt (Fast) also failed. Falling back to Robust method...");
         vTaskDelay(2000 / portTICK_PERIOD_MS);
         success_count = send_at_cmd_data(http_data, true);
+        if (success_count == -1) goto fail_handling; // v12: Atomic Abort
       }
     }
   }
@@ -467,13 +519,13 @@ void prepare_data_and_send() {
 
     if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
       debugln(
-          "[HTTP] Attempt 1 failed. Re-initialising stack for single retry...");
+          "[HTTPS] Attempt 1 failed. Re-initialising stack for single retry...");
       xSemaphoreGive(serialMutex);
     }
     esp_task_wdt_reset();
 
     // v5.58: Hard-Kill 706/714 TCP Zombie Guard (Airtel Fix)
-    bool tcp_zombie = (strcmp(diag_http_fail_reason, "706") == 0 ||
+    tcp_zombie = (strcmp(diag_http_fail_reason, "706") == 0 ||
                        strcmp(diag_http_fail_reason, "713") == 0 ||
                        strcmp(diag_http_fail_reason, "714") == 0 ||
                        strcmp(diag_http_fail_reason, "TIMEOUT") == 0);
@@ -483,7 +535,7 @@ void prepare_data_and_send() {
 
     if (tcp_zombie) {
       if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-        debugln("[HTTP] TCP Zombie (706/714) detected. Executing Hard Bearer "
+        debugln("[HTTPS] TCP Zombie (706/714) detected. Executing Hard Bearer "
                 "Nuke...");
         xSemaphoreGive(serialMutex);
       }
@@ -530,6 +582,13 @@ void prepare_data_and_send() {
       waitForResponse("OK", 1000);
 
       flushSerialSIT(); // Clear stale UART bytes before HTTPINIT
+      
+      // v5.85 Final v11: The Heavyweight (3s Guard Delay)
+      debugln("[HTTPS] Clearing stale HTTP sessions (3s Guard)...");
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 2000); 
+      vTaskDelay(3000 / portTICK_PERIOD_MS); // Mandatory breather
+      flushSerialSIT();
 
       SerialSIT.println("AT+HTTPINIT");
       if (waitForResponse("OK", 5000)) {
@@ -537,6 +596,62 @@ void prepare_data_and_send() {
         // Restore all parameters
         SerialSIT.println("AT+HTTPPARA=\"CID\",1"); // v5.58: Hard-lock
         waitForResponse("OK", 1000);
+
+#if DEMO_MODE == 1
+        if (strstr(httpPostRequest, "https://")) {
+            char host[128];
+            memset(host, 0, sizeof(host));
+            const char *start = strstr(DEMO_HTTPS_URL, "://");
+            
+            // v5.85 Final v11: 600s Hyper-Negotiation + Single Cipher strike
+            flushSerialSIT();
+            SerialSIT.println("AT+CSSLCFG=\"sslversion\",0,2");
+            waitForResponse("OK", 1000);
+            
+            // Lock to SINGLE fast cipher (ECDHE-RSA-AES128-GCM-SHA256)
+            SerialSIT.println("AT+CSSLCFG=\"ciphersuites\",0,\"0xC02F\""); 
+            waitForResponse("OK", 1000);
+            
+            SerialSIT.println("AT+CSSLCFG=\"fragment\",0,1"); 
+            waitForResponse("OK", 1000);
+            SerialSIT.println("AT+CSSLCFG=\"ignorertctime\",0,1");
+            waitForResponse("OK", 1000);
+            SerialSIT.println("AT+CSSLCFG=\"negotiatetime\",0,600");
+            waitForResponse("OK", 1000);
+            SerialSIT.println("AT+HTTPPARA=\"SSLCFG\",0");
+            waitForResponse("OK", 2000);
+
+            if (start) {
+                start += 3;
+                char *end = (char *)strchr(start, '/');
+                if (end) {
+                    size_t host_len = end - start;
+                    if (host_len < sizeof(host)) {
+                        memcpy(host, start, host_len);
+                    }
+                } else {
+                    strncpy(host, start, sizeof(host)-1);
+                }
+
+                vTaskDelay(2000 / portTICK_PERIOD_MS); // Settle
+
+                if (strlen(host) > 0) {
+                    SerialSIT.println("AT+CSSLCFG=\"enableSNI\",0,1");
+                    waitForResponse("OK", 1000);
+                    SerialSIT.print("AT+CSSLCFG=\"sni\",0,");
+                    SerialSIT.println(host);
+                    waitForResponse("OK", 1000);
+                }
+            }
+            
+            SerialSIT.println("AT+HTTPPARA=\"UA\",\"AIO9/1\"");
+            waitForResponse("OK", 1000);
+            SerialSIT.println("AT+HTTPPARA=\"HTTPSREDIRECTION\",1");
+            waitForResponse("OK", 1000);
+            SerialSIT.println("AT+HTTPPARA=\"CUSTOMHEADER\",\"ngrok-skip-browser-warning: 1\"");
+            waitForResponse("OK", 1000);
+        }
+#endif
 
         SerialSIT.println(httpPostRequest);
         waitForResponse("OK", 1000);
@@ -553,7 +668,7 @@ void prepare_data_and_send() {
         waitForResponse("OK", 1000);
 
         if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-          debugln("[HTTP] Retry attempt...");
+          debugln("[HTTPS] Retry attempt...");
           xSemaphoreGive(serialMutex);
         }
         // rate on weak/noisy networks, as this is already a retry cycle.
@@ -584,19 +699,24 @@ void prepare_data_and_send() {
             diag_http_retry_count++; // v7.86
           }
           if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-            debugln("[HTTP] Retry succeeded.");
+            debugln("[HTTPS] Retry succeeded.");
             xSemaphoreGive(serialMutex);
           }
         }
       } else {
         if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-          debugln("[HTTP] HTTPINIT failed on retry. Skipping to backlog.");
+          debugln("[HTTPS] HTTPINIT failed on retry. Skipping to backlog.");
           xSemaphoreGive(serialMutex);
         }
       }
     } // End of verify_bearer_or_recover else block
 
   fail_handling:
+    if (success_count == -1) {
+        // v12: Poison Pill Abort - return to caller so it can release mutex and cycle
+        debugln("[HTTPS] Poison Pill received. Aborting current attempt.");
+        return; 
+    }
     if (success_count == 0) { // Complete failure
       last_http_ok =
           false; // v5.84: Failure recorded - force full check next slot
@@ -610,6 +730,18 @@ void prepare_data_and_send() {
       }
 
       diag_consecutive_http_fails++;
+
+      // v5.85 Final Lockdown: Weak Signal Recovery Protocol (-111 dBm Guard)
+      // If we fail 3 times in a row, the radio stack is likely zombied by the tower.
+      // Physical silicon reset via GPIO 26 (AIO9 Main Power Rail).
+      if (diag_consecutive_http_fails >= 3) {
+          debugln("[GPRS] [CRIT] 3 Successive Fails at -111 dBm. EMERGENCY MODEM POWER CYCLE (GPIO 26)...");
+          digitalWrite(26, LOW);
+          vTaskDelay(3000 / portTICK_PERIOD_MS);
+          digitalWrite(26, HIGH);
+          diag_consecutive_http_fails = 0; // Reset counter for fresh boot
+          // We don't return here — we let it store to backlog and the next wake will be fresh.
+      }
       diag_daily_http_fails++;
       if (data_mode == eCurrentData) {
         // v7.70: Monthly cum reset logic (Robust: any day of new month triggers
@@ -618,7 +750,7 @@ void prepare_data_and_send() {
           diag_http_cum_fails = 0;
           diag_cum_fail_reset_month = current_month;
           debugln(
-              "[HTTP] Monthly cum fail counter reset (New Month detected).");
+              "[HTTPS] Monthly cum fail counter reset (New Month detected).");
         }
         diag_http_present_fails++;
         diag_http_cum_fails++;
@@ -753,7 +885,7 @@ void prepare_data_and_send() {
                     "(TWS)");
           }
         } else {
-          debugln("[HTTP] Record already in FTP backlog. Skipping duplicate.");
+          debugln("[HTTPS] Record already in FTP backlog. Skipping duplicate.");
         }
 #endif
 
@@ -783,7 +915,7 @@ void prepare_data_and_send() {
                     "(TWS-RF)");
           }
         } else {
-          debugln("[HTTP] Record already in FTP backlog. Skipping duplicate.");
+          debugln("[HTTPS] Record already in FTP backlog. Skipping duplicate.");
         }
 #endif
       } // closes if(data_mode == eCurrentData)
@@ -803,6 +935,7 @@ void send_http_data() {
   // Clear any stale TCP errors from previous runs to prevent false-positive
   // network nuke loops
   diag_http_fail_reason[0] = '\0';
+  success_count = 0; // v5.85: Reset status before transmission cycle
 
   const char *charArray;
   /*
@@ -821,6 +954,7 @@ void send_http_data() {
     }
   }
 
+#if DEMO_MODE != 1
   // v5.55: PREPARE URL (Zero-Gap Prep)
   // Logic: Use static IP from globals.h if DNS is problematic or if first
   // attempt fails.
@@ -834,7 +968,30 @@ void send_http_data() {
            httpSet[http_no].Port, httpSet[http_no].Link);
 
   debugf("[GPRS] Prepared URL: %s\n", httpPostRequest);
+#else
+  char fallbackUrl[150] = {0};
+#endif
 
+#if DEMO_MODE == 1 && SYSTEM == 0
+  if (true) {
+      if (strlen(DEMO_HTTPS_URL) > 5) {
+          snprintf(httpPostRequest, sizeof(httpPostRequest),
+                   "AT+HTTPPARA=\"URL\",\"%s\"", DEMO_HTTPS_URL);
+          snprintf(fallbackUrl, sizeof(fallbackUrl),
+                   "AT+HTTPPARA=\"URL\",\"%s\"", DEMO_HTTPS_URL);
+          is_ip_format = true; // Set to true to LOCK the URL and prevent bottom-file fallback override
+          debugln("[DEMO] A7672S TrustZone: Native HTTPS/TLS routing active.");
+          debugf("[DEMO] Override Target: %s\n", DEMO_HTTPS_URL);
+      } else {
+          snprintf(httpPostRequest, sizeof(httpPostRequest),
+                   "AT+HTTPPARA=\"URL\",\"http://%s:80/demo_ksndmc\"", HEALTH_SERVER_IP);
+          snprintf(fallbackUrl, sizeof(fallbackUrl),
+                   "AT+HTTPPARA=\"URL\",\"http://%s:80/demo_ksndmc\"", HEALTH_SERVER_IP);
+          is_ip_format = true;
+          debugln("[DEMO] Fallback: TCP (No SSL tunnel provided).");
+      }
+  }
+#endif
   // Ensure PDP context is active before doing DNS lookups or HTTP
   SerialSIT.println("AT+CGACT?");
   if (waitForResponse("OK", 3000)) {
@@ -842,7 +999,8 @@ void send_http_data() {
     snprintf(target, sizeof(target), "+CGACT: %d,1", active_cid);
     if (strstr(modem_response_buf, target) == NULL) {
       debugln("[GPRS] PDP context inactive. Activating for DNS/HTTP...");
-      SerialSIT.printf("AT+CGACT=1,%d\n", active_cid);
+      SerialSIT.print("AT+CGACT=1,");
+      SerialSIT.println(active_cid);
       waitForResponse("OK", 10000);
     }
   }
@@ -852,7 +1010,8 @@ void send_http_data() {
   // slot v5.75: Tightened to > 1 slot. Airtel/Jio can drop idle bearers in < 15
   // mins.
   if (!last_http_ok || (abs(sampleNo - last_http_ok_slot) > 1)) {
-    SerialSIT.printf("AT+CGPADDR=%d\n", active_cid);
+    SerialSIT.print("AT+CGPADDR=");
+    SerialSIT.println(active_cid);
     if (waitForResponse("OK", 3000)) {
        if (strstr(modem_response_buf, "0.0.0.0") != NULL || strstr(modem_response_buf, "+CGPADDR") == NULL) {
           debugln("[GPRS] Ghost PDP (0.0.0.0). Triggering recovery...");
@@ -958,7 +1117,19 @@ void send_http_data() {
     snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CGACT=1,%d",
              clean_target);
     SerialSIT.println(gprs_xmit_buf);
-    waitForResponse("OK", 12000);
+    if (!waitForResponse("OK", 12000)) {
+        if (strstr(modem_response_buf, "+CME ERROR:") != NULL) {
+            debugln("[GPRS] PDP Activation failed (+CME ERROR). Resetting stack...");
+            SerialSIT.println("AT+CIPSHUT");
+            waitForResponse("SHUT OK", 4000);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            SerialSIT.println(gprs_xmit_buf);
+            if (waitForResponse("OK", 12000)) {
+                debugln("[GPRS] [STABILITY] PDP Active. Settling internal routing (3s)...");
+                vTaskDelay(3000 / portTICK_PERIOD_MS);
+            }
+        }
+    }
     // diag_consecutive_http_fails = 0; // Don't reset -- only reset on success
   }
   // snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), ...); // Prepared in
@@ -970,6 +1141,18 @@ void send_http_data() {
   // (Deliberate Roadmap Exception N-8: TERM is handled in retry block at line
   // 814)
   vTaskDelay(50 / portTICK_PERIOD_MS);
+  flushSerialSIT();
+
+  // v5.85 Final: Weak Signal TCP Tuning
+  // Extend retransmission budgets to prevent zombies on high-ping -111dBm lines.
+  SerialSIT.println("AT+CIPTIMEOUT=60000,60000,60000");
+  waitForResponse("OK", 2000);
+
+  // [713 Guard] Proactively nuke any stale/zombie sessions from previous failed attempts
+  debugln("[HTTPS] Clearing stale HTTP sessions (713 Guard)...");
+  SerialSIT.println("AT+HTTPTERM");
+  waitForResponse("OK", 1000); // Ignore Error if already closed
+  vTaskDelay(500 / portTICK_PERIOD_MS);
   flushSerialSIT();
 
   SerialSIT.println("AT+HTTPINIT");
@@ -991,10 +1174,145 @@ void send_http_data() {
   SerialSIT.println("AT+HTTPPARA=\"CID\",1");
   waitForResponse("OK", 1000);
 
+#if DEMO_MODE == 1
+  // A7672S TrustZone: Hardened SSL/TLS Handshake for Cloud Tunnels (Ngrok/Cloudflare)
+  if (strstr(httpPostRequest, "https://")) {
+      char host[128];
+      memset(host, 0, sizeof(host));
+      const char *start = strstr(DEMO_HTTPS_URL, "://");
+      if (start) {
+          start += 3;
+          const char *end = strchr(start, '/');
+          if (end) {
+              size_t host_len = end - start;
+              if (host_len < sizeof(host)) {
+                  memcpy(host, start, host_len);
+              }
+          } else {
+              strncpy(host, start, sizeof(host)-1);
+          }
+      }
+
+      // v5.85 Bulletproof Sequence Start: TERM -> INIT -> SSL -> URL
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 1000);
+      SerialSIT.println("AT+HTTPINIT");
+      waitForResponse("OK", 1000);
+
+      // v5.85: Force IPv4 Audit
+      SerialSIT.println("AT+CGPADDR=1");
+      waitForResponse("OK", 1000);
+
+      // v5.85: Force Bearer Audit (IPv4 verification)
+      SerialSIT.println("AT+CGPADDR=1");
+      if (waitForResponse("OK", 1000)) {
+          debugf("[GPRS] Bearer Audit: %s\n", modem_response_buf);
+      }
+      
+      // v5.85 Final: Bearer Stability Verification (Ensures session is anchored)
+      debugln("[GPRS] Waiting for Bearer Stability...");
+      for(int b=0; b<3; b++) {
+          SerialSIT.println("AT+CGACT?");
+          if (waitForResponse("OK", 1000)) {
+              if (strstr(modem_response_buf, ",1") != NULL) {
+                  debugln("[GPRS] Bearer Anchored Successfully.");
+                  break;
+              }
+          }
+          vTaskDelay(1000 / portTICK_PERIOD_MS);
+      }
+
+      // v5.85 Final: Modem Time Injection (Prevents Cert Validation 715 Hangs)
+      debugln("[HTTPS] Syncing Modem Clock with RTC...");
+      char time_cmd[64];
+      // AT+CCLK="yy/mm/dd,hh:mm:ss+tz" (Using +22 for IST 5:30 offset)
+      snprintf(time_cmd, sizeof(time_cmd), "AT+CCLK=\"%02d/%02d/%02d,%02d:%02d:%02d+22\"",
+               current_year % 100, current_month, current_day, current_hour, current_min, current_sec);
+      SerialSIT.println(time_cmd);
+      waitForResponse("OK", 1000);
+      
+      // v5.85: IPv4 PRIORITY (Fix for 715 Handshake Hangs)
+      SerialSIT.println("AT+CDNSCFG=3,1"); // Force IPv4 Priority to bypass unstable IPv6 tunnels
+      waitForResponse("OK", 1000);
+      debugln("[HTTPS] Forcing IPv4 Priority for SSL Handshake...");
+
+      debugln("[HTTPS] Entering V8 Slim-Protocol sequence...");
+      flushSerialSIT();
+
+      // 1. v5.85 Final v11: Restricted Single-Cipher Lockdown
+      SerialSIT.println("AT+CSSLCFG=\"sslversion\",0,2");
+      waitForResponse("OK", 1000);
+      SerialSIT.println("AT+CSSLCFG=\"fragment\",0,1");
+      waitForResponse("OK", 1000);
+
+      // Force SINGLE high-speed GCM cipher (0xC02F)
+      SerialSIT.println("AT+CSSLCFG=\"ciphersuites\",0,\"0xC02F\"");
+      waitForResponse("OK", 1000);
+
+      // 1b. Ignore RTC Time
+      SerialSIT.println("AT+CSSLCFG=\"ignorertctime\",0,1");
+      waitForResponse("OK", 500);
+
+      // 1c. Hyper-Negotiation Timeout (v12: 300s optimized for 2G/LTE mix)
+      SerialSIT.println("AT+CSSLCFG=\"negotiatetime\",0,300");
+      waitForResponse("OK", 1000);
+
+      // 1d. Buffer Expansion (v5.82 Golden Master)
+      SerialSIT.println("AT+CSSLCFG=\"ssloutsize\",0,2048");
+      waitForResponse("OK", 500);
+
+      // 1e. IPv4 DNS Resilience
+      SerialSIT.println("AT+CDNSCFG=8,\"8.8.8.8\",\"8.8.4.4\"");
+      waitForResponse("OK", 1000);
+      
+      // 2. Disable ALL Verification (Ultra-Hardened for Handshake 715)
+      SerialSIT.println("AT+CSSLCFG=\"authmode\",0,0");
+      waitForResponse("OK", 500);
+      SerialSIT.println("AT+CSSLCFG=\"seclevel\",0,0"); // Disable chain checks
+      waitForResponse("OK", 500);
+      SerialSIT.println("AT+CSSLCFG=\"ignorecertchain\",0,1"); // v5.85 Extension
+      waitForResponse("OK", 500);
+      SerialSIT.println("AT+CSSLCFG=\"check_identify\",0,0"); // Disable hostname check
+      waitForResponse("OK", 500);
+      
+      // 4. Bind SSL Context 0
+      SerialSIT.println("AT+HTTPPARA=\"SSLCFG\",0");
+      waitForResponse("OK", 2000);
+
+      // 5. SNI Host Injection (NO QUOTES)
+      if (strlen(host) > 0) {
+          SerialSIT.println("AT+CSSLCFG=\"enableSNI\",0,1");
+          waitForResponse("OK", 1000);
+          SerialSIT.print("AT+CSSLCFG=\"sni\",0,");
+          SerialSIT.println(host);
+          waitForResponse("OK", 1000);
+      }
+      
+      flushSerialSIT();
+      vTaskDelay(2000 / portTICK_PERIOD_MS); // v8 Settle Period
+
+      
+      // 6. Set UA, Redirects and NGROK BYPASS (MUST BE BEFORE URL)
+      SerialSIT.println("AT+HTTPPARA=\"UA\",\"AIO9/1\"");
+      waitForResponse("OK", 1000);
+      SerialSIT.println("AT+HTTPPARA=\"HTTPSREDIRECTION\",1");
+      waitForResponse("OK", 1000);
+      SerialSIT.println("AT+HTTPPARA=\"CUSTOMHEADER\",\"ngrok-skip-browser-warning: 1\"");
+      waitForResponse("OK", 1000);
+
+      // 7. SET URL NOW (The Final Trigger)
+      debugf("[HTTPS] Setting Target URL: %s\n", httpPostRequest);
+      SerialSIT.println(httpPostRequest);
+      waitForResponse("OK", 1000);
+  }
+#endif
+
+#if DEMO_MODE == 0
   // v5.55: Re-send URL immediately before context variables to lock session
-  // (Rule 48 alignment)
+  // (Rule 48 alignment) - Strictly bypassed in Demo mode to avoid overwriting tunnel URL.
   SerialSIT.println(httpPostRequest);
   waitForResponse("OK", 1000);
+#endif
 
   SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
   waitForResponse("OK", 1000);
@@ -1016,8 +1334,13 @@ void send_http_data() {
   debugln();
   debugln("*********  STARTING TO SEND HTTP ... ***********");
   debugln();
+  success_count = 0;
   data_mode = eCurrentData; // Set the data mode
   prepare_data_and_send();
+  
+  if (success_count == -1) {
+      goto demo_cleanup; // v5.85: Exit immediately on hardware reset
+  }
 
   if (success_count == 1) { // Success in sending current data ... Continue
     // Update internal persistent markers for 'Last Logged'
@@ -1378,6 +1701,9 @@ void send_http_data() {
 #if (SYSTEM == 1 || SYSTEM == 2)
   // v5.49 Build 5: INDEPENDENT FTP TRIGGER
   // Decoupled from HTTP Success. FTP serves as the robust rescue layer.
+  int success_count = 0;
+  bool tcp_zombie = false;
+  
   if (gprs_mode == eGprsSignalOk && (signal_lvl > -96)) {
     // v5.68 FIX: UART Race Condition Prevented. If the user queued a manual
     // LCD command during the HTTP HTTP-Fill, skip the massive FTP job
@@ -1404,6 +1730,9 @@ void send_http_data() {
     sync_mode = eHttpStop;
     portEXIT_CRITICAL(&syncMux);
   }
+  
+demo_cleanup:
+  xSemaphoreGive(modemMutex); // v5.85: RELEASE MUTEX (Resolves hang)
 } // end of send_http_data
 
 void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
@@ -1777,7 +2106,7 @@ int send_at_cmd_data(char *payload, bool robust) {
   uint32_t start_time = millis();
   strcpy(diag_http_fail_reason, "NONE"); // v5.81 Surgical: Clear stale context
   if (!http_ready) {
-    debugln("[HTTP] HTTP session not ready. Fast-fail to backlog.");
+    debugln("[HTTPS] HTTP session not ready. Fast-fail to backlog.");
     return 0;
   }
   int i = strlen(payload);
@@ -1789,10 +2118,10 @@ int send_at_cmd_data(char *payload, bool robust) {
   if (robust) {
     // Robust mode for weak-signal or strict towers (BSNL, etc.)
     snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,5000", i);
-    debugln("[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...");
+    debugln("[HTTPS] Using Robust Handshake (Wait for DOWNLOAD)...");
     SerialSIT.println(cmd_buf);
     if (!waitForResponse("DOWNLOAD", 10000)) {
-      debugln("[HTTP] AT+HTTPDATA failed (Missing DOWNLOAD).");
+      debugln("[HTTPS] AT+HTTPDATA failed (Missing DOWNLOAD).");
       flushSerialSIT();
       return 0;
     }
@@ -1807,7 +2136,7 @@ int send_at_cmd_data(char *payload, bool robust) {
     // late, we need enough of the 3000ms window remaining to clock the payload
     // JSON.
     snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,3000", i);
-    debugln("[HTTP] Using Fast v3.0 Handshake...");
+    debugln("[HTTPS] Using Fast v3.0 Handshake...");
     SerialSIT.println(cmd_buf);
     waitForResponse("DOWNLOAD", 1500);
 
@@ -1817,26 +2146,22 @@ int send_at_cmd_data(char *payload, bool robust) {
 
   // Fire Action
   SerialSIT.println("AT+HTTPACTION=1");
-  if (!waitForResponse("+HTTPACTION:", 25000)) {
+  int h_timeout = (DEMO_MODE == 1) ? 120000 : 25000; // v5.85: Long wait for SSL Handshake
+  if (!waitForResponse("+HTTPACTION:", h_timeout)) {
      strncpy(diag_http_fail_reason, "TIMEOUT", sizeof(diag_http_fail_reason)-1);
-     debugln("[HTTP] HTTPACTION timed out — no URC received from modem.");
+     debugln("[HTTPS] HTTPACTION timed out — no URC received from modem.");
      return 0;
   }
 
   const char* response = strstr(modem_response_buf, "+HTTPACTION:");
   if (response == NULL) {
-     debugln("[HTTP] HTTPACTION missing from modem buffer. Aborting.");
+     debugln("[HTTPS] HTTPACTION missing from modem buffer. Aborting.");
      return 0;
   }
-  debugf("[HTTP] Response of AT+HTTPACTION=1 is: %s\n", response);
+  debugf("[HTTPS] Response of AT+HTTPACTION=1 is: %s\n", response);
 
-  if (strstr(response, "200") == NULL && strstr(response, "201") == NULL &&
-      strstr(response, "202") == NULL) {
+  if (strstr(response, "200") == NULL && strstr(response, "201") == NULL && strstr(response, "202") == NULL) {
     // v5.45: Extract error code from +HTTPACTION: prefix ONLY.
-    // Old method searched the whole buffer from comma1[INFO]comma2, which picked
-    // up commas inside +CGEV: ME PDN ACT 8,0 URCs that rode in on the same
-    // buffer, producing corrupt strings like "0\n\n+CGEV: ME PDN ACT 8" as
-    // the code.
     const char* ha_ptr = strstr(response, "+HTTPACTION:");
     if (ha_ptr != NULL) {
       const char* c1 = strchr(ha_ptr, ',');
@@ -1850,30 +2175,30 @@ int send_at_cmd_data(char *payload, bool robust) {
       }
     }
 
-    if (strstr(response, "706") != NULL || strstr(response, "713") != NULL ||
-        strstr(response, "714") != NULL || strstr(response, "601") != NULL) {
+    if (strstr(response, "715") != NULL || strstr(response, "713") != NULL || 
+        strstr(response, "706") != NULL || strstr(response, "601") != NULL) {
       
       diag_http_zombie_count++;
-      debugf("HTTP Zombie Error (%s). Count: %d/3. Clean stack requested.\n", diag_http_fail_reason, diag_http_zombie_count);
+      debugf("HTTP Zombie Error (%s). Count: %d/3.\n", diag_http_fail_reason, diag_http_zombie_count);
       
-      SerialSIT.println("AT+HTTPTERM");
-      waitForResponse("OK", 2000);
-
-      // v5.82 Surgical Hardening (Phase 4):
-      // On legacy boards, a 706 TCP Zombie often requires an immediate stack reset
-      // rather than waiting for 3 fails.
-      debugln("[CRIT] TCP Zombie detected. Nuking bearer for fresh IP...");
-      SerialSIT.println("AT+CIPSHUT");
-      waitForResponse("SHUT OK", 3000);
-      SerialSIT.println("AT+CGACT=0,1");
-      waitForResponse("OK", 1000);
-      http_ready = false; // Housekeeping: State follows destroyed stack
-      vTaskDelay(2000 / portTICK_PERIOD_MS); 
-
       if (diag_http_zombie_count >= 3) {
-         debugln("[CRIT] Persistent Zombie detected. Triggering Radio Refresh...");
-         diag_http_zombie_count = 0;
-         verify_bearer_or_recover(); // Triggers radio refresh internally if APN fails
+          // v5.85 Final v12: The Nuclear Power Cycle (Only after persistent failure)
+          debugln("[GPRS] [CRIT] Persistent Zombie. PHYSICAL MODEM POWER CYCLE (GPIO 26)...");
+          
+          SerialSIT.println("AT+HTTPTERM");
+          waitForResponse("OK", 2000);
+
+          // Kill physical power
+          digitalWrite(26, LOW); 
+          vTaskDelay(3000 / portTICK_PERIOD_MS); // Discharge wait
+          digitalWrite(26, HIGH); // Power Back On
+          
+          http_ready = false;
+          diag_http_zombie_count = 0; // Reset for next attempt
+          return -1; // v12: Poison Pill code triggers task abort
+      } else {
+          debugln("[GPRS] Zombie suspected. Attempting soft recovery in next slot.");
+          return 0;
       }
     } else {
       diag_http_zombie_count = 0; // Reset on other errors
@@ -1900,7 +2225,7 @@ int send_at_cmd_data(char *payload, bool robust) {
   }
   
   const char* final_resp = modem_response_buf;
-  debugf("[HTTP] Final Response Body snippet: %s\n", final_resp);
+  debugf("[HTTPS] Final Response Body snippet: %s\n", final_resp);
 
   // v6.75: Advanced Response Parsing
   // SerialSIT says: OK\r\n\r\n+HTTPREAD: <size>\r\n<PAYLOAD>\r\nOK
@@ -1928,6 +2253,7 @@ int send_at_cmd_data(char *payload, bool robust) {
   if (success) {
     debugln("GPRS SEND : It is a Success");
     diag_rejected_count = 0; // Reset on success
+    diag_http_zombie_count = 0; // v5.85: Reset on success
 
     // v5.46: Daily silent RTC sync from server time (force=false: once/day,
     // drift>90s)

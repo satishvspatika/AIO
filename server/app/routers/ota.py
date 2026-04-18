@@ -45,7 +45,7 @@ async def ota_page(request: Request, db: Session = Depends(get_db)):
             # Check if file exists in builds folder
             dest = os.path.join(BUILDS_DIR, f"FW_S{fw.category_id}_{fw.unit_type}.bin")
             fw.file_exists = os.path.exists(dest)
-        return templates.TemplateResponse("ota.html", {"request": request, "fws": fws})
+        return templates.TemplateResponse(request=request, name="ota.html", context= {"request": request, "fws": fws})
     except Exception as e:
         return {"OTA Error": str(e)}
 

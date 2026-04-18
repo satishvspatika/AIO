@@ -177,7 +177,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         # Final Sort: priority, then station ID
         reports.sort(key=lambda x: (x.sort_priority, x.stn_id))
 
-        return templates.TemplateResponse("dashboard.html", {
+        return templates.TemplateResponse(request=request, name="dashboard.html", context= {
 
             "request": request, "reports": reports,
             "total": total, "alarms": alarms,
@@ -185,7 +185,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         })
     except Exception as e:
         print(f"CRITICAL 500 DASHBOARD ERROR: {e}")
-        return templates.TemplateResponse("error.html", {"request": request}, status_code=500)
+        return templates.TemplateResponse(request=request, name="error.html", context= {"request": request}, status_code=500)
 
 
 @router.get("/station/{stn_id}")
@@ -254,7 +254,7 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
                 category_id = fw.category_id
 
         return templates.TemplateResponse(
-            "station.html", {
+            request=request, name="station.html", context={
                 "request": request,
                 "stn_id": stn_id,
                 "history": history,
@@ -265,7 +265,7 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
         )
     except Exception as e:
         print(f"CRITICAL 500 STATION ERROR: {e}")
-        return templates.TemplateResponse("error.html", {"request": request}, status_code=500)
+        return templates.TemplateResponse(request=request, name="error.html", context= {"request": request}, status_code=500)
 
 
 # ── CSV Downloads ─────────────────────────────────────────────────────────────

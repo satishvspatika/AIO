@@ -50,9 +50,7 @@ volatile bool force_gps_refresh =
 volatile bool force_clear_ftp_queue = false;
 volatile bool force_delete_data = false;
 
-// --- v5.81 DEFINITIVE SYMBOL SEAL ---
-bool send_health_report();
-int send_at_cmd_data(char *payload, bool robust);
+// Prototypes centrally managed in globals.h
 
 // v5.83 Fix: Consensus System State (Standardized sizes & proper init)
 volatile bool ota_silent_mode = false;
