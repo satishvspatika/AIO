@@ -15,9 +15,19 @@ void scheduler(void *pvParameters) {
   float hum_output = 0.0; // v5.79: Global function scope for goto safety
 
   if (!wifi_active && !__atomic_load_n(&gprs_started, __ATOMIC_ACQUIRE)) {
-    int solar_raw;
-    if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw) == ESP_OK) {
-      solar = solar_raw;
+    // v5.93: Multi-sample averaging for Solar ADC to prevent transient sags
+    long solar_sum = 0;
+    int solar_samples = 0;
+    for (int i = 0; i < 10; i++) {
+        int solar_raw;
+        if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw) == ESP_OK) {
+            solar_sum += solar_raw;
+            solar_samples++;
+        }
+        vTaskDelay(5 / portTICK_PERIOD_MS); // Noise rejection breather
+    }
+    if (solar_samples > 0) {
+      solar = solar_sum / solar_samples;
       solar_val = (solar / 4096.0) * 3.6 * 7.2; // Matches AIO9_3.0 formula
     }
   }

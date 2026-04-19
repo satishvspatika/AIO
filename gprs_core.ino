@@ -325,7 +325,12 @@ void gprs(void *pvParameters) {
           // v5.66: CDM True-Failure Fallback Check
           // If the Morning closing data (08:30) and Health windows (11:00-12:20) both pass
           // without success, the closing window is permanently missed for this day.
-          if (strcmp(diag_cdm_status, "PENDING") == 0 && snap_hour >= 13 && health_last_sent_day != snap_day) {
+          // v5.86: Only flag FAIL if we've been awake for >2 hours since a fresh boot
+          // This prevents false alarms during mid-day maintenance reboots.
+          bool reboot_grace = (millis() < (2 * 60 * 60 * 1000UL));
+
+          if (strcmp(diag_cdm_status, "PENDING") == 0 && snap_hour >= 13 && 
+              health_last_sent_day != snap_day && !reboot_grace) {
             strcpy(diag_cdm_status, "FAIL");
             debugln("[Health] CDM window entirely missed today. Flagging FAIL.");
           }

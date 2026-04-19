@@ -34,8 +34,28 @@ void webServer(void *pvParameters) {
   wifi_active = true; 
   last_wifi_activity_time = millis();
 
+  // v5.90: Load AP password dynamically from SPIFFS; fall back to compiled default.
+  char ap_pass_buf[64];
+  strncpy(ap_pass_buf, AP_PASS, sizeof(ap_pass_buf) - 1);
+  ap_pass_buf[sizeof(ap_pass_buf) - 1] = '\0';
+  if (SPIFFS.exists("/wifi_pass.txt")) {
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+      File pf = SPIFFS.open("/wifi_pass.txt", FILE_READ);
+      if (pf) {
+        int n = pf.readBytes(ap_pass_buf, sizeof(ap_pass_buf) - 1);
+        ap_pass_buf[n] = '\0';
+        // Trim trailing whitespace / newlines
+        for (int i = n - 1; i >= 0 && (ap_pass_buf[i] == '\r' || ap_pass_buf[i] == '\n' || ap_pass_buf[i] == ' '); i--)
+          ap_pass_buf[i] = '\0';
+        pf.close();
+        debugf1("[WiFi] Custom AP pass loaded from SPIFFS: %s\n", ap_pass_buf);
+      }
+      xSemaphoreGive(fsMutex);
+    }
+  }
+
   // Use a completely unique password to instantly break any OS caching bugs
-  WiFi.softAP(ap_name, AP_PASS);
+  WiFi.softAP(ap_name, ap_pass_buf);
   IPAddress IP = WiFi.softAPIP();
   debug("AP IP address: ");
   debugln(IP);
@@ -276,6 +296,10 @@ void handleRoot() { // v5.70 STREAMING
   server.sendContent("if(document.getElementById('live_hum')) document.getElementById('live_hum').innerHTML = data.humidity + ' <span style=\"font-size:0.6em\">%</span>';");
   server.sendContent("if(document.getElementById('live_ws')) document.getElementById('live_ws').innerHTML = data.windSpeed + ' <span style=\"font-size:0.6em\">m/s</span>';");
   server.sendContent("if(document.getElementById('live_wd')) document.getElementById('live_wd').innerHTML = data.windDir + ' <span style=\"font-size:0.6em\">&deg;</span>';");
+  server.sendContent("if(data.bat_v) document.getElementById('live_bat').innerHTML = data.bat_v + ' <span style=\"font-size:0.6em\">V</span>';");
+  server.sendContent("if(data.sol_v) document.getElementById('live_sol').innerHTML = data.sol_v + ' <span style=\"font-size:0.6em\">V</span>';");
+  server.sendContent("if(data.gps_lat) { if(Math.abs(data.gps_lat) < 0.0001) document.getElementById('live_gps').innerHTML = 'SEARCHING...'; else document.getElementById('live_gps').innerHTML = data.gps_lat.toFixed(6) + ', ' + data.gps_lon.toFixed(6); }");
+  server.sendContent("if(data.calib) document.getElementById('live_calib').innerHTML = data.calib;");
   server.sendContent("if(data.pressure && document.getElementById('live_pres')) { var val = data.pressure.toFixed(2); if(data.mslp) val += ' | ' + data.mslp.toFixed(2); document.getElementById('live_pres').innerHTML = val + ' <span style=\"font-size:0.6em\">hPa</span>'; }");
   server.sendContent("if(data.wifi_left < 15) { document.getElementById('warnModal').style.display='block'; document.getElementById('timeLeft').innerText = data.wifi_left; } else { document.getElementById('warnModal').style.display='none'; }");
   server.sendContent("} else if (this.readyState == 4 && (this.status == 0 || this.status == 500)) { document.body.innerHTML = '<div style=\"text-align:center;margin-top:20vh;\"><h1>Offline</h1></div>'; } }; xhttp.open('GET', '/data?t=' + Date.now(), true); xhttp.send(); }, 3000);");
@@ -298,12 +322,14 @@ void handleRoot() { // v5.70 STREAMING
       sysType + " )</div>";
 
   server.sendContent("<h2 style='color:#007bff;font-size:1.5em;margin-bottom:5px;'>Spatika Web Portal</h2>");
-  server.sendContent("<h1 style='font-size: 1.8em;color:#333;margin-bottom:5px;'>" + String(station_name) + "</h1>");
-  server.sendContent("<div style='font-size: 1.0em;color:#666;font-weight:bold;margin-bottom:20px;'>( " + sysType + " )</div>");
+  server.sendContent(stationValue);
 
   // Define translation labels once
   const char* s_live = isKan ? "\xE0\xB2\xB2\xE0\xB3\x88\xE0\xB2\xB5\xE0\xB3\x8D \xE0\xB2\xAE\xE0\xB2\xBE\xE0\xB2\xB9\xE0\xB2\xBF\xE0\xB2\xA1\xE0\xB2\xBF (Live Monitor)" : "Live Monitor";
   const char* s_rf = isKan ? "\xE0\xB2\xAE\xE0\xB2\xB3\xE0\xB3\x86 (Instant RF)" : "Instant RF";
+  const char* s_bat = isKan ? "\xE0\xB2\xAC\xE0\xB3\x8D\xE0\xB2\xAF\xE0\xB2\xBE\xE0\xB2\x9F\xE0\xB2\xB0\xE0\xB2\xBF (Battery)" : "Battery";
+  const char* s_sol = isKan ? "\xE0\xB2\xB8\xE0\xB3\x8C\xE0\xB2\xB0 (Solar)" : "Solar";
+  const char* s_gps = isKan ? "\xE0\xB2\xB8\xE0\xB3\x8D\xE0\xB2\xA5\xE0\xB2\xB2 (GPS - Lat, Lon)" : "GPS (Lat, Lon)";
 
   server.sendContent("<div class='container'>");
 
@@ -317,8 +343,20 @@ void handleRoot() { // v5.70 STREAMING
 #if SYSTEM == 1 || SYSTEM == 2
     server.sendContent("<div class='card'><div class='label'>Temp</div><div id='live_temp' class='value'>" + String(temperature, 1) + " &deg;C</div></div>");
     server.sendContent("<div class='card'><div class='label'>Humidity</div><div id='live_hum' class='value'>" + String(humidity, 1) + " %</div></div>");
-    server.sendContent("<div class='card'><div class='label'>Wind</div><div id='live_ws' class='value'>" + String(cur_wind_speed, 2) + " m/s</div></div>");
 #endif
+
+    server.sendContent("<div class='card'><div class='label'>" + String(s_bat) + "</div><div id='live_bat' class='value'>" + String(li_bat_val, 2) + " <span style='font-size:0.6em'>V</span></div></div>");
+    server.sendContent("<div class='card'><div class='label'>" + String(s_sol) + "</div><div id='live_sol' class='value'>" + String(solar_val, 2) + " <span style='font-size:0.6em'>V</span></div></div>");
+    
+    String gps_display = (abs(gps_latitude) < 0.0001) ? "SEARCHING..." : (String(gps_latitude, 6) + ", " + String(gps_longitude, 6));
+    server.sendContent("<div class='card'><div class='label'>" + String(s_gps) + "</div><div id='live_gps' class='value' style='font-size:0.9em;'>" + gps_display + "</div></div>");
+    
+    char clb_info[32] = "N/A";
+    if (calib_year > 2000) {
+        snprintf(clb_info, sizeof(clb_info), "%s (%02d/%02d/%02d)", 
+                 (calib_sts == 1 ? "PASS" : "FAIL"), calib_day, calib_month, calib_year % 100);
+    }
+    server.sendContent("<div class='card'><div class='label'>RF Calibration</div><div id='live_calib' class='value' style='font-size:0.9em;'>" + String(clb_info) + "</div></div>");
     server.sendContent("</div>");
     xSemaphoreGive(i2cMutex);
   }
@@ -388,7 +426,7 @@ void handleFileList() {
   String s_sr = isKan ? "ಫಲಿತಾಂಶಗಳು (Search Results for)" : "Search Results for";
   String s_nf = isKan ? "ಫೈಲ್ಸ್ ಸಿಗಲಿಲ್ಲ (No matching files found)"
                       : "No matching files found.";
-  String s_filter = isKan ? "ಹುಡುಕಿ (Filter)" : "Filter";
+  String s_filter = isKan ? "\xE0\xB2\xB9\xE0\xB3\x81\xE0\xB2\xA1\xE0\xB3\x81\xE0\xB2\x95\xE0\xB2\xBF (Search)" : "Search";
   String s_bhome =
       isKan ? "ಹೋಮ್ ಪೇಜ್‌ಗೆ ಹೋಗಿ (Back to Home)"
             : "Back to Home";
@@ -660,12 +698,12 @@ void handleFileView() {
 
       server.sendContent("<pre id='fileContent'>");
 
-      // Stream content in chunks
-      char buf[1025];
+      // Stream content in chunks to preserve heap
+      char buf[512];
       while (file.available()) {
-        int len = file.readBytes(buf, 1024);
-        buf[len] = 0; // Null terminate
-        server.sendContent(String(buf));
+        int len = file.readBytes(buf, sizeof(buf)-1);
+        buf[len] = 0; 
+        server.sendContent(buf);
       }
 
       // --- CSV LEGEND HEADER AT BOTTOM ---
@@ -976,8 +1014,17 @@ void handleData() {
 
     unsigned long elapsed = millis() - last_wifi_activity_time;
     long left = (elapsed < 180000) ? (180000 - elapsed) / 1000 : 0;
-    json += ", \"status\": \"READY\"";
-    json += ", \"wifi_left\": " + String(left);
+    json += ", \"bat_v\": " + String(li_bat_val, 2);
+    json += ", \"sol_v\": " + String(solar_val, 2);
+    json += ", \"gps_lat\": " + String(gps_latitude, 8);
+    json += ", \"gps_lon\": " + String(gps_longitude, 8);
+    
+    char clb_json[48] = "N/A";
+    if (calib_year > 2000) {
+        snprintf(clb_json, sizeof(clb_json), "%s (%02d/%02d/%02d)", 
+                 (calib_sts == 1 ? "PASS" : "FAIL"), calib_day, calib_month, calib_year % 100);
+    }
+    json += ", \"calib\": \"" + String(clb_json) + "\"";
 
     // Lock removed in v5.87 to prevent UI lag
   json += "}";

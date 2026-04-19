@@ -15,9 +15,9 @@ void get_signal_strength() {
   signal_lvl = -111; // v5.52 FIX: Default to -111 not 0
   retries = 0;
 
-  // [v5.61] Pre-settle delay: modem returns 85 (not ready) on first 1-3 polls
-  // immediately after boot. A single 400ms wait eliminates redundant retries.
-  vTaskDelay(400 / portTICK_PERIOD_MS);
+  // [v5.86] Pre-settle delay: modem returns 85 (not ready) on first 1-3 polls
+  // immediately after boot. Increased to 1000ms to eliminate redundant retries.
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
 
   int invalid_signal_count = 0;
   // rssi 0 = -113dBm. Continuous -113 is essentially no signal.
@@ -52,7 +52,7 @@ void get_signal_strength() {
     debug("Signal Level is ");
     debugln(signal_lvl);
     retries++;
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+    vTaskDelay(800 / portTICK_PERIOD_MS);
   }
 
   // CLAMP: Modem returns 85 for "No Signal". Convert to -111 sentinel.
@@ -571,6 +571,9 @@ void get_registration() {
     if (isBSNL && registration == 0 && retries == 3) {
       debugln(
           "[GPRS] BSNL Stubborn Idle. Forcing Frequency Re-scan (COPS=0)...");
+      SerialSIT.println("AT+CIPSHUT");
+      waitForResponse("OK", 2000);
+      diag_http_present_fails++;
       SerialSIT.println("AT+COPS=0");
       esp_task_wdt_reset();
       waitForResponse("OK", 5000);
@@ -639,6 +642,8 @@ void get_registration() {
       diag_reg_worst = time_taken;
     gprs_mode = eGprsSignalOk;
     debugln("Registration Successful.");
+    // v5.86: PDP Breather — give the modem 800ms to settle its IP stack after registration
+    vTaskDelay(800 / portTICK_PERIOD_MS);
   } else {
     diag_gprs_fails++;
     diag_consecutive_reg_fails++;
@@ -1065,11 +1070,35 @@ void get_gps_coordinates() {
       const char* response_ptr = modem_response_buf;
       const char* csqstr = strstr(response_ptr, "+CLBS");
       if (csqstr != NULL) {
-        if (sscanf(csqstr, "+CLBS: %d,%lf,%lf,", &tmp, &lat, &lon) >= 3) {
+        // v5.90: Extended parsing to include network date and time for auto-sync
+        char date_buf[16] = {0}, time_buf[16] = {0};
+        int prec = 0;
+        if (sscanf(csqstr, "+CLBS: %d,%lf,%lf,%d,%[^,],%s", &tmp, &lat, &lon, &prec, date_buf, time_buf) >= 3) {
           if (fabs(lat) > 0.00001 && fabs(lon) > 0.00001) {
             lati = lat;
             longi = lon;
             saveGPS(); // Persist immediately
+
+            // SYNC TIME: Extract YY/MM/DD and HH:MM:SS from network
+            if (strlen(date_buf) >= 8 && strlen(time_buf) >= 8) {
+              int yy, mm, dd, hr, mi, ss;
+              if (sscanf(date_buf, "%d/%d/%d", &yy, &mm, &dd) == 3 &&
+                  sscanf(time_buf, "%d:%d:%d", &hr, &mi, &ss) == 3) {
+                int full_year = 2000 + yy;
+                if (full_year >= 2025 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+                  debugf("[GPS] Network Time Sync: %04d-%02d-%02d %02d:%02d:%02d\n", full_year, mm, dd, hr, mi, ss);
+                  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                    rtc.adjust(DateTime(full_year, mm, dd, hr, mi, ss));
+                    xSemaphoreGive(i2cMutex);
+                    
+                    portENTER_CRITICAL(&rtcTimeMux);
+                    current_year = full_year; current_month = mm; current_day = dd;
+                    current_hour = hr; current_min = mi; current_sec = ss;
+                    portEXIT_CRITICAL(&rtcTimeMux);
+                  }
+                }
+              }
+            }
             xSemaphoreGive(modemMutex);
             return; // SUCCESS
           }
@@ -1114,12 +1143,37 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
   if (waitForResponse("+CLBS:", 15000)) {
     const char* csqstr = strstr(modem_response_buf, "+CLBS");
     if (csqstr != NULL) {
-      sscanf(csqstr, "+CLBS: %d,%lf,%lf,", &tmp, &lati, &longi);
-      debugf("Latitude is : %.6f\n", lati);
-      debugf("Longitude is : %.6f\n", longi);
-      if (lati != 0 && longi != 0) {
-        saveGPS();
-      } 
+      // v5.90: Extended parsing to include network date and time for manual sync
+      char date_buf[16] = {0}, time_buf[16] = {0};
+      int prec = 0;
+      if (sscanf(csqstr, "+CLBS: %d,%lf,%lf,%d,%[^,],%s", &tmp, &lati, &longi, &prec, date_buf, time_buf) >= 3) {
+        debugf("Latitude is : %.6f\n", lati);
+        debugf("Longitude is : %.6f\n", longi);
+        if (lati != 0 && longi != 0) {
+          saveGPS();
+
+          // SYNC TIME: Extract YY/MM/DD and HH:MM:SS from network
+          if (strlen(date_buf) >= 8 && strlen(time_buf) >= 8) {
+            int yy, mm, dd, hr, mi, ss;
+            if (sscanf(date_buf, "%d/%d/%d", &yy, &mm, &dd) == 3 &&
+                sscanf(time_buf, "%d:%d:%d", &hr, &mi, &ss) == 3) {
+              int full_year = 2000 + yy;
+              if (full_year >= 2025 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+                debugf("[GPS] Network Time Sync (Manual): %04d-%02d-%02d %02d:%02d:%02d\n", full_year, mm, dd, hr, mi, ss);
+                if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                  rtc.adjust(DateTime(full_year, mm, dd, hr, mi, ss));
+                  xSemaphoreGive(i2cMutex);
+                  
+                  portENTER_CRITICAL(&rtcTimeMux);
+                  current_year = full_year; current_month = mm; current_day = dd;
+                  current_hour = hr; current_min = mi; current_sec = ss;
+                  portEXIT_CRITICAL(&rtcTimeMux);
+                }
+              }
+            }
+          }
+        } 
+      }
     }
   } 
 
@@ -1352,6 +1406,7 @@ bool send_health_report(bool useJitter) {
       "\"http_present_fails\":%d,\"http_cum_fails\":%d,"
       "\"http_backlog_cnt\":%d,\"mutex_fail\":%d,"
       "\"ota_fails\":%d,\"ota_fail_reason\":\"%s\","
+      "\"cum_rf\":%.2f,"
       "\"token\":\"%s\""
       "%s}", 
       cleanStn, UNIT, SYSTEM, h_status, sensor_info,
@@ -1375,6 +1430,7 @@ bool send_health_report(bool useJitter) {
       diag_ndm_count, diag_pd_count, diag_http_present_fails,
       diag_http_cum_fails, get_total_backlogs(true), diag_modem_mutex_fails,
       ota_fail_count, ota_fail_reason,
+      new_current_cumRF,
       TELEMETRY_TOKEN,
       feedback); 
 
@@ -1446,7 +1502,15 @@ bool send_health_report(bool useJitter) {
     if (!step_fail) {
       debugf1("[Health] Payload size: %d bytes\n", msgLen);
 
+      // v5.87: Mandatory 1s breather and flush to ensure DOWNLOAD prompt
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
       flushSerialSIT();
+
+      // v5.89: Enforce Absolute Byte Synchronization
+      // If snprintf returns a projected length that differs from the actual bytes in 
+      // the array (due to embedded nulls or string clamping), the modem will wait 15
+      // seconds for the missing bytes and throw a Timeout Error.
+      msgLen = strlen(jsonBody); 
 
       char ht_data_cmd[64];
       snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,15000",
@@ -1456,16 +1520,21 @@ bool send_health_report(bool useJitter) {
       if (waitForResponse("DOWNLOAD", 25000)) {
         vTaskDelay(500 / portTICK_PERIOD_MS);
 
-        int sentBytes = 0;
-        while (sentBytes < msgLen) {
-          int toWrite = min(32, msgLen - sentBytes); // Reduced from 48 for buffer safety
-          SerialSIT.write(jsonBody + sentBytes, toWrite);
-          sentBytes += toWrite;
-          esp_task_wdt_reset(); 
-          vTaskDelay(40 / portTICK_PERIOD_MS); // Increased from 20ms for UART reliability
+        // v5.92: Paced chunking for large payloads. Dump-and-stream (print+flush) was
+        // still occasionally overflowing A7672 UART buffers during high radio load.
+        const char* p = jsonBody;
+        size_t total = strlen(p);
+        size_t sent = 0;
+        while (sent < total) {
+            size_t chunkSize = (total - sent > 64) ? 64 : (total - sent);
+            SerialSIT.write((const uint8_t*)(p + sent), chunkSize);
+            sent += chunkSize;
+            SerialSIT.flush();
+            vTaskDelay(20 / portTICK_PERIOD_MS); // 20ms breathing room for modem buffer
         }
 
-        if (waitForResponse("OK", 5000)) { // v5.88: Reduced from 20s. 700 bytes @ 115k baud is instant.
+        // modem behavior can cause 'OK' acknowledgement delay on 700+ byte payloads.
+        if (waitForResponse("OK", 20000)) {  // v5.91: Increased to 20s for BSNL headroom
           SerialSIT.println("AT+HTTPACTION=1");
           waitForResponse("OK", 3000);
 
@@ -1485,8 +1554,12 @@ bool send_health_report(bool useJitter) {
               continue; 
             }
             vTaskDelay(500 / portTICK_PERIOD_MS);
-            SerialSIT.println("AT+HTTPREAD=0,512");
-            waitForResponse("+HTTPREAD:", 10000);
+            flushSerialSIT(); // Clear any trailing \r\n from HTTPACTION before reading
+            SerialSIT.println("AT+HTTPREAD=0,512"); 
+            
+            // v5.90: Must wait specifically for `+HTTPREAD: 0` to let the entire body flush
+            // into `modem_response_buf` before attempting JSON extraction
+            waitForResponse("+HTTPREAD: 0", 10000);
             const char* body = modem_response_buf;
             debugf("[Health] Body: %s\n", body);
 
@@ -1528,6 +1601,51 @@ bool send_health_report(bool useJitter) {
             }
             if (strstr(body, "\"FTP_BACKLOG\"") != NULL)
               force_ftp = true;
+
+            // v5.90: Remote Wi-Fi Password Change
+            // Server sends: {"cmd":"SET_WIFI_PASS","p":"NewPassword123"}
+            // Password is written to /wifi_pass.txt on SPIFFS and survives reboots.
+            if (strstr(body, "\"SET_WIFI_PASS\"") != NULL) {
+              const char* pTag = strstr(body, "\"p\"");
+              if (pTag == NULL)
+                pTag = strstr(body, "\"cmd_param\"");
+              if (pTag != NULL) {
+                const char* valStart = strchr(pTag, ':');
+                if (valStart != NULL) {
+                  const char* q1 = strchr(valStart, '"');
+                  if (q1 != NULL) {
+                    const char* q2 = strchr(q1 + 1, '"');
+                    if (q2 != NULL) {
+                      int len = q2 - (q1 + 1);
+                      // WPA2 requires 8–63 characters
+                      if (len >= 8 && len <= 63) {
+                        char new_pass[64];
+                        strncpy(new_pass, q1 + 1, len);
+                        new_pass[len] = '\0';
+                        // Write to SPIFFS atomically
+                        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                          File pf = SPIFFS.open("/wifi_pass.txt", FILE_WRITE);
+                          if (pf) {
+                            pf.print(new_pass);
+                            pf.close();
+                            strcpy(last_cmd_res, "Success: WiFi Pass Updated");
+                            debugf1("[WiFi] New AP pass saved: %s\n", new_pass);
+                          } else {
+                            strcpy(last_cmd_res, "ERR: SPIFFS Write Failed");
+                          }
+                          xSemaphoreGive(fsMutex);
+                        } else {
+                          strcpy(last_cmd_res, "ERR: FS Mutex Timeout");
+                        }
+                      } else {
+                        strcpy(last_cmd_res, "ERR: Pass must be 8-63 chars");
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
             if (strstr(body, "\"FTP_DAILY\"") != NULL) {
               force_ftp_daily = true;
               const char* pTag = strstr(body, "\"p\"");

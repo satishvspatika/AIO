@@ -120,3 +120,36 @@ def delete_bulk_stations(payload: BulkDeleteStations, db: Session = Depends(get_
     db.query(StationSettings).filter(StationSettings.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
     db.commit()
     return {"status": "ok", "deleted": len(payload.stn_ids)}
+
+
+class WifiPassPayload(BaseModel):
+    password: str
+    stn_ids: List[str] = []  # Empty = broadcast to all stations
+
+
+@router.post("/cmd/fleet/set-wifi-pass")
+def fleet_set_wifi_pass(payload: WifiPassPayload, db: Session = Depends(get_db)):
+    """
+    Queue a SET_WIFI_PASS command for one or more stations.
+    If stn_ids is empty, broadcasts to ALL active stations in the fleet.
+    Password must be 8-63 characters (WPA2 requirement).
+    """
+    if len(payload.password) < 8 or len(payload.password) > 63:
+        return {"status": "error", "msg": "Password must be 8-63 characters (WPA2 requirement)."}
+
+    if payload.stn_ids:
+        targets = payload.stn_ids
+    else:
+        # Broadcast: fetch all unique station IDs from the fleet
+        rows = db.query(HealthReport.stn_id).distinct().all()
+        targets = [r.stn_id for r in rows]
+
+    if not targets:
+        return {"status": "error", "msg": "No stations found."}
+
+    for stn in targets:
+        db.add(CommandQueue(stn_id=stn, cmd="SET_WIFI_PASS", cmd_param=payload.password))
+
+    db.commit()
+    return {"status": "ok", "queued": len(targets), "targets": targets}
+

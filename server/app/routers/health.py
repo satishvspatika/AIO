@@ -119,7 +119,11 @@ def _auto_migrate(db: Session, data: dict, table: str = "health_reports"):
 
 async def _process_health_data(data: dict, request: Request, db: Session):
     """Internal helper to process health data for any endpoint."""
-    stn_id = str(data.get("stn_id", "UNKNOWN")).strip().upper()
+    # v5.87: Clean Stn ID (Strip leading zeros for database consistency)
+    stn_id = str(data.get("stn_id", "UNKNOWN")).strip()
+    if stn_id.isdigit():
+        stn_id = str(int(stn_id))
+    stn_id = stn_id.upper()
     
     # ── Step 0: Security Verification ────────────────────────────────────
     # v5.87: Accept token from either header (Standard) or JSON Body (IoT Friendly)
@@ -189,7 +193,15 @@ async def _process_health_data(data: dict, request: Request, db: Session):
     
     setting.last_seen = now_utc
     gps_val = str(data.get("gps", "") or "").strip()
-    if gps_val not in ("NA", "0.000000,0.000000", "", "0,0", "None"):
+    is_zero = False
+    if "," in gps_val:
+        try:
+            lat, lon = [float(x.strip()) for x in gps_val.split(",")]
+            if abs(lat) < 0.0001 and abs(lon) < 0.0001:
+                is_zero = True
+        except: pass
+    
+    if gps_val and gps_val not in ("NA", "None", "") and not is_zero:
         setting.last_gps = gps_val
 
     # OTA Auto-Lock logic

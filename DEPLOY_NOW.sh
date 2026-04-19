@@ -14,8 +14,10 @@ echo "🚀 Sending and Deploying (Single Connection)..."
 cat deploy.tar.gz | ssh root@$HOST "
     mkdir -p /opt/spatika-health && \
     cd /opt/spatika-health && \
+    cp -a app/SpatikaHealth.db* /tmp/ 2>/dev/null || true && \
     rm -rf app requirements.txt && \
     tar -xz && \
+    mv /tmp/SpatikaHealth.db* app/ 2>/dev/null || true && \
     echo '▶ Restarting Spatika Service...' && \
     docker compose restart && \
     sleep 3 && \

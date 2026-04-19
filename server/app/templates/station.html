@@ -5,95 +5,234 @@
 {% block content %}
 
 <!-- Header -->
-<div class="mb-5 flex justify-between items-start">
-    <div>
-        <a href="/summary{% if category_id %}#tab-{{ category_id }}{% endif %}" class="text-slate-500 text-xs hover:text-white transition">← Back to Fleet</a>
-        <h1 class="text-2xl font-black text-blue-300 mt-1">{{ stn_id }}</h1>
-        <div class="flex items-center space-x-3 mt-0.5">
-            <p class="text-xs text-slate-500">Full history — last {{ history|length }} health reports</p>
-            {% if history and history|length > 0 %}
-            <span class="text-[10px] px-2 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800/50">
-                🛰 Carrier: {{ history[0].carrier or 'Unknown' }}
-            </span>
-            {% endif %}
+<div class="mb-5">
+    <!-- Top row: back link + Station ID + Download buttons -->
+    <div class="flex justify-between items-start flex-wrap gap-3 mb-3">
+        <div>
+            <a href="/summary{% if category_id %}#tab-{{ category_id }}{% endif %}" class="text-slate-500 text-xs hover:text-white transition">← Back to Fleet</a>
+            <h1 class="text-2xl font-black text-blue-300 mt-1">
+                Station {{ stn_id.lstrip('0') if stn_id.lstrip('0') else stn_id }}
+                <span class="text-sm font-normal text-slate-500 ml-2">— last {{ history|length }} check-ins (max 10)</span>
+            </h1>
         </div>
 
+        <!-- Download buttons (public) -->
+        <div class="flex flex-col gap-1 items-end">
+            <div class="flex gap-2">
+                <a href="/station/{{ stn_id }}/concise-csv"
+                   class="btn-sm bg-blue-700 hover:bg-blue-600 text-white border border-blue-500/50 shadow"
+                   title="Compact CSV: Time, Health, Battery, Signal, Firmware">
+                    📥 Crisp CSV
+                </a>
+                <a href="/station/{{ stn_id }}/csv"
+                   class="btn-sm bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600"
+                   title="Full CSV: All raw telemetry fields from every health check-in">
+                    📋 Full CSV
+                </a>
+            </div>
+            <p class="text-[9px] text-slate-600 text-right">Crisp = key fields only · Full = all raw data</p>
+        </div>
     </div>
-    <div class="flex space-x-2 flex-wrap gap-2 items-center">
-        <a href="/station/{{ stn_id }}/csv" class="btn-sm bg-blue-600 hover:bg-blue-500 text-white">📥 Download History
-            CSV</a>
 
-        {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') ==
-        'supervisor') %}
+    <!-- Info badges row -->
+    {% if history and history|length > 0 %}
+    <div class="flex flex-wrap gap-2 items-stretch mb-3">
+        <!-- Carrier -->
+        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-blue-900/30 border border-blue-800/50 min-w-[70px]">
+            <span class="text-[11px] font-bold text-blue-300">🛰 {{ history[0].carrier or '?' }}</span>
+            <span class="text-[8px] text-blue-600 mt-0.5">Network</span>
+        </div>
+        <!-- Rain (only for TRG) -->
+        {% if (history[0].system == 0 or history[0].system == 2) and history[0].cum_rf is not none %}
+        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-sky-900/30 border border-sky-800/50 min-w-[70px]">
+            <span class="text-[11px] font-bold text-sky-300">🌧 {{ "%.2f"|format(history[0].cum_rf) }} mm</span>
+            <span class="text-[8px] text-sky-600 mt-0.5">Today's Rain</span>
+        </div>
+        {% endif %}
+        <!-- Battery -->
+        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-orange-900/30 border border-orange-800/50 min-w-[70px]">
+            <span class="text-[11px] font-bold text-orange-300">🔋 {{ "%.2f"|format(history[0].bat_v) if history[0].bat_v else 'N/A' }}V</span>
+            <span class="text-[8px] text-orange-600 mt-0.5">ಬ್ಯಾಟರಿ (Battery)</span>
+        </div>
+        <!-- Solar -->
+        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-yellow-900/30 border border-yellow-800/50 min-w-[70px]">
+            <span class="text-[11px] font-bold text-yellow-300">☀️ {{ "%.2f"|format(history[0].sol_v) if history[0].sol_v else 'N/A' }}V</span>
+            <span class="text-[8px] text-yellow-600 mt-0.5">ಸೌರ (Solar)</span>
+        </div>
+        <!-- GPS -->
+        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-emerald-900/30 border border-emerald-800/50 min-w-[130px]">
+            {% if settings and settings.last_gps and settings.last_gps not in ('0.000000,0.000000', '0,0', 'NA', 'None', '') %}
+                {% set gps_parts = settings.last_gps.split(',') %}
+                <span class="text-[11px] font-bold text-emerald-300 font-mono">📍 {{ "%.4f"|format(gps_parts[0]|strip|float) }}, {{ "%.4f"|format(gps_parts[1]|strip|float) }}</span>
+            {% else %}
+                <span class="text-[11px] font-bold text-emerald-400/60 animate-pulse">📡 Searching...</span>
+            {% endif %}
+            <span class="text-[8px] text-emerald-600 mt-0.5">ಸ್ಥಳ (GPS - Lat/Long)</span>
+        </div>
+        <!-- Wi-Fi Pass (supervisor only) -->
+        {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
+        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-purple-900/30 border border-purple-800/50 min-w-[100px]" title="Last Wi-Fi password set via portal">
+            <span class="text-[11px] font-bold text-purple-300">🔐 {{ last_wifi_pass if last_wifi_pass else 'Spatika123' }}</span>
+            <span class="text-[8px] text-purple-600 mt-0.5">Wi-Fi Password</span>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Supervisor action buttons grouped -->
+    {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
+    <div class="flex flex-wrap gap-2 items-center p-3 rounded-lg bg-slate-800/40 border border-slate-700/50">
+        <span class="text-[9px] text-slate-500 uppercase tracking-widest font-bold mr-1">Actions:</span>
         <a href="/toggle-ota-lock/{{ stn_id }}"
             class="btn-sm bg-orange-900/50 hover:bg-orange-800 text-orange-300 border border-orange-700/50"
-            onclick="return confirm('Toggle Mass OTA Lock status for {{ stn_id }}?')">
-            {% if is_exempt %}🔓 Configured: LOCKED{% else %}🔒 Lock OTA{% endif %}
+            onclick="return confirm('Toggle OTA Lock for {{ stn_id }}?')">
+            {% if is_exempt %}🔓 OTA Locked{% else %}🔒 Lock OTA{% endif %}
         </a>
         <a href="/clear-ota-queue/{{ stn_id }}"
             class="btn-sm bg-yellow-900/50 hover:bg-yellow-800 text-yellow-300 border border-yellow-700/50"
-            onclick="return confirm('Clear ONLY pending OTA commands for {{ stn_id }}?')">
+            onclick="return confirm('Clear only pending OTA commands for {{ stn_id }}?')">
             ❌ Clear OTA Queue
         </a>
         <a href="/clear-queue/{{ stn_id }}"
-            class="btn-sm bg-red-900/50 hover:bg-red-800 text-red-300 border border-red-700/50"
+            class="btn-sm bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600"
             onclick="return confirm('Clear ALL pending commands for {{ stn_id }}?')">
-            ❌ Clear ALL Queue
+            🗑 Clear All Cmds
         </a>
+        <button onclick="openWifiPassModal('{{ stn_id }}')"
+            class="btn-sm bg-purple-900/50 hover:bg-purple-800 text-purple-300 border border-purple-700/50">
+            🔐 Set Wi-Fi Pass
+        </button>
         <a href="/cmd/{{ stn_id }}/DELETE_DATA"
             class="btn-sm bg-orange-950/70 hover:bg-orange-800 text-orange-400 border border-orange-700/50"
-            onclick="return confirm('CRITICAL: This will trigger a REMOTE FACTORY RESET on {{ stn_id }}. All historical data on the device SPIFFS will be deleted. Configuration will be preserved. Proceed?')">
-            ⚠ Remote Factory Reset
+            onclick="return confirm('CRITICAL: Remote factory reset on {{ stn_id }}. All SPIFFS data deleted. Proceed?')">
+            ⚠ Factory Reset
         </a>
         <a href="/delete/{{ stn_id }}"
-            class="btn-sm bg-red-900/80 hover:bg-red-700 text-red-200 border border-red-600/50 ml-2 shadow-lg"
-            onclick="return confirm('WARNING: Permanently destroy ALL records and clear the command queue for {{ stn_id }}? This action cannot be undone.')">
+            class="btn-sm bg-red-900/80 hover:bg-red-700 text-red-200 border border-red-600/50 shadow-lg"
+            onclick="return confirm('WARNING: Permanently destroy ALL records for {{ stn_id }}? Cannot be undone.')">
             🗑 Delete Station
         </a>
-        {% endif %}
     </div>
+
+    <!-- Legend -->
+    <details class="mt-2">
+        <summary class="text-[10px] text-slate-600 cursor-pointer hover:text-slate-400 transition select-none">ℹ️ What do these buttons do? (click to expand)</summary>
+        <div class="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-[10px] text-slate-500 pl-2 border-l border-slate-700 ml-1">
+            <div><span class="text-blue-400 font-bold">📥 Crisp CSV</span> — Downloads compact CSV with key health fields (battery, signal, health status)</div>
+            <div><span class="text-slate-400 font-bold">📋 Full CSV</span> — Downloads every raw telemetry column ever reported by this station</div>
+            <div><span class="text-orange-400 font-bold">🔒 Lock OTA</span> — Prevents this station from receiving mass OTA firmware updates (useful for pinned versions)</div>
+            <div><span class="text-yellow-400 font-bold">❌ Clear OTA Queue</span> — Cancels any pending OTA update commands without affecting other commands</div>
+            <div><span class="text-slate-400 font-bold">🗑 Clear All Cmds</span> — Wipes entire pending command queue (REBOOT, FTP, OTA etc.)</div>
+            <div><span class="text-purple-400 font-bold">🔐 Set Wi-Fi Pass</span> — Sends new SpatikaWeb Wi-Fi password to device; takes effect on next Wi-Fi activation</div>
+            <div><span class="text-orange-400 font-bold">⚠ Factory Reset</span> — Remotely deletes all SPIFFS data files on device. Config (GPS, APN, calibration) is preserved</div>
+            <div><span class="text-red-400 font-bold">🗑 Delete Station</span> — Permanently removes ALL historical records from the server database. Device is unaffected</div>
+        </div>
+    </details>
+    {% endif %}
 </div>
 
-{% if request.state.user and request.state.user.role == 'supervisor' %}
-<!-- Individual OTA Upload Panel -->
-<div class="card p-4 mb-5 border-yellow-900/40 relative overflow-hidden">
-    <div class="flex justify-between items-start">
-        <div class="flex-1">
-            <h3 class="text-xs font-bold text-yellow-400 uppercase tracking-wider mb-3">
-                🚀 Deploy Custom Firmware to {{ stn_id }} Only
-            </h3>
-            <form action="/station/{{ stn_id }}/ota" method="post" enctype="multipart/form-data"
-                class="flex items-center space-x-3 flex-wrap gap-2">
-                <input type="text" name="ver" placeholder="Target ver e.g. 5.80"
-                    class="bg-slate-900 border border-slate-700 px-3 py-1.5 rounded text-white text-xs w-44" required>
-                <input type="file" name="file" accept=".bin" class="text-xs text-slate-400" required>
-                <button type="submit" class="btn-sm btn-yel">🚀 Deploy to {{ stn_id }}</button>
-            </form>
-        </div>
-
-        {% if history and history|length > 0 %}
-        {% set latest = history[0] %}
-        {% if (latest.system == 0 or latest.system == 2) and latest.calib and latest.calib != 'NA' %}
-        <div class="ml-4 p-3 bg-slate-800/50 rounded-lg border border-green-500/20 text-right">
-            <div class="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Last Calibration</div>
-            <div class="text-xs font-mono text-green-400 font-bold">{{ latest.calib }}</div>
-        </div>
-        {% endif %}
+<!-- History Table -->
+<div class="card p-4 mb-5">
+    <div class="flex justify-between items-center mb-3">
+        <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Historical Check-ins</h3>
+        {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
+        <button onclick="deleteSelectedRecords()"
+            class="btn-sm bg-red-900/80 hover:bg-red-700 text-red-200 border border-red-600/50 hidden shadow-lg"
+            id="bulk-del-rec-btn">🗑 Delete Selected</button>
         {% endif %}
     </div>
-</div>
-{% elif history and history|length > 0 %}
-{% set latest = history[0] %}
-{% if (latest.system == 0 or latest.system == 2) and latest.calib and latest.calib != 'NA' %}
-<div class="card p-4 mb-5 border-green-900/40 flex justify-between items-center">
-    <h3 class="text-xs font-bold text-green-400 uppercase tracking-wider">Calibration Status</h3>
-    <div class="p-2 bg-slate-800/50 rounded-lg border border-green-500/20 text-right">
-        <div class="text-[10px] text-slate-500 uppercase tracking-widest mb-0.5">Last Calibration</div>
-        <div class="text-xs font-mono text-green-400 font-bold">{{ latest.calib }}</div>
+    <div class="tbl-wrap">
+        <table class="w-full text-left text-xs">
+            <thead>
+                <tr class="text-slate-500 uppercase text-[10px] tracking-widest">
+                    {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
+                    <th class="p-3 w-8"><input type="checkbox" onclick="toggleAllRecords(this)"></th>
+                    {% else %}
+                    <th class="p-3 w-8"></th>
+                    {% endif %}
+                    <th class="p-3">Time (IST)</th>
+                    <th class="p-3">Health</th>
+                    <th class="p-3">Sensor</th>
+                    <th class="p-3">Firmware</th>
+                    <th class="p-3">Batt / Sol</th>
+                    <th class="p-3">Signal</th>
+                    <th class="p-3">Net Sent</th>
+                    <th class="p-3">HTTP Fails</th>
+                    {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
+                    <th class="p-3 text-right"></th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+                {% for r in history %}
+                <tr class="hover:bg-slate-800/30 transition">
+                    <td class="p-3" onclick="event.stopPropagation()">
+                        {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
+                        <input type="checkbox" class="rec-checkbox" value="{{ r.id }}" onchange="updateBulkRecBtn()">
+                        {% endif %}
+                    </td>
+                    <!-- Time -->
+                    <td class="p-3 font-mono text-slate-400 text-[11px] whitespace-nowrap">
+                        {{ r.reported_at|ist }}
+                    </td>
+                    <!-- Health verdict -->
+                    <td class="p-3">
+                        {% if r.eval.verdict == 'OK' %}
+                        <span class="badge-ok" title="Score: {{ r.eval.score }}">OK</span>
+                        {% else %}
+                        <div class="flex flex-wrap gap-1">
+                            {% for reason in r.eval.reasons %}
+                            <span class="badge-fail py-0.5 px-1 whitespace-normal text-[9px] leading-tight"
+                                title="Score: {{ r.eval.score }}">
+                                ✗ {{ reason }}
+                            </span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <!-- Sensor -->
+                    <td class="p-3 text-slate-400 text-[11px]">{{ r.sensor_sts or '?' }}</td>
+                    <!-- Firmware -->
+                    <td class="p-3"><span class="badge-ver">{{ r.ver or '?' }}</span></td>
+                    <!-- Battery / Solar -->
+                    <td class="p-3 leading-tight">
+                        <span class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}">
+                            {{ '%.2f'|format(r.bat_v or 0) }}V
+                        </span>
+                        <span class="text-[9px] text-slate-500 ml-1">/ {{ '%.1f'|format(r.sol_v or 0) }}V</span>
+                    </td>
+                    <!-- Signal -->
+                    <td class="p-3 {% if r.signal and r.signal > -75 %}text-green-400{% else %}text-yellow-400{% endif %}">
+                        {{ r.signal or '-' }}
+                    </td>
+                    <!-- Net sent today -->
+                    <td class="p-3 font-mono text-slate-200">{{ r.net_cnt or 0 }}</td>
+                    <!-- HTTP Fails — only highlight when non-zero -->
+                    <td class="p-3 text-[11px] leading-tight">
+                        {% if r.http_present_fails and r.http_present_fails > 0 %}
+                        <span class="{% if r.http_present_fails > 3 %}text-red-400 font-bold{% else %}text-yellow-400{% endif %}">
+                            {{ r.http_present_fails }} fails
+                        </span>
+                        {% else %}
+                        <span class="text-slate-700">—</span>
+                        {% endif %}
+                    </td>
+                    {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
+                    <td class="p-3 text-right">
+                        <a href="/delete/record/{{ r.id }}"
+                            class="btn-sm text-slate-600 hover:text-red-500 transition hover:bg-red-900/30 px-2 py-1"
+                            title="Delete Record"
+                            onclick="return confirm('Delete this record ({{ r.reported_at }}) permanently?')">
+                            🗑
+                        </a>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
-{% endif %}
-{% endif %}
 
 <!-- Remote Command History -->
 <div class="card p-4 mb-5 border-blue-900/20">
@@ -147,124 +286,62 @@
     </div>
 </div>
 
-<!-- History Table -->
-<div class="card p-4">
-    <div class="flex justify-between items-center mb-3">
-        <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Historical Check-ins</h3>
-        {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') ==
-        'supervisor') %}
-        <button onclick="deleteSelectedRecords()"
-            class="btn-sm bg-red-900/80 hover:bg-red-700 text-red-200 border border-red-600/50 hidden shadow-lg"
-            id="bulk-del-rec-btn">🗑 Delete Selected</button>
+{% if request.state.user and request.state.user.role == 'supervisor' %}
+<!-- Individual OTA Upload Panel -->
+<div class="card p-4 mb-5 border-yellow-900/40 relative overflow-hidden">
+    <div class="flex justify-between items-start">
+        <div class="flex-1">
+            <h3 class="text-xs font-bold text-yellow-400 uppercase tracking-wider mb-3">
+                🚀 Deploy Custom Firmware to {{ stn_id }} Only
+            </h3>
+            <form action="/station/{{ stn_id }}/ota" method="post" enctype="multipart/form-data"
+                class="flex items-center space-x-3 flex-wrap gap-2">
+                <input type="text" name="ver" placeholder="Target ver e.g. 5.80"
+                    class="bg-slate-900 border border-slate-700 px-3 py-1.5 rounded text-white text-xs w-44" required>
+                <input type="file" name="file" accept=".bin" class="text-xs text-slate-400" required>
+                <button type="submit" class="btn-sm btn-yel">🚀 Deploy to {{ stn_id }}</button>
+            </form>
+        </div>
+
+        {% if history and history|length > 0 %}
+        {% set latest = history[0] %}
+        {% if (latest.system == 0 or latest.system == 2) and latest.calib and latest.calib != 'NA' %}
+        <div class="ml-4 p-3 bg-slate-800/50 rounded-lg border border-green-500/20 text-right">
+            <div class="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Last Calibration</div>
+            <div class="text-xs font-mono text-green-400 font-bold">{{ latest.calib }}</div>
+        </div>
+        {% endif %}
         {% endif %}
     </div>
-    <div class="tbl-wrap">
-        <table class="w-full text-left text-xs">
-            <thead>
-                <tr class="text-slate-500 uppercase text-[10px] tracking-widest">
-                    {% if request.state.user and (request.state.user.role == 'supervisor' or
-                    request.state.user.get('role') == 'supervisor') %}
-                    <th class="p-3 w-8"><input type="checkbox" onclick="toggleAllRecords(this)"></th>
-                    {% else %}
-                    <th class="p-3 w-8"></th>
-                    {% endif %}
-                    <th class="p-3">Time (IST)</th>
-                    <th class="p-3">Calib</th>
-                    <th class="p-3">Health</th>
-                    <th class="p-3">Sensor</th>
-                    <th class="p-3">Firmware</th>
-                    <th class="p-3">Batt / Sol</th>
-                    <th class="p-3">Sig</th>
-                    <th class="p-3">Net / SPIFFS</th>
-                    <th class="p-3">Prev / Consec HTTP</th>
-                    <th class="p-3">Reg Fail(Rsn)</th>
-                    <th class="p-3">HTTP Fails (Pres/Cum)</th>
-                    <th class="p-3">Mutex / B-Log</th>
-                    {% if request.state.user and (request.state.user.role == 'supervisor' or
-                    request.state.user.get('role') == 'supervisor') %}
-                    <th class="p-3 text-right"></th>
-                    {% endif %}
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-800">
-                {% for r in history %}
-                <tr class="hover:bg-slate-800/30 transition">
-                    <td class="p-3" onclick="event.stopPropagation()">
-                        {% if request.state.user and (request.state.user.role == 'supervisor' or
-                        request.state.user.get('role') == 'supervisor') %}
-                        <input type="checkbox" class="rec-checkbox" value="{{ r.id }}" onchange="updateBulkRecBtn()">
-                        {% endif %}
-                    </td>
-                    <td class="p-3 font-mono text-slate-400 text-[11px]">
-                        {{ r.reported_at|ist }}
-                    </td>
-                    <td class="p-3 font-mono text-[10px] leading-tight text-slate-400">
-                        {{ r.calib if r.calib and r.calib != 'NA' else '-' }}
-                    </td>
-                    <td class="p-3">
-                        {% if r.eval.verdict == 'OK' %}
-                        <span class="badge-ok" title="Score: {{ r.eval.score }}">OK</span>
-                        {% else %}
-                        <div class="flex flex-wrap gap-1">
-                            {% for reason in r.eval.reasons %}
-                            <span class="badge-fail py-0.5 px-1 whitespace-normal text-[9px] leading-tight"
-                                title="Score: {{ r.eval.score }}">
-                                ✗ {{ reason }}
-                            </span>
-                            {% endfor %}
-                        </div>
-                        {% endif %}
-                    </td>
-                    <td class="p-3 text-slate-400">{{ r.sensor_sts or '?' }}</td>
-                    <td class="p-3"><span class="badge-ver">{{ r.ver or '?' }}</span></td>
-                    <td class="p-3 leading-tight">
-                        <span
-                            class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}">
-                            {{ '%.2f'|format(r.bat_v or 0) }}V
-                        </span><br>
-                        <span class="text-[9px] text-slate-500">{{ '%.1f'|format(r.sol_v or 0) }}V</span>
-                    </td>
-                    <td
-                        class="p-3 {% if r.signal and r.signal > -75 %}text-green-400{% else %}text-yellow-400{% endif %}">
-                        {{ r.signal or '-' }}
-                    </td>
-                    <td class="p-3 leading-tight">
-                        <span class="font-mono text-slate-200">{{ r.net_cnt or 0 }}</span><br>
-                        <span class="text-[9px] text-slate-500">{{ r.spiffs_kb or 0 }}k</span>
-                    </td>
-                    <td class="p-3 font-mono text-slate-400 leading-tight">
-                        {{ r.net_cnt_prev or 0 }}<br>
-                        <span class="text-[9px] text-slate-500">Consec: {{ r.consec_http_fails or 0 }}</span>
-                    </td>
-                    <td
-                        class="p-3 leading-tight {% if r.reg_fails and r.reg_fails > 3 %}text-red-400 font-bold{% else %}text-slate-400{% endif %}">
-                        {{ r.reg_fails or 0 }} <br><span class="text-[9px] text-slate-500">{{ (r.reg_fail_reason or
-                            'NONE')[:10] }}</span>
-                    </td>
-                    <td
-                        class="p-3 leading-tight {% if (r.http_present_fails and r.http_present_fails > 3) or (r.http_cum_fails and r.http_cum_fails > 10) %}text-red-400 font-bold{% else %}text-slate-400{% endif %}">
-                        Pr: {{ r.http_present_fails or 0 }} <br><span class="text-[9px] text-slate-500">Cum: {{ r.http_cum_fails or 0 }} / {{ (r.http_fail_reason or
-                            'NONE')[:10] }}</span>
-                    </td>
-                    <td class="p-3 leading-tight text-slate-400">
-                        <span class="{% if r.mutex_fail and r.mutex_fail > 0 %}text-red-400 font-bold{% endif %}">M: {{ r.mutex_fail or 0 }}</span><br>
-                        <span class="text-[9px] text-slate-500">B: {{ r.http_backlog_cnt or 0 }}</span>
-                    </td>
-                    {% if request.state.user and (request.state.user.role == 'supervisor' or
-                    request.state.user.get('role') == 'supervisor') %}
-                    <td class="p-3 text-right">
-                        <a href="/delete/record/{{ r.id }}"
-                            class="btn-sm text-slate-600 hover:text-red-500 transition hover:bg-red-900/30 px-2 py-1"
-                            title="Delete Record"
-                            onclick="return confirm('Delete this record ({{ r.reported_at }}) permanently?')">
-                            🗑
-                        </a>
-                    </td>
-                    {% endif %}
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+</div>
+{% elif history and history|length > 0 %}
+{% set latest = history[0] %}
+{% if (latest.system == 0 or latest.system == 2) and latest.calib and latest.calib != 'NA' %}
+<div class="card p-4 mb-5 border-green-900/40 flex justify-between items-center">
+    <h3 class="text-xs font-bold text-green-400 uppercase tracking-wider">Calibration Status</h3>
+    <div class="p-2 bg-slate-800/50 rounded-lg border border-green-500/20 text-right">
+        <div class="text-[10px] text-slate-500 uppercase tracking-widest mb-0.5">Last Calibration</div>
+        <div class="text-xs font-mono text-green-400 font-bold">{{ latest.calib }}</div>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+
+<!-- Wi-Fi Password Modal -->
+<div id="wifi-pass-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div class="bg-slate-900 border border-purple-700/50 rounded-xl shadow-2xl p-6 w-full max-w-sm">
+        <h3 class="text-sm font-bold text-purple-300 mb-1">🔐 Set Wi-Fi Password</h3>
+        <p class="text-xs text-slate-500 mb-4">For station: <span id="wifi-modal-stn" class="text-white font-mono"></span></p>
+        <input id="wifi-pass-input" type="text" placeholder="New password (8–63 chars)"
+            class="w-full bg-slate-800 border border-slate-600 text-white text-sm px-3 py-2 rounded mb-3 focus:outline-none focus:border-purple-500">
+        <p class="text-[10px] text-slate-500 mb-4">Must be 8–63 characters (WPA2). Takes effect next time the station enables Wi-Fi.</p>
+        <div class="flex space-x-2 justify-end">
+            <button onclick="closeWifiPassModal()"
+                class="btn-sm bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600">Cancel</button>
+            <button id="wifi-pass-submit" onclick="submitWifiPass()"
+                class="btn-sm bg-purple-700 hover:bg-purple-600 text-white border border-purple-500 shadow-lg">Queue Command</button>
+        </div>
+        <p id="wifi-pass-msg" class="text-[10px] text-green-400 mt-3 hidden"></p>
     </div>
 </div>
 
@@ -344,5 +421,50 @@
             document.querySelectorAll('.dropdown-content').forEach(d => d.classList.remove('show'));
         }
     };
+
+    // Wi-Fi Password Modal
+    let _wifiModalStn = [];
+    window.openWifiPassModal = function(stnId) {
+        _wifiModalStn = stnId ? [stnId] : [];
+        document.getElementById('wifi-modal-stn').textContent = stnId || 'ALL STATIONS';
+        document.getElementById('wifi-pass-input').value = '';
+        document.getElementById('wifi-pass-msg').classList.add('hidden');
+        document.getElementById('wifi-pass-modal').classList.remove('hidden');
+    };
+    window.closeWifiPassModal = function() {
+        document.getElementById('wifi-pass-modal').classList.add('hidden');
+    };
+    window.submitWifiPass = function() {
+        const pass = document.getElementById('wifi-pass-input').value.trim();
+        if (pass.length < 8 || pass.length > 63) {
+            alert('Password must be 8–63 characters (WPA2 requirement).');
+            return;
+        }
+        const btn = document.getElementById('wifi-pass-submit');
+        btn.disabled = true;
+        btn.textContent = 'Queuing...';
+        fetch('/cmd/fleet/set-wifi-pass', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ password: pass, stn_ids: _wifiModalStn })
+        })
+        .then(r => r.json())
+        .then(data => {
+            const msg = document.getElementById('wifi-pass-msg');
+            if (data.status === 'ok') {
+                msg.textContent = `✅ Queued for ${data.queued} station(s). Takes effect on next Wi-Fi activation.`;
+                msg.className = 'text-[10px] text-green-400 mt-3';
+            } else {
+                msg.textContent = `❌ ${data.msg}`;
+                msg.className = 'text-[10px] text-red-400 mt-3';
+            }
+            msg.classList.remove('hidden');
+            btn.disabled = false;
+            btn.textContent = 'Queue Command';
+            setTimeout(() => { closeWifiPassModal(); window.location.reload(); }, 2000);
+        })
+        .catch(() => { alert('Server error. Please try again.'); btn.disabled = false; btn.textContent = 'Queue Command'; });
+    };
+
 </script>
 {% endblock %}

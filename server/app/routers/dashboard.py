@@ -67,6 +67,22 @@ def _all_fields_row(r, now=None):
     ]
 
 
+def _concise_fields_row(r, now=None):
+    """Returns a streamlined list of essential fields only."""
+    ist_time = r.reported_at + datetime.timedelta(hours=5, minutes=30) if r.reported_at else None
+    ev = evaluate(r, now)
+    v = ev.get("verdict", "OK")
+    return [
+        ist_time.strftime("%Y-%m-%d %H:%M") if ist_time else "N/A",
+        v,
+        f"{r.bat_v:.2f}V" if r.bat_v else "N/A",
+        f"{r.sol_v:.2f}V" if r.sol_v else "N/A",
+        r.signal if r.signal else "N/A",
+        r.ver if r.ver else "N/A",
+        r.gps if r.gps else "N/A"
+    ]
+
+
 ALL_FIELDS_HEADER = [
     "Timestamp_IST", "Station_ID", "Unit_Type", "System_Mode",
     "Health_Status", "Sensor_Status",
@@ -88,6 +104,10 @@ ALL_FIELDS_HEADER = [
     "Consec_HTTP_Fails", "Consec_SIM_Fails",
     "HTTP_Backlog_Count", "Modem_Mutex_Fails",    # v5.56
     "Calculated_Verdict"
+]
+
+CONCISE_CSV_HEADER = [
+    "Date_Time_IST", "Health_Status", "Battery", "Solar", "Signal_dBm", "Firmware", "GPS_Coordinates"
 ]
 
 
@@ -214,8 +234,8 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
                     history.append(r)
                     seen_dates.add(dt)
         
-        # Trim to a reasonable view (e.g., last 40 entries/days)
-        history = history[:40]
+        # Trim to last 10 check-ins
+        history = history[:10]
 
         commands = (
             db.query(CommandQueue)
@@ -252,6 +272,27 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
             if fw:
                 category_id = fw.category_id
 
+        # Phase 2: Fetch last known GPS/Settings
+        settings = db.query(StationSettings).filter_by(stn_id=stn_id).first()
+
+        # v5.86 FIX: UI Resilience. If the primary GPS cache is empty/invalid, 
+        # scan historical records to find the last known "Good" coordinate.
+        # This prevents the badge from showing "Searching" when historical data exists.
+        if settings and (not settings.last_gps or settings.last_gps in ("NA", "0,0", "0.000000,0.000000", "None")):
+            for r in raw_history:
+                if r.gps and str(r.gps).strip() not in ("NA", "0,0", "0.000000,0.000000", "None", ""):
+                    settings.last_gps = r.gps
+                    break
+
+        # v5.90: Fetch last SET_WIFI_PASS command for supervisor display
+        last_wifi_cmd = (
+            db.query(CommandQueue)
+            .filter_by(stn_id=stn_id, cmd="SET_WIFI_PASS")
+            .order_by(CommandQueue.created_at.desc())
+            .first()
+        )
+        last_wifi_pass = last_wifi_cmd.cmd_param if last_wifi_cmd else None
+
         return templates.TemplateResponse(
             request=request, name="station.html", context={
                 "request": request,
@@ -259,7 +300,9 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
                 "history": history,
                 "commands": commands,
                 "is_exempt": is_exempt,
-                "category_id": category_id
+                "category_id": category_id,
+                "settings": settings,
+                "last_wifi_pass": last_wifi_pass,
             }
         )
     except Exception as e:
@@ -344,4 +387,28 @@ def station_csv(stn_id: str, db: Session = Depends(get_db)):
     return StreamingResponse(
         output, media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={stn_id}_history.csv"}
+    )
+
+
+@router.get("/station/{stn_id}/concise-csv")
+def station_concise_csv(stn_id: str, db: Session = Depends(get_db)):
+    """
+    Concise CSV: Streamlined report for non-technical audits.
+    """
+    history = (
+        db.query(HealthReport)
+        .filter_by(stn_id=stn_id)
+        .order_by(HealthReport.reported_at.desc())
+        .all()
+    )
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(CONCISE_CSV_HEADER)
+    for r in history:
+        writer.writerow(_concise_fields_row(r, now))
+    output.seek(0)
+    return StreamingResponse(
+        output, media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={stn_id}_crisp_report.csv"}
     )

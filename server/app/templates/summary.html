@@ -84,7 +84,7 @@
                     {% for r in g.stations %}
                     <tr class="hover:bg-slate-800/30 transition cursor-pointer"
                         onclick="window.location='/station/{{ r.stn_id }}'">
-                        <td class="p-3 font-bold text-blue-300">{{ r.stn_id }}</td>
+                        <td class="p-3 font-bold text-blue-300">{{ r.stn_id.lstrip('0') if r.stn_id.lstrip('0') else r.stn_id }}</td>
                         {% if fw.sort_priority < 99 %}
                         <td class="p-3 text-[11px] font-mono">
                             <span class="{% if r.calib and r.calib != 'NA' %}text-green-400 font-bold{% else %}text-slate-600{% endif %}">

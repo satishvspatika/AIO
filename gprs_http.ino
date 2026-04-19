@@ -1788,10 +1788,14 @@ int send_at_cmd_data(char *payload, bool robust) {
 
   if (robust) {
     // Robust mode for weak-signal or strict towers (BSNL, etc.)
-    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,5000", i);
+    // v5.86: Purge UART before data request to ensure DOWNLOAD prompt is caught correctly
+    flushSerialSIT();
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    
+    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,15000", i);
     debugln("[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...");
     SerialSIT.println(cmd_buf);
-    if (!waitForResponse("DOWNLOAD", 10000)) {
+    if (!waitForResponse("DOWNLOAD", 15000)) {
       debugln("[HTTP] AT+HTTPDATA failed (Missing DOWNLOAD).");
       flushSerialSIT();
       return 0;
@@ -1810,7 +1814,7 @@ int send_at_cmd_data(char *payload, bool robust) {
     }
     SerialSIT.println(); // Finalize buffer if needed by specific firmware stacks
 
-    if (!waitForResponse("OK", 5000)) {
+    if (!waitForResponse("OK", 15000)) {
        debugln("[HTTP] AT+HTTPDATA confirmation timeout. Nuking PDP...");
        SerialSIT.println("AT+HTTPTERM");
        waitForResponse("OK", 2000);

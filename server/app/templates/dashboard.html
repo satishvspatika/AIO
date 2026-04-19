@@ -39,6 +39,10 @@
         <a href="/csv/summary" class="btn-sm btn-grn">📊 Export All CSV</a>
         {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') ==
         'supervisor') %}
+        <button onclick="openFleetWifiModal()"
+            class="btn-sm bg-purple-900/50 hover:bg-purple-800 text-purple-300 border border-purple-700/50">
+            🔐 Set Wi-Fi Pass (All)
+        </button>
         <button onclick="deleteSelectedStations()"
             class="btn-sm bg-red-900/80 hover:bg-red-700 text-red-200 border border-red-600/50 shadow-lg hidden"
             id="bulk-del-btn">🗑 Delete Selected</button>
@@ -93,7 +97,7 @@
                     {% endif %}
                 </td>
                 <td class="p-3 font-bold text-blue-300 whitespace-nowrap">
-                    {{ r.stn_id }}
+                    {{ r.stn_id.lstrip('0') if r.stn_id.lstrip('0') else r.stn_id }}
                 </td>
 
                 <td class="p-3 text-slate-400 text-[10px] leading-tight">
@@ -336,7 +340,63 @@
             })
             .catch(err => alert("Failed to communicate with server."));
     };
+    // Fleet-wide Wi-Fi Password Modal
+    window.openFleetWifiModal = function() {
+        document.getElementById('fleet-wifi-pass-input').value = '';
+        document.getElementById('fleet-wifi-pass-msg').classList.add('hidden');
+        document.getElementById('fleet-wifi-pass-modal').classList.remove('hidden');
+    };
+    window.closeFleetWifiModal = function() {
+        document.getElementById('fleet-wifi-pass-modal').classList.add('hidden');
+    };
+    window.submitFleetWifiPass = function() {
+        const pass = document.getElementById('fleet-wifi-pass-input').value.trim();
+        if (pass.length < 8 || pass.length > 63) {
+            alert('Password must be 8–63 characters (WPA2 requirement).');
+            return;
+        }
+        const btn = document.getElementById('fleet-wifi-pass-submit');
+        btn.disabled = true;
+        btn.textContent = 'Queuing...';
+        fetch('/cmd/fleet/set-wifi-pass', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ password: pass, stn_ids: [] })  // empty = all stations
+        })
+        .then(r => r.json())
+        .then(data => {
+            const msg = document.getElementById('fleet-wifi-pass-msg');
+            if (data.status === 'ok') {
+                msg.textContent = `✅ Queued for ${data.queued} station(s). Takes effect on each station's next Wi-Fi activation.`;
+                msg.className = 'text-[10px] text-green-400 mt-3';
+            } else {
+                msg.textContent = `❌ ${data.msg}`;
+                msg.className = 'text-[10px] text-red-400 mt-3';
+            }
+            msg.classList.remove('hidden');
+            btn.disabled = false;
+            btn.textContent = 'Broadcast to Fleet';
+            setTimeout(() => closeFleetWifiModal(), 3000);
+        })
+        .catch(() => { alert('Server error. Please try again.'); btn.disabled = false; btn.textContent = 'Broadcast to Fleet'; });
+    };
 </script>
+
+<!-- Fleet Wi-Fi Password Modal -->
+<div id="fleet-wifi-pass-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div class="bg-slate-900 border border-purple-700/50 rounded-xl shadow-2xl p-6 w-full max-w-sm">
+        <h3 class="text-sm font-bold text-purple-300 mb-1">🔐 Fleet Wi-Fi Password Change</h3>
+        <p class="text-xs text-slate-500 mb-4">This will queue a <code class="text-purple-300">SET_WIFI_PASS</code> command for <strong class="text-white">every active station</strong> in the fleet. Each unit will apply the new password on its next Wi-Fi activation.</p>
+        <input id="fleet-wifi-pass-input" type="text" placeholder="New password (8–63 chars)"
+            class="w-full bg-slate-800 border border-slate-600 text-white text-sm px-3 py-2 rounded mb-3 focus:outline-none focus:border-purple-500">
+        <p class="text-[10px] text-slate-500 mb-4">WPA2: 8–63 characters. The change persists across reboots on each device.</p>
+        <div class="flex space-x-2 justify-end">
+            <button onclick="closeFleetWifiModal()" class="btn-sm bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600">Cancel</button>
+            <button id="fleet-wifi-pass-submit" onclick="submitFleetWifiPass()" class="btn-sm bg-purple-700 hover:bg-purple-600 text-white border border-purple-500 shadow-lg">Broadcast to Fleet</button>
+        </div>
+        <p id="fleet-wifi-pass-msg" class="text-[10px] text-green-400 mt-3 hidden"></p>
+    </div>
+</div>
 
 <style>
     .active-card {

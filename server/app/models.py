@@ -65,6 +65,7 @@ class HealthReport(Base):
     mutex_fail       = Column(Integer, default=0) # v5.55
     last_cmd_id      = Column(Integer, default=0) # v7.92
     last_cmd_res     = Column(String, default="N/A") # v7.92
+    cum_rf           = Column(Float, default=0.0) # v5.86: Live RF Snapshot
     reported_at      = Column(DateTime, server_default=func.now(), index=True)
 
 

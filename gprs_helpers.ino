@@ -213,10 +213,24 @@ bool try_activate_apn(const char *apn) {
   }
 
   flushSerialSIT(); // v5.79: Clear any "PB DONE" boot noise before command
-  SerialSIT.println("AT+CGACT=1,1");
   
-  // v5.79 Robust Response Wait: Filter async URCs (PB DONE, SMS DONE)
-  bool act_success = waitForResponse("OK", 25000);
+  // v5.86: Surgical Retry Loop for CGACT
+  // Modems often return "Unknown Error" if activation is requested immediately after 
+  // registration. This loop handles the first failure gracefully.
+  bool act_success = false;
+  for (int try_act = 0; try_act < 2; try_act++) {
+    SerialSIT.println("AT+CGACT=1,1");
+    // v5.79 Robust Response Wait: Filter async URCs (PB DONE, SMS DONE)
+    act_success = waitForResponse("OK", 25000);
+    
+    if (act_success) break;
+    
+    if (try_act == 0) {
+      debugln("[APN] CGACT Failed. Breather (1.5s) before retry...");
+      vTaskDelay(1500 / portTICK_PERIOD_MS);
+      flushSerialSIT();
+    }
+  }
   
   debugf("[GPRS] CGACT Resp: %s\n", modem_response_buf); 
 
