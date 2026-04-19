@@ -12,7 +12,9 @@ import os, shutil, re
 from fastapi import HTTPException
 
 router    = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
+import os
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 templates.env.filters["ist"] = ist_filter
 BUILDS_DIR = "/app/builds"
 
@@ -45,7 +47,7 @@ async def ota_page(request: Request, db: Session = Depends(get_db)):
             # Check if file exists in builds folder
             dest = os.path.join(BUILDS_DIR, f"FW_S{fw.category_id}_{fw.unit_type}.bin")
             fw.file_exists = os.path.exists(dest)
-        return templates.TemplateResponse("ota.html", {"request": request, "fws": fws})
+        return templates.TemplateResponse(request, "ota.html", {"request": request, "fws": fws})
     except Exception as e:
         return {"OTA Error": str(e)}
 

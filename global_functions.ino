@@ -196,9 +196,14 @@ void start_deep_sleep() {
   rtc_gpio_pullup_en(GPIO_NUM_27);
   rtc_gpio_pulldown_dis(GPIO_NUM_27);
 
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW);
-  // Use the calculated seconds directly
+  // Phase 10 Fix: Enable ULP and Timer wakeups first
+  esp_sleep_enable_ulp_wakeup();
   esp_sleep_enable_timer_wakeup((uint64_t)sleep_seconds * uS_TO_S_FACTOR);
+
+  // Phase 10 Fix: Use EXT1 for button instead of EXT0 to resolve conflict with ULP
+  // EXT1 is more stable when the ULP co-processor is active.
+  const uint64_t ext_wakeup_pin_1 = (1ULL << GPIO_NUM_27);
+  esp_sleep_enable_ext1_wakeup(ext_wakeup_pin_1, ESP_EXT1_WAKEUP_ALL_LOW);
 
   // CRITICAL: Restored from Version 3.0. Adjusts ULP startup delay to prevent
   // hang in deep sleep.

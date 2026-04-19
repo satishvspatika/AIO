@@ -82,6 +82,7 @@ extern volatile bool gprs_active;
 extern volatile bool timeSyncRequired;
 extern volatile bool schedulerBusy;
 extern volatile bool ota_writing_active;
+extern RTC_DATA_ATTR volatile bool hir_tx_pending; // Phase 9: Trigger immediate HTTP for 5mm rain
 extern volatile uint32_t last_activity_time; // v5.85: Safety Heartbeat Timer
 
 // SAFETY BUFFER: Reserve 512 bytes at the start of RTC Memory to prevent
@@ -259,7 +260,7 @@ enum {
   eGprsSignalForStoringOnly,
   eGprsSleepMode
 };                                                // gprs_mode
-enum { eCurrentData, eClosingData, eUnsentData }; // for http
+enum GPRSDataMode { eCurrentData, eClosingData, eUnsentData }; // for http
 
 enum { eEditOff, eEditOn };                   // lcdkeypad
 enum { eCursorOff, eCursorUl, eCursorBlink }; // lcdkeypad
@@ -290,6 +291,7 @@ extern volatile bool health_in_progress;
 extern volatile bool
     schedulerBusy; // Prevents sleep during 15-min slot processing
 extern volatile bool primary_data_delivered;
+extern volatile bool is_hir_event; // [HR-C01] Global trigger pulse
 extern volatile RTC_DATA_ATTR bool skip_primary_http;
 extern volatile bool sleep_sequence_active;    // v5.77: Sleep Gate signal
 extern volatile bool force_ftp;               // v5.77: RESTORED
@@ -477,12 +479,14 @@ extern RTC_DATA_ATTR bool rtc_daily_sync_done;
 #define U_PREV_STATE 514
 #define U_DEBOUNCED_STATE 515
 #define U_DEBOUNCE_CNT 516
-#define U_WIND_COUNT 517
-#define U_WIND_PREV_STATE 518
-#define U_CALIB_COUNT 519
-#define U_CALIB_MODE 520
-#define U_WIND_DEBOUNCED_STATE 521
-#define U_WIND_DEBOUNCE_CNT 522
+#define U_RF_ANCHOR 517
+#define U_RF_WAKE_SENT 518
+#define U_WIND_COUNT 519
+#define U_WIND_PREV_STATE 520
+#define U_CALIB_COUNT 521
+#define U_CALIB_MODE 522
+#define U_WIND_DEBOUNCED_STATE 523
+#define U_WIND_DEBOUNCE_CNT 524
 
 extern int ULP_WAKEUP_TC; // ulp runs every 1ms (High Resolution for Wind)
 

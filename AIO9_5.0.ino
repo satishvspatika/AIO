@@ -415,6 +415,8 @@ volatile bool rtcReady = false;
 volatile bool rtcTimeChanged = false;
 volatile int wakeup_reason_is = 0;
 volatile int lcdkeypad_start = 0;
+RTC_DATA_ATTR volatile bool hir_tx_pending = false; // Phase 9: High-Intensity Rainfall trigger
+volatile bool is_hir_event = false; // [HR-C01] Global trigger pulse
 // --- End Volatile Definitions ---
 
 // --- System Configuration & Counters (v5.65 ODR Fix) ---
@@ -2043,10 +2045,14 @@ void ULP_COUNTING(uint32_t us) {
   debug("[ULP] Init. HW Reason: ");
   debugln((int)reason);
 
-  // v7.93: Only wipe on HARD Power-On (1). 
-  if (reason == 1) {
-    debugln("[ULP] Hard Power-On. Wiping ULP counters.");
+  // v7.95: Wipe on Hard Power-On (1), Software Reset (12), or External Reset (14).
+  // Also wipe if WAKE_SENT contains garbage (RTC RAM corruption).
+  if (reason == 1 || reason == 12 || reason == 14 || (RTC_SLOW_MEM[U_RF_WAKE_SENT] > 1)) {
+    debugln("[ULP] Hard Init or Garbage detected. Wiping ULP counters and anchors.");
     rf_count.val = 0;
+    RTC_SLOW_MEM[U_RF_ANCHOR] = 0;
+    RTC_SLOW_MEM[U_RF_WAKE_SENT] = 0;
+    hir_tx_pending = false; 
     cur_state.val = 0;
     prev_state.val = 0;
     debounced_state.val = 0;
@@ -2117,7 +2123,24 @@ void ULP_COUNTING(uint32_t us) {
 
       // Normal Count
       I_LD(R0, R3, U_RF_COUNT), I_ADDI(R0, R0, 1), I_ST(R0, R3, U_RF_COUNT),
+      
+      // Phase 9 Fix: HIR Trigger (Wakeup on 20 tips within 15 mins)
+      I_MOVI(R3, 0),
+      I_LD(R0, R3, U_RF_WAKE_SENT), M_BGE(4, 1), // If already sent, skip
+
+      I_LD(R0, R3, U_RF_COUNT),
+      I_LD(R1, R3, U_RF_ANCHOR),
+      I_SUBR(R2, R0, R1), // R2 = Delta (tips this interval)
+
+      // v5.85.1: Explicit Trigger if Delta >= HIR_THRESHOLD
+      M_BGE(3, HIR_THRESHOLD), 
+      M_BX(4), // Else Exit
+
+      M_LABEL(3), // HIR Triggered! (Delta >= Threshold) 
+      I_MOVI(R1, 1), I_ST(R1, R3, U_RF_WAKE_SENT), 
+      I_WAKE(),
       M_BX(4),
+      
 
       M_LABEL(10), // Calibration Count
       I_LD(R0, R3, U_CALIB_COUNT), I_ADDI(R0, R0, 1),

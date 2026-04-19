@@ -111,9 +111,19 @@ def delete_bulk_records(payload: BulkDeleteRecords, db: Session = Depends(get_db
     db.commit()
     return {"status": "ok", "deleted": len(payload.ids)}
 
+import os
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 @router.post("/delete/bulk-stations")
 def delete_bulk_stations(payload: BulkDeleteStations, db: Session = Depends(get_db)):
-    db.query(HealthReport).filter(HealthReport.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
-    db.query(CommandQueue).filter(CommandQueue.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
-    db.commit()
-    return {"status": "ok", "deleted": len(payload.stn_ids)}
+    print(f"[AUTH-OP] Bulk deletion requested for: {payload.stn_ids}")
+    try:
+        db.query(HealthReport).filter(HealthReport.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
+        db.query(CommandQueue).filter(CommandQueue.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
+        db.commit()
+        print(f"  ✓ Successfully deleted {len(payload.stn_ids)} stations.")
+        return {"status": "ok", "deleted": len(payload.stn_ids)}
+    except Exception as e:
+        db.rollback()
+        print(f"  ✗ Bulk delete failed: {e}")
+        return {"status": "error", "message": str(e)}

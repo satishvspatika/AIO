@@ -5,7 +5,12 @@ from app.services.health_eval import ist_filter
 import secrets
 
 router = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
+import os
+import sys
+
+# Phase 9 Fix: Use absolute path for templates to prevent 500 error when CWD is not 'server'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 templates.env.filters["ist"] = ist_filter
 
 import os
@@ -34,7 +39,10 @@ import sqlite3
 import json
 
 class SqliteSessionStore:
-    def __init__(self, db_path="app/SpatikaSessions.db"):
+    def __init__(self, db_path=None):
+        if db_path is None:
+            # Use absolute path in Phase 9
+            db_path = os.path.join(BASE_DIR, "SpatikaSessions.db")
         self.db_path = db_path
         try:
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -89,7 +97,7 @@ import time
 
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(request, "login.html", {"request": request})
 
 @router.post("/login")
 def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
@@ -112,7 +120,7 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
         resp.set_cookie(key="session_id", value=session_id, max_age=86400 * 7, httponly=True, samesite="strict")
         return resp
     
-    return templates.TemplateResponse("login.html", {
+    return templates.TemplateResponse(request, "login.html", {
         "request": request, 
         "error": "Invalid username or password"
     })

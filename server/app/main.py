@@ -3,7 +3,7 @@ from fastapi.responses import RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import engine
 from app.models import Base
-from app.routers import health, dashboard, ota, commands, summary
+from app.routers import health, dashboard, ota, commands, summary, demo
 from app.auth import router as auth_router, SESSIONS
 import aiofiles
 
@@ -84,6 +84,7 @@ app.include_router(dashboard.router)
 app.include_router(ota.router)
 app.include_router(commands.router)
 app.include_router(summary.router)
+app.include_router(demo.router)
 
 # Serve the firmware builds directory via a Range-aware endpoint instead of StaticFiles
 import os

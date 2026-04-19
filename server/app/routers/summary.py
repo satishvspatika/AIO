@@ -10,7 +10,9 @@ import datetime, os
 BUILDS_DIR = "/app/builds"
 
 router = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
+import os
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 templates.env.filters["ist"] = ist_filter
 
 
@@ -110,7 +112,7 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
                 "pct":           int((converted / total_seen * 100)) if total_seen > 0 else 0,
             })
 
-        return templates.TemplateResponse("summary.html", {
+        return templates.TemplateResponse(request, "summary.html", {
             "request": request,
             "groups":  groups,
         })
@@ -121,4 +123,4 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
 @router.get("/help")
 async def help_page(request: Request):
     """Static help and legend page."""
-    return templates.TemplateResponse("help.html", {"request": request})
+    return templates.TemplateResponse(request, "help.html", {"request": request})

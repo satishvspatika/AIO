@@ -59,6 +59,11 @@ void scheduler(void *pvParameters) {
   }
 #endif
 
+  // Phase 9 Fix: [HIR] Removed automatic anchor reset here.
+  // Anchors are handled on POWERON_RESET in setup() and updated at slot boundaries.
+  // This allows the HIR trigger to accumulate tips across deep sleep cycles.
+  debugf("[HIR] ULP Anchor Check: %u / WAKE_SENT: %u\n", RTC_SLOW_MEM[U_RF_ANCHOR], RTC_SLOW_MEM[U_RF_WAKE_SENT]);
+
   //    while (!rtcReady) {
   //      esp_task_wdt_reset();
   //      vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -78,16 +83,18 @@ void scheduler(void *pvParameters) {
   vTaskDelay(
       pdMS_TO_TICKS(500)); // Phase 8 Fix: Trim idle wake time to save battery
 
-  for (;;) {
-    esp_task_wdt_reset();
-    skip_primary_http = false; // v5.85: RESET per-slot flag
+    for (;;) {
+      esp_task_wdt_reset();
+      skip_primary_http = false; // v5.85: RESET per-slot flag
 
-    // v7.87: All scheduler declarations hoisted for scope safety (goto)
-    char stnId[16] = "";
-    int slot_min = 0, slot_hr = 0;
-    int current_sample_idx = 0, minutes_into_interval = 0;
-    bool is_valid_window = false, is_fresh_boot_entry = false;
-    bool snap_timeSyncRequired = false; // v5.85.1: Atomic snapshot for condition invariant
+      // v7.87: All scheduler declarations hoisted for scope safety (goto)
+      char stnId[16] = "";
+      int slot_min = 0, slot_hr = 0;
+      int current_sample_idx = 0, minutes_into_interval = 0;
+      bool is_valid_window = false, is_fresh_boot_entry = false;
+      bool is_fresh_boot = false; // Phase 9 safety hoist
+      bool ui_requested = false; // goto safety hoist
+      bool snap_timeSyncRequired = false; // v5.85.1: Atomic snapshot for condition invariant
     float totalWindPulses = 0.0, temp_read = 0.0, hum_read = 0.0;
     float check_temp = 0.0, check_hum = 0.0;
     float avgPulsesPerSecond = 0.0;
@@ -172,6 +179,24 @@ void scheduler(void *pvParameters) {
     snap_timeSyncRequired = timeSyncRequired;
     portEXIT_CRITICAL(&syncMux);
 
+    // Phase 9 Fix: High-Intensity Rainfall (HIR) Special Wakeup
+    if (hir_tx_pending || wakeup_reason_is == ulp) {
+        debugln("[HIR] ⚠ High-Intensity Rain Trigger detected (>5mm mid-interval)!");
+        wakeup_reason_is = timer; 
+        hir_tx_pending = true; 
+        RTC_SLOW_MEM[U_RF_WAKE_SENT] = 0; // Phase 10: Allow future triggers
+        // Trigger immediate transmission logic
+        portENTER_CRITICAL(&syncMux);
+        if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
+            sync_mode != eStartupGPS && sync_mode != eHealthStart) {
+            sync_mode = eHttpTrigger;
+        }
+        schedulerBusy = true;
+        portEXIT_CRITICAL(&syncMux);
+        
+        goto HIR_DATA_PROCESSING;
+    }
+
     if (current_sample_idx != last_processed_sample_idx &&
         (is_valid_window ||
          is_fresh_boot_entry) && // Allow entry if fresh boot, to handle "Late
@@ -205,7 +230,7 @@ void scheduler(void *pvParameters) {
       // (DELETE DATA). wakeup_reason_is only covers PowerOn (==0); SW_CPU_RESET
       // boots as wakeup_reason==0 but only if no prior sleep occurred.
       // diag_last_reset_reason is always accurate.
-      bool is_fresh_boot = (wakeup_reason_is == 0) ||
+      is_fresh_boot = (wakeup_reason_is == 0) ||
                            (diag_last_reset_reason == 12) ||
                            (diag_last_reset_reason == 14);
 
@@ -219,7 +244,7 @@ void scheduler(void *pvParameters) {
         debugln("Fresh boot (Battery). Waiting 10s for UI Request (EXT0)...");
 
         // 10s Wait Loop for EXT0 or LCD Interaction
-        bool ui_requested = false;
+        ui_requested = false;
         for (int i = 0; i < 100; i++) {
           // Check for button press (LOW) OR Task Active OR wakeup_reason became
           // ext0 (from ISR)
@@ -250,6 +275,13 @@ void scheduler(void *pvParameters) {
         }
       }
 
+      is_hir_event = false;
+HIR_DATA_PROCESSING:
+      // Phase 9 Fix: If we arrived here via 'ulp' wakeup, is_hir_event will be true
+      if (current_sample_idx == last_processed_sample_idx && schedulerBusy == true) {
+          is_hir_event = true;
+      }
+      
       // CRITICAL CHANGE: Read Sensors & Reset Counters BEFORE waiting for GPRS
       // This ensures 8:45 data represents exactly 8:30-8:45.
       // Any pulses occurring during the GPRS wait (8:45-8:47) will actumulate
@@ -306,7 +338,18 @@ void scheduler(void *pvParameters) {
       last_raw_rf_count = curr_rf_raw;
 
       captured_rf = total_rf_pulses_32 - last_sched_rf_pulses_32;
-      last_sched_rf_pulses_32 = total_rf_pulses_32;
+      
+      if (!is_hir_event) { 
+          // Regular slot closure: Update the anchor
+          last_sched_rf_pulses_32 = total_rf_pulses_32;
+          
+          // Phase 9 Fix: Update ULP anchor for HIR trigger
+          RTC_SLOW_MEM[U_RF_ANCHOR] = rf_count.val & 0xFFFF;
+          RTC_SLOW_MEM[U_RF_WAKE_SENT] = 0;
+          debugln("[HIR] ULP Anchor updated for new slot.");
+      } else {
+          debugln("[HIR] Skipping anchor update to retain count for next slot.");
+      }
 
       rf_value = (float)captured_rf * RF_RESOLUTION;
 
@@ -341,6 +384,31 @@ void scheduler(void *pvParameters) {
       inst_rf[6] = 0;
 #endif
 #endif
+
+      if (is_hir_event) {
+          debugln("[HIR] Sensor Read Complete. Triggering Fast-Transmission and Sleep.");
+          
+          // Signal GPRS task to start HTTP immediately
+          portENTER_CRITICAL(&syncMux);
+          sync_mode = eHttpBegin; 
+          portEXIT_CRITICAL(&syncMux);
+          
+          // Wait loop for GPRS completion
+          int wait_limit = 0;
+          while (sync_mode != eHttpStop && wait_limit < 120) {
+              if (wait_limit % 5 == 0) debugln("[HIR] Waiting for HTTP trigger send...");
+              vTaskDelay(1000 / portTICK_PERIOD_MS);
+              wait_limit++;
+              esp_task_wdt_reset();
+              
+              // v5.85: Safety: If GPRS task fails/aborts, sync_mode will return to eHttpStop
+              if (sync_mode == eHttpStop) break;
+          }
+          
+          debugln("[HIR] Transmission finished. Entering Instant Deep Sleep.");
+          digitalWrite(26, LOW); // Cut modem VCC
+          start_deep_sleep();    // Efuse-calibrated sequence
+      }
 
 // TWS
 #if (SYSTEM == 1) || (SYSTEM == 2)
@@ -1955,22 +2023,19 @@ void scheduler(void *pvParameters) {
                 "DAYS  ***********");
         debugln();
         File file1;
-        // v5.75 FIX: [M-01] ABBA Deadlock / Double-Take Fix
-        // fsMutex is already held by the outer loop (Line 1230).
-        // Do NOT reset fs_locked or attempt a second Take (non-recursive
-        // mutex).
-        if (fs_locked) {
-          file1 = SPIFFS.open(cur_file, FILE_APPEND);
-        } else if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
-          // Fallback for safety if somehow entered from a path without a lock
-          fs_locked = true;
-          file1 = SPIFFS.open(cur_file, FILE_APPEND);
+        if (!is_hir_event) { 
+            if (fs_locked) {
+                file1 = SPIFFS.open(cur_file, FILE_APPEND);
+            } else if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
+                fs_locked = true;
+                file1 = SPIFFS.open(cur_file, FILE_APPEND);
+            }
         }
         if (!file1) {
           debugln("Failed to open new SPIFFS file");
         } // #TRUEFIX
         File sd1;
-        if (sd_card_ok) {
+        if (sd_card_ok && !is_hir_event) {
           sd1 = SD.open(cur_file, FILE_APPEND);
         }
         if (sd_card_ok && !sd1) {
@@ -3275,9 +3340,15 @@ void scheduler(void *pvParameters) {
       } // End of Brownout Guard else-block
 
       vTaskDelay(300 / portTICK_PERIOD_MS);
-      last_processed_sample_idx =
-          current_sample_idx; // v5.66: Mark as processed ONLY after successful
-                              // completion
+      if (!is_hir_event) {
+          last_processed_sample_idx =
+              current_sample_idx; // v5.66: Mark as processed ONLY after successful
+                                  // completion
+      } else {
+          debugln("[HIR] HIR Record processed. Retaining SampleIdx for main closure.");
+          // Flag remains true for GPRS task, but we must clear it eventually.
+          // gprs task will clear it after sending.
+      }
 
       // R-5 Fix: Scheduler stack high-water mark monitoring (moved inside
       // 15-min gate)

@@ -1,6 +1,105 @@
 #include "globals.h"
+#include "mbedtls/aes.h"
+#include "mbedtls/base64.h"
+
+#if DEMO_MODE == 1
+/**
+ * Encrypts a payload using AES-128-ECB and returns a Base64 string.
+ * This is for DEMO purposes ONLY.
+ */
+String encrypt_payload_aes(const char* input) {
+    mbedtls_aes_context aes;
+    unsigned char key[16];
+    memcpy(key, AES_KEY, 16);
+
+    size_t input_len = strlen(input);
+    size_t padded_len = ((input_len / 16) + 1) * 16;
+    unsigned char* input_padded = (unsigned char*)malloc(padded_len);
+    unsigned char* output_encrypted = (unsigned char*)malloc(padded_len);
+
+    if (!input_padded || !output_encrypted) {
+        if (input_padded) free(input_padded);
+        if (output_encrypted) free(output_encrypted);
+        return "";
+    }
+
+    memset(input_padded, 0, padded_len);
+    memcpy(input_padded, input, input_len);
+    // PKCS7 padding
+    unsigned char padding_val = (unsigned char)(padded_len - input_len);
+    for (size_t i = input_len; i < padded_len; i++) {
+        input_padded[i] = padding_val;
+    }
+
+    mbedtls_aes_init(&aes);
+    mbedtls_aes_setkey_enc(&aes, key, 128);
+
+    for (size_t i = 0; i < padded_len; i += 16) {
+        mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, input_padded + i, output_encrypted + i);
+    }
+
+    size_t b64_len = 0;
+    mbedtls_base64_encode(NULL, 0, &b64_len, output_encrypted, padded_len);
+    unsigned char* b64_output = (unsigned char*)malloc(b64_len + 1);
+    if (b64_output) {
+        mbedtls_base64_encode(b64_output, b64_len, &b64_len, output_encrypted, padded_len);
+        b64_output[b64_len] = '\0';
+    }
+
+    String result = (b64_output) ? String((char*)b64_output) : "";
+
+    mbedtls_aes_free(&aes);
+    free(input_padded);
+    free(output_encrypted);
+    if (b64_output) free(b64_output);
+
+    return result;
+}
+
+/**
+ * Poor man's URL encoding specifically for Base64 characters.
+ * Replaces '+', '/', and '=' with their percent-encoded equivalents.
+ */
+String url_encode_base64(String b64) {
+    String encoded = "";
+    for (size_t i = 0; i < b64.length(); i++) {
+        char c = b64[i];
+        if (c == '+') encoded += "%2B";
+        else if (c == '/') encoded += "%2F";
+        else if (c == '=') encoded += "%3D";
+        else encoded += c;
+    }
+    return encoded;
+}
+#endif
 
 void prepare_data_and_send() {
+  uint32_t s = 0;
+  bool is_domain = false;
+  const char *charArray = NULL;
+  int res = 0;
+  int h = 0, m = 0, d = 0, mo = 0, y = 0, s_idx = 0;
+
+  // v5.85: Universal generation of cleanStn for Demo/HIR/Standard construction
+  char rawStn_univ[16];
+  strncpy(rawStn_univ, station_name, 15);
+  rawStn_univ[15] = '\0';
+  char *st_univ = rawStn_univ;
+  while (*st_univ == ' ') st_univ++;
+  char cleanStn[16];
+  strncpy(cleanStn, st_univ, 15);
+  cleanStn[15] = '\0';
+  int tLen_univ = strlen(cleanStn);
+  while (tLen_univ > 0 && cleanStn[tLen_univ - 1] == ' ') {
+    cleanStn[tLen_univ - 1] = '\0';
+    tLen_univ--;
+  }
+  if (strlen(cleanStn) == 4 && isDigitStr(cleanStn)) {
+    char padded_univ[16];
+    snprintf(padded_univ, sizeof(padded_univ), "00%s", cleanStn);
+    strncpy(cleanStn, padded_univ, sizeof(cleanStn) - 1);
+    cleanStn[sizeof(cleanStn) - 1] = '\0';
+  }
 
   // v5.65 P0: Range guard for server configuration index
   if (http_no < 0 || http_no >= (int)(sizeof(httpSet) / sizeof(httpSet[0]))) {
@@ -51,56 +150,135 @@ void prepare_data_and_send() {
   }
 
   if (data_mode == eCurrentData || data_mode == eClosingData) {
+
     // v5.83 Hardening: Zero out the payload buffer BEFORE file read
     // to prevent stale RAM data from leaking if a file read fails.
     memset(gprs_payload, 0, sizeof(gprs_payload));
 
-    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-      File file1 = SPIFFS.open(temp_file, FILE_READ);
-      if (file1) {
-        debug("SPIFF FILE EXISTS ....");
-        debugln(temp_file);
-        s = file1.size();
-        // v5.85 Hardened: Safely jump back ~3 records to generously accommodate
-        // highly variable negative/positive decimal string fluctuations without
-        // accidentally landing inside the final record and swallowing it.
-        int seek_back = (record_length * 3);
-        s = (s > (size_t)seek_back) ? (s - seek_back) : 0;
+#if DEMO_MODE == 1
+    // Demo Mode Override: Only for KSNDMC_TRG systems (SYSTEM == 0)
+    if (SYSTEM == 0 && !strcmp(NETWORK, "KSNDMC")) {
+        // We bypass file reading and construct a live payload for demo
+        portENTER_CRITICAL(&rtcTimeMux);
+        h = current_hour; m = current_min; d = current_day; mo = current_month; y = current_year;
+        portEXIT_CRITICAL(&rtcTimeMux);
+        s_idx = (h * 4 + m / 15 + 61) % 96;
+
+        char csv_part[128];
+        snprintf(csv_part, sizeof(csv_part),
+                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%d,%s", 
+                s_idx, y, mo, d, h, m, inst_rf, cum_rf, signal_strength, battery);
         
-        file1.seek(s);
+        char raw_payload[256];
+        snprintf(raw_payload, sizeof(raw_payload), "stn_id=%s,data=%s", cleanStn, csv_part);
 
-        if (s > 0) {
-           // Skip partial line
-           while(file1.available()) {
-              char c = file1.read();
-              if (c == '\n') break;
-           }
-        }
+        debugln("--------------------------------------------------");
+        debugf("[DEMO] Raw Payload (Pre-AES): %s\n", raw_payload);
+        String encrypted = encrypt_payload_aes(raw_payload);
+        String encoded = url_encode_base64(encrypted);
+        if (encoded.length() > 0) {
+            debugf("[DEMO] AES 128 Encrypted: %s\n", encrypted.c_str());
+            debugf("[DEMO] URL Encoded: %s\n", encoded.c_str());
+            debugln("--------------------------------------------------");
+            snprintf(gprs_payload, sizeof(gprs_payload), "payload=%s", encoded.c_str());
+            
+            // v5.85: Populate temp metadata so URL helpers work after skip
+            temp_sampleNo = s_idx;
+            temp_year = y; temp_month = mo; temp_day = d;
+            temp_hr = h; temp_min = m;
+            temp_sig = signal_lvl; // Use live signal
+            temp_bat = atof(battery); // Convert global battery string to float
 
-        // Read the actual last valid record into gprs_payload
-        // v5.85: Iterate to the very last line to guarantee we don't pull
-        // the previous slot if the record size was smaller than seek_back.
-        char temp_buf[sizeof(gprs_payload)];
-        while(file1.available()) {
-           int len = read_line_to_buf(file1, temp_buf, sizeof(temp_buf));
-           if (len > 10) {
-              strcpy(gprs_payload, temp_buf);
-           }
+            strcpy(http_data, gprs_payload); // Load the encrypted payload directly
+
+            // Link/Port/IP redirection handled in send_at_cmd_data
+            goto SKIP_PARSING; // Skip sscanf which would fail on encrypted string
+        } else {
+            debugln("[DEMO] [ERR] Encryption failed! Falling back to plaintext.");
+            // Fall through to regular file reading logic
         }
-        file1.close();
-      } else {
-        debugln("Failed to open temp_file for reading");
-      }
-      xSemaphoreGive(fsMutex);
-      if (strlen(gprs_payload) < 10)
-        return; 
-    } else {
-      debugln("[FS] Mutex Timeout: Skipping main data read.");
-      return;
+    }
+    
+    if (strlen(gprs_payload) > 0) {
+        // Skip file reading if we already have the demo payload
+        goto SKIP_FILE_READ;
+    }
+#endif
+
+    { // Scope isolation for goto SKIP_PARSING
+        if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+          File file1 = SPIFFS.open(temp_file, FILE_READ);
+          if (file1) {
+            debug("SPIFF FILE EXISTS ....");
+            debugln(temp_file);
+            s = file1.size();
+            // v5.85 Hardened: Safely jump back ~3 records to generously accommodate
+            // highly variable negative/positive decimal string fluctuations without
+            // accidentally landing inside the final record and swallowing it.
+            int seek_back = (record_length * 3);
+            s = (s > (size_t)seek_back) ? (s - seek_back) : 0;
+            
+            file1.seek(s);
+
+            if (s > 0) {
+               // Skip partial line
+               while(file1.available()) {
+                  char c = file1.read();
+                  if (c == '\n') break;
+               }
+            }
+
+            // Read the actual last valid record into gprs_payload
+            // v5.85: Iterate to the very last line to guarantee we don't pull
+            // the previous slot if the record size was smaller than seek_back.
+            char temp_buf[sizeof(gprs_payload)];
+            while(file1.available()) {
+               int len = read_line_to_buf(file1, temp_buf, sizeof(temp_buf));
+               if (len > 10) {
+                  strcpy(gprs_payload, temp_buf);
+               }
+            }
+            file1.close();
+          } else {
+            debugln("Failed to open temp_file for reading");
+          }
+          xSemaphoreGive(fsMutex);
+        } else {
+          debugln("[FS] Mutex Timeout: Skipping main data read.");
+        }
     }
   }
 
-  const char *charArray = gprs_payload;
+SKIP_FILE_READ:
+  // Phase 9 Fix: [HIR] Override for High-Intensity Rainfall
+  if (hir_tx_pending) {
+      debugln("[HIR] Constructing live payload for immediate transmission...");
+      memset(gprs_payload, 0, sizeof(gprs_payload));
+      
+      { // Scope isolation for goto SKIP_PARSING
+          portENTER_CRITICAL(&rtcTimeMux);
+          h = current_hour; m = current_min; d = current_day; mo = current_month; y = current_year;
+          portEXIT_CRITICAL(&rtcTimeMux);
+          
+          // v5.85: Use snprintf to match standard KSNDMC/Spatika expectation
+          // We use current_sample_idx calculation from globals
+          s_idx = h * 4 + m / 15;
+          s_idx = (s_idx + 61) % 96;
+
+#if SYSTEM == 0
+          snprintf(gprs_payload, sizeof(gprs_payload),
+                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%d,%s\r\n", 
+                   s_idx, y, mo, d, h, m, inst_rf, cum_rf, signal_strength, battery);
+#elif SYSTEM == 2
+          snprintf(gprs_payload, sizeof(gprs_payload),
+                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%s,%d,%s\r\n", 
+                   s_idx, y, mo, d, h, m, inst_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, signature, signal_strength, battery);
+#endif
+      }
+      debugf("[HIR] Payload: %s", gprs_payload);
+  }
+
+  charArray = gprs_payload;
 
   debugln();
   debugf1("Current Data to be sent is : %s", charArray);
@@ -118,7 +296,7 @@ void prepare_data_and_send() {
   temp_bat = 0.0;
 
 #if SYSTEM == 0
-  int res = sscanf(charArray, "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%04d,%f",
+  res = sscanf(charArray, "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%04d,%f",
                    &temp_sampleNo, &temp_year, &temp_month, &temp_day, &temp_hr,
                    &temp_min, &temp_instrf, &temp_crf, &temp_sig, &temp_bat);
   if (res < 10) {
@@ -129,7 +307,7 @@ void prepare_data_and_send() {
 #endif
 #if SYSTEM == 1
   // TWS: 12 components
-  int res = sscanf(
+  res = sscanf(
       charArray, "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%f,%03d,%04d,%f",
       &temp_sampleNo, &temp_year, &temp_month, &temp_day, &temp_hr, &temp_min,
       &temp_temp, &temp_hum, &temp_avg_ws, &temp_dir, &temp_sig, &temp_bat);
@@ -141,7 +319,7 @@ void prepare_data_and_send() {
 #endif
 #if SYSTEM == 2
   // TWS-RF: 13 components
-  int res = sscanf(charArray,
+  res = sscanf(charArray,
                    "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%f,%f,%03d,%04d,%f",
                    &temp_sampleNo, &temp_year, &temp_month, &temp_day, &temp_hr,
                    &temp_min, &temp_crf, &temp_temp, &temp_hum, &temp_avg_ws,
@@ -224,36 +402,7 @@ void prepare_data_and_send() {
     temp_min = 30;
   }
 
-  // Create trimmed station name for URL
-  char rawStn[16];
-  strncpy(rawStn, station_name, 15);
-  rawStn[15] = '\0';
-
-  // Trim leading
-  char *st = rawStn;
-  while (*st == ' ')
-    st++;
-
-  char cleanStn[16];
-  strncpy(cleanStn, st, 15);
-  cleanStn[15] = '\0';
-
-  // Trim trailing
-  int tLen = strlen(cleanStn);
-  while (tLen > 0 && cleanStn[tLen - 1] == ' ') {
-    cleanStn[tLen - 1] = '\0';
-    tLen--;
-  }
-
-  // v5.75 Hardened: KSNDMC Padding Rule - Pad 4-digit numeric IDs to 6-digits
-  // (e.g. 1921 -> 001921) Required for TRG, TWS and TWS-RF legacy servers on
-  // KSNDMC to match database primary keys.
-      if (strlen(cleanStn) == 4 && isDigitStr(cleanStn)) {
-        char padded[16];
-        snprintf(padded, sizeof(padded), "00%s", cleanStn);
-        strncpy(cleanStn, padded, sizeof(cleanStn) - 1);
-        cleanStn[sizeof(cleanStn) - 1] = '\0';
-      }
+  // cleanStn logic removed from here as it was moved to the top of the function
 
   if (!strcmp(httpSet[http_no].Format,
               "json")) { // if json then this loop otherwise goto urlencoded one
@@ -316,6 +465,10 @@ void prepare_data_and_send() {
     }
   } // Ensure this cleanly closes the TRG checks
 
+
+SKIP_PARSING:
+  is_domain = false;
+
 // TWS
 #if SYSTEM == 1
   if (strcmp(httpSet[http_no].Format, "json")) { // Only if NOT json
@@ -327,6 +480,7 @@ void prepare_data_and_send() {
              httpSet[http_no].Key, sample_bat, sample_bat);
   }
 #endif
+
 
 // TWS-RF (ADDON / SPATIKA)
 #if SYSTEM == 2
@@ -360,7 +514,7 @@ void prepare_data_and_send() {
   debugln();
 
   // v5.83 Elite Polish: Only audit DNS if the endpoint is a domain name
-  bool is_domain = false;
+  is_domain = false;
   const char *srvStr = httpSet[http_no].serverName;
   for (int d = 0; srvStr[d] != '\0'; d++) {
     if (isalpha(srvStr[d])) {
@@ -638,7 +792,7 @@ void prepare_data_and_send() {
         debugln();
 #if SYSTEM == 0 // RF
         snprintf(current_record, sizeof(current_record),
-                 "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%05.2f\r\n",
+                 "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%d,%04.1f\r\n",
                  temp_sampleNo, temp_year, temp_month, temp_day, temp_hr,
                  temp_min, inst_rf, cum_rf, temp_sig, temp_bat);
 #endif
@@ -791,6 +945,8 @@ void prepare_data_and_send() {
   }     // closes if(success_count == 0 - first try)
   // v5.70: fsMutex is no longer held here.
   // GPRS task now follows granular lock pattern.
+  hir_tx_pending = false; 
+  is_hir_event = false;
 } // closes prepare_data_and_send()
 
 void send_http_data() {
@@ -810,8 +966,20 @@ void send_http_data() {
    */
 
   const char *domain = httpSet[http_no].serverName;
-  // char target_ip[64] = {0}; // Removed, target_ip is now handled by
-  // httpPostRequest directly
+  const char *link   = httpSet[http_no].Link;
+  const char *port   = httpSet[http_no].Port;
+  const char *ip     = httpSet[http_no].IP;
+
+#if DEMO_MODE == 1
+  // Phase 10 Fix: Force Redirection for DEMO Mode (KSNDMC TRG only)
+  if (SYSTEM == 0 && !strcmp(NETWORK, "KSNDMC")) {
+      domain = HEALTH_SERVER_IP;
+      link   = "/demo_ksndmc";
+      port   = "80";
+      ip     = HEALTH_SERVER_IP;
+      debugln("[DEMO] Redirection Active: Overriding URL for AES Demo.");
+  }
+#endif
 
   bool is_ip_format = true;
   for (int i = 0; domain[i] != '\0'; i++) {
@@ -826,12 +994,12 @@ void send_http_data() {
   // attempt fails.
   snprintf(httpPostRequest, sizeof(httpPostRequest),
            "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", domain,
-           httpSet[http_no].Port, httpSet[http_no].Link);
+           port, link);
 
   char fallbackUrl[150] = {0};
   snprintf(fallbackUrl, sizeof(fallbackUrl),
-           "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", httpSet[http_no].IP,
-           httpSet[http_no].Port, httpSet[http_no].Link);
+           "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", ip,
+           port, link);
 
   debugf("[GPRS] Prepared URL: %s\n", httpPostRequest);
 

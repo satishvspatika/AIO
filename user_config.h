@@ -13,7 +13,10 @@
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 
-#define FIRMWARE_VERSION "5.83"
+#define FIRMWARE_VERSION "5.85"
+#define HIR_THRESHOLD 20  // 20 tips = 5mm rain (at 0.25mm resolution)
+#define DEMO_MODE 1       // 1: Enable AES-128 Encrypted Demo, 0: Production
+#define AES_KEY "SpatikaDemoAIO09" // 16 bytes key
 
 #define ENABLE_HEALTH_REPORT                                                   \
   0 // Master Switch: Enable automated device health reporting
