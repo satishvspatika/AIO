@@ -9,16 +9,17 @@
 // --- 1. CORE SYSTEM IDENTITY ---
 #define SYSTEM 0                // 0: TRG, 1: TWS, 2: TWS-RF Addon
 #define UNIT_CFG "KSNDMC_TRG" // Exact station network name:
+#define TELEMETRY_TOKEN "spatika_telemetry_2025"
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 
-#define FIRMWARE_VERSION "5.83"
+#define FIRMWARE_VERSION "5.86"
 
 #define ENABLE_HEALTH_REPORT                                                   \
-  0 // Master Switch: Enable automated device health reporting
+  1 // Master Switch: Enable automated device health reporting
 #define TEST_HEALTH_DEFAULT                                                    \
-  0 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)
+  1 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)
 
 // --- 2. COMPILE OPTIONS ---
 #define DEBUG 1 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)

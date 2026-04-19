@@ -1,19 +1,15 @@
 from fastapi import APIRouter, Request, Form, File, UploadFile, Depends
 from fastapi.responses import RedirectResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import SessionLocal
 from app.models import FirmwareRegistry, HealthReport, CommandQueue
 from app.services.health_eval import ist_filter
 from app.services.ota_service import get_numeric_ver
-from app.services.ota_service import get_numeric_ver
 import os, shutil, re
 from fastapi import HTTPException
-
-router    = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
-templates.env.filters["ist"] = ist_filter
+from app.templates import templates
+router = APIRouter()
 BUILDS_DIR = "/app/builds"
 
 
@@ -45,7 +41,7 @@ async def ota_page(request: Request, db: Session = Depends(get_db)):
             # Check if file exists in builds folder
             dest = os.path.join(BUILDS_DIR, f"FW_S{fw.category_id}_{fw.unit_type}.bin")
             fw.file_exists = os.path.exists(dest)
-        return templates.TemplateResponse("ota.html", {"request": request, "fws": fws})
+        return templates.TemplateResponse(request=request, name="ota.html", context={"request": request, "fws": fws})
     except Exception as e:
         return {"OTA Error": str(e)}
 

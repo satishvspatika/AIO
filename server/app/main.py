@@ -5,28 +5,45 @@ from app.database import engine
 from app.models import Base
 from app.routers import health, dashboard, ota, commands, summary
 from app.auth import router as auth_router, SESSIONS
+from app.services.maintenance import maintenance_loop
+import asyncio
 import aiofiles
+import os
+import mimetypes
+import traceback
+import sys
+from app.templates import templates
 
 # Ensure all DB tables exist at startup
 Base.metadata.create_all(bind=engine)
 
-
-app = FastAPI(title="Spatika Health API v3.0")
+app = FastAPI(title="Spatika Health API v3.0", debug=True)
+BUILDS_DIR = "/app/builds" 
 
 # Phase 8/9 Fix: Stop command_queue from growing infinitely over years of operation
 from sqlalchemy import text
 from app.database import SessionLocal
 
 @app.on_event("startup")
-async def prune_old_commands():
-    db = SessionLocal()
+async def start_maintenance():
+    # Phase 9 Hardening: Ensure only one worker runs the maintenance loop in multi-worker environments
+    # We use a non-blocking flock on a persistent file in /app/data
+    lock_path = "/app/data/maintenance.lock"
+    import fcntl
     try:
-        db.execute(text("DELETE FROM command_queue WHERE created_at < datetime('now', '-30 days')"))
-        db.commit()
+        f = open(lock_path, "w")
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # If we got here, we are the leader
+        asyncio.create_task(maintenance_loop())
+        print(f"[SYSTEM] Background maintenance service started (PID: {os.getpid()}).")
+        # Note: We don't close 'f' to keep the lock held for the lifetime of this process
+    except BlockingIOError:
+        # Lock held by another worker
+        print(f"[SYSTEM] Maintenance service already running in another worker. Skipping for PID: {os.getpid()}.")
     except Exception as e:
-        print(f"Startup Command Queue Prune Error: {e}")
-    finally:
-        db.close()
+        print(f"[SYSTEM] Warning: Could not acquire maintenance lock ({e}). Service might be redundant.")
+        # Fallback to starting it anyway if the filesystem doesn't support locking
+        asyncio.create_task(maintenance_loop())
 
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -47,11 +64,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # 2. Get User from Session
         import time
         session_id = request.cookies.get("session_id")
-        user = SESSIONS.get(session_id)
+        user = None
+        if session_id:
+            try:
+                user = SESSIONS.get(session_id)
+            except Exception:
+                user = None
         
         if user and user.get("expires_at", 0) < time.time():
             if session_id in SESSIONS:
-                del SESSIONS[session_id]
+                try:
+                    del SESSIONS[session_id]
+                except Exception:
+                    pass
             user = None
         
         # Inject into state so Jinja templates can use it via request.state.user

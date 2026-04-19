@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Request, Depends
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import SessionLocal
@@ -7,11 +6,9 @@ from app.models import HealthReport, FirmwareRegistry
 from app.services.health_eval import ist_filter, evaluate
 from app.services.ota_service import get_numeric_ver
 import datetime, os
-BUILDS_DIR = "/app/builds"
-
+from app.templates import templates
 router = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
-templates.env.filters["ist"] = ist_filter
+BUILDS_DIR = "/app/builds"
 
 
 def get_db():
@@ -110,15 +107,16 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
                 "pct":           int((converted / total_seen * 100)) if total_seen > 0 else 0,
             })
 
-        return templates.TemplateResponse("summary.html", {
+        return templates.TemplateResponse(request=request, name="summary.html", context={
             "request": request,
             "groups":  groups,
         })
     except Exception as e:
-        return {"Summary Error": str(e)}
+        print(f"CRITICAL 500 SUMMARY ERROR: {e}")
+        return templates.TemplateResponse(request=request, name="error.html", context={"error_msg": str(e)}, status_code=500)
 
 
 @router.get("/help")
 async def help_page(request: Request):
     """Static help and legend page."""
-    return templates.TemplateResponse("help.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="help.html", context={"request": request})

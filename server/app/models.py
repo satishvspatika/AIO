@@ -7,8 +7,8 @@ class FirmwareRegistry(Base):
     category_id  = Column(Integer, primary_key=True)
     name         = Column(String(32))
     display_name = Column(String(64), default="")
-    unit_type    = Column(String(32))
-    system_mode  = Column(Integer)
+    unit_type    = Column(String(32), index=True)
+    system_mode  = Column(Integer, index=True)
     current_ver  = Column(String(16), default="5.77")
     filename     = Column(String(128), default="firmware.bin")
     total_target = Column(Integer, default=0)
@@ -19,8 +19,8 @@ class HealthReport(Base):
     __tablename__ = "health_reports"
     id               = Column(Integer, primary_key=True, index=True)
     stn_id           = Column(String, index=True)
-    unit_type        = Column(String)
-    system           = Column(Integer, default=-1)
+    unit_type        = Column(String, index=True)
+    system           = Column(Integer, default=-1, index=True)
     health_sts       = Column(String)
     sensor_sts       = Column(String)
     reset_reason     = Column(Integer, default=0)
@@ -65,7 +65,7 @@ class HealthReport(Base):
     mutex_fail       = Column(Integer, default=0) # v5.55
     last_cmd_id      = Column(Integer, default=0) # v7.92
     last_cmd_res     = Column(String, default="N/A") # v7.92
-    reported_at      = Column(DateTime, server_default=func.now())
+    reported_at      = Column(DateTime, server_default=func.now(), index=True)
 
 
 class CommandQueue(Base):
@@ -84,4 +84,7 @@ class StationSettings(Base):
     __tablename__ = "station_settings"
     stn_id      = Column(String, primary_key=True, index=True)
     ota_exempt  = Column(Integer, default=0) # 1 means OTA is disabled for this station
+    # Phase 2 Cache: Keep last known state here for $O(1)$ dashboard lookups
+    last_gps    = Column(String, nullable=True) 
+    last_seen   = Column(DateTime, nullable=True)
     updated_at  = Column(DateTime, server_default=func.now(), onupdate=func.now())

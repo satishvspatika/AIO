@@ -1,16 +1,14 @@
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from app.database import SessionLocal
 from app.models import HealthReport, FirmwareRegistry, CommandQueue, StationSettings
 from app.services.health_eval import evaluate, ist_filter
-import csv, io, datetime
+import csv, io, datetime, traceback
+from app.templates import templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
-templates.env.filters["ist"] = ist_filter
 
 
 def get_db():
@@ -101,9 +99,19 @@ from app.services.health_eval import evaluate
 async def dashboard(request: Request, db: Session = Depends(get_db)):
     try:
         reports = get_latest_per_station(db)
-        fw_map  = {
-            (fw.unit_type + str(fw.system_mode)): fw
+        
+        # Phase 2 Optimization: Bulk Fetch everything before the loop
+        fw_map = {
+            (str(fw.unit_type or "") + str(fw.system_mode or 0)): fw
             for fw in db.query(FirmwareRegistry).all()
+        }
+        
+        # Bulk fetch all settings (GPS cache, OTA exempt)
+        settings_map = {s.stn_id: s for s in db.query(StationSettings).all()}
+        
+        # Bulk fetch all pending commands
+        pending_map = {
+            c.stn_id: c for c in db.query(CommandQueue).filter(CommandQueue.executed_at == None).all()
         }
         
         now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
@@ -114,13 +122,13 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         low_bat     = 0
         ota_pending = 0
 
-        settings_rows = db.query(StationSettings).all()
-        exempt_map    = {s.stn_id: s.ota_exempt for s in settings_rows}
-
         for r in reports:
             key        = (r.unit_type or "") + str(r.system or 0)
             r.fw_group = fw_map.get(key)
-            r.is_exempt = (exempt_map.get(r.stn_id, 0) == 1)
+            
+            # Use cached settings (Phase 2)
+            s_cache    = settings_map.get(r.stn_id)
+            r.is_exempt = (s_cache.ota_exempt == 1) if s_cache else False
 
             # OTA badge
             r.ota_needed = False
@@ -137,7 +145,6 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                 low_bat += 1
 
             # v5.49 & v7.90: Sort Priority Arrangement
-            # Order: BIHAR-TRG, KSNDMC-TRG, KSNDMC-TWS, KSNDMC-ADDON, SPATIKA-TRG, SPATIKA-ADDON
             ut = (r.unit_type or r.ver or "").upper()
             sys = r.system
             r.sort_priority = 99
@@ -157,35 +164,27 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             else:
                 r.time_ago = "?"
 
+            # Pending command badge (O(1) Map Lookup)
+            r.pending = pending_map.get(r.stn_id)
 
-            # Pending command badge
-            r.pending = db.query(CommandQueue).filter_by(
-                stn_id=r.stn_id, executed_at=None
-            ).first()
-
-            # GPS Fallback: If latest report has no GPS (e.g. older firmware sends NA during non-GPS wakeups),
-            # search history for the last known good coordinate.
+            # GPS Cache (Phase 2): Use the cached GPS if the current report has "NA"
             if not r.gps or str(r.gps).strip() in ("NA", "0.000000,0.000000", "", "0,0", "None"):
-                last_good = db.query(HealthReport).filter(
-                    HealthReport.stn_id == r.stn_id,
-                    HealthReport.gps.isnot(None),
-                    HealthReport.gps.notin_(("NA", "0.000000,0.000000", "", "0,0"))
-                ).order_by(HealthReport.reported_at.desc()).first()
-                if last_good:
-                    r.gps = last_good.gps
+                if s_cache and s_cache.last_gps:
+                    r.gps = s_cache.last_gps
 
         # Final Sort: priority, then station ID
         reports.sort(key=lambda x: (x.sort_priority, x.stn_id))
 
-        return templates.TemplateResponse("dashboard.html", {
-
+        return templates.TemplateResponse(request=request, name="dashboard.html", context={
             "request": request, "reports": reports,
             "total": total, "alarms": alarms,
             "ota_pending": ota_pending, "low_bat": low_bat,
         })
     except Exception as e:
         print(f"CRITICAL 500 DASHBOARD ERROR: {e}")
-        return templates.TemplateResponse("error.html", {"request": request}, status_code=500)
+        import traceback
+        traceback.print_exc()
+        return templates.TemplateResponse(request=request, name="error.html", context={"error_msg": str(e)}, status_code=500)
 
 
 @router.get("/station/{stn_id}")
@@ -254,7 +253,7 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
                 category_id = fw.category_id
 
         return templates.TemplateResponse(
-            "station.html", {
+            request=request, name="station.html", context={
                 "request": request,
                 "stn_id": stn_id,
                 "history": history,
@@ -265,7 +264,7 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
         )
     except Exception as e:
         print(f"CRITICAL 500 STATION ERROR: {e}")
-        return templates.TemplateResponse("error.html", {"request": request}, status_code=500)
+        return templates.TemplateResponse(request=request, name="error.html", context={"error_msg": str(e)}, status_code=500)
 
 
 # ── CSV Downloads ─────────────────────────────────────────────────────────────

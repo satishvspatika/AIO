@@ -577,8 +577,8 @@ void gprs(void *pvParameters) {
         fullPath[sizeof(fullPath) - 1] = '\0';
 
         // List of files to PRESERVE (Only basic station info)
-        if (fullPath == "/station.doc" || fullPath == "/station.txt" ||
-            fullPath == "/rf_fw.txt" || fullPath == "/rf_res.txt") {
+        if (strcmp(fullPath, "/station.doc") == 0 || strcmp(fullPath, "/station.txt") == 0 ||
+            strcmp(fullPath, "/rf_fw.txt") == 0 || strcmp(fullPath, "/rf_res.txt") == 0) {
           debug("Preserving: ");
           debugln(fullPath);
         } else {

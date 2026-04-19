@@ -1797,8 +1797,27 @@ int send_at_cmd_data(char *payload, bool robust) {
       return 0;
     }
     vTaskDelay(200 / portTICK_PERIOD_MS);
-    SerialSIT.println(payload); // v3.0: use println to finalize buffer
-    waitForResponse("OK", 5000);
+    
+    // v5.88: Hardened Chunked Write (Sync with Health logic)
+    int payloadLen = i;
+    int sentBytes = 0;
+    while (sentBytes < payloadLen) {
+      int toWrite = min(32, payloadLen - sentBytes);
+      SerialSIT.write(payload + sentBytes, toWrite);
+      sentBytes += toWrite;
+      esp_task_wdt_reset();
+      vTaskDelay(40 / portTICK_PERIOD_MS);
+    }
+    SerialSIT.println(); // Finalize buffer if needed by specific firmware stacks
+
+    if (!waitForResponse("OK", 5000)) {
+       debugln("[HTTP] AT+HTTPDATA confirmation timeout. Nuking PDP...");
+       SerialSIT.println("AT+HTTPTERM");
+       waitForResponse("OK", 2000);
+       SerialSIT.println("AT+CGACT=0,1");
+       waitForResponse("OK", 5000);
+       return 0;
+    }
   } else {
     // v5.63 Native v3.0 Fast push!
     // We send command, wait for prompt byte, then push payload.

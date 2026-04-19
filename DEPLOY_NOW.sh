@@ -1,21 +1,34 @@
 #!/usr/bin/env bash
 # =============================================================================
-# DEPLOY_NOW.sh - Final Fixed Version
+# DEPLOY_NOW.sh - Robust Single-Connection Sync
 # =============================================================================
 HOST="75.119.148.192"
 
-echo "🚀 Syncing FILES directly to Live Folder..."
-scp -r server/app server/deploy.sh server/requirements.txt \
-    server/seed_db.py server/migrate.py \
-    root@$HOST:/opt/spatika-health/
+echo "📦 Bundling files..."
+# Move scripts into app/ temporarily to ensure they are inside the Docker mount
+cp server/migrate.py server/app/migrate_internal.py
+cp server/seed_db.py server/app/seed_db_internal.py
+tar -cvz -C server app requirements.txt > deploy.tar.gz
 
-echo "▶ Restarting Spatika Service..."
-ssh root@$HOST "cd /opt/spatika-health && docker compose restart"
-sleep 2
+echo "🚀 Sending and Deploying (Single Connection)..."
+cat deploy.tar.gz | ssh root@$HOST "
+    mkdir -p /opt/spatika-health && \
+    cd /opt/spatika-health && \
+    rm -rf app requirements.txt && \
+    tar -xz && \
+    echo '▶ Restarting Spatika Service...' && \
+    docker compose restart && \
+    sleep 3 && \
+    echo '▶ Running DB Migrations...' && \
+    docker exec -i -w /app -e PYTHONPATH=/app spatika-health python3 app/migrate_internal.py && \
+    echo '▶ Restoring Fleet Categories (Seeding)...' && \
+    docker exec -i -w /app -e PYTHONPATH=/app spatika-health python3 app/seed_db_internal.py
+"
 
-echo "▶ Running DB Migrations..."
-cat server/migrate.py | ssh root@$HOST "docker exec -i spatika-health python3 -"
+# Cleanup local tar
+rm deploy.tar.gz
 
+echo ""
 echo "✅ DEPLOYMENT SUCCESSFUL!"
 echo "Visit: http://$HOST/dashboard"
 echo "TIP: If changes don't appear, press Cmd+Shift+R or Ctrl+F5 in your browser."

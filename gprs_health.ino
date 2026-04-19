@@ -1351,7 +1351,8 @@ bool send_health_report(bool useJitter) {
       "\"ndm_cnt\":%d,\"pd_cnt\":%d,"
       "\"http_present_fails\":%d,\"http_cum_fails\":%d,"
       "\"http_backlog_cnt\":%d,\"mutex_fail\":%d,"
-      "\"ota_fails\":%d,\"ota_fail_reason\":\"%s\""
+      "\"ota_fails\":%d,\"ota_fail_reason\":\"%s\","
+      "\"token\":\"%s\""
       "%s}", 
       cleanStn, UNIT, SYSTEM, h_status, sensor_info,
       (diag_rtc_battery_ok ? 1 : 0), li_bat_val, solar_val, signal_lvl,
@@ -1374,6 +1375,7 @@ bool send_health_report(bool useJitter) {
       diag_ndm_count, diag_pd_count, diag_http_present_fails,
       diag_http_cum_fails, get_total_backlogs(true), diag_modem_mutex_fails,
       ota_fail_count, ota_fail_reason,
+      TELEMETRY_TOKEN,
       feedback); 
 
   if (msgLen >= (int)sizeof(jsonBody)) {
@@ -1398,7 +1400,7 @@ bool send_health_report(bool useJitter) {
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
   bool success = false;
-  int max_attempts = useJitter ? 3 : 2; 
+  int max_attempts = useJitter ? 2 : 1; // v5.88: Reduced from 3/2 to 2/1 to speed up sleep cycle
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
     debugf2("[Health] Attempt %d/%d\n", attempt, max_attempts);
     if (!verify_bearer_or_recover())
@@ -1456,14 +1458,14 @@ bool send_health_report(bool useJitter) {
 
         int sentBytes = 0;
         while (sentBytes < msgLen) {
-          int toWrite = min(48, msgLen - sentBytes);
+          int toWrite = min(32, msgLen - sentBytes); // Reduced from 48 for buffer safety
           SerialSIT.write(jsonBody + sentBytes, toWrite);
           sentBytes += toWrite;
           esp_task_wdt_reset(); 
-          vTaskDelay(20 / portTICK_PERIOD_MS);
+          vTaskDelay(40 / portTICK_PERIOD_MS); // Increased from 20ms for UART reliability
         }
 
-        if (waitForResponse("OK", 20000)) {
+        if (waitForResponse("OK", 5000)) { // v5.88: Reduced from 20s. 700 bytes @ 115k baud is instant.
           SerialSIT.println("AT+HTTPACTION=1");
           waitForResponse("OK", 3000);
 
@@ -1584,7 +1586,12 @@ bool send_health_report(bool useJitter) {
           debugf("[Health] [ERR] HTTP Action Failed, Resp: %s\n", modem_response_buf);
         }
       } else {
-        debugln("[Health] [ERR] Data Load Timeout/Error");
+        debugln("[Health] [ERR] Data Load Timeout/Error. Nuking stack & PDP...");
+        SerialSIT.println("AT+HTTPTERM");
+        waitForResponse("OK", 2000);
+        SerialSIT.println("AT+CGACT=0,1"); // v5.88: Force PDP refresh on hard serial lock
+        waitForResponse("OK", 5000);
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
       }
     } else {
       debugln("[Health] [ERR] DOWNLOAD Prompt Failed");

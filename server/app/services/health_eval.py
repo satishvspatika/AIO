@@ -18,9 +18,17 @@ import datetime
 def ist_filter(dt):
     """Jinja2 filter to convert UTC datetime to IST string."""
     if not dt: return "-"
-    # IST = UTC + 5:30
-    ist_time = dt + datetime.timedelta(hours=5, minutes=30)
-    return ist_time.strftime("%m-%d %H:%M:%S")
+    try:
+        # If it's already a string, just return it or try simple ISO parse
+        if isinstance(dt, str):
+            if " " in dt: dt = dt.split(".")[0] # Clean up miliseconds
+            return dt
+            
+        # IST = UTC + 5:30
+        ist_time = dt + datetime.timedelta(hours=5, minutes=30)
+        return ist_time.strftime("%m-%d %H:%M:%S")
+    except Exception:
+        return str(dt)
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
 OFFLINE_MINS         = 1470   # Level: Relaxed to 24.5 hours (Prev 7h) — Flag offline only if full day of reports is missing.

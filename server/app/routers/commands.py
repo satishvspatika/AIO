@@ -17,7 +17,7 @@ def get_db():
         db.close()
 
 
-@router.post("/cmd/{stn_id}/{command}")
+@router.api_route("/cmd/{stn_id}/{command}", methods=["GET", "POST"])
 def queue_command(
     stn_id:  str,
     command: str,
@@ -40,14 +40,14 @@ def queue_command(
     return RedirectResponse(url=f"/station/{stn_id}")
 
 
-@router.post("/clear-queue/{stn_id}")
+@router.api_route("/clear-queue/{stn_id}", methods=["GET", "POST"])
 def clear_queue(stn_id: str, db: Session = Depends(get_db)):
     """Deletes all pending commands (like queued OTAs) for a station."""
     db.query(CommandQueue).filter_by(stn_id=stn_id, executed_at=None).delete()
     db.commit()
     return RedirectResponse(url=f"/station/{stn_id}")
 
-@router.post("/clear-ota-queue/{stn_id}")
+@router.api_route("/clear-ota-queue/{stn_id}", methods=["GET", "POST"])
 def clear_ota_queue(stn_id: str, db: Session = Depends(get_db)):
     """Deletes ONLY pending OTA_CHECK commands for a station."""
     db.query(CommandQueue).filter_by(stn_id=stn_id, cmd="OTA_CHECK", executed_at=None).delete()
@@ -55,7 +55,7 @@ def clear_ota_queue(stn_id: str, db: Session = Depends(get_db)):
     return RedirectResponse(url=f"/station/{stn_id}")
 
 
-@router.post("/toggle-ota-lock/{stn_id}")
+@router.api_route("/toggle-ota-lock/{stn_id}", methods=["GET", "POST"])
 def toggle_ota_lock(stn_id: str, db: Session = Depends(get_db)):
     from fastapi.responses import RedirectResponse
     setting = db.query(StationSettings).filter_by(stn_id=stn_id).first()
@@ -73,15 +73,16 @@ def toggle_ota_lock(stn_id: str, db: Session = Depends(get_db)):
     return RedirectResponse(url=f"/station/{stn_id}")
 
 
-@router.post("/delete/{stn_id}")
+@router.api_route("/delete/{stn_id}", methods=["GET", "POST"])
 def delete_station(stn_id: str, db: Session = Depends(get_db)):
-    from app.models import HealthReport
+    from app.models import HealthReport, StationSettings
     db.query(HealthReport).filter_by(stn_id=stn_id).delete()
     db.query(CommandQueue).filter_by(stn_id=stn_id).delete()
+    db.query(StationSettings).filter_by(stn_id=stn_id).delete()
     db.commit()
     return RedirectResponse(url="/dashboard")
 
-@router.post("/delete-category/{stn_id}/{unit_type}/{system}")
+@router.api_route("/delete-category/{stn_id}/{unit_type}/{system}", methods=["GET", "POST"])
 def delete_station_category(stn_id: str, unit_type: str, system: int, db: Session = Depends(get_db)):
     """Surgical delete: Removes a station only from a specific category (e.g. KSNDMC_TWS)."""
     from app.models import HealthReport
@@ -89,7 +90,7 @@ def delete_station_category(stn_id: str, unit_type: str, system: int, db: Sessio
     db.commit()
     return RedirectResponse(url="/summary")
 
-@router.post("/delete/record/{report_id}")
+@router.api_route("/delete/record/{report_id}", methods=["GET", "POST"])
 def delete_record(report_id: int, db: Session = Depends(get_db)):
     record = db.query(HealthReport).filter_by(id=report_id).first()
     if record:
@@ -113,7 +114,9 @@ def delete_bulk_records(payload: BulkDeleteRecords, db: Session = Depends(get_db
 
 @router.post("/delete/bulk-stations")
 def delete_bulk_stations(payload: BulkDeleteStations, db: Session = Depends(get_db)):
+    from app.models import HealthReport, CommandQueue, StationSettings
     db.query(HealthReport).filter(HealthReport.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
     db.query(CommandQueue).filter(CommandQueue.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
+    db.query(StationSettings).filter(StationSettings.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
     db.commit()
     return {"status": "ok", "deleted": len(payload.stn_ids)}

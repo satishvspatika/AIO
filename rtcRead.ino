@@ -176,8 +176,13 @@ void rtcRead(void *pvParameters) {
           }
           badReads = -1;
           resync_time();
-        } else {
-          debugln("[RTC] Deferring sync, GPRS task is busy.");
+        } else if (!sleep_sequence_active) {
+          // v5.88: Hardened Log Silencing — Only spam once every 60s
+          static unsigned long last_defer_msg_time = 0;
+          if (millis() - last_defer_msg_time > 60000) {
+            debugln("[RTC] Deferring sync, GPRS task is busy.");
+            last_defer_msg_time = millis();
+          }
         }
       }
     }
