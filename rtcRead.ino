@@ -159,9 +159,20 @@ void rtcRead(void *pvParameters) {
       // v5.77: Coordination Guard — Do not sync if sleep is imminent or retry cap reached
       if (sleep_sequence_active) {
         debugln("[RTC] Sleep imminent. Deferring sync.");
-      } else if (rtc_daily_sync_count >= 3) {
-        debugln("[RTC] Daily sync retry cap reached. Deferring.");
+      } else if (rtc_daily_sync_count >= 12) {
+        // v5.98: Hardened Log Silencing — Only spam once every hour for budget exhaustion
+        static unsigned long last_cap_msg_time = 0;
+        if (millis() - last_cap_msg_time > 3600000) {
+          debugln("[RTC] Daily sync budget exhausted (12/12). Deferring until 08:30 reset.");
+          last_cap_msg_time = millis();
+        }
       } else {
+        // v5.98: Backoff logic to prevent rapid-fire retries on poor network
+        static unsigned long last_sync_retry_time = 0;
+        if (millis() - last_sync_retry_time < 900000) { // 15 minute backoff
+            goto SKIP_RTC_SYNC; 
+        }
+
         portENTER_CRITICAL(&syncMux);
         int mode_snap = sync_mode;
         portEXIT_CRITICAL(&syncMux);
@@ -169,10 +180,18 @@ void rtcRead(void *pvParameters) {
                            mode_snap == eExceptionHandled) &&
                           !health_in_progress && !wifi_active);
         if (gprs_idle) {
+          last_sync_retry_time = millis(); // Update retry timer
           if (badReads >= 40) debugln("[RTC] Too many bad reads — resyncing RTC");
           else {
             debugln("[RTC] Scheduled daily sync/drift correction triggered.");
             rtc_daily_sync_count++; // Increment retry counter
+            
+            // v5.98: Nuclear Option - if we've failed 8 times, the LBS stack might be hung
+            if (rtc_daily_sync_count == 8) {
+                debugln("[RTC] Persistent Sync Failure. Triggering NUCLEAR RESET (Pin 26)...");
+                digitalWrite(26, LOW); vTaskDelay(2000 / portTICK_PERIOD_MS);
+                digitalWrite(26, HIGH); vTaskDelay(5000 / portTICK_PERIOD_MS);
+            }
           }
           badReads = -1;
           resync_time();
@@ -186,9 +205,17 @@ void rtcRead(void *pvParameters) {
         }
       }
     }
+    
+    // v5.98: Daily Reporting Reset — If it's near reporting start (08:30)
+    // Force reset the budget to ensure we get a clean time sync for the new data day
+    if (hr == 8 && mi >= 30 && mi <= 35 && rtc_daily_sync_count > 0) {
+        rtc_daily_sync_count = 0; 
+        debugln("[RTC] Reporting Window Reset: Restoring sync budget.");
+    }
 
+    SKIP_RTC_SYNC:
     esp_task_wdt_reset();
-    vTaskDelay(pdMS_TO_TICKS(3000)); // wait 3 seconds (v5.78 Hardening: reduced from 5s to prevent WDT race)
+    vTaskDelay(pdMS_TO_TICKS(3000)); // wait 3 seconds
   }
 }
 

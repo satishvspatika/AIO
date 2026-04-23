@@ -74,7 +74,12 @@ def toggle_ota_lock(stn_id: str, db: Session = Depends(get_db)):
 
 
 @router.api_route("/delete/{stn_id}", methods=["GET", "POST"])
-def delete_station(stn_id: str, db: Session = Depends(get_db)):
+def delete_station(request: Request, stn_id: str, db: Session = Depends(get_db)):
+    # v6.4 Authorization Check
+    user = request.state.user
+    if not user or (user.get("role") != "supervisor" and user.get("username") != "satishv"):
+        return RedirectResponse(url="/dashboard")
+
     from app.models import HealthReport, StationSettings
     db.query(HealthReport).filter_by(stn_id=stn_id).delete()
     db.query(CommandQueue).filter_by(stn_id=stn_id).delete()
@@ -83,15 +88,25 @@ def delete_station(stn_id: str, db: Session = Depends(get_db)):
     return RedirectResponse(url="/dashboard")
 
 @router.api_route("/delete-category/{stn_id}/{unit_type}/{system}", methods=["GET", "POST"])
-def delete_station_category(stn_id: str, unit_type: str, system: int, db: Session = Depends(get_db)):
+def delete_station_category(request: Request, stn_id: str, unit_type: str, system: int, db: Session = Depends(get_db)):
     """Surgical delete: Removes a station only from a specific category (e.g. KSNDMC_TWS)."""
+    # v6.4 Authorization Check
+    user = request.state.user
+    if not user or (user.get("role") != "supervisor" and user.get("username") != "satishv"):
+        return RedirectResponse(url="/summary")
+
     from app.models import HealthReport
     db.query(HealthReport).filter_by(stn_id=stn_id, unit_type=unit_type, system=system).delete()
     db.commit()
     return RedirectResponse(url="/summary")
 
 @router.api_route("/delete/record/{report_id}", methods=["GET", "POST"])
-def delete_record(report_id: int, db: Session = Depends(get_db)):
+def delete_record(request: Request, report_id: int, db: Session = Depends(get_db)):
+    # v6.4 Authorization Check
+    user = request.state.user
+    if not user or (user.get("role") != "supervisor" and user.get("username") != "satishv"):
+        return RedirectResponse(url="/dashboard")
+
     record = db.query(HealthReport).filter_by(id=report_id).first()
     if record:
         stn_id = record.stn_id
@@ -107,13 +122,23 @@ class BulkDeleteStations(BaseModel):
     stn_ids: List[str]
 
 @router.post("/delete/bulk-records")
-def delete_bulk_records(payload: BulkDeleteRecords, db: Session = Depends(get_db)):
+def delete_bulk_records(request: Request, payload: BulkDeleteRecords, db: Session = Depends(get_db)):
+    # v6.4 Authorization Check
+    user = request.state.user
+    if not user or (user.get("role") != "supervisor" and user.get("username") != "satishv"):
+        return {"status": "error", "msg": "Unauthorized"}
+
     db.query(HealthReport).filter(HealthReport.id.in_(payload.ids)).delete(synchronize_session=False)
     db.commit()
     return {"status": "ok", "deleted": len(payload.ids)}
 
 @router.post("/delete/bulk-stations")
-def delete_bulk_stations(payload: BulkDeleteStations, db: Session = Depends(get_db)):
+def delete_bulk_stations(request: Request, payload: BulkDeleteStations, db: Session = Depends(get_db)):
+    # v6.4 Authorization Check
+    user = request.state.user
+    if not user or (user.get("role") != "supervisor" and user.get("username") != "satishv"):
+        return {"status": "error", "msg": "Unauthorized"}
+        
     from app.models import HealthReport, CommandQueue, StationSettings
     db.query(HealthReport).filter(HealthReport.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
     db.query(CommandQueue).filter(CommandQueue.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)

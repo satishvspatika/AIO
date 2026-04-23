@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, func
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, func
 from .database import Base
 
 
@@ -89,3 +89,27 @@ class StationSettings(Base):
     last_gps    = Column(String, nullable=True) 
     last_seen   = Column(DateTime, nullable=True)
     updated_at  = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class ServiceReport(Base):
+    __tablename__ = "service_reports"
+    id          = Column(Integer, primary_key=True, index=True)
+    stn_id      = Column(String, index=True)
+    eng_name    = Column(String, nullable=True)
+    svc_type    = Column(String, nullable=True)
+    comments    = Column(String)
+    img1_path   = Column(String, nullable=True)
+    img2_path   = Column(String, nullable=True)
+    
+    # v5.87: Captured Telemetry at time of service
+    bat_v       = Column(Float, nullable=True)
+    sol_v       = Column(Float, nullable=True)
+    gps         = Column(String, nullable=True)
+    inst_rf     = Column(Float, nullable=True)
+    cum_rf      = Column(Float, nullable=True)
+    
+    # v6.05: Binary Sync Status (All-or-Nothing visibility)
+    is_finalized = Column(Boolean, default=False)
+    has_img1    = Column(Boolean, default=False)
+    has_img2    = Column(Boolean, default=False)
+    reported_at = Column(DateTime, index=True, server_default=func.now())

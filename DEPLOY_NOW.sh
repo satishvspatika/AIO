@@ -7,6 +7,7 @@ HOST="75.119.148.192"
 echo "📦 Bundling files..."
 # Move scripts into app/ temporarily to ensure they are inside the Docker mount
 cp server/migrate.py server/app/migrate_internal.py
+cp server/migrate_v587.py server/app/migrate_v587_internal.py
 cp server/seed_db.py server/app/seed_db_internal.py
 tar -cvz -C server app requirements.txt > deploy.tar.gz
 
@@ -23,6 +24,8 @@ cat deploy.tar.gz | ssh root@$HOST "
     sleep 3 && \
     echo '▶ Running DB Migrations...' && \
     docker exec -i -w /app -e PYTHONPATH=/app spatika-health python3 app/migrate_internal.py && \
+    echo '▶ Running ID Normalization Migration (v5.87)...' && \
+    docker exec -i -w /app -e PYTHONPATH=/app spatika-health python3 app/migrate_v587_internal.py && \
     echo '▶ Restoring Fleet Categories (Seeding)...' && \
     docker exec -i -w /app -e PYTHONPATH=/app spatika-health python3 app/seed_db_internal.py
 "

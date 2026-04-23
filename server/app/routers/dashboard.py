@@ -3,12 +3,20 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from app.database import SessionLocal
-from app.models import HealthReport, FirmwareRegistry, CommandQueue, StationSettings
+from app.models import HealthReport, FirmwareRegistry, CommandQueue, StationSettings, ServiceReport
 from app.services.health_eval import evaluate, ist_filter
-import csv, io, datetime, traceback
+import csv, io, datetime, traceback, os
 from app.templates import templates
 
 router = APIRouter()
+
+
+def normalize_sid(sid: str) -> str:
+    """Consistently strips leading zeros and whitespace (001952 -> 1952)."""
+    s = str(sid or "").strip()
+    if s.isdigit():
+        return str(int(s))
+    return s.upper()
 
 
 def get_db():
@@ -20,16 +28,30 @@ def get_db():
 
 
 def get_latest_per_station(db):
-    """Returns exactly one (latest) record per unique station ID."""
-    subq = db.query(
-        HealthReport.stn_id,
-        func.max(HealthReport.reported_at).label("m")
-    ).group_by(HealthReport.stn_id).subquery()
-    return db.query(HealthReport).join(
-        subq,
-        (HealthReport.stn_id == subq.c.stn_id) &
-        (HealthReport.reported_at == subq.c.m)
-    ).order_by(HealthReport.reported_at.desc()).all()
+    """
+    Returns exactly one (latest) record per unique normalized station ID.
+    Normalization ensures '001952' and '1952' are treated as the same station.
+    """
+    # Fetch all records from the last 48 hours to find active stations
+    # (Using a broad window for performance, then sorting manually)
+    two_days_ago = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=2)
+    
+    # v5.88: Optimized deduplication logic
+    all_recent = (
+        db.query(HealthReport)
+        .filter(HealthReport.reported_at > two_days_ago)
+        .order_by(HealthReport.reported_at.desc())
+        .all()
+    )
+    
+    unique_reports = {}
+    for r in all_recent:
+        sid = normalize_sid(r.stn_id)
+        if sid not in unique_reports:
+            unique_reports[sid] = r
+            
+    # Sort by reported_at desc for the final list
+    return sorted(unique_reports.values(), key=lambda x: x.reported_at, reverse=True)
 
 
 def _g(r, attr, default=None):
@@ -127,12 +149,20 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         }
         
         # Bulk fetch all settings (GPS cache, OTA exempt)
-        settings_map = {s.stn_id: s for s in db.query(StationSettings).all()}
+        # v5.88: Normalize keys to ensure '1952' matches '001952' in the cache
+        settings_map = {}
+        for s in db.query(StationSettings).all():
+            nsid = normalize_sid(s.stn_id)
+            # If duplicates exist in Settings table, keep the one with most recent update
+            if nsid not in settings_map or (s.updated_at and settings_map[nsid].updated_at and s.updated_at > settings_map[nsid].updated_at):
+                settings_map[nsid] = s
         
         # Bulk fetch all pending commands
-        pending_map = {
-            c.stn_id: c for c in db.query(CommandQueue).filter(CommandQueue.executed_at == None).all()
-        }
+        pending_map = {}
+        for c in db.query(CommandQueue).filter(CommandQueue.executed_at == None).all():
+            nsid = normalize_sid(c.stn_id)
+            if nsid not in pending_map:
+                pending_map[nsid] = c
         
         now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
@@ -147,7 +177,9 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             r.fw_group = fw_map.get(key)
             
             # Use cached settings (Phase 2)
-            s_cache    = settings_map.get(r.stn_id)
+            # Consolidated lookups using normalized ID
+            norm_id = normalize_sid(r.stn_id)
+            s_cache = settings_map.get(norm_id)
             r.is_exempt = (s_cache.ota_exempt == 1) if s_cache else False
 
             # OTA badge
@@ -185,12 +217,30 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                 r.time_ago = "?"
 
             # Pending command badge (O(1) Map Lookup)
-            r.pending = pending_map.get(r.stn_id)
+            r.pending = pending_map.get(norm_id)
 
             # GPS Cache (Phase 2): Use the cached GPS if the current report has "NA"
             if not r.gps or str(r.gps).strip() in ("NA", "0.000000,0.000000", "", "0,0", "None"):
-                if s_cache and s_cache.last_gps:
+                if s_cache and s_cache.last_gps and s_cache.last_gps not in ("NA", "0,0", "0.000000,0.000000", "None"):
                     r.gps = s_cache.last_gps
+                else:
+                    # Cache empty & Report bad. Try a deep lookup for THIS station if we haven't already.
+                    # Limit to 1 deep lookup per request to prevent lag
+                    deep_gps = (
+                        db.query(HealthReport.gps)
+                        .filter(HealthReport.stn_id == r.stn_id)
+                        .filter(HealthReport.gps != None)
+                        .filter(HealthReport.gps != "0,0")
+                        .filter(HealthReport.gps != "0.000000,0.000000")
+                        .filter(HealthReport.gps != "NA")
+                        .order_by(HealthReport.reported_at.desc())
+                        .first()
+                    )
+                    if deep_gps:
+                        r.gps = deep_gps[0]
+                        if s_cache:
+                            s_cache.last_gps = deep_gps[0]
+                            db.commit() # Update the persistent cache
 
         # Final Sort: priority, then station ID
         reports.sort(key=lambda x: (x.sort_priority, x.stn_id))
@@ -207,10 +257,96 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         return templates.TemplateResponse(request=request, name="error.html", context={"error_msg": str(e)}, status_code=500)
 
 
+@router.get("/service_reports")
+async def service_reports_fleet(request: Request, q: str = None, mode: str = "latest", db: Session = Depends(get_db)):
+    """Fleet-wide gallery of recent service reports with search and grouping."""
+    try:
+        query = db.query(ServiceReport).filter(ServiceReport.is_finalized == True)
+
+        if mode == "latest":
+            # Subquery to get the max ID for each station to ensure unique station list (only finalized)
+            subquery = db.query(func.max(ServiceReport.id)).filter(ServiceReport.is_finalized == True).group_by(ServiceReport.stn_id)
+            query = query.filter(ServiceReport.id.in_(subquery))
+        
+        if q:
+            # v5.88: Enhanced search to handle comma-separated Station IDs
+            if "," in q:
+                ids = [i.strip() for i in q.split(",") if i.strip()]
+                # Further normalize digit-only IDs in the split list
+                clean_ids = []
+                for idx in ids:
+                    if idx.isdigit(): clean_ids.append(str(int(idx)))
+                    else: clean_ids.append(idx.upper())
+                query = query.filter(ServiceReport.stn_id.in_(clean_ids))
+            else:
+                # Standard partial match for single entry
+                query = query.filter(ServiceReport.stn_id.contains(q))
+
+        reports = query.order_by(ServiceReport.reported_at.desc()).limit(100).all()
+        
+        # IST conversion is now handled exclusively by the |ist template filter for robustness
+        return templates.TemplateResponse(request=request, name="service_fleet.html", context={
+            "request": request, "reports": reports, "active": "service", "q": q, "mode": mode
+        })
+    except Exception as e:
+        print(f"CRITICAL 500 SERVICE FLEET ERROR: {e}")
+        traceback.print_exc()
+        return templates.TemplateResponse(request=request, name="error.html", context={"error_msg": str(e)}, status_code=500)
+
+
+@router.post("/delete/bulk-service-reports")
+async def bulk_delete_service_reports(request: Request, db: Session = Depends(get_db)):
+    """Deletes multiple service reports and scrubs their associated JPG files from storage."""
+    try:
+        # v6.4: Authorize supervisor OR administrative bypass for 'satishv'
+        user = request.state.user
+        is_auth = False
+        if user:
+            if user.get("role") == "supervisor" or user.get("username") == "satishv":
+                is_auth = True
+        
+        if not is_auth:
+            return {"status": "error", "msg": "Unauthorized"}
+            
+        data = await request.json()
+        ids = data.get("ids", [])
+        if not ids:
+            return {"status": "error", "msg": "No IDs provided"}
+
+        # Fetch records to find image paths before deletion
+        reports = db.query(ServiceReport).filter(ServiceReport.id.in_(ids)).all()
+        
+        # Determine storage root (handle both container and local)
+        storage_root = "/app/data/svc" if os.path.exists("/app/data/svc") else "data/svc"
+            
+        for r in reports:
+            # Physically delete associated images to save space
+            for path in [r.img1_path, r.img2_path]:
+                if path:
+                    full_path = os.path.join(storage_root, path)
+                    if os.path.exists(full_path):
+                        try: os.remove(full_path)
+                        except: pass
+            
+            # Delete database record
+            db.delete(r)
+            
+        db.commit()
+        return {"status": "ok", "count": len(reports)}
+    except Exception as e:
+        print(f"[SVC] Bulk Delete Error: {e}")
+        return {"status": "error", "msg": str(e)}
+
+
 @router.get("/station/{stn_id}")
 async def station_detail(stn_id: str, request: Request, db: Session = Depends(get_db)):
     """Full history page with de-cluttered daily trends."""
     try:
+        # v5.87: Normalize stn_id for consistent querying (001952 -> 1952)
+        if stn_id.isdigit():
+            stn_id = str(int(stn_id))
+        stn_id = stn_id.upper()
+
         raw_history = (
             db.query(HealthReport)
             .filter_by(stn_id=stn_id)
@@ -245,8 +381,35 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
             .all()
         )
         
-        setting = db.query(StationSettings).filter_by(stn_id=stn_id).first()
-        is_exempt = (setting.ota_exempt == 1) if setting else False
+        # v5.87: Fetch recent service        # v6.4: Limit Service History to exactly 5 entries
+        service_history = (
+            db.query(ServiceReport).filter(ServiceReport.is_finalized == True)
+            .filter_by(stn_id=stn_id)
+            .order_by(ServiceReport.reported_at.desc())
+            .limit(5)
+            .all()
+        )
+        
+        # IST conversion is now handled exclusively by the |ist template filter for robustness
+        # v5.88: GPS Deep-Lookup Fallback (Phase 2 Recovery)
+        # If the settings cache has no GPS (common after transmission failures),
+        # peek into historical records to recover the last known location.
+        if settings and (not settings.last_gps or settings.last_gps in ('0,0', '0.000000,0.000000', 'NA', 'None', '')):
+            deep_gps = (
+                db.query(HealthReport.gps)
+                .filter(HealthReport.stn_id == stn_id)
+                .filter(HealthReport.gps != None)
+                .filter(HealthReport.gps != "0,0")
+                .filter(HealthReport.gps != "0.000000,0.000000")
+                .filter(HealthReport.gps != "NA")
+                .order_by(HealthReport.reported_at.desc())
+                .first()
+            )
+            if deep_gps:
+                settings.last_gps = deep_gps[0]
+                db.commit() # Self-healing update for the cache
+
+        is_exempt = (settings.ota_exempt == 1) if settings else False
 
         
         now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
@@ -277,12 +440,28 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
 
         # v5.86 FIX: UI Resilience. If the primary GPS cache is empty/invalid, 
         # scan historical records to find the last known "Good" coordinate.
-        # This prevents the badge from showing "Searching" when historical data exists.
         if settings and (not settings.last_gps or settings.last_gps in ("NA", "0,0", "0.000000,0.000000", "None")):
+            # 1. Search local 400 reports we already have
             for r in raw_history:
                 if r.gps and str(r.gps).strip() not in ("NA", "0,0", "0.000000,0.000000", "None", ""):
                     settings.last_gps = r.gps
+                    db.commit()
                     break
+            # 2. Deep scan if still not found
+            if not settings.last_gps or settings.last_gps in ("NA", "0,0", "0.000000,0.000000", "None"):
+                deep_gps = (
+                    db.query(HealthReport.gps)
+                    .filter(HealthReport.stn_id == stn_id)
+                    .filter(HealthReport.gps != None)
+                    .filter(HealthReport.gps != "0,0")
+                    .filter(HealthReport.gps != "0.000000,0.000000")
+                    .filter(HealthReport.gps != "NA")
+                    .order_by(HealthReport.reported_at.desc())
+                    .first()
+                )
+                if deep_gps:
+                    settings.last_gps = deep_gps[0]
+                    db.commit()
 
         # v5.90: Fetch last SET_WIFI_PASS command for supervisor display
         last_wifi_cmd = (
@@ -303,6 +482,7 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
                 "category_id": category_id,
                 "settings": settings,
                 "last_wifi_pass": last_wifi_pass,
+                "service_history": service_history
             }
         )
     except Exception as e:

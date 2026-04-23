@@ -866,8 +866,11 @@ void lcdkeypad(void *pvParameters) {
             }
           } else if (cur_fld_no == FLD_SD_COPY) {
             if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-              lcd.clear(); lcd.print("COPYING TO SD...");
-              xSemaphoreGive(i2cMutex); // Release lock BEFORE massive file copy sequence
+              lcd.clear(); 
+              lcd.setCursor(0, 0);
+              lcd.print("COPYING TO SD...");
+              xSemaphoreGive(i2cMutex); 
+              vTaskDelay(200 / portTICK_PERIOD_MS); // v5.88: Breather to ensure message is painted
 
               // v5.70: Protect SD copy with fsMutex AND block concurrent filesystem mods
               if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {

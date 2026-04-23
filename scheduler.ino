@@ -847,7 +847,7 @@ void scheduler(void *pvParameters) {
         previous_date(&temp_day, &temp_month, &temp_year);
 
       debugln();
-      debugf3("RF Close date from RTC = %04d-%02d-%02d  ", rf_cls_yy, rf_cls_mm,
+      debugf3("[SCHED] Current Active Log File Date: %04d-%02d-%02d  ", rf_cls_yy, rf_cls_mm,
               rf_cls_dd);
       debugln();
 
@@ -1087,7 +1087,7 @@ void scheduler(void *pvParameters) {
         debugln(last_sampleNo);
 
         if (last_sampleNo == sampleNo) {
-          debugln("Duplicate sample detected (RF). Data already logged.");
+          debugln("[SCHED] Stabilization Check: Slot already logged in SPIFFS (Duplicate skip).");
           data_writing_initiated = 0;
           skip_primary_http = true; // No need to hit server with a duplicate
           __atomic_store_n(&httpInitiated, true,
@@ -1219,7 +1219,7 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 2
         last_sampleNo = atoi(content_buf);
         if (last_sampleNo == sampleNo) {
-          debugln("Duplicate sample detected (TWS-RF).");
+          debugln("[SCHED] Stabilization Check: Slot already logged in SPIFFS (Duplicate skip).");
           data_writing_initiated = 0;
           skip_primary_http = true;
           __atomic_store_n(&httpInitiated, true,
@@ -2310,7 +2310,8 @@ void scheduler(void *pvParameters) {
             // 2. SYSTEM 1/2 (TWS): ALWAYS queue to ftpunsent.txt as FTP is the robust sync layer.
             bool should_queue_ftp = (data_writing_initiated == 1);
 #if SYSTEM == 0
-            should_queue_ftp = should_queue_ftp && skip_primary_http;
+            // v5.88: Also queue to backlog if primary is skipped due to WiFi contention
+            should_queue_ftp = should_queue_ftp && (skip_primary_http || wifi_active);
 #endif
             if (should_queue_ftp) {
               if (last_unsent_sampleNo != sampleNo) { // v5.72: Dedup guard
@@ -3266,10 +3267,21 @@ void scheduler(void *pvParameters) {
         } else {
           debugln();
           // Trigger HTTP after manual task is done
+          bool wifiActiveSnap = false;
           portENTER_CRITICAL(&syncMux);
-          sync_mode = eHttpBegin;
+          wifiActiveSnap = wifi_active;
+          // v5.88: Skip automated sync if technician is using Wi-Fi to avoid AT+HTTPDATA timeouts
+          if (wifiActiveSnap) {
+            sync_mode = eHttpStop; // Allow system to process other tasks
+          } else {
+            sync_mode = eHttpBegin;
+            __atomic_store_n(&httpInitiated, true, __ATOMIC_RELEASE);
+          }
           portEXIT_CRITICAL(&syncMux);
-          __atomic_store_n(&httpInitiated, true, __ATOMIC_RELEASE);
+
+          if (wifiActiveSnap) {
+            debugln("[SCHED] WiFi Active. Deferring automated sync to backlog.");
+          }
           data_writing_initiated = 0;
 
           // v5.41 Test Mode: Send Health Report every slot

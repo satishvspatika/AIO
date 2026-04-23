@@ -3,7 +3,7 @@ from fastapi.responses import RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import engine
 from app.models import Base
-from app.routers import health, dashboard, ota, commands, summary
+from app.routers import health, dashboard, ota, commands, summary, service
 from app.auth import router as auth_router, SESSIONS
 from app.services.maintenance import maintenance_loop
 import asyncio
@@ -19,6 +19,22 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Spatika Health API v3.0", debug=True)
 BUILDS_DIR = "/app/builds" 
+
+# v5.88: Automatic Cache-Busting & Template Helpers
+import uuid
+from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime
+DEPLOY_ID = uuid.uuid4().hex[:8]
+templates.env.globals.update(deploy_id=DEPLOY_ID, datetime=datetime)
+
+# v5.94: CORS for Direct Mobile Sync
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Phase 8/9 Fix: Stop command_queue from growing infinitely over years of operation
 from sqlalchemy import text
@@ -109,6 +125,7 @@ app.include_router(dashboard.router)
 app.include_router(ota.router)
 app.include_router(commands.router)
 app.include_router(summary.router)
+app.include_router(service.router)
 
 # Serve the firmware builds directory via a Range-aware endpoint instead of StaticFiles
 import os

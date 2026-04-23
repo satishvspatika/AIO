@@ -235,6 +235,8 @@ void get_registration() {
   // v7.54 FAST-TRACK REGISTRATION CHECK:
   // If the modem was kept awake or reconnected instantly, checking CGREG first
   // saves 4-5 seconds of redundant AT commands.
+  // v5.97 Hardening: Flush before Fast-Track poll to avoid residual URC interference
+  flushSerialSIT();
   SerialSIT.println("AT+CGREG?");
   if (!isBSNL && waitForResponse("+CGREG:", 1000)) {
     const char* cgregResp = modem_response_buf;
@@ -248,6 +250,8 @@ void get_registration() {
   } else {
     // RUN FULL SETUP BLOCK ONLY IF NOT REGISTERED
     // v5.60 SURE-SHOT REGISTRATION:
+    flushSerialSIT(); 
+    vTaskDelay(200 / portTICK_PERIOD_MS);
     SerialSIT.println("AT+CFUN=1"); // Full functionality
     waitForResponse("OK", 1000);
     SerialSIT.println("AT+CGDCONT=8,\"IP\",\"\""); // Kill CID 8 side-channel
@@ -295,13 +299,30 @@ void get_registration() {
         gprs_2g_slots_count = 0;
     }
 
+    flushSerialSIT(); // v7.11: ESC + Drain
+    SerialSIT.println("ATE0"); waitForResponse("OK", 1000); // v7.11 Echo Off
+    SerialSIT.println("AT+CMEE=2"); waitForResponse("OK", 1000); // v7.11 Verbose Errors
+    
+    if (strstr(carrier, "BSNL")) {
+       debugln("[GPRS] BSNL Detected: 7s Settle Delay for Boot URCs...");
+       vTaskDelay(7000 / portTICK_PERIOD_MS); 
+    } else {
+       vTaskDelay(1500 / portTICK_PERIOD_MS); 
+    }
+    
     char cnmp_cmd[20];
     snprintf(cnmp_cmd, sizeof(cnmp_cmd), "AT+CNMP=%d", initial_cnmp);
     SerialSIT.println(cnmp_cmd);
     debugf("[GPRS] Adaptive Mode: %s (LastSucc:%d SlotsOn2G:%d)\n", cnmp_cmd,
            last_successful_cnmp, gprs_2g_slots_count);
 
-    waitForResponse("OK", 1000);
+    if (!waitForResponse("OK", 2000)) {
+      // v5.89: Fallback to Auto if preferred mode returns ERROR
+      debugln("[GPRS] CNMP Failed. Falling back to Auto (CNMP=2)...");
+      flushSerialSIT();
+      SerialSIT.println("AT+CNMP=2");
+      waitForResponse("OK", 3000);
+    }
     vTaskDelay(500 / portTICK_PERIOD_MS); // v5.72: Radio settle delay after
                                           // mode change (Issue 5)
     SerialSIT.println("AT+CMNB=3");       // LTE then GSM
@@ -310,6 +331,7 @@ void get_registration() {
     waitForResponse("OK", 5000);
     SerialSIT.println("AT+CREG=1");
     waitForResponse("OK", 1000);
+    flushSerialSIT();
     SerialSIT.println("AT+CEREG=2"); // Enhanced LTE reporting
     waitForResponse("OK", 1000);
     SerialSIT.println("AT+CEMODE=2"); // PS Only (Data Only)
@@ -350,6 +372,7 @@ void get_registration() {
 
     if (!isBSNL) {
       // --- 4G Path (Airtel / Jio): Check CEREG first ---
+      flushSerialSIT();
       SerialSIT.println("AT+CEREG?");
       if (waitForResponse("+CEREG:", 2000)) {
         const char* resp4 = modem_response_buf;
@@ -519,7 +542,6 @@ void get_registration() {
         waitForResponse("OK", 5000);
         SerialSIT.println(
             "AT+CRSM=214,28539,0,0,12,\"FFFFFFFFFFFFFFFFFFFFFFFF\"");
-        waitForResponse("OK", 2000);
         SerialSIT.println("AT+CFUN=1");
         esp_task_wdt_reset();
         waitForResponse("OK", 5000);
@@ -1048,10 +1070,29 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
     xSemaphoreGive(modemMutex);
 }
 
-void get_gps_coordinates() {
-  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
-    debugln("[GPS] Error: Modem Mutex Timeout - skipping GPS request");
-    return;
+void check_incoming_sms(bool alreadyLocked) {
+  if (!alreadyLocked) {
+    if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
+      debugln("[SMS] Error: Modem Mutex Timeout - skipping SMS check");
+      return;
+    }
+  }
+
+  int response_no;
+  char status_response[256];
+  char response[256];
+  // v5.88: Hardened SMS Check loop
+  debugln("[SMS] Polling for incoming command messages...");
+  
+  if (!alreadyLocked) xSemaphoreGive(modemMutex);
+}
+
+void get_gps_coordinates(bool alreadyLocked) {
+  if (!alreadyLocked) {
+    if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
+      debugln("[GPS] Error: Modem Mutex Timeout - skipping GPS request");
+      return;
+    }
   }
 
   int tmp;
@@ -1099,7 +1140,7 @@ void get_gps_coordinates() {
                 }
               }
             }
-            xSemaphoreGive(modemMutex);
+            if (!alreadyLocked) xSemaphoreGive(modemMutex);
             return; // SUCCESS
           }
         }
@@ -1456,11 +1497,24 @@ bool send_health_report(bool useJitter) {
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
   bool success = false;
-  int max_attempts = useJitter ? 2 : 1; // v5.88: Reduced from 3/2 to 2/1 to speed up sleep cycle
+  int max_attempts = useJitter ? 2 : 1; 
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
     debugf2("[Health] Attempt %d/%d\n", attempt, max_attempts);
-    if (!verify_bearer_or_recover())
+    if (active_cid <= 0) active_cid = 1; // v7.12: Safety fallback, use discovered CID if available
+    // v7.11: LTE Primary Bearer Guard — Skip CID 1 Nuke if on 4G (carrier blocks it)
+    if (attempt == 1 && !isLTE && (strstr(carrier, "BSNL") || strstr(carrier, "bsnl"))) {
+       debugln("[Health] BSNL (2G) detected. Pre-emptive Bearer Nuke for fresh session...");
+       SerialSIT.print("AT+CGACT=0,"); SerialSIT.println(active_cid);
+       waitForResponse("OK", 5000);
+       vTaskDelay(2000 / portTICK_PERIOD_MS);
+    } else if (attempt == 1 && isLTE) {
+       debugln("[Health] LTE Detected: Skipping CID 1 Nuke (Primary Bearer)");
+    }
+
+    if (!verify_bearer_or_recover()) {
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
       continue;
+    }
 
     SerialSIT.println("AT+CGEREP=0");
     waitForResponse("OK", 1000);
@@ -1469,47 +1523,104 @@ bool send_health_report(bool useJitter) {
     waitForResponse("OK", 5000);
 
     if (strstr(carrier, "BSNL") || strstr(carrier, "bsnl")) {
-      vTaskDelay(8000 / portTICK_PERIOD_MS);
+      vTaskDelay(3000 / portTICK_PERIOD_MS); // BSNL Breather
     } else {
-      vTaskDelay(2000 / portTICK_PERIOD_MS);
+      vTaskDelay(1000 / portTICK_PERIOD_MS); 
     }
 
     flushSerialSIT();
 
-    SerialSIT.println("AT+HTTPINIT");
-    if (!waitForResponse("OK", 5000)) {
-      debugln("[Health] [ERR] HTTPINIT Failed. Bearer Nuke...");
-      SerialSIT.println("AT+CGACT=0,1");
-      waitForResponse("OK", 5000);
-      continue;
+    // v7.06: Context-Ready Anchor for Health
+    bool ip_ready = false;
+    for (int ip_retry = 0; ip_retry < 5; ip_retry++) {
+      esp_task_wdt_reset(); // v7.07: Hardened Watchdog Pet
+      SerialSIT.print("AT+CGPADDR=");
+      SerialSIT.println(1); // CID 1
+      if (waitForResponse("+CGPADDR:", 3000)) {
+         if (strstr(modem_response_buf, "0.0.0.0") == NULL && strstr(modem_response_buf, ".") != NULL) {
+            ip_ready = true;
+            break;
+         }
+      }
+      debugln("[Health] Waiting for IP allocation...");
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
+    }
+    
+    if (!ip_ready) {
+      debugln("[Health] FATAL: Bearer active but no IP assigned. Deferring.");
+      return false;
     }
 
+    // v5.99: Carrier Settle Delay — Give BSNL/2G time to bind the IP stack
+    if (strstr(carrier, "BSNL")) vTaskDelay(5000 / portTICK_PERIOD_MS);
+
+    // v7.09: Explicitly disable SSL for health reports to prevent bearer binding errors
+    SerialSIT.println("AT+HTTPSSL=0");
+    waitForResponse("OK", 2000);
+    
+    SerialSIT.println("AT+HTTPINIT");
+    if (!waitForResponse("OK", 5000)) {
+       debugln("[Health] HTTPINIT failed after Anchor. Zombie state?");
+       return false;
+    }
+
+    // v7.09: Reverting to legacy stable order (URL then CID) with deeper flushes
     bool step_fail = false;
+    flushSerialSIT();
+    
     char ht_url[150];
     snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"",
              HEALTH_SERVER_IP, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
     SerialSIT.println(ht_url);
-    waitForResponse("OK", 2000);
+    if (!waitForResponse("OK", 5000)) step_fail = true;
+    vTaskDelay(1000 / portTICK_PERIOD_MS); // v7.09: Increased breather
+    
+    if (!step_fail) {
+      SerialSIT.println("AT+HTTPPARA=\"CID\",1");
+      if (!waitForResponse("OK", 5000)) step_fail = true;
+      vTaskDelay(500 / portTICK_PERIOD_MS); 
+    }
 
-    SerialSIT.println("AT+HTTPPARA=\"CID\",1");
-    waitForResponse("OK", 1000);
+    if (!step_fail) {
+      SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+      if (!waitForResponse("OK", 5000)) step_fail = true;
+      vTaskDelay(500 / portTICK_PERIOD_MS);
+    }
 
-    SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-    waitForResponse("OK", 1000);
-    SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
-    waitForResponse("OK", 1000);
+    if (!step_fail) {
+      SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
+      if (!waitForResponse("OK", 5000)) step_fail = true;
+    }
+
+    if (step_fail) {
+      debugln("[GPRS] [Health] HTTPPARA Failed. Recovery tier...");
+      diag_http_present_fails++;
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 3000);
+      // v7.11: Skip Bearer Nuke on PARA failure if on LTE
+      if (!isLTE) {
+        debugln("[Health] Non-LTE Recovery: Forcing Bearer Reset...");
+        SerialSIT.print("AT+CGACT=0,"); SerialSIT.println(active_cid);
+        waitForResponse("OK", 5000);
+      } else {
+        debugln("[Health] LTE Recovery: Skipping Bearer Reset (Locked context).");
+      }
+      vTaskDelay(5000 / portTICK_PERIOD_MS);
+      continue; // Try next attempt inside the for-loop
+    }
 
     if (!step_fail) {
       debugf1("[Health] Payload size: %d bytes\n", msgLen);
 
-      // v5.87: Mandatory 1s breather and flush to ensure DOWNLOAD prompt
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      // v5.93: Adaptive breather before high-current data transfer
+      if (strstr(carrier, "BSNL") || strstr(carrier, "bsnl")) {
+        vTaskDelay(2000 / portTICK_PERIOD_MS); 
+      } else {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+      }
       flushSerialSIT();
 
       // v5.89: Enforce Absolute Byte Synchronization
-      // If snprintf returns a projected length that differs from the actual bytes in 
-      // the array (due to embedded nulls or string clamping), the modem will wait 15
-      // seconds for the missing bytes and throw a Timeout Error.
       msgLen = strlen(jsonBody); 
 
       char ht_data_cmd[64];
@@ -1519,9 +1630,14 @@ bool send_health_report(bool useJitter) {
 
       if (waitForResponse("DOWNLOAD", 25000)) {
         vTaskDelay(500 / portTICK_PERIOD_MS);
+      } else {
+        debugf("[Health] [ERR] DOWNLOAD Timeout. Modem Response: %s\n", modem_response_buf);
+        step_fail = true;
+        continue;
+      }
 
-        // v5.92: Paced chunking for large payloads. Dump-and-stream (print+flush) was
-        // still occasionally overflowing A7672 UART buffers during high radio load.
+      if (!step_fail) {
+        // v5.92: Paced chunking for large payloads.
         const char* p = jsonBody;
         size_t total = strlen(p);
         size_t sent = 0;

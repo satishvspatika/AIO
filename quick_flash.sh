@@ -22,5 +22,6 @@ if [ ! -f "$APP_BIN" ]; then
 fi
 
 echo "--- QUICK FLASH (App Only at 0x10000) | ${FLASH_SIZE} | Port: $PORT ---"
-esptool.py --chip esp32 --port "$PORT" --baud 921600 write_flash 0x10000 "$APP_BIN"
+ESPTOOL="/usr/local/bin/esptool.py"
+python3 "$ESPTOOL" --chip esp32 --port "$PORT" --baud 921600 write_flash 0x10000 "$APP_BIN"
 echo "--- Quick Flash Complete ---"

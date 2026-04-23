@@ -835,33 +835,32 @@ void send_http_data() {
 
   debugf("[GPRS] Prepared URL: %s\n", httpPostRequest);
 
-  // Ensure PDP context is active before doing DNS lookups or HTTP
-  SerialSIT.println("AT+CGACT?");
-  if (waitForResponse("OK", 3000)) {
-    char target[20];
-    snprintf(target, sizeof(target), "+CGACT: %d,1", active_cid);
-    if (strstr(modem_response_buf, target) == NULL) {
-      debugln("[GPRS] PDP context inactive. Activating for DNS/HTTP...");
-      SerialSIT.printf("AT+CGACT=1,%d\n", active_cid);
-      waitForResponse("OK", 10000);
-    }
-  }
-
-  // v5.70-Hardened (N-5): CGPADDR non-zero IP check
-  // v5.84: Only check CGPADDR when last slot failed — saves 3-4s per healthy
-  // slot v5.75: Tightened to > 1 slot. Airtel/Jio can drop idle bearers in < 15
-  // mins.
-  if (!last_http_ok || (abs(sampleNo - last_http_ok_slot) > 1)) {
-    SerialSIT.printf("AT+CGPADDR=%d\n", active_cid);
-    if (waitForResponse("OK", 3000)) {
-       if (strstr(modem_response_buf, "0.0.0.0") != NULL || strstr(modem_response_buf, "+CGPADDR") == NULL) {
-          debugln("[GPRS] Ghost PDP (0.0.0.0). Triggering recovery...");
-          verify_bearer_or_recover();
+  // v7.05: Bulletproof Context-Ready Anchor
+  // Before starting HTTP, we MUST have a non-zero IP address.
+  // Raw CGACT=1 is not enough for the A7672S HTTP internal state.
+  bool ip_ready = false;
+  for (int ip_retry = 0; ip_retry < 5; ip_retry++) {
+    esp_task_wdt_reset(); // Pet the watchdog during each IP check iteration
+    SerialSIT.print("AT+CGPADDR=");
+    SerialSIT.println(active_cid); 
+    if (waitForResponse("+CGPADDR:", 3000)) {
+       if (strstr(modem_response_buf, "0.0.0.0") == NULL && strstr(modem_response_buf, ".") != NULL) {
+          ip_ready = true;
+          break;
        }
     }
-  } else {
-    debugln(
-        "[GPRS] last_http_ok=true. Skipping CGPADDR check (age < 2 slots).");
+    debugln("[GPRS] Waiting for IP address allocation...");
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    if (ip_retry == 2) {
+       debugln("[GPRS] IP Delay: Nuking context for re-activation...");
+       SerialSIT.print("AT+CGACT=0,"); SerialSIT.println(active_cid); waitForResponse("OK", 3000);
+       SerialSIT.print("AT+CGACT=1,"); SerialSIT.println(active_cid); waitForResponse("OK", 15000);
+    }
+  }
+  
+  if (!ip_ready) {
+    debugln("[GPRS] FATAL: Context active but no IP assigned. Deferring.");
+    return;
   }
 
   // v5.55: SMART DNS FALLBACK (Fast-Track)
@@ -987,26 +986,55 @@ void send_http_data() {
     http_ready = true;
   }
 
-  // Restore all parameters
+  // v5.99: Carrier Settle Delay — Give BSNL/2G time to bind the IP stack
+  if (strstr(carrier, "BSNL")) vTaskDelay(3000 / portTICK_PERIOD_MS);
+
+  // Restore all parameters with individual error checking
+  bool http_param_fail = false;
   SerialSIT.println("AT+HTTPPARA=\"CID\",1");
-  waitForResponse("OK", 1000);
+  if (!waitForResponse("OK", 5000)) http_param_fail = true;
+  vTaskDelay(500 / portTICK_PERIOD_MS); // v7.01 Breather
 
-  // v5.55: Re-send URL immediately before context variables to lock session
-  // (Rule 48 alignment)
-  SerialSIT.println(httpPostRequest);
-  waitForResponse("OK", 1000);
+  if (!http_param_fail) {
+    SerialSIT.println(httpPostRequest);
+    if (!waitForResponse("OK", 5000)) http_param_fail = true;
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+  }
 
-  SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
-  waitForResponse("OK", 1000);
+  if (!http_param_fail) {
+    SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
+    if (!waitForResponse("OK", 5000)) http_param_fail = true;
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+  }
 
-  if (!strcmp(httpSet[http_no].Format, "json")) {
-    SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-    waitForResponse("OK", 1000);
-    debugln("It is json");
-  } else {
-    SerialSIT.println(
-        "AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"");
-    waitForResponse("OK", 1000);
+  if (!http_param_fail) {
+    if (!strcmp(httpSet[http_no].Format, "json")) {
+      SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+    } else {
+      SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"");
+    }
+    if (!waitForResponse("OK", 5000)) http_param_fail = true;
+  }
+
+  if (http_param_fail) {
+    debugln("[GPRS] HTTPPARA failed in main flow. Retrying TERM/INIT...");
+    SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 2000);
+    SerialSIT.println("AT+HTTPINIT");
+    if (!waitForResponse("OK", 5000)) {
+        debugln("[GPRS] Secondary HTTPINIT failed. Deferring to next slot.");
+        http_ready = false;
+        diag_http_present_fails++;
+        return;
+    }
+    // Re-attempt parameters ONCE
+    SerialSIT.println("AT+HTTPPARA=\"CID\",1"); waitForResponse("OK", 2000);
+    SerialSIT.println(httpPostRequest); waitForResponse("OK", 2000);
+    if (!strcmp(httpSet[http_no].Format, "json")) {
+       SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+    } else {
+       SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"");
+    }
+    waitForResponse("OK", 2000);
   }
 
   /*
@@ -1810,9 +1838,9 @@ int send_at_cmd_data(char *payload, bool robust) {
       SerialSIT.write(payload + sentBytes, toWrite);
       sentBytes += toWrite;
       esp_task_wdt_reset();
-      vTaskDelay(40 / portTICK_PERIOD_MS);
+      vTaskDelay(50 / portTICK_PERIOD_MS); // v5.99: Increased breather
     }
-    SerialSIT.println(); // Finalize buffer if needed by specific firmware stacks
+    // SerialSIT.println(); // REMOVED: Do not send trailing newline for fixed-length HTTPDATA
 
     if (!waitForResponse("OK", 15000)) {
        debugln("[HTTP] AT+HTTPDATA confirmation timeout. Nuking PDP...");
@@ -1829,13 +1857,17 @@ int send_at_cmd_data(char *payload, bool robust) {
     // v5.67 (Claude's logic fix): Opened up latency window. If DOWNLOAD drops
     // late, we need enough of the 3000ms window remaining to clock the payload
     // JSON.
-    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,3000", i);
+    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,10000", i);
     debugln("[HTTP] Using Fast v3.0 Handshake...");
     SerialSIT.println(cmd_buf);
-    waitForResponse("DOWNLOAD", 1500);
-
-    SerialSIT.println(payload);
-    waitForResponse("OK", 1500);
+    if (waitForResponse("DOWNLOAD", 5000)) {
+      vTaskDelay(200 / portTICK_PERIOD_MS);
+      SerialSIT.print(payload); // v5.99: Use print() to avoid trailing \r\n desync
+      waitForResponse("OK", 5000);
+    } else {
+      debugln("[HTTP] Fast Handshake DOWNLOAD Timeout.");
+      return 0;
+    }
   }
 
   // Fire Action
@@ -2194,6 +2226,12 @@ void store_current_unsent_data() {
 #if SYSTEM == 0
   snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
   if (last_unsent_sampleNo != snap_sampleNo) { // v5.75: Atomic Dedup
+    // v5.93: Onside Engineer Priority Backoff
+    if (local_svc_upload_active) {
+       debugln("[GPRS] Onsite Engineer Active. Yielding fsMutex for unsent data...");
+       vTaskDelay(3000 / portTICK_PERIOD_MS); 
+    }
+    
     if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
       pruneFile(unsent_file, (300 * record_length), true);
       File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
@@ -2301,3 +2339,306 @@ void store_current_unsent_data() {
  *  - get_registration();
  *  - get_a7672s();
  */
+// v5.87: Service Report Background Sync Task
+void cleanup_service_report(bool fatal) {
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        if (fatal) debugln("[SVC] Scrubbing FATAL failure data from flash...");
+        else debugln("[SVC] Cleaning up successful report data...");
+        
+        SPIFFS.remove("/svc_pending.json");
+        SPIFFS.remove("/svc_img1.jpg");
+        SPIFFS.remove("/svc_img2.jpg");
+        
+        // Legacy cleanup (v5.91 Cleanup)
+        SPIFFS.remove("/svc_img1.j64");
+        SPIFFS.remove("/svc_img2.j64");
+        
+        svc_retry_count = 0;
+        xSemaphoreGive(fsMutex);
+    }
+}
+
+bool send_service_report() {
+  if (!SPIFFS.exists("/svc_pending.json")) return false;
+  
+  if (local_svc_upload_active) {
+     debugln("[SVC] Onsite Engineer Active. Yielding...");
+     return false;
+  }
+  
+  svc_sync_status = 2; // SYNC_META
+  debugln("[SVC] Found report. Starting Hardened Split-Sync (v6.8)...");
+  
+  size_t img1Len = 0, img2Len = 0;
+  long timestamp = 0;
+
+  // v6.8: Extract TS without reading entire file into a String
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+    File fM = SPIFFS.open("/svc_pending.json", FILE_READ);
+    if (fM) {
+      // Look for "ts": using a sliding buffer or just reading enough
+      String head = fM.readStringUntil('}'); // Usually TS is near the top
+      int tsIdx = head.indexOf("\"ts\":");
+      if(tsIdx > 0) {
+         timestamp = head.substring(tsIdx+5).toInt();
+         debugf("[SVC] Sync Anchor TS: %ld\n", timestamp);
+      }
+      fM.close();
+    }
+    if (SPIFFS.exists("/svc_img1.jpg")) {
+      File fI1 = SPIFFS.open("/svc_img1.jpg", FILE_READ);
+      if (fI1) { img1Len = fI1.size(); fI1.close(); }
+    }
+    if (SPIFFS.exists("/svc_img2.jpg")) {
+      File fI2 = SPIFFS.open("/svc_img2.jpg", FILE_READ);
+      if (fI2) { img2Len = fI2.size(); fI2.close(); }
+    }
+    xSemaphoreGive(fsMutex);
+  }
+
+  const char* bnd = "----SvcBnd";
+  const char* dash = "--";
+  const char* crlf = "\r\n";
+  
+  // Base Parts
+  String stnPart = String(dash) + bnd + crlf + "Content-Disposition: form-data; name=\"stn\"" + crlf + crlf + String(station_name) + crlf;
+  String metaHeader = String(dash) + bnd + crlf + "Content-Disposition: form-data; name=\"json\"" + crlf + "Content-Type: application/json" + crlf + crlf;
+  String footer = String(dash) + bnd + dash + crlf;
+
+  // --- STAGE 1: METADATA ---
+  bool stage1Ok = false;
+  size_t metaSize = 0;
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+      File f = SPIFFS.open("/svc_pending.json", FILE_READ);
+      if (f) metaSize = f.size();
+      f.close();
+      xSemaphoreGive(fsMutex);
+  }
+
+  if (metaSize < 5) { debugln("[SVC] Invalid metadata. Scrubbing."); cleanup_service_report(true); return false; }
+
+  size_t stage1Len = stnPart.length() + metaHeader.length() + metaSize + 2 + footer.length();
+
+  int hSetupFailCount = 0; 
+  for (int att = 1; att <= 2; att++) {
+      active_cid = 1; // v5.89: Standardize on CID 1 for 2G stability
+      if (!verify_bearer_or_recover()) { vTaskDelay(2000/portTICK_PERIOD_MS); continue; }
+      
+      SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 500); 
+      SerialSIT.println("AT+HTTPINIT"); if (!waitForResponse("OK", 3000)) continue;
+      
+      bool prep_fail = false;
+      SerialSIT.println("AT+HTTPPARA=\"CID\",1"); 
+      if (!waitForResponse("OK", 2000)) prep_fail = true;
+      if (!prep_fail) {
+          char url[128]; snprintf(url, sizeof(url), "AT+HTTPPARA=\"URL\",\"http://%s/api/v2/service_report\"", HEALTH_SERVER_IP);
+          SerialSIT.println(url); if (!waitForResponse("OK", 3000)) prep_fail = true;
+      }
+      if (!prep_fail) {
+          char ct[96]; snprintf(ct, sizeof(ct), "AT+HTTPPARA=\"CONTENT\",\"multipart/form-data; boundary=%s\"", bnd);
+          SerialSIT.println(ct); if (!waitForResponse("OK", 3000)) prep_fail = true;
+      }
+      
+      if (prep_fail) {
+          debugln("[GPRS] [CRIT] HTTP Setup ERROR. Triggering NUCLEAR POWER CYCLE (Pin 26)...");
+          digitalWrite(26, LOW); vTaskDelay(2000/portTICK_PERIOD_MS);
+          digitalWrite(26, HIGH); vTaskDelay(5000/portTICK_PERIOD_MS);
+          return false; // Exit and let the next auto-retry handle the fresh modem
+      }
+
+      char dcmd[32]; snprintf(dcmd, sizeof(dcmd), "AT+HTTPDATA=%u,30000", (uint32_t)stage1Len);
+      flushSerialSIT();
+      SerialSIT.println(dcmd);
+      if (waitForResponse("DOWNLOAD", 15000)) {
+          vTaskDelay(500 / portTICK_PERIOD_MS); // v5.96: Breather for modem internal buffer
+          
+          SerialSIT.print(stnPart); SerialSIT.print(metaHeader);
+          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+              File f = SPIFFS.open("/svc_pending.json", FILE_READ);
+              if (f) {
+                  uint8_t s_buf[128]; // v5.89: Optimized for performance
+                  while(f.available()) { 
+                      size_t r = f.read(s_buf, sizeof(s_buf));
+                      SerialSIT.write(s_buf, r);
+                      vTaskDelay(5 / portTICK_PERIOD_MS); 
+                  }
+                  f.close();
+              }
+              xSemaphoreGive(fsMutex);
+          }
+          SerialSIT.print(crlf); SerialSIT.print(footer); SerialSIT.flush();
+          if (waitForResponse("OK", 15000)) {
+              SerialSIT.println("AT+HTTPACTION=1");
+              if (waitForResponse("+HTTPACTION: 1,200,", 30000)) { stage1Ok = true; break; }
+          }
+      } else {
+          debugf("[SVC] Metadata DOWNLOAD Timeout! Resp: %s\n", modem_response_buf);
+      }
+      debugf("[SVC] M-Sync Retry %d...\n", att); vTaskDelay(2000/portTICK_PERIOD_MS);
+  }
+
+  if (!stage1Ok) { 
+      debugln("[SVC] Stage 1 Fail (Metadata)."); 
+      strcpy(svc_last_error, "META_FAIL");
+      svc_sync_status = SVC_FAIL; 
+      return false; 
+  }
+  debugf("[SVC] Stage 1 OK (Size: %d)\n", stnPart.length());
+
+  bool s2Ok = (img1Len == 0); 
+  bool s3Ok = (img2Len == 0);
+
+  // --- STAGE 2: IMAGE 1 ---
+  if (img1Len > 100) {
+      svc_sync_status = SVC_SYNC_IMG1; 
+      String tsPart = String(dash) + bnd + crlf + "Content-Disposition: form-data; name=\"ts\"" + crlf + crlf + String(timestamp) + crlf;
+      String i1Header = String(dash) + bnd + crlf + "Content-Disposition: form-data; name=\"img1\"; filename=\"i1.jpg\"" + crlf + "Content-Type: image/jpeg" + crlf + crlf;
+      size_t s2Len = stnPart.length() + tsPart.length() + i1Header.length() + img1Len + 2 + footer.length();
+      
+      for (int att = 1; att <= 3; att++) {
+          active_cid = 1;
+          if (!verify_bearer_or_recover()) { vTaskDelay(2000/portTICK_PERIOD_MS); continue; }
+          SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 500); 
+          SerialSIT.println("AT+HTTPINIT"); if (!waitForResponse("OK", 2000)) continue;
+          bool p2_fail = false;
+          SerialSIT.println("AT+HTTPPARA=\"CID\",1"); if (!waitForResponse("OK", 2000)) p2_fail = true;
+          if (!p2_fail) {
+              char url[128]; snprintf(url, sizeof(url), "AT+HTTPPARA=\"URL\",\"http://%s/api/v2/service_report\"", HEALTH_SERVER_IP);
+              SerialSIT.println(url); if (!waitForResponse("OK", 3000)) p2_fail = true;
+          }
+          if (!p2_fail) {
+              char ct[96]; snprintf(ct, sizeof(ct), "AT+HTTPPARA=\"CONTENT\",\"multipart/form-data; boundary=%s\"", bnd);
+              SerialSIT.println(ct); if (!waitForResponse("OK", 3000)) p2_fail = true;
+          }
+          if (p2_fail) {
+              debugln("[GPRS] [CRIT] Image 1 HTTP Setup ERROR. Triggering NUCLEAR POWER CYCLE (Pin 26)...");
+              digitalWrite(26, LOW); vTaskDelay(2000/portTICK_PERIOD_MS);
+              digitalWrite(26, HIGH); vTaskDelay(5000/portTICK_PERIOD_MS);
+              return false; // Exit and let auto-retry handle fresh modem
+          }
+
+          char dcmd[32]; snprintf(dcmd, sizeof(dcmd), "AT+HTTPDATA=%u,30000", (uint32_t)s2Len);
+          flushSerialSIT();
+          SerialSIT.println(dcmd);
+          if (waitForResponse("DOWNLOAD", 15000)) {
+              SerialSIT.print(stnPart); SerialSIT.print(tsPart); SerialSIT.print(i1Header);
+              if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                  File f = SPIFFS.open("/svc_img1.jpg", FILE_READ);
+                  if (f) {
+                      size_t yieldCounter = 0;
+                      uint8_t buf[128]; // v5.89: Increased for performance
+                      while (f.available()) {
+                          size_t r = f.read(buf, sizeof(buf));
+                          SerialSIT.write(buf, r);
+                          yieldCounter += r;
+                          
+                          // v5.89: Yield fsMutex every 4KB
+                          if (yieldCounter >= 4096) {
+                              xSemaphoreGive(fsMutex);
+                              vTaskDelay(20 / portTICK_PERIOD_MS); // Yield CPU
+                              if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) break;
+                              yieldCounter = 0;
+                          }
+                          vTaskDelay(5 / portTICK_PERIOD_MS); // Reduced delay
+                      }
+                      f.close();
+                  }
+                  xSemaphoreGive(fsMutex);
+              }
+              SerialSIT.print(crlf); SerialSIT.print(footer); SerialSIT.flush();
+              if (waitForResponse("OK", 10000)) {
+                  SerialSIT.println("AT+HTTPACTION=1");
+                  if (waitForResponse("+HTTPACTION: 1,200,", 60000)) { s2Ok = true; break; }
+              }
+          }
+          debugf("[SVC] Photo 1 Retry %d...\n", att); vTaskDelay(2000/portTICK_PERIOD_MS);
+      }
+      if (s2Ok) { debugf("[SVC] Stage 2 OK (Size: %d)\n", (int)s2Len); SPIFFS.remove("/svc_img1.jpg"); }
+      else { strcpy(svc_last_error, "IMG1_FAIL"); debugln("[SVC] Stage 2 Fail."); }
+  }
+
+  // --- STAGE 3: IMAGE 2 ---
+  if (img2Len > 100) {
+      svc_sync_status = SVC_SYNC_IMG2;
+      String tsPart = String(dash) + bnd + crlf + "Content-Disposition: form-data; name=\"ts\"" + crlf + crlf + String(timestamp) + crlf;
+      String i2Header = String(dash) + bnd + crlf + "Content-Disposition: form-data; name=\"img2\"; filename=\"i2.jpg\"" + crlf + "Content-Type: image/jpeg" + crlf + crlf;
+      size_t s3Len = stnPart.length() + tsPart.length() + i2Header.length() + img2Len + 2 + footer.length();
+
+      for (int att = 1; att <= 3; att++) {
+          active_cid = 1;
+          if (!verify_bearer_or_recover()) { vTaskDelay(2000/portTICK_PERIOD_MS); continue; }
+          SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 500); 
+          SerialSIT.println("AT+HTTPINIT"); if (!waitForResponse("OK", 2000)) continue;
+          bool p3_fail = false;
+          SerialSIT.println("AT+HTTPPARA=\"CID\",1"); if (!waitForResponse("OK", 2000)) p3_fail = true;
+          if (!p3_fail) {
+              char url[128]; snprintf(url, sizeof(url), "AT+HTTPPARA=\"URL\",\"http://%s/api/v2/service_report\"", HEALTH_SERVER_IP);
+              SerialSIT.println(url); if (!waitForResponse("OK", 3000)) p3_fail = true;
+          }
+          if (!p3_fail) {
+              char ct[96]; snprintf(ct, sizeof(ct), "AT+HTTPPARA=\"CONTENT\",\"multipart/form-data; boundary=%s\"", bnd);
+              SerialSIT.println(ct); if (!waitForResponse("OK", 3000)) p3_fail = true;
+          }
+          if (p3_fail) {
+              debugln("[GPRS] [CRIT] Image 2 HTTP Setup ERROR. Triggering NUCLEAR POWER CYCLE (Pin 26)...");
+              digitalWrite(26, LOW); vTaskDelay(2000/portTICK_PERIOD_MS);
+              digitalWrite(26, HIGH); vTaskDelay(5000/portTICK_PERIOD_MS);
+              return false; // Exit and let auto-retry handle fresh modem
+          }
+
+          char dcmd[32]; snprintf(dcmd, sizeof(dcmd), "AT+HTTPDATA=%u,30000", (uint32_t)s3Len);
+          flushSerialSIT();
+          SerialSIT.println(dcmd);
+          if (waitForResponse("DOWNLOAD", 15000)) {
+              SerialSIT.print(stnPart); SerialSIT.print(tsPart); SerialSIT.print(i2Header);
+              if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                  File f = SPIFFS.open("/svc_img2.jpg", FILE_READ);
+                  if (f) {
+                      size_t yieldCounter = 0;
+                      uint8_t buf[128]; // v5.89: Increased for performance
+                      while (f.available()) {
+                          size_t r = f.read(buf, sizeof(buf));
+                          SerialSIT.write(buf, r);
+                          yieldCounter += r;
+
+                          // v5.89: Yield fsMutex every 4KB
+                          if (yieldCounter >= 4096) {
+                              xSemaphoreGive(fsMutex);
+                              vTaskDelay(20 / portTICK_PERIOD_MS); // Yield CPU
+                              if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) break;
+                              yieldCounter = 0;
+                          }
+                          vTaskDelay(5 / portTICK_PERIOD_MS); // Reduced delay
+                      }
+                      f.close();
+                  }
+                  xSemaphoreGive(fsMutex);
+              }
+              SerialSIT.print(crlf); SerialSIT.print(footer); SerialSIT.flush();
+              if (waitForResponse("OK", 10000)) {
+                  SerialSIT.println("AT+HTTPACTION=1");
+                  if (waitForResponse("+HTTPACTION: 1,200,", 60000)) { s3Ok = true; break; }
+              }
+          }
+          debugf("[SVC] Photo 2 Retry %d...\n", att); vTaskDelay(2000/portTICK_PERIOD_MS);
+      }
+      if (s3Ok) { debugf("[SVC] Stage 3 OK (Size: %d)\n", (int)s3Len); SPIFFS.remove("/svc_img2.jpg"); }
+      else { strcpy(svc_last_error, "IMG2_FAIL"); debugln("[SVC] Stage 3 Fail."); }
+  }
+
+  bool finalOk = (stage1Ok && s2Ok && s3Ok);
+  if (finalOk) {
+      svc_sync_status = SVC_DONE; 
+      strcpy(svc_last_error, "NONE");
+      cleanup_service_report(false);
+      debugln("[SVC] Sync SUCCESS.");
+  } else {
+      svc_sync_status = SVC_FAIL;
+      if (strlen(svc_last_error) < 4) strcpy(svc_last_error, "PARTIAL_FAIL");
+      debugf("[SVC] Sync FAIL: %s. Preserving report.\n", svc_last_error);
+  }
+
+  SerialSIT.println("AT+HTTPTERM");
+  waitForResponse("OK", 1000);
+  return finalOk;
+}

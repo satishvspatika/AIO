@@ -44,7 +44,12 @@ volatile bool force_ftp_daily = false;
 RTC_DATA_ATTR int rtc_daily_sync_count = 0; // v5.77: Daily sync retry cap
 char ftp_daily_date[12] = "";
 volatile bool force_reboot = false;
+volatile int svc_sync_status = SVC_IDLE; // v5.87: standard tracking using SVC_SYNC_STATUS enum
+char svc_last_error[48] = ""; // v5.98: detailed failure tracking
+unsigned long last_svc_trigger_time = 0;
+RTC_DATA_ATTR int svc_retry_count = 0; // v5.91: Track sync attempts for fatal scrub
 volatile bool force_ota = false;
+volatile bool local_svc_upload_active = false; // v5.93: Engineer Priority Flag
 volatile bool force_gps_refresh =
     false; // v7.59: Server-requested GPS re-acquire
 volatile bool force_clear_ftp_queue = false;
@@ -247,6 +252,7 @@ RTC_DATA_ATTR bool diag_rtc_battery_ok = true;
 RTC_DATA_ATTR int diag_consecutive_reg_fails = 0;
 RTC_DATA_ATTR int diag_stored_apn_fails = 0;
 RTC_DATA_ATTR int diag_consecutive_sim_fails = 0;
+
 
 RTC_DATA_ATTR int diag_ws_same_count = 0;
 RTC_DATA_ATTR bool diag_temp_cv = false;
@@ -494,6 +500,12 @@ void setup() {
     xSemaphoreGive(modemMutex);
 
   initialize_hw(); // sets CPU to 80MHz internally
+
+  // v5.91: Boot-time Sanity Scrub
+  // Ensure we start with a clean slate for Service Reports on fresh Power-On
+  if (rtc_get_reset_reason(0) == POWERON_RESET) {
+      cleanup_service_report(true); // Treat fresh boot as a 'Safe Scrub'
+  }
 
   // Record Reset Reason and Increment Uptime
   RESET_REASON rr = rtc_get_reset_reason(0);
@@ -1538,10 +1550,10 @@ void initialize_hw() {
 #if DEBUG == 1
   Serial.begin(115200);
 #endif
-  // v7.06: CRITICAL! Expand UART RX buffer to 16KB so that incoming AT+HTTPREAD
-  // data does not drop bytes when Update.write() blocks the CPU during flash
-  // erase operations.
-  SerialSIT.setRxBufferSize(16384);
+  // v6.0 Deep Dive: Use a balanced buffer for modem UART. 2KB is sufficient for
+  // most HTTP responses while preserving heap for SPIFFS/VFS boot tasks.
+  SerialSIT.setRxBufferSize(2048);
+  SerialSIT.setTxBufferSize(2048);
   SerialSIT.begin(115200, SERIAL_8N1, 16, 17, false);
 
   setCpuFrequencyMhz(80); // Step down early to save power during boot init
@@ -1899,6 +1911,7 @@ void loop() {
       (snap_schedulerBusy == false) && (gprs_started == false || sync_mode == eHttpStop) &&
       (pending_manual_status == false) && (pending_manual_gps == false) &&
       (pending_manual_health == false) &&
+      (svc_sync_status == 0 || svc_sync_status >= 3) && // v5.88: Block sleep if PENDING(1) or SYNCING(2)
       (force_reboot == false) && (force_ota == false) &&
       (ota_writing_active == false)) {
 
@@ -1931,7 +1944,8 @@ void loop() {
     sys_busy = (snap_schedulerBusy || (gprs_started && sync_mode != eHttpStop) || health_in_progress || __atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) || 
                 force_reboot || force_ota || ota_writing_active || (lcdkeypad_start && !uiIsGhosting) || (wakeup_reason_is == ext0) || 
                 wifi_active || race_sync_invalid || 
-                pending_manual_status || pending_manual_gps || pending_manual_health);
+                pending_manual_status || pending_manual_gps || pending_manual_health ||
+                (svc_sync_status == 1 || svc_sync_status == 2)); // v5.88: Mark as busy during Service Sync
     portEXIT_CRITICAL(&syncMux);
 
     if (sys_busy) {

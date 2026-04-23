@@ -17,5 +17,7 @@ if not os.path.exists(TEMPLATE_DIR):
 # print(f"DEBUG: Using templates from {TEMPLATE_DIR}")
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
-# Register common filters here once
+# Register common filters and globals here once
 templates.env.filters["ist"] = ist_filter
+import datetime
+templates.env.globals["datetime"] = datetime.datetime

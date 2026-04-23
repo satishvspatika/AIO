@@ -8,6 +8,8 @@
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Rich Graphics & Export Support -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <style>
     body {
       background: #0c1220;
@@ -191,7 +193,7 @@
       position: sticky;
       top: 0;
       background: #0f172a;
-      z-index: 10;
+      z-index: 1; /* Reduced from 10 to prevent overlapping with system modals */
       white-space: nowrap;
     }
 
@@ -317,6 +319,7 @@
       <a href="/dashboard" class="nav-link {% if active == 'dashboard' %}nav-active{% endif %}">DASHBOARD</a>
       <a href="/summary" class="nav-link {% if active == 'summary' %}nav-active{% endif %}">FLEET</a>
       <a href="/ota" class="nav-link {% if active == 'ota' %}nav-active{% endif %}">OTA</a>
+      <a href="/service_reports" class="nav-link {% if active == 'service' %}nav-active{% endif %}">SERVICE</a>
       <a href="/help" class="nav-link {% if active == 'help' %}nav-active{% endif %}">HELP</a>
     </div>
     <div
@@ -374,6 +377,7 @@
         }
     });
   </script>
+  {% block modals %}{% endblock %}
   {% block extra_js %}{% endblock %}
 </body>
 

@@ -1,0 +1,593 @@
+{% extends "base.html" %}
+{% block title %}Service Intelligence — Spatika Health{% endblock %}
+
+{% block content %}
+<!-- Header & Filters -->
+<div class="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
+    <div>
+        <h1 class="text-3xl font-black text-white tracking-tight flex items-center gap-3">
+            <span class="p-2 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30">🛠</span>
+            Service Intelligence
+        </h1>
+    </div>
+    
+    <div class="flex flex-wrap items-center gap-3 w-full md:w-auto">
+        <button id="bulkBtn" onclick="downloadBulkPDF()" class="hidden btn-sm bg-blue-600 text-white border-none shadow-lg shadow-blue-600/20 hover:scale-105 transition active:scale-95 flex items-center gap-2">
+            📥 Download Selected (<span id="bulkCount">0</span>)
+        </button>
+        <button id="bulkDelBtn" onclick="deleteBulkReports()" class="hidden btn-sm bg-red-600 text-white border-none shadow-lg shadow-red-600/20 hover:scale-105 transition active:scale-95 flex items-center gap-2">
+            🗑 Delete Selected
+        </button>
+        <!-- Search Bar (Live Filter) -->
+        <div class="relative flex-grow md:flex-grow-0">
+            <input type="text" id="sid-search" placeholder="Type ID to filter..." 
+                value="{{ q or '' }}"
+                class="w-full md:w-64 bg-gray-900 border border-gray-700 text-white text-xs px-4 py-2.5 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition shadow-inner"
+                oninput="liveFilter()"
+                onkeyup="if(event.key === 'Enter') applyFilters()">
+        </div>
+
+        <!-- Mode Toggle -->
+        <div class="flex p-1 bg-gray-900 rounded-xl border border-gray-800 shadow-inner">
+            <button onclick="setMode('latest')" 
+                class="px-4 py-1.5 text-[10px] font-bold uppercase rounded-lg transition-all {% if mode == 'latest' %}bg-blue-600 text-white shadow-lg{% else %}text-gray-500 hover:text-gray-300{% endif %}">
+                Unique Stations
+            </button>
+            <button onclick="setMode('all')" 
+                class="px-4 py-1.5 text-[10px] font-bold uppercase rounded-lg transition-all {% if mode == 'all' %}bg-blue-600 text-white shadow-lg{% else %}text-gray-500 hover:text-gray-300{% endif %}">
+                All Logs
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Dense List View -->
+<div class="card overflow-hidden border-gray-800 shadow-2xl">
+    <div class="tbl-wrap">
+        <table class="w-full text-left text-xs isolation-auto">
+            <thead class="bg-gray-900/50 relative z-0">
+                <tr class="text-gray-400 uppercase text-[10px] tracking-widest border-b border-gray-800">
+                    <th class="p-4 w-10 text-center">
+                        <input type="checkbox" id="selectAll" onclick="toggleAll(this)" class="rounded border-gray-700 bg-gray-900 text-blue-600">
+                    </th>
+                    <th class="p-4 w-24">Station</th>
+                    <th class="p-4">Type</th>
+                    <th class="p-4">Engineer</th>
+                    <th class="p-4">Date & Time</th>
+                    <th class="p-4">Battery/Solar</th>
+                    <th class="p-4">Geo-Tag</th>
+                    <th class="p-4 text-right">Evidence</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-800/50" id="reportTableBody">
+                {% for r in reports %}
+                <tr class="hover:bg-blue-600/5 transition group cursor-pointer" onclick="handleRowClick(event, '{{ loop.index0 }}')">
+                    <td class="p-4 text-center">
+                        <input type="checkbox" class="report-check rounded border-gray-700 bg-gray-900 text-blue-600" data-idx="{{ loop.index0 }}" onclick="event.stopPropagation(); updateBulkBtn()">
+                    </td>
+                    <td class="p-4">
+                        <span class="font-black text-gray-200 text-sm">{{ r.stn_id }}</span>
+                    </td>
+                    <td class="p-4">
+                        <span class="px-2 py-0.5 rounded bg-gray-800 text-gray-400 text-[9px] font-bold border border-gray-700 uppercase group-hover:bg-blue-900/30 group-hover:text-blue-300 transition">
+                            {{ r.svc_type or 'Periodic' }}
+                        </span>
+                    </td>
+                    <td class="p-4 font-bold text-gray-300">{{ r.eng_name or 'Unknown' }}</td>
+                    <td class="p-4 text-gray-500 font-mono text-[10px]">{{ r.reported_at|ist }}</td>
+                    <td class="p-4">
+                        <span class="text-green-400 font-mono">{{ "%.2f"|format(r.bat_v or 0) }}V</span>
+                        <span class="text-gray-600 mx-1">/</span>
+                        <span class="text-yellow-400 font-mono">{{ "%.1f"|format(r.sol_v or 0) }}V</span>
+                    </td>
+                    <td class="p-4">
+                        <div class="flex items-center gap-1.5 text-gray-400">
+                            <span class="text-[10px] font-mono">{{ (r.gps or '0,0').split(',')[0][:7] if ',' in (r.gps or '') else '0.000...' }}</span>
+                            <span class="text-emerald-500 opacity-0 group-hover:opacity-100 transition">📍</span>
+                        </div>
+                    </td>
+                    <td class="p-4 text-right">
+                        <div class="flex items-center justify-end gap-1">
+                            {% if r.img1_path %}
+                            <img src="/api/v2/service_report/image/{{ r.img1_path }}" class="h-8 w-12 object-cover rounded border border-gray-700 shadow-sm transition hover:scale-110">
+                            {% endif %}
+                            {% if r.img2_path %}
+                            <img src="/api/v2/service_report/image/{{ r.img2_path }}" class="h-8 w-12 object-cover rounded border border-gray-700 shadow-sm transition hover:scale-110">
+                            {% endif %}
+                            {% if not r.img1_path and not r.img2_path %}
+                            <span class="text-[9px] text-gray-600 italic">No Photos</span>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="p-20 text-center">
+                        <div class="text-4xl opacity-10 mb-2">🔭</div>
+                        <p class="text-gray-500 italic">No maintenance logs found matching these criteria.</p>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Field Service Record Modal (Light Professional Theme) -->
+<div id="serviceModal" class="fixed inset-0 z-[9999999] hidden bg-black/70 backdrop-blur-md flex items-start justify-center p-4 overflow-y-auto pt-10 md:pt-16">
+    <div class="bg-white border border-gray-300 rounded-3xl shadow-[0_40px_100px_rgba(0,0,0,0.5)] w-full max-w-4xl max-h-none md:max-h-[90vh] overflow-hidden flex flex-col scale-95 transition-transform duration-300 transform" id="modalContainer">
+        <!-- Modal Header (Draggable Handle & Sticky Top) -->
+        <div id="modalHeader" class="p-6 border-b border-gray-200 flex justify-between items-center bg-gray-50/95 backdrop-blur-sm cursor-move sticky top-0 z-[10] transition-colors active:bg-gray-100 select-none">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-lg shadow-blue-600/30">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                </div>
+                <div>
+                    <h2 class="text-xl font-black text-gray-900" id="m-stn-title">Field Service Record</h2>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="downloadPDF()" class="btn-sm bg-blue-600 text-white border-none shadow-lg shadow-blue-600/20 hover:scale-105 transition active:scale-95">
+                    📥 Download PDF
+                </button>
+                <button onclick="closeSvcReport()" class="p-2 rounded-xl border border-gray-200 text-gray-400 hover:bg-gray-100 transition">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Scrollable Content (PDF Export Target) -->
+        <div class="p-6 md:p-8 overflow-y-auto flex-grow" id="exportContent">
+            <!-- PDF Watermark/Header (Visible in export) -->
+            <div class="hidden export-only mb-8 items-center justify-between border-b-2 border-gray-100 pb-6">
+                <div>
+                    <h1 class="text-2xl font-black text-gray-900">Field Service & TDSI Report</h1>
+                    <p class="text-xs text-gray-500">Official Infrastructure Maintenance Log</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-[11px] text-gray-400 uppercase font-black tracking-tight">Record Timestamp</p>
+                    <p class="text-sm font-bold text-gray-700" id="pdf-gen-time">{{ datetime.now().strftime('%Y-%m-%d %H:%M') }}</p>
+                </div>
+            </div>
+
+            <!-- Top Grid info -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                <div class="space-y-1">
+                    <label class="text-[11px] uppercase font-black text-gray-400 tracking-wider">Station Identity</label>
+                    <div class="text-2xl font-black text-blue-600" id="m-stn-id">1952</div>
+                </div>
+                <div class="space-y-1 border-l border-gray-200 pl-8">
+                    <label class="text-[11px] uppercase font-black text-gray-400 tracking-wider">Field Engineer</label>
+                    <div class="text-base font-bold text-gray-800" id="m-eng">John Doe</div>
+                </div>
+                <div class="space-y-1 border-l border-gray-200 pl-8">
+                    <label class="text-[11px] uppercase font-black text-gray-400 tracking-wider">Visit Category</label>
+                    <div class="text-base font-bold text-gray-800" id="m-type">Repair</div>
+                </div>
+            </div>
+
+            <!-- Secondary Metadata -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 p-5 rounded-2xl bg-gray-50 border border-gray-200">
+                <div>
+                    <p class="text-[10px] text-gray-400 uppercase font-black mb-1.5 tracking-tight">Date Reported</p>
+                    <p class="text-sm text-gray-700 font-mono" id="m-date">2026-04-22 07:44</p>
+                </div>
+                <div>
+                    <p class="text-[10px] text-gray-400 uppercase font-black mb-1.5 tracking-tight">Bat / Sol</p>
+                    <p class="text-sm text-gray-700 font-mono"><span id="m-bat">3.7</span>V / <span id="m-sol">4.2</span>V</p>
+                </div>
+                <div>
+                    <p class="text-[10px] text-gray-400 uppercase font-black mb-1.5 tracking-tight">Rain (Instal/Cum)</p>
+                    <p class="text-sm text-gray-700 font-mono"><span id="m-irf">0</span> / <span id="m-crf">0.25</span> mm</p>
+                </div>
+                <div>
+                    <p class="text-[10px] text-gray-400 uppercase font-black mb-1.5 tracking-tight">GPS Coordinates</p>
+                    <a href="#" id="m-gps-link" target="_blank" class="text-sm text-blue-600 font-mono hover:underline">12.9716, 77.5946</a>
+                </div>
+            </div>
+
+            <!-- Photos -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div class="space-y-2">
+                    <div class="text-[10px] text-gray-400 uppercase font-black ml-1">Photo 1</div>
+                    <div class="bg-gray-100 rounded-2xl border-2 border-gray-200 aspect-video overflow-hidden flex items-center justify-center">
+                        <img id="m-img1" src="" class="hidden w-full h-full object-cover">
+                        <div id="m-img1-alt" class="text-[10px] text-gray-400 italic">No image available</div>
+                    </div>
+                </div>
+                <div class="space-y-2">
+                    <div class="text-[10px] text-gray-400 uppercase font-black ml-1">Photo 2</div>
+                    <div class="bg-gray-100 rounded-2xl border-2 border-gray-200 aspect-video overflow-hidden flex items-center justify-center">
+                        <img id="m-img2" src="" class="hidden w-full h-full object-cover">
+                        <div id="m-img2-alt" class="text-[10px] text-gray-400 italic">No image available</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Observations -->
+            <div class="p-6 rounded-2xl bg-blue-50 border border-blue-100">
+                <div class="text-[11px] text-blue-600 uppercase font-black mb-2 flex items-center gap-2 tracking-wider">
+                    <span class="w-2 h-2 rounded-full bg-blue-600"></span>
+                    Detailed Observations & Technician Comments
+                </div>
+                <p class="text-sm text-gray-700 leading-relaxed font-medium" id="m-comments">
+                    Engineer observed slight oxidation on sensor pins. Cleaned and tested. Calibration successful. 
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Helper for JSON Data (Minimal heap impact) -->
+<script id="reports-data" type="application/json">
+[
+    {% for r in reports %}
+    {
+        "id": "{{ r.id }}",
+        "stn_id": "{{ r.stn_id }}",
+        "svc_type": "{{ r.svc_type or 'Periodic' }}",
+        "eng_name": "{{ r.eng_name or 'Unknown' }}",
+        "reported_at": "{{ r.reported_at|ist if r.reported_at else 'N/A' }}",
+        "bat_v": "{{ '%.2f'|format(r.bat_v or 0) }}",
+        "sol_v": "{{ '%.1f'|format(r.sol_v or 0) }}",
+        "inst_rf": "{{ r.inst_rf or 0 }}",
+        "cum_rf": "{{ r.cum_rf or 0 }}",
+        "gps": "{{ r.gps or '0,0' }}",
+        "comments": "{{ (r.comments or '') | replace('\"', '\\\"') | replace('\n', ' ') }}",
+        "img1": "{% if r.img1_path %}/api/v2/service_report/image/{{ r.img1_path }}{% endif %}",
+        "img2": "{% if r.img2_path %}/api/v2/service_report/image/{{ r.img2_path }}{% endif %}"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+]
+</script>
+
+<script>
+let reports = JSON.parse(document.getElementById('reports-data').textContent);
+let currentReport = null;
+
+function applyFilters() {
+    const q = document.getElementById('sid-search').value;
+    const activeBtn = document.querySelector('.bg-blue-600.text-white');
+    const mode = activeBtn && activeBtn.textContent.trim().toLowerCase() === 'all logs' ? 'all' : 'latest';
+    window.location.href = `/service_reports?q=${q}&mode=${mode}`;
+}
+
+function liveFilter() {
+    const q = document.getElementById('sid-search').value.toLowerCase().trim();
+    const rows = document.querySelectorAll('#reportTableBody tr');
+    
+    if (!q) {
+        rows.forEach(r => r.style.display = '');
+        return;
+    }
+
+    const tokens = q.split(',').map(t => t.trim()).filter(t => t);
+    
+    rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        // Check if ANY token matches the row content
+        const isMatch = tokens.some(token => text.includes(token));
+        
+        if (isMatch) row.style.display = '';
+        else row.style.display = 'none';
+    });
+}
+
+function setMode(mode) {
+    const q = document.getElementById('sid-search').value;
+    window.location.href = `/service_reports?q=${q}&mode=${mode}`;
+}
+
+function viewSvcReport(index) {
+    currentReport = reports[index];
+    populateModal(currentReport);
+    
+    // Reset position to center before showing
+    const container = document.getElementById('modalContainer');
+    container.style.transform = 'translate(0,0) scale(0.95)';
+    container.style.left = 'auto';
+    container.style.top = 'auto';
+
+    const modal = document.getElementById('serviceModal');
+    modal.classList.remove('hidden');
+    setTimeout(() => { 
+        container.style.transition = 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)';
+        container.style.transform = 'translate(0,0) scale(1)'; 
+    }, 10);
+}
+
+function populateModal(report) {
+    document.getElementById('m-stn-title').textContent = `Field Service Report ${report.stn_id}`;
+    document.getElementById('m-stn-id').textContent = report.stn_id;
+    document.getElementById('m-eng').textContent = report.eng_name;
+    document.getElementById('m-type').textContent = report.svc_type;
+    document.getElementById('m-date').textContent = report.reported_at + ' IST';
+    document.getElementById('m-bat').textContent = report.bat_v;
+    document.getElementById('m-sol').textContent = report.sol_v;
+    document.getElementById('m-irf').textContent = report.inst_rf;
+    document.getElementById('m-crf').textContent = report.cum_rf;
+    document.getElementById('m-comments').textContent = report.comments;
+    
+    const gpsLink = document.getElementById('m-gps-link');
+    gpsLink.textContent = report.gps;
+    gpsLink.href = `https://www.google.com/maps?q=${report.gps}`;
+
+    // Images
+    const img1 = document.getElementById('m-img1');
+    const img1Alt = document.getElementById('m-img1-alt');
+    if (report.img1) { img1.src = report.img1; img1.classList.remove('hidden'); img1Alt.classList.add('hidden'); }
+    else { img1.classList.add('hidden'); img1Alt.classList.remove('hidden'); }
+
+    const img2 = document.getElementById('m-img2');
+    const img2Alt = document.getElementById('m-img2-alt');
+    if (report.img2) { img2.src = report.img2; img2.classList.remove('hidden'); img2Alt.classList.add('hidden'); }
+    else { img2.classList.add('hidden'); img2Alt.classList.remove('hidden'); }
+}
+
+function toggleAll(master) {
+    const checks = document.querySelectorAll('.report-check');
+    checks.forEach(c => c.checked = master.checked);
+    updateBulkBtn();
+}
+
+function handleRowClick(e, idx) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.tagName === 'A') return;
+    viewSvcReport(idx);
+}
+
+function updateBulkBtn() {
+    const selected = document.querySelectorAll('.report-check:checked');
+    const downBtn = document.getElementById('bulkBtn');
+    const delBtn = document.getElementById('bulkDelBtn');
+    const count = document.getElementById('bulkCount');
+    
+    if (selected.length > 0) {
+        downBtn.classList.remove('hidden');
+        delBtn.classList.remove('hidden');
+        count.textContent = selected.length;
+    } else {
+        downBtn.classList.add('hidden');
+        delBtn.classList.add('hidden');
+    }
+}
+
+async function downloadBulkPDF() {
+    const selected = document.querySelectorAll('.report-check:checked');
+    if (selected.length === 0) return;
+    
+    const btn = document.getElementById('bulkBtn');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '🔄 Processing...';
+
+    // Create a temporary container for bulk merge (Hidden but in render flow)
+    const master = document.createElement('div');
+    master.style.position = 'fixed'; // v6.5 FIX: Fixed position for more reliable capturing
+    master.style.left = '0';
+    master.style.top = '0';
+    master.style.zIndex = '-1';
+    master.style.opacity = '0';
+    master.style.pointerEvents = 'none';
+    master.style.width = '850px';
+    master.style.backgroundColor = '#ffffff';
+    document.body.appendChild(master);
+
+    const reportContent = document.getElementById('exportContent');
+
+    for (let i = 0; i < selected.length; i++) {
+        const idx = selected[i].getAttribute('data-idx');
+        const report = reports[idx];
+        
+        btn.innerHTML = `🔄 Loading ${i+1}/${selected.length}...`;
+        
+        populateModal(report);
+        
+        const imgs = [document.getElementById('m-img1'), document.getElementById('m-img2')];
+        await Promise.all(imgs.map(img => {
+            if (img.classList.contains('hidden')) return Promise.resolve();
+            return new Promise(resolve => {
+                if (img.complete) resolve();
+                else { img.onload = resolve; img.onerror = resolve; }
+            });
+        }));
+
+        const clone = reportContent.cloneNode(true);
+        // v6.5 FIX: Strip IDs to prevent html2canvas conflicts
+        clone.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+        clone.classList.add('pdf-render');
+        clone.style.height = 'auto'; // Ensure no truncation
+        clone.style.overflow = 'visible';
+        clone.style.pageBreakAfter = 'always';
+        clone.style.backgroundColor = '#ffffff';
+        clone.style.padding = '40px';
+        
+        master.appendChild(clone);
+    }
+
+    btn.innerHTML = '📂 Generating PDF...';
+    
+    const opt = {
+        margin:       0.3,
+        filename:     `Bulk_Service_Reports_${new Date().toISOString().slice(0,10)}.pdf`,
+        image:        { type: 'jpeg', quality: 0.95 },
+        html2canvas:  { scale: 1.5, useCORS: true, backgroundColor: '#ffffff', logging: false },
+        jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+    };
+
+    try {
+        await html2pdf().set(opt).from(master).save();
+    } catch(e) {
+        console.error(e);
+        alert('Bulk PDF Export failed. Try selecting fewer reports at once.');
+    } finally {
+        document.body.removeChild(master);
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
+
+async function deleteBulkReports() {
+    const selected = document.querySelectorAll('.report-check:checked');
+    if (selected.length === 0) return;
+    
+    if (!confirm(`⚠ SECURITY WARNING: Are you sure you want to PERMANENTLY DELETE ${selected.length} reports? This cannot be undone.`)) return;
+
+    const ids = Array.from(selected).map(cb => {
+        const idx = cb.getAttribute('data-idx');
+        return parseInt(reports[idx].id || 0);
+    }).filter(id => id > 0);
+
+    try {
+        let res = await fetch('/delete/bulk-service-reports', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: ids })
+        });
+        let data = await res.json();
+        if (data.status === 'ok') {
+            alert(`✅ Successfully deleted ${data.count} reports.`);
+            location.reload();
+        } else {
+            alert('Delete failed: ' + data.msg);
+        }
+    } catch(e) {
+        alert('Communication error with server.');
+    }
+}
+
+function closeSvcReport() {
+    const modal = document.getElementById('serviceModal');
+    const container = document.getElementById('modalContainer');
+    container.classList.remove('scale-100');
+    container.classList.add('scale-95');
+    setTimeout(() => { modal.classList.add('hidden'); }, 200);
+}
+
+function downloadPDF() {
+    const element = document.getElementById('exportContent');
+    const btn = event.target;
+    btn.textContent = 'Generating PDF...';
+    btn.disabled = true;
+
+    // Temporal CSS modifications for PDF styling
+    element.classList.add('pdf-render');
+    
+    const opt = {
+        margin:       0.5,
+        filename:     `Service_Report_${currentReport.stn_id}_${currentReport.reported_at.split(' ')[0]}.pdf`,
+        image:        { type: 'jpeg', quality: 0.98 },
+        html2canvas:  { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+        jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+    };
+
+    html2pdf().set(opt).from(element).save().then(() => {
+        element.classList.remove('pdf-render');
+        btn.textContent = '📥 Download PDF';
+        btn.disabled = false;
+    });
+}
+
+// Close modal on backdrop click
+document.getElementById('serviceModal').addEventListener('click', function(e) {
+    if (e.target === this) closeSvcReport();
+});
+
+// --- Draggable Modal Logic ---
+(function() {
+    const header = document.getElementById('modalHeader');
+    const container = document.getElementById('modalContainer');
+    let isDragging = false;
+    let offset = { x: 0, y: 0 };
+
+    header.addEventListener('mousedown', (e) => {
+        if (e.target.closest('button')) return; // Don't drag if clicking buttons
+        isDragging = true;
+        container.style.transition = 'none'; // Disable transition while dragging
+        
+        const rect = container.getBoundingClientRect();
+        offset.x = e.clientX - rect.left;
+        offset.y = e.clientY - rect.top;
+        
+        container.style.position = 'fixed';
+        container.style.left = rect.left + 'px';
+        container.style.top = rect.top + 'px';
+        container.style.margin = '0';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        let newX = e.clientX - offset.x;
+        let newY = e.clientY - offset.y;
+        
+        // v6.0 Boundary Guard: Don't allow header to go off-screen
+        newY = Math.max(10, newY); 
+        newX = Math.max(10, Math.min(window.innerWidth - 100, newX));
+
+        container.style.left = newX + 'px';
+        container.style.top = newY + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+        isDragging = false;
+    });
+
+    // Touch Support for Mobile
+    header.addEventListener('touchstart', (e) => {
+        if (e.target.closest('button')) return;
+        isDragging = true;
+        container.style.transition = 'none';
+        const rect = container.getBoundingClientRect();
+        offset.x = e.touches[0].clientX - rect.left;
+        offset.y = e.touches[0].clientY - rect.top;
+        container.style.position = 'fixed';
+        container.style.left = rect.left + 'px';
+        container.style.top = rect.top + 'px';
+        container.style.margin = '0';
+    }, {passive: true});
+
+    document.addEventListener('touchmove', (e) => {
+        if (!isDragging) return;
+        const touch = e.touches[0];
+        let newX = touch.clientX - offset.x;
+        let newY = touch.clientY - offset.y;
+        
+        newY = Math.max(10, newY);
+        
+        container.style.left = newX + 'px';
+        container.style.top = newY + 'px';
+    }, {passive: false});
+
+    document.addEventListener('touchend', () => isDragging = false);
+})();
+</script>
+
+<style>
+/* Page Theme */
+body {
+    background: #0f172a !important; /* Force darker gray */
+}
+
+/* PDF Export Styles (Applied only during generation) */
+.pdf-render {
+    background: #ffffff !important;
+    color: #000000 !important;
+    padding: 40px !important;
+}
+.pdf-render label { color: #64748b !important; }
+.pdf-render .text-blue-400, .pdf-render .text-gray-200, .pdf-render .text-gray-300 { color: #0f172a !important; }
+.pdf-render .bg-gray-900, .pdf-render .bg-blue-600\/5 { 
+    background: #f8fafc !important; 
+    border-color: #e2e8f0 !important;
+}
+.pdf-render .hidden.export-only { display: flex !important; }
+
+/* Desktop Hover effects */
+@media (min-width: 768px) {
+    .hover-glow:hover {
+        box-shadow: 0 0 20px rgba(59, 130, 246, 0.2);
+    }
+}
+</style>
+{% endblock %}

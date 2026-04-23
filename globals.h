@@ -108,6 +108,8 @@ void sync_rtc_from_server_tm(const char *body, bool is_ntp);
 void reset_all_diagnostics();
 void recoverI2CBus(bool alreadyLocked = false);
 void pruneFile(const char *path, size_t limit, bool alreadyLocked = false);
+void cleanup_service_report(bool fatal = false);
+bool send_service_report();
 
 /************************************************************************************************/
 extern char
@@ -290,6 +292,7 @@ extern volatile bool health_in_progress;
 extern volatile bool
     schedulerBusy; // Prevents sleep during 15-min slot processing
 extern volatile bool primary_data_delivered;
+extern volatile bool local_svc_upload_active; // v5.93: Priority flag for onsite engineers
 extern volatile RTC_DATA_ATTR bool skip_primary_http;
 extern volatile bool sleep_sequence_active;    // v5.77: Sleep Gate signal
 extern volatile bool force_ftp;               // v5.77: RESTORED
@@ -396,8 +399,23 @@ extern RTC_DATA_ATTR volatile int diag_http_zombie_count;
 extern RTC_DATA_ATTR bool
     backfill_done; // v5.72 Hardened: Architecture fix for Health TX reporting
 
+enum SVC_SYNC_STATUS {
+  SVC_IDLE = 0,
+  SVC_PENDING = 1,
+  SVC_SYNC_META = 2,
+  SVC_SYNC_IMG1 = 3,
+  SVC_SYNC_IMG2 = 4,
+  SVC_DONE = 5,
+  SVC_FAIL = 6
+};
+
+extern char svc_last_error[48]; // v5.98: Detailed failure reason for UI/Serial
+extern unsigned long last_svc_trigger_time; // v5.88: for timeout tracking
+
 // Golden Summary Diagnostic Flags (v5.43)
 extern RTC_DATA_ATTR int diag_ws_same_count;
+extern volatile int svc_sync_status; // v5.87: 0:Idle, 1:Pending, 2:Syncing, 3:Done, 4:Failed (See SVC_SYNC_STATUS)
+extern RTC_DATA_ATTR int svc_retry_count; // v5.91: Track sync attempts for fatal scrub
 extern RTC_DATA_ATTR bool diag_temp_cv;
 extern RTC_DATA_ATTR bool diag_hum_cv;
 extern RTC_DATA_ATTR bool diag_ws_cv;
@@ -613,7 +631,7 @@ bool send_health_report(bool useJitter = true);
 void send_unsent_data();
 void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked = false);
 void start_gprs();
-void send_sms();
+void send_sms(bool alreadyLocked = false);
 void process_sms(char msg_no);
 int setup_ftp(int transMode = 0);
 void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked = false);
@@ -652,7 +670,8 @@ void get_a7672s();
 void prepare_and_send_status(char *number, bool alreadyLocked = false);
 void get_lat_long_date_time(char *number, bool alreadyLocked = false);
 void store_current_unsent_data();
-void get_gps_coordinates();
+void get_gps_coordinates(bool alreadyLocked = false);
+void check_incoming_sms(bool alreadyLocked = false);
 void prepare_data_and_send();
 void power_cut_modem_shutdown();
 // (prototype above at line 90)

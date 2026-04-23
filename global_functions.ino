@@ -297,9 +297,19 @@ void set_wakeup_reason() {
 }
 
 void copyFilesFromSPIFFSToSD(const char *dirname) {
+  // v5.88: Dynamic SD Detection — Attempt to init if not already flagged OK.
+  // This allows the user to insert the card AFTER boot and still perform the copy.
   if (!sd_card_ok) {
-    debugln("[SD] [ERR] SD Card not ready. Aborting copy.");
-    return;
+    debugln("[SD] Card not ready. Attempting on-the-fly initialization...");
+    SPI.begin(18, 19, 23, 5);
+    if (SD.begin(5, SPI, 2000000)) {
+        debugln("[SD] ✅ Initialization successful.");
+        sd_card_ok = 1;
+    } else {
+        debugln("[SD] [ERR] Initialization failed. Is the card inserted?");
+        SPI.end(); // Release bus
+        return;
+    }
   }
   
   File root = SPIFFS.open(dirname);
@@ -311,65 +321,84 @@ void copyFilesFromSPIFFSToSD(const char *dirname) {
 
   int successCount = 0;
   int failCount = 0;
+  int totalFiles = 0;
+
+  // First pass: count eligible files
+  File countRoot = SPIFFS.open(dirname);
+  if (countRoot) {
+      File f = countRoot.openNextFile();
+      while(f) { if (strstr(f.name(), ".txt")) totalFiles++; f = countRoot.openNextFile(); }
+      countRoot.close();
+  }
+
+  debugf("[SD] Starting transfer of %d files...\n", totalFiles);
+
   File file = root.openNextFile();
   while (file) {
     esp_task_wdt_reset();
     
-    // v5.87 Hardening: [C-01] Mutex-Interleaving
-    // We take the lock for EACH file to allow the scheduler to sneak in a log write.
-    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
-      const char* fileName = file.name();
-      size_t fileSize = file.size();
+    // v5.96 Progress Reporting
+    int currentFileIndex = successCount + failCount + 1;
+    if (totalFiles > 0) {
+        snprintf(ui_data[FLD_SD_COPY].bottomRow, 17, "COPY %d/%d (%d%%)", currentFileIndex, totalFiles, (currentFileIndex * 100) / totalFiles);
+        show_now = 1;
+    }
+    
+    // v5.88 FIX: DEADLOCK REMOVED. 
+    // The UI task (caller) already holds fsMutex. Taking it again here on a 
+    // non-recursive mutex causes a permanent hang.
+    const char* fileName = file.name();
+    size_t fileSize = file.size();
 
-      if (strstr(fileName, ".txt") != NULL) {
-        char destPath[80];
-        if (fileName[0] != '/') {
-          snprintf(destPath, sizeof(destPath), "/%s", fileName);
-        } else {
-          strncpy(destPath, fileName, sizeof(destPath)-1);
-          destPath[sizeof(destPath)-1] = '\0';
-        }
+    if (strstr(fileName, ".txt") != NULL) {
+      char destPath[80];
+      // v5.88 Path Normalization: Ensure we don't create double-slash paths (e.g. "//data.txt")
+      // SPIFFS file.name() usually includes the leading slash.
+      if (fileName[0] == '/') {
+        strncpy(destPath, fileName, sizeof(destPath)-1);
+      } else {
+        snprintf(destPath, sizeof(destPath), "/%s", fileName);
+      }
+      destPath[sizeof(destPath)-1] = '\0';
 
-        debugf("[SD] Copying: %s (%d bytes)\n", fileName, (int)fileSize);
+      debugf("[SD] Copying: %s (%d bytes)\n", fileName, (int)fileSize);
 
-        File destFile = SD.open(destPath, FILE_WRITE);
-        if (destFile) {
-          if (fileSize > 0) {
-            uint8_t buffer[512];
-            size_t totalWritten = 0;
-            while (file.available()) {
-              size_t bytesRead = file.read(buffer, sizeof(buffer));
-              size_t written = destFile.write(buffer, bytesRead);
-              totalWritten += written;
-              esp_task_wdt_reset(); // Keep watchdog happy during large file streams
-              if (written != bytesRead) {
-                debugf("[SD] [ERR] Write mismatch! Read: %d, Wrote: %d\n", (int)bytesRead, (int)written);
-                break;
-              }
+      File destFile = SD.open(destPath, FILE_WRITE);
+      if (destFile) {
+        if (fileSize > 0) {
+          uint8_t buffer[1024]; // v5.88: Increased buffer for faster throughput
+          size_t totalWritten = 0;
+          while (file.available()) {
+            size_t bytesRead = file.read(buffer, sizeof(buffer));
+            size_t written = destFile.write(buffer, bytesRead);
+            totalWritten += written;
+            esp_task_wdt_reset(); 
+            if (written != bytesRead) {
+              debugf("[SD] [ERR] Write mismatch! Read: %d, Wrote: %d\n", (int)bytesRead, (int)written);
+              break;
             }
-            destFile.close();
-            if (totalWritten == fileSize) {
-              debugf("[SD] ✅ Success: %d bytes transferred\n", (int)totalWritten);
-              successCount++;
-            } else {
-              debugf("[SD] ⚠️ Incomplete: %d/%d bytes written\n", (int)totalWritten, (int)fileSize);
-              failCount++;
-            }
-          } else {
-            debugln("[SD] Skipping empty file.");
-            destFile.close();
+          }
+          destFile.close();
+          if (totalWritten == fileSize) {
+            debugf("[SD] ✅ Success: %d bytes\n", (int)totalWritten);
             successCount++;
+          } else {
+            debugf("[SD] ⚠️ Incomplete: %d/%d bytes\n", (int)totalWritten, (int)fileSize);
+            failCount++;
           }
         } else {
-          debugf("[SD] [ERR] Failed to create %s on SD\n", destPath);
-          failCount++;
+          debugln("[SD] Skipping empty file.");
+          destFile.close();
+          successCount++;
         }
+      } else {
+        debugf("[SD] [ERR] Failed to create %s on SD\n", destPath);
+        failCount++;
       }
-      xSemaphoreGive(fsMutex);
-      vTaskDelay(20 / portTICK_PERIOD_MS); // v5.87: Breathe delay for the scheduler
-    } else {
-      debugln("[SD] [ERR] FS Mutex Busy. Skipping file to prevent UI stall.");
     }
+    
+    // v5.88: Manual breather to allow scheduler to process background tasks
+    vTaskDelay(10 / portTICK_PERIOD_MS); 
     
     file.close(); 
     file = root.openNextFile();

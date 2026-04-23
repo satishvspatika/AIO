@@ -186,26 +186,24 @@ bool try_activate_apn(const char *apn) {
   debug("Trying APN: ");
   debugln(apn);
 
-  // v5.70: Fix C-01 - Prevent redundant APN writes to modem flash to preserve endurance
-  // We read the current definition for CID 1 and only update if it differs.
+  int check_cid = (active_cid > 0) ? active_cid : 1;
+  // v5.70: Prevent redundant APN writes to modem flash
   SerialSIT.println("AT+CGDCONT?");
   waitForResponse("OK", 2000);
   const char* current_apn_resp = modem_response_buf;
-  // [SRC-M02 Fix] Replaced String heap alloc with stack buffer — no malloc inside modemMutex
   char target_apn_quoted[64];
   snprintf(target_apn_quoted, sizeof(target_apn_quoted), "\"%s\"", apn);
 
-  if (strstr(current_apn_resp, "+CGDCONT: 1,") != NULL &&
+  char cid_label[32]; snprintf(cid_label, sizeof(cid_label), "+CGDCONT: %d,", check_cid);
+  if (strstr(current_apn_resp, cid_label) != NULL &&
      (strstr(current_apn_resp, target_apn_quoted) != NULL || strstr(current_apn_resp, apn) != NULL)) {
-    debugln("[APN] Flash match found. Skipping redundant write.");
+    debugf("[APN] CID %d: Flash match found. Skipping write.\n", check_cid);
   } else {
-    debugln("[APN] Flash mismatch or missing. Updating modem profile...");
+    debugf("[APN] CID %d: Mismatch. Updating profile...\n", check_cid);
     if (strcmp(apn, "jionet") == 0) {
-      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-               "AT+CGDCONT=1,\"IPV4V6\",\"%s\"", apn);
+      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CGDCONT=%d,\"IPV4V6\",\"%s\"", check_cid, apn);
     } else {
-      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CGDCONT=1,\"IP\",\"%s\"",
-               apn);
+      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CGDCONT=%d,\"IP\",\"%s\"", check_cid, apn);
     }
     SerialSIT.println(gprs_xmit_buf);
     waitForResponse("OK", 3000);
@@ -214,37 +212,65 @@ bool try_activate_apn(const char *apn) {
 
   flushSerialSIT(); // v5.79: Clear any "PB DONE" boot noise before command
   
-  // v5.86: Surgical Retry Loop for CGACT
-  // Modems often return "Unknown Error" if activation is requested immediately after 
-  // registration. This loop handles the first failure gracefully.
+  // v5.95: Hardened BSNL/Carrier Recovery
   bool act_success = false;
-  for (int try_act = 0; try_act < 2; try_act++) {
-    SerialSIT.println("AT+CGACT=1,1");
-    // v5.79 Robust Response Wait: Filter async URCs (PB DONE, SMS DONE)
-    act_success = waitForResponse("OK", 25000);
+  for (int try_act = 0; try_act < 3; try_act++) {
+    if(try_act > 0) {
+      debugf("[APN] Retry %d: Nuking stack for fresh start...\n", try_act);
+      SerialSIT.println("AT+CIPSHUT"); // Clean up old attempts
+      waitForResponse("SHUT OK", 3000);
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
+    }
+
+    char act_cmd[32];
+    snprintf(act_cmd, sizeof(act_cmd), "AT+CGACT=1,%d", check_cid);
+    SerialSIT.println(act_cmd);
+    act_success = waitForResponse("OK", 20000);
     
     if (act_success) break;
     
-    if (try_act == 0) {
-      debugln("[APN] CGACT Failed. Breather (1.5s) before retry...");
-      vTaskDelay(1500 / portTICK_PERIOD_MS);
+    if (try_act < 2) {
+      debugln("[APN] CGACT Failed. 5s Breather for carrier reset...");
+      vTaskDelay(5000 / portTICK_PERIOD_MS);
       flushSerialSIT();
+    } else {
+      // Nuclear Option: CFUN Refresh
+      debugln("[APN] TOTAL FAILURE. Triggering Radio Refresh (CFUN 0/1)...");
+      SerialSIT.println("AT+CFUN=0"); waitForResponse("OK", 5000);
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
+      SerialSIT.println("AT+CFUN=1"); waitForResponse("OK", 5000);
+      vTaskDelay(5000 / portTICK_PERIOD_MS);
     }
   }
   
-  debugf("[GPRS] CGACT Resp: %s\n", modem_response_buf); 
+  debugf("[GPRS] Final Proxy Resp: %s\n", modem_response_buf); 
 
   if (act_success) {
-    // v5.70 Hardened [H-4 Fix]: Verify actual IP assigned — BSNL returns OK but 0.0.0.0
+    // v7.12 Dynamic Discovery: Find which CID actually has the IP (LTE might use 1, 5, or 8)
     vTaskDelay(500 / portTICK_PERIOD_MS);
-    SerialSIT.println("AT+CGPADDR=1");
-    waitForResponse("OK", 3000);
-    const char* ip_resp = modem_response_buf;
-    if (strstr(ip_resp, "0.0.0.0") != NULL || strstr(ip_resp, "+CGPADDR:") == NULL) {
-        debugln("[APN] CGACT OK but no valid IP (0.0.0.0). Treating as failure.");
-        return false;
+    SerialSIT.println("AT+CGPADDR");
+    if (waitForResponse("OK", 4000)) {
+        const char* resp = modem_response_buf;
+        const char* p = strstr(resp, "+CGPADDR: ");
+        if (p != NULL) {
+            int discovered_cid = atoi(p + 10);
+            if (discovered_cid > 0 && discovered_cid < 16) {
+                active_cid = discovered_cid;
+                debugf("[GPRS] Dynamic Discovery: Primary IP found on CID %d\n", active_cid);
+                return true;
+            }
+        }
     }
-    return true;
+    
+    // Fallback: If no IP found in discovery, check if CID 1 was explicitly given an IP
+    SerialSIT.println("AT+CGPADDR=1");
+    if (waitForResponse("+CGPADDR: 1,", 3000)) {
+        active_cid = 1;
+        return true;
+    }
+    
+    debugln("[APN] CGACT OK but no valid IP found in discovery. Treating as failure.");
+    return false;
   }
   return false;
 }
@@ -260,23 +286,40 @@ bool verify_bearer_or_recover() {
   }
 
   bearer_recovery_active = true; // Block UI/I2C tasks from interrupting
+  
+  // 0. v5.89: Universal GPRS Attach Guard
   flushSerialSIT();
-
-  // 1. Determine which CID is active (Support CID 1, 5, or 8)
-  // Use the global active_cid if set, otherwise query.
-  int check_cid = (active_cid > 0) ? active_cid : 1;
-
-  SerialSIT.println("AT+CGACT?");
-  waitForResponse("OK", 3000);
-  const char* cgact_resp = modem_response_buf;
-
-  bool context_active = false;
-  // Check for the specific CID that we configured
-  char cid_check[20];
-  snprintf(cid_check, sizeof(cid_check), "+CGACT: %d,1", check_cid);
-  if (strstr(cgact_resp, cid_check) != NULL) {
-    context_active = true;
+  SerialSIT.println("AT+CGATT?");
+  if (waitForResponse("+CGATT: 1", 3000)) {
+     debugln("[GPRS] Attach Status: OK");
+  } else {
+     debugln("[GPRS] [CRIT] Not GPRS Attached! Attempting re-attach...");
+     SerialSIT.println("AT+CGATT=1");
+     if (!waitForResponse("OK", 5000)) {
+        debugln("[GPRS] Attach Failed. Forcing Radio Reboot.");
+        return false; // This triggers the Nuclear Reset in the caller
+     }
   }
+
+  flushSerialSIT();
+  // 1. v7.12: Dynamic CID Discovery — Check which context is active
+  SerialSIT.println("AT+CGPADDR"); 
+  waitForResponse("OK", 3000);
+  const char* paddr_resp = modem_response_buf;
+  
+  bool context_active = false;
+  const char* p = strstr(paddr_resp, "+CGPADDR: ");
+  if (p != NULL) {
+      int discovered_cid = atoi(p + 10);
+      if (discovered_cid > 0 && discovered_cid < 16) {
+          active_cid = discovered_cid;
+          debugf("[GPRS] Bearer Check: Found active CID %d\n", active_cid);
+          context_active = true;
+          // check_cid = active_cid; // Defined in local scope at line 291? Let's check.
+      }
+  }
+
+  int check_cid = active_cid; 
 
   // 2. If context is active, verify assigned IP is valid AND APN matches
   if (context_active) {
@@ -454,13 +497,16 @@ bearer_recovery: // Label used for ghost-session fallthrough
   return false;
 }
 void flushSerialSIT() {
-  // P2 fix v5.65: Added 500ms hard deadline.
-  // Without it, a modem URC storm (continuous bearer-bounce events) could cause
-  // this loop to spin indefinitely: data arrives faster than the 1ms drain,
-  // so SerialSIT.available() never returns false, hanging the GPRS task.
-  unsigned long deadline = millis() + 500;
+  // v7.09 Hardening: Send ESC (0x1B) to cancel any rogue prompts (like stuck DOWNLOAD prompts)
+  // before draining the buffer. This prevents command overlap errors.
+  SerialSIT.write(0x1B); 
+  vTaskDelay(20 / portTICK_PERIOD_MS); // Brief breather for UART to settle after ESC
+  
+  unsigned long deadline = millis() + 1000; // Increased to 1s for heavy network URCs
   while (SerialSIT.available() && millis() < deadline) {
     SerialSIT.read();
+    // Minor delay to let incoming URC bursts arrive; essential for A7672S at high baud
+    if (!SerialSIT.available()) vTaskDelay(5 / portTICK_PERIOD_MS); 
     esp_task_wdt_reset();
   }
 }
@@ -737,8 +783,8 @@ void start_gprs() {
   for (int attempt = 0; attempt < 2; attempt++) {
     // Power ON GPRS
     digitalWrite(26, HIGH);               // Power on GPRS module
-    // v5.83 Optimization: 3s on first cold boot, 500ms on retry (caps already charged)
-    vTaskDelay((attempt == 0 ? 3000 : 500) / portTICK_PERIOD_MS); 
+    // v5.91 Hardening: 5s on first cold boot to allow rail stabilization
+    vTaskDelay((attempt == 0 ? 5000 : 1000) / portTICK_PERIOD_MS); 
     
     if (attempt > 0) debugln("[GPRS] RETRY: Hardware Resetting Modem (Attempt 2)...");
     else debugln("[GPRS] Waiting for active UART...");
@@ -762,9 +808,10 @@ void start_gprs() {
     }
 
     if (modem_ready) {
+      vTaskDelay(2000 / portTICK_PERIOD_MS); // v5.91: Settle rail before high-current commands
       SerialSIT.println("AT+CMEE=2"); // v5.82 Diagnostic: Enable verbose error messages
       waitForResponse("OK", 500);
-      vTaskDelay(500 / portTICK_PERIOD_MS); // Brief settle
+      vTaskDelay(1000 / portTICK_PERIOD_MS); // Brief settle
     }
 
     // PROACTIVE SIM POLLING
@@ -890,12 +937,20 @@ void graceful_modem_shutdown() {
   if (!session_unstable) {
     debugln("[GPRS] Session clean. Attempting graceful shutdown...");
     if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      flushSerialSIT();
       SerialSIT.println("AT");
       if (waitForResponse("OK", 500)) {
         debugln("[GPRS] Modem alive. Closing network session gracefully...");
-        SerialSIT.println("AT+CPOWD=1"); // Normal Power Down
-        waitForResponse("NORMAL POWER DOWN", 8000); // Extended timeout for graceful detach
-        vTaskDelay(500 / portTICK_PERIOD_MS);
+        SerialSIT.println("AT+HTTPTERM"); // v7.08: Kill stack (ignore ERROR if already closed)
+        waitForResponse("OK", 2000);
+        
+        // v7.11: Ignore ERROR on CPOWD. Some LTE states prevent graceful software shutdown,
+        // but we must still allow the cycle to finish before physical power cut.
+        SerialSIT.println("AT+CPOWD=1"); 
+        waitForResponse("NORMAL POWER DOWN", 8000); 
+        
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+        flushSerialSIT();
       }
       xSemaphoreGive(modemMutex);
     } else {
@@ -926,8 +981,13 @@ void graceful_modem_shutdown() {
   portEXIT_CRITICAL(&syncMux);
 }
 
-void send_sms() {
-  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+void send_sms(bool alreadyLocked) {
+  if (!alreadyLocked) {
+    if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
+       debugln("[GPRS] send_sms: Modem Busy. Deferring.");
+       return;
+    }
+  }
   vTaskDelay(500 /
              portTICK_PERIOD_MS); // TRG8-3.0.5g reduced from 1min to 500ms
   int msg_no;
@@ -954,8 +1014,7 @@ void send_sms() {
   sync_mode = eSMSStop;
   portEXIT_CRITICAL(&syncMux);
 
-  xSemaphoreGive(modemMutex);
-  }
+  if (!alreadyLocked) xSemaphoreGive(modemMutex);
 }
 
 // REQUIRES: modemMutex held by caller (Not thread-safe due to static buffer)
@@ -986,6 +1045,13 @@ bool waitForResponse(const char *expected, unsigned long timeout) {
 
     if (strstr(modem_response_buf, expected) != NULL) {
       return true;
+    }
+
+    // v5.93: Early exit on ERROR to prevent idling for the full timeout duration
+    if (strstr(modem_response_buf, "ERROR") != NULL && 
+        strstr(expected, "ERROR") == NULL) {
+      debugf("[GPRS] [ERR] Unexpected ERROR while waiting for '%s'. Buf: %s\n", expected, modem_response_buf);
+      return false;
     }
   }
 

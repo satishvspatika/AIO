@@ -14,7 +14,8 @@
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 
-#define FIRMWARE_VERSION "5.86"
+#define FIRMWARE_VERSION "5.87"
+#define ENGINEER_PIN "2000" // v5.87: Access code for Field Service Mode
 
 #define ENABLE_HEALTH_REPORT                                                   \
   1 // Master Switch: Enable automated device health reporting

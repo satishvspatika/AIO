@@ -17,6 +17,23 @@ void handleFileDownload();
 void handleFileView();
 void handleViewLog();
 void handleDisconnect();
+void handleLogin();
+void handleServiceReport();
+void handleSvcUpload();
+void handleSyncStatus();
+void handleLogout();
+void handleRefreshGPS();
+
+// v5.87 Auth Helper
+bool is_engineer() {
+  if (server.hasHeader("Cookie")) {
+    String cookie = server.header("Cookie");
+    if (cookie.indexOf("SpatikaAuth=valid") != -1) return true;
+  }
+  // Fallback: Check for ?pin=XXXX in URL for legacy/simplicity
+  if (server.hasArg("pin") && server.arg("pin") == ENGINEER_PIN) return true;
+  return false;
+}
 
 void webServer(void *pvParameters) {
   esp_task_wdt_add(NULL);
@@ -64,6 +81,11 @@ void webServer(void *pvParameters) {
     debugln("MDNS responder started");
   }
 
+  // Define headers to capture for auth
+  const char *headerkeys[] = {"Cookie"};
+  size_t headerkeyssize = sizeof(headerkeys) / sizeof(char *);
+  server.collectHeaders(headerkeys, headerkeyssize);
+
   // Set up the web server routes
   server.on("/", []() {
     updateActivity();
@@ -109,6 +131,30 @@ void webServer(void *pvParameters) {
     updateActivity();
     handleDisconnect();
   });
+  server.on("/login", []() {
+    updateActivity();
+    handleLogin();
+  });
+  server.on("/service", []() {
+    updateActivity();
+    handleServiceReport();
+  });
+  server.on("/svc_upload", HTTP_POST, []() {
+    updateActivity();
+    handleSvcUploadFinish();
+  }, handleSvcUploadChunk);
+  server.on("/sync_status", []() {
+    updateActivity();
+    handleSyncStatus();
+  });
+  server.on("/logout", []() {
+    updateActivity();
+    handleLogout();
+  });
+  server.on("/refresh_gps", HTTP_GET, []() {
+    updateActivity();
+    handleRefreshGPS();
+  });
 
   // Start the server
   server.begin();
@@ -138,6 +184,121 @@ void webServer(void *pvParameters) {
 
     vTaskDelay(10 / portTICK_PERIOD_MS);
   }
+}
+
+// --- v6.3 Premium Service Report UI ---
+void handleServiceReport() {
+  if (!is_engineer()) {
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", "Auth Required");
+    return;
+  }
+
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html", "");
+  
+  // Header & Styles (Modern Premium Dark Theme)
+  server.sendContent("<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>");
+  server.sendContent("<title>Spatika Service Area</title>");
+  server.sendContent("<style>body{font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background-color:#0d1117;color:#c9d1d9;margin:0;padding:0;line-height:1.6;overflow-x:hidden;}");
+  server.sendContent(".container{max-width:500px;margin:20px auto;padding:0 16px;box-sizing:border-box;}");
+  server.sendContent(".card{background:#161b22;border:1px solid #30363d;border-radius:16px;padding:24px;box-shadow:0 12px 24px rgba(0,0,0,0.3);margin-bottom:20px;}");
+  server.sendContent("h2{color:#58a6ff;margin:0 0 8px 0;font-size:1.6em;font-weight:800;letter-spacing:-0.5px;}");
+  server.sendContent(".sub{color:#8b949e;font-size:0.85em;margin-bottom:24px;}");
+  server.sendContent("label{display:block;margin:16px 0 6px 0;font-weight:600;font-size:0.85em;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;}");
+  server.sendContent("input[type=text],select,textarea{width:100%;background:#0d1117;border:1px solid #30363d;color:#f0f6fc;padding:14px;border-radius:10px;box-sizing:border-box;font-size:16px;transition:border-color 0.2s;outline:none;}");
+  server.sendContent("input:focus,select:focus,textarea:focus{border-color:#58a6ff;background:#161b22;}");
+  server.sendContent(".row{display:grid;grid-template-cols:1fr 1fr;gap:12px;margin-bottom:12px;}");
+  server.sendContent(".img-slot{position:relative;background:#0d1117;border:2px dashed #30363d;border-radius:12px;height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;cursor:pointer;transition:all 0.2s;}");
+  server.sendContent(".img-slot:active{border-color:#58a6ff;background:#1c2128;}");
+  server.sendContent(".img-slot img{position:absolute;width:100%;height:100%;object-cover:cover;z-index:2;}");
+  server.sendContent(".img-slot span{font-size:0.7em;color:#8b949e;z-index:1;text-align:center;padding:10px;}");
+  server.sendContent(".btn{background:#238636;color:white;border:none;padding:16px;width:100%;border-radius:12px;font-weight:bold;font-size:16px;cursor:pointer;box-shadow:0 4px 12px rgba(35,134,54,0.3);transition:transform 0.1s, background 0.2s;margin-top:20px;}");
+  server.sendContent(".btn:active{transform:scale(0.98);background:#2ea043;}.btn:disabled{opacity:0.5;cursor:not-allowed;}");
+  server.sendContent(".st-item{margin-bottom:12px;padding:12px;background:#0d1117;border-radius:10px;border-left:4px solid #30363d;font-size:0.9em;}");
+  server.sendContent(".st-item.act{border-left-color:#58a6ff;background:#1c2128;} .st-item.dn{border-left-color:#3fb950;background:#0d1117;opacity:0.75;}");
+  server.sendContent(".check{color:#3fb950;margin-right:8px;font-weight:bold;}");
+  server.sendContent("</style></head><body>");
+
+  server.sendContent("<div class='container'>");
+  server.sendContent("<div class='card' id='formContainer'><h2>Service Record</h2><p class='sub'>Secure field engineering log for " + String(station_name) + "</p>");
+  server.sendContent("<form id='sf'>");
+  server.sendContent("<label>Engineer Name</label><input type='text' id='en' name='eng' placeholder='Enter your full name' required>");
+  server.sendContent("<label>Visit Category</label><select name='type_str'><option value='PERIODIC'>PERIODIC MAINTENANCE</option><option value='TDSI'>SITE ISSUE (THEFT/DAMAGE)</option><option value='INSTALL'>NEW INSTALLATION</option><option value='REPAIR'>REPAIR</option></select>");
+  
+  server.sendContent("<label>Maintenance Photos</label><div class='row'>");
+  server.sendContent("<div class='img-slot' onclick=\"document.getElementById('i1').click()\"><img id='p1-p' class='hidden'><span id='p1-s'>📸 Tap to capture Photo 1</span><input type='file' id='i1' accept='image/*' style='display:none' onchange=\"prv(this,'p1-p','p1-s')\"></div>");
+  server.sendContent("<div class='img-slot' onclick=\"document.getElementById('i2').click()\"><img id='p2-p' class='hidden'><span id='p2-s'>📸 Tap to capture Photo 2</span><input type='file' id='i2' accept='image/*' style='display:none' onchange=\"prv(this,'p2-p','p2-s')\"></div>");
+  server.sendContent("</div>");
+
+  server.sendContent("<label>Technical Observation</label><textarea name='comments' rows='3' placeholder='Describe work done or site issues...'></textarea>");
+  server.sendContent("<button type='button' class='btn' id='sb' onclick='su()'>SUBMIT FINAL REPORT</button></form></div>");
+  
+  server.sendContent("<div id='st' class='card' style='display:none;'><h2>Syncing Report...</h2><p class='sub' id='syncMsg'>Establishing secure telemetry link...</p>");
+  server.sendContent("<div id='p1' class='st-item'>Path 1: Mobile 4G Sync</div><div id='p2' class='st-item'>Path 2: Station GPRS Sync</div><div id='p3' class='st-item'>Data Finalization</div></div>");
+  
+  server.sendContent("<div id='rs' class='card' style='display:none;text-align:center;'>");
+  server.sendContent("<div style='font-size:48px;margin-bottom:16px;'>✅</div><h2>Sync Complete</h2><p class='sub' id='resMsg'>Your report has been securely archived.</p>");
+  server.sendContent("<button class='btn' style='background:#30363d;box-shadow:none;' onclick=\"location.href='/'\">FINISHED</button></div>");
+  
+  server.sendContent("</div><canvas id='cv' style='display:none'></canvas>");
+
+  server.sendContent("<script>");
+  server.sendContent("let cur_stn='" + String(station_name) + "'; let cur_bat='" + String(li_bat_val, 2) + "V'; let cur_sol='" + String(solar_val, 1) + "V'; let cur_gps='" + String(lati, 6) + "," + String(longi, 6) + "';");
+
+  // v6.03: Live Telemetry Update Loop
+  server.sendContent("setInterval(async ()=>{ try{ const r=await fetch('/data?t='+Date.now()); const d=await r.json(); cur_stn=d.stn||cur_stn; cur_bat=d.bat_v+'V'; cur_sol=d.sol_v+'V'; if(d.gps_lat && Math.abs(d.gps_lat)>0.001) cur_gps=d.gps_lat.toFixed(6)+','+d.gps_lon.toFixed(6); }catch(e){} }, 3000);");
+  
+  // Preview Logic
+  server.sendContent("function prv(i,p,s){ if(i.files && i.files[0]){ var r=new FileReader(); r.onload=e=>{ document.getElementById(p).src=e.target.result; document.getElementById(p).style.display='block'; document.getElementById(s).style.display='none'; }; r.readAsDataURL(i.files[0]); }}");
+  
+  server.sendContent("function stP(id,cl,msg){ let el=document.getElementById(id); if(!el) return; el.className='st-item '+cl; if(cl=='dn') el.innerHTML='<span class=\"check\">✓</span> '+msg; else el.innerHTML=msg; }");
+  
+  server.sendContent("async function su(){ if(!document.getElementById('en').value){ alert('Please enter your name.'); return; } ");
+  server.sendContent("  document.getElementById('formContainer').style.display='none'; document.getElementById('st').style.display='block'; ");
+  server.sendContent("  stP('p1','act','Path 1: Mobile Data (UPLOADING...)'); ");
+  
+  server.sendContent("  const cv=document.getElementById('cv'); const ctx=cv.getContext('2d'); cv.width=320; cv.height=240; ");
+  server.sendContent("  const bls=[]; const files=[document.getElementById('i1').files[0], document.getElementById('i2').files[0]]; ");
+  server.sendContent("  for(let i=0; i<2; i++){ if(!files[i]){ bls.push(null); continue; } ");
+  server.sendContent("    const img=await new Promise(r=>{ const rd=new FileReader(); rd.onload=e=>{ const im=new Image(); im.onload=()=>r(im); im.src=e.target.result; }; rd.readAsDataURL(files[i]); }); ");
+  server.sendContent("    ctx.drawImage(img,0,0,320,240); ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,195,320,45); ctx.fillStyle='white'; ctx.font='bold 11px Arial'; ");
+  server.sendContent("    ctx.fillText('STN: '+cur_stn,10,210); ctx.fillText('GPS: '+cur_gps,10,225); ctx.font='9px Arial'; ctx.fillText(new Date().toLocaleString(),10,237); ");
+  server.sendContent("    bls.push(await new Promise(r=>cv.toBlob(r,'image/jpeg',0.5))); } ");
+  
+  server.sendContent("  const fd=new FormData(document.getElementById('sf')); fd.append('stn',cur_stn); fd.append('bat',cur_bat); fd.append('sol',cur_sol); ");
+  server.sendContent("  fd.append('ts',((new Date().getTime())/1000)|0); fd.append('gps', cur_gps); ");
+  server.sendContent("  if(bls[0]) fd.append('img1',bls[0],'i1.jpg'); if(bls[1]) fd.append('img2',bls[1],'i2.jpg'); ");
+  
+  server.sendContent("  let mobOk=false; try{ let rM=await fetch('http://75.119.148.192/api/v2/service_report',{method:'POST',body:fd}); if(rM.ok) mobOk=true; }catch(e){} ");
+  
+  server.sendContent("  if(mobOk){ stP('p1','dn','Path 1: Mobile Data (SUCCESS)'); stP('p2','dn','Path 2: Station GPRS (BYPASSED)'); setTimeout(()=>{document.getElementById('st').style.display='none'; document.getElementById('rs').style.display='block';},1500); return; } ");
+  
+  server.sendContent("  stP('p1','act','Path 1: Mobile Data (SYNC FAILED - WiFi Blocked)'); ");
+  server.sendContent("  stP('p2','act','Path 2: Station GPRS (Initiating Fallback...)'); ");
+  server.sendContent("  let rL; try{ rL=await fetch('/svc_upload',{method:'POST',body:fd}); }catch(e){} ");
+  server.sendContent("  if(!rL || !rL.ok){ ");
+  server.sendContent("    stP('p2','act','Path 2: Station GPRS (Verifying Connection...)'); ");
+  server.sendContent("    await new Promise(r=>setTimeout(r,3000)); ");
+  server.sendContent("    try{ let rv=await fetch('/sync_status'); let dv=await rv.json(); ");
+  server.sendContent("      if(dv.status!=='PENDING' && dv.status!=='WAIT_MODEM' && dv.status!=='BUSY' && !dv.status.startsWith('SYNC_')){ ");
+  server.sendContent("        alert('Station Link Failed. Please reconnect WiFi and try again.'); location.reload(); return; ");
+  server.sendContent("      } ");
+  server.sendContent("    }catch(e){ alert('Station Link Failed. Please reconnect WiFi and try again.'); location.reload(); return; } ");
+  server.sendContent("  } ");
+  
+  server.sendContent("  stP('p2','act','Path 2: Station GPRS (SYNC IN PROGRESS...)'); ");
+  server.sendContent("  let ats=0; let iv=setInterval(async ()=>{ ats++; try{ let r=await fetch('/sync_status'); let d=await r.json(); ");
+  server.sendContent("    if(d.status==='DONE'){ clearInterval(iv); stP('p2','dn','Path 2: Station GPRS (SUCCESS)'); setTimeout(()=>{document.getElementById('st').style.display='none'; document.getElementById('rs').style.display='block';},1500); } ");
+  server.sendContent("    else if(d.status==='SYNC_META'){ stP('p2','act','Path 2: GPRS (Pushing Metadata...)'); } ");
+  server.sendContent("    else if(d.status==='SYNC_IMG1'){ stP('p2','act','Path 2: GPRS (Uploading Photo 1...)'); } ");
+  server.sendContent("    else if(d.status==='SYNC_IMG2'){ stP('p2','act','Path 2: GPRS (Uploading Photo 2...)'); } ");
+  server.sendContent("    else if(d.status==='WAIT_MODEM'){ stP('p2','act','Path 2: GPRS (Station Busy - Waiting for Modem...)'); } ");
+  server.sendContent("    else if(d.status==='PENDING'){ stP('p2','act','Path 2: GPRS (Pending Task Slot...)'); } ");
+  server.sendContent("    else if(d.status==='BUSY'){ stP('p2','act','Path 2: GPRS (Station Busy - Waiting for File System...)'); } ");
+  server.sendContent("    else if(d.status==='FAIL'){ clearInterval(iv); stP('p2','act','Path 2: Station GPRS (FAILED)'); alert('Modem Sync failed: ' + (d.err || 'Unknown') + '. Report saved in Flash for next auto-sync.'); setTimeout(()=>location.href='/',3000); } ");
+  server.sendContent("    else if(ats>300){ clearInterval(iv); document.getElementById('syncMsg').innerHTML='Sync is running in background. You can close this page.'; setTimeout(()=>location.href='/',5000); }}catch(e){} }, 2000); } ");
+  server.sendContent("</script></body></html>");
 }
 
 // --- Handle Root (/) ---
@@ -303,7 +464,9 @@ void handleRoot() { // v5.70 STREAMING
   server.sendContent("if(data.pressure && document.getElementById('live_pres')) { var val = data.pressure.toFixed(2); if(data.mslp) val += ' | ' + data.mslp.toFixed(2); document.getElementById('live_pres').innerHTML = val + ' <span style=\"font-size:0.6em\">hPa</span>'; }");
   server.sendContent("if(data.wifi_left < 15) { document.getElementById('warnModal').style.display='block'; document.getElementById('timeLeft').innerText = data.wifi_left; } else { document.getElementById('warnModal').style.display='none'; }");
   server.sendContent("} else if (this.readyState == 4 && (this.status == 0 || this.status == 500)) { document.body.innerHTML = '<div style=\"text-align:center;margin-top:20vh;\"><h1>Offline</h1></div>'; } }; xhttp.open('GET', '/data?t=' + Date.now(), true); xhttp.send(); }, 3000);");
-  server.sendContent("function extendInfo() { fetch('/extend').then(()=>{ document.getElementById('warnModal').style.display='none'; }); }</script></head><body>");
+  server.sendContent("function extendInfo() { fetch('/extend').then(()=>{ document.getElementById('warnModal').style.display='none'; }); }");
+  server.sendContent("async function refreshGPS() { const btn = document.getElementById('gpsBtn'); const disp = document.getElementById('live_gps'); if(btn.disabled) return; btn.disabled = true; btn.style.opacity = '0.5'; disp.innerHTML = 'Refining...'; try { const r = await fetch('/refresh_gps'); const res = await r.json(); if(res.status === 'OK') { disp.innerHTML = res.lat.toFixed(6) + ', ' + res.lon.toFixed(6); } else { alert('GPS Refresh Failed: ' + (res.reason || 'Timeout')); disp.innerHTML = 'SEARCHING...'; } } catch(e) { console.error(e); } finally { btn.disabled = false; btn.style.opacity = '1'; } }");
+  server.sendContent("</script></head><body>");
 
   String sysType = "";
 #if SYSTEM == 0
@@ -348,8 +511,8 @@ void handleRoot() { // v5.70 STREAMING
     server.sendContent("<div class='card'><div class='label'>" + String(s_bat) + "</div><div id='live_bat' class='value'>" + String(li_bat_val, 2) + " <span style='font-size:0.6em'>V</span></div></div>");
     server.sendContent("<div class='card'><div class='label'>" + String(s_sol) + "</div><div id='live_sol' class='value'>" + String(solar_val, 2) + " <span style='font-size:0.6em'>V</span></div></div>");
     
-    String gps_display = (abs(gps_latitude) < 0.0001) ? "SEARCHING..." : (String(gps_latitude, 6) + ", " + String(gps_longitude, 6));
-    server.sendContent("<div class='card'><div class='label'>" + String(s_gps) + "</div><div id='live_gps' class='value' style='font-size:0.9em;'>" + gps_display + "</div></div>");
+    String gps_display = (abs(lati) < 0.0001) ? "SEARCHING..." : (String(lati, 6) + ", " + String(longi, 6));
+    server.sendContent("<div class='card'><div class='label'>" + String(s_gps) + "</div><div id='live_gps' class='value' style='font-size:0.9em;'>" + gps_display + "</div><button id='gpsBtn' onclick='refreshGPS()' style='background:none;border:none;color:#007bff;font-size:0.8em;cursor:pointer;padding:5px;'>🔄 Refresh Location</button></div>");
     
     char clb_info[32] = "N/A";
     if (calib_year > 2000) {
@@ -369,13 +532,37 @@ void handleRoot() { // v5.70 STREAMING
 #endif
   server.sendContent("</div>");
 
-  // --- ACTIONS ---
   server.sendContent("<div class='section-title'>System Control</div>");
   server.sendContent("<div style='background:white;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);max-width:500px;margin:10px auto;'>");
   server.sendContent("<a href='/files' class='btn' style='display:block;width:100%;box-sizing:border-box;'>Browse Explorer</a>");
+  
+  // v5.87: Service Engineer Entry
+  if (!is_engineer()) {
+    server.sendContent("<a href='#' onclick=\"let p=prompt('Enter Engineer PIN:'); if(p) window.location='/login?pin='+p;\" class='btn' style='background-color:#6c757d;display:block;width:100%;box-sizing:border-box;'>Field Service Login</a>");
+  } else {
+    server.sendContent("<a href='/service' class='btn' style='background-color:#ffc107;color:#000;display:block;width:100%;box-sizing:border-box;'>Go to Service Area</a>");
+  }
+
   server.sendContent("<br><a href='#' onclick=\"if(confirm('Disconnect?')) window.location='/disconnect';\" class='btn btn-danger' style='width:auto;padding:10px 20px;'>Close WiFi</a>");
   server.sendContent("</div></div></body></html>");
   server.sendContent(""); // End
+}
+
+// --- v6.3 Handle Redirect Login ---
+void handleLogin() {
+  if (server.hasArg("pin") && server.arg("pin") == ENGINEER_PIN) {
+    server.sendHeader("Set-Cookie", "SpatikaAuth=valid; Path=/");
+    // Send a minimal HTML that forces JS redirect to be 100% sure the browser follows
+    server.send(200, "text/html", "<html><body><script>location.replace('/service');</script></body></html>");
+  } else {
+    server.send(200, "text/html", "<html><body><script>alert('Invalid PIN'); window.location='/';</script></body></html>");
+  }
+}
+
+void handleLogout() {
+  server.sendHeader("Set-Cookie", "SpatikaAuth=; Path=/; Max-Age=0");
+  server.sendHeader("Location", "/");
+  server.send(302, "text/plain", "Logged Out");
 }
 
 // --- Handle File List (/files) ---
@@ -685,16 +872,18 @@ void handleFileView() {
 
       server.sendContent("<h3>" + fileName + "</h3>");
 
-      server.sendContent("<div>");
-      server.sendContent("<a href='/download?file=" + fileName +
-                         "' class='btn btn-dl'>" + s_dl + "</a>");
-      server.sendContent("<button onclick='copyContent()' class='btn "
-                         "btn-copy'>" +
-                         s_copy + "</button>");
-      server.sendContent("</div>");
-
-      server.sendContent("<div class='tip'><strong>" + s_tip + ":</strong> " +
-                         s_tip_txt + "</div><hr>");
+      if (is_engineer()) {
+          server.sendContent("<div>");
+          server.sendContent("<a href='/download?file=" + fileName +
+                             "' class='btn btn-dl'>" + s_dl + "</a>");
+          server.sendContent("<button onclick='copyContent()' class='btn "
+                             "btn-copy'>" +
+                             s_copy + "</button>");
+          server.sendContent("</div>");
+          server.sendContent("<div class='tip'><strong>" + s_tip + ":</strong> " + s_tip_txt + "</div><hr>");
+      } else {
+          server.sendContent("<div class='tip' style='border-left-color:#6c757d;'><strong>🔒 Restricted:</strong> Download & WhatsApp Copying are reserved for Field Engineers. Please login in the home page to unlock.</div><hr>");
+      }
 
       server.sendContent("<pre id='fileContent'>");
 
@@ -1030,4 +1219,138 @@ void handleData() {
   json += "}";
   server.send(200, "application/json", json);
 }
+
+// v5.87 Handle Service Upload
+static File svcUploadFile;
+static bool svcMutexTaken = false;
+
+void handleSvcUploadChunk() {
+  HTTPUpload& upload = server.upload();
+  
+  if (upload.status == UPLOAD_FILE_START) {
+    if (!is_engineer()) return;
+    
+    // v5.93: Take mutex on first file start + Signal 'Engineer Onsite'
+    local_svc_upload_active = true; 
+    if (!svcMutexTaken) {
+      // Increased to 12s to give GPRS task time to finish a pending write
+      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(12000)) == pdTRUE) {
+        svcMutexTaken = true;
+      } else {
+        debugln("[SVC] Local Upload BLOCKED: fsMutex timeout.");
+        return; 
+      }
+    }
+    
+    String filename = "";
+    if (upload.name == "img1") filename = "/svc_img1.jpg";
+    else if (upload.name == "img2") filename = "/svc_img2.jpg";
+    else { local_svc_upload_active = false; return; }
+    
+    debugf("[SVC] Streaming Binary Upload: %s...\n", filename.c_str());
+    svcUploadFile = SPIFFS.open(filename, FILE_WRITE);
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (svcUploadFile) {
+      svcUploadFile.write(upload.buf, upload.currentSize);
+    }
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (svcUploadFile) {
+      svcUploadFile.close();
+      debugf("[SVC] Photo Streamed: %d bytes\n", upload.totalSize);
+    }
+  }
+}
+
+void handleSvcUploadFinish() {
+  if (!is_engineer()) {
+    if (svcMutexTaken) { xSemaphoreGive(fsMutex); svcMutexTaken = false; }
+    server.send(403, "text/plain", "Forbidden");
+    return;
+  }
+
+  // Finalize Metadata
+  // v5.93: Increase priority for engineer finalization
+  if (!svcMutexTaken) {
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(12000)) != pdTRUE) {
+      local_svc_upload_active = false;
+      server.send(500, "text/plain", "STATION_BUSY");
+      return;
+    }
+    svcMutexTaken = true;
+  }
+
+  debugln("[SVC] Finalizing Report Metadata...");
+  File f = SPIFFS.open("/svc_pending.json", FILE_WRITE);
+  if (f) {
+    f.print("{\"stn\":\""); f.print(station_name);
+    f.print("\",\"com\":\""); f.print(server.arg("comments"));
+    f.print("\",\"eng\":\""); f.print(server.arg("eng"));
+    f.print("\",\"type\":\""); f.print(server.arg("type_str"));
+    f.print("\",\"bat\":");   f.print(server.arg("bat"));
+    f.print(",\"sol\":");   f.print(server.arg("sol"));
+    f.print(",\"gps\":\"");  f.print(server.arg("gps"));
+    f.print("\",\"inst_rf\":"); f.print(server.arg("inst_rf"));
+    f.print(",\"cum_rf\":");  f.print(server.arg("cum_rf"));
+    f.print(",\"ts\":");      f.print(server.arg("ts"));
+    f.print(",\"has_img1\":"); f.print(server.hasArg("img1") ? "true" : "false");
+    f.print(",\"has_img2\":"); f.print(server.hasArg("img2") ? "true" : "false");
+    f.print("}");
+    f.close();
+  }
+
+  svc_retry_count = 0; // Reset FATAL retry counter for new report
+  svc_sync_status = SVC_PENDING; // PENDING
+  last_svc_trigger_time = millis(); // v5.88: Mark start of sync window
+  debugln("[SVC] Sync Triggered (Binary Pipeline).");
+
+  vTaskDelay(200 / portTICK_PERIOD_MS); // Yield briefly
+  
+  if (svcMutexTaken) {
+    xSemaphoreGive(fsMutex);
+    svcMutexTaken = false;
+  }
+  local_svc_upload_active = false; // Engineer priority finished
+  
+  server.send(200, "application/json", "{\"status\":\"ok\"}");
+}
+
+void handleSyncStatus() {
+  if (local_svc_upload_active && !svcMutexTaken) {
+    server.send(200, "application/json", "{\"status\":\"BUSY\"}");
+    return;
+  }
+  
+  String status = "IDLE";
+  if (svc_sync_status == SVC_PENDING) {
+    if (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) || schedulerBusy || health_in_progress) {
+      status = "WAIT_MODEM";
+    } else {
+      status = "PENDING";
+    }
+  }
+  else if (svc_sync_status == SVC_SYNC_META) status = "SYNC_META";
+  else if (svc_sync_status == SVC_SYNC_IMG1) status = "SYNC_IMG1";
+  else if (svc_sync_status == SVC_SYNC_IMG2) status = "SYNC_IMG2";
+  else if (svc_sync_status == SVC_DONE) status = "DONE";
+  else if (svc_sync_status == SVC_FAIL) status = "FAIL";
+  
+  char json[128];
+  snprintf(json, sizeof(json), "{\"status\":\"%s\",\"err\":\"%s\"}", status.c_str(), svc_last_error);
+  server.send(200, "application/json", json);
+}
+
+void handleRefreshGPS() {
+  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(500)) != pdTRUE) {
+    server.send(409, "application/json", "{\"status\":\"ERROR\",\"reason\":\"Modem Busy\"}");
+    return;
+  }
+  debugln("[Web] Manual GPS Refresh Triggered...");
+  get_gps_coordinates(true); // alreadyLocked=true
+
+  String res = "{\"status\":\"OK\", \"lat\":" + String(lati, 6) + ", \"lon\":" + String(longi, 6) + "}";
+  server.send(200, "application/json", res);
+  
+  xSemaphoreGive(modemMutex); // Release after completion
+}
+
 #endif

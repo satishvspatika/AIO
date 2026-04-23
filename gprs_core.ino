@@ -33,8 +33,9 @@ void gprs(void *pvParameters) {
 
     // --- MANUAL TRIGGERS (Keypad) ---
     // v5.82: Pending Request Promotion (Ensures 'PLEASE WAIT' requests are picked up when idle)
-    if (mode_snap == eSyncModeInitial || mode_snap == eSMSStop || 
-        mode_snap == eHttpStop || mode_snap == eExceptionHandled) {
+    // v5.88: Defer manual keypad syncs if Wi-Fi is active to avoid resource contention
+    if (!wifi_active && (mode_snap == eSyncModeInitial || mode_snap == eSMSStop || 
+        mode_snap == eHttpStop || mode_snap == eExceptionHandled)) {
       if (pending_manual_status || pending_manual_gps || pending_manual_health) {
         portENTER_CRITICAL(&syncMux);
         if (pending_manual_status) sync_mode = eSMSStart;
@@ -44,6 +45,38 @@ void gprs(void *pvParameters) {
         portEXIT_CRITICAL(&syncMux);
       }
     }
+
+    // v5.87: Service Report Background Sync Trigger
+    // v5.88: Serialized Trigger - Only run when idle or stopped to prevent conflict with 15-min sync
+    if (svc_sync_status == SVC_PENDING) {
+      // v5.88: Hardened Mutex Wait with UI feedback
+      if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+          debugln("[GPRS] Service Report Pending. Triggering Cloud Sync...");
+          strcpy(svc_last_error, "NONE"); // Reset error
+          svc_sync_status = SVC_SYNC_META; // SYNCING
+          
+          start_gprs();
+          if (gprs_mode == eGprsSignalOk) {
+             debugf("[SVC] Modem ready. Carrier: %s, Signal: %d\n", carrier, signal_lvl);
+             send_service_report();
+          } else {
+             if (gprs_mode == eGprsInitial) strcpy(svc_last_error, "MODEM_POWER_FAIL");
+             else strcpy(svc_last_error, "NO_SIGNAL");
+             svc_sync_status = SVC_FAIL;
+             debugf("[SVC] Modem init failed: %s\n", svc_last_error);
+          }
+          xSemaphoreGive(modemMutex);
+      } else {
+          // v5.88: Provide info why Path 2 is hanging
+          if (health_in_progress || schedulerBusy) {
+              strcpy(svc_last_error, "WAITING_HEALTH_SYNC");
+              debugln("[SVC] Waiting for 15-min Health Sync to release modem...");
+          } else {
+              strcpy(svc_last_error, "WAITING_MODEM_ACCESS");
+              debugln("[SVC] Waiting for modemMutex (Task Slot occupied)...");
+          }
+      }
+   }
 
     if (mode_snap == eSMSStart || mode_snap == eGPSStart ||
         mode_snap == eStartupGPS || mode_snap == eHealthStart) {
@@ -69,7 +102,7 @@ void gprs(void *pvParameters) {
             debugln("[GPRS] Initialization failed. Aborting trigger.");
             strcpy(ui_data[target_fld].bottomRow, "NETWORK ERROR   ");
             show_now = 1;
-            xSemaphoreGive(modemMutex); 
+            xSemaphoreGive(modemMutex); // Release lock before exiting
             vTaskDelay(3000 / portTICK_PERIOD_MS);
             strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
             show_now = 1;
@@ -96,7 +129,7 @@ void gprs(void *pvParameters) {
           strcpy(ui_data[target_fld].bottomRow, "SENDING SMS...  ");
           vTaskDelay(2000 / portTICK_PERIOD_MS);
           
-          prepare_and_send_status(universalNumber, true);
+          prepare_and_send_status(universalNumber, true); // alreadyLocked=true
 
           if (msg_sent) {
             strcpy(ui_data[target_fld].bottomRow, "SMS SUCCESS     ");
@@ -157,7 +190,7 @@ void gprs(void *pvParameters) {
           }
           strcpy(ui_data[target_fld].bottomRow, "GETTING GPS...  ");
           show_now = 1;
-          get_gps_coordinates();
+          get_gps_coordinates(true); // alreadyLocked=true
 
           // If fresh fix failed, try loading from SPIFFS before showing FAILED
           if (lati == 0 || longi == 0)
@@ -196,7 +229,11 @@ void gprs(void *pvParameters) {
         } // Close targets (GPS, Health, etc)
         
         xSemaphoreGive(modemMutex); // Release lock after transmission attempt
-      } // Close gprs_mode == eGprsSignalOk
+      } else {
+        // [SCR-H01] Critical Fix: Release mutex if gprs_mode != eGprsSignalOk
+        debugln("[GPRS] Manual Trigger: Signal lost/not ready. Releasing Mutex.");
+        xSemaphoreGive(modemMutex);
+      } 
       } else {
         debugln("[GPRS] Error: Modem Mutex Timeout during manual trigger!");
         strcpy(ui_data[target_fld].bottomRow, "MODEM BUSY      ");
@@ -287,14 +324,20 @@ void gprs(void *pvParameters) {
 
     // --- REGULAR AUTOMATED DATA REPORTING ---
     if (timeSyncRequired == false) {
+      // v5.89: Engineer Priority - If local upload is active, skip automations
+      if (local_svc_upload_active) {
+        debugln("[GPRS] 💡 Engineer Onsite: Deferring automated cycles to prevent contention.");
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        continue; 
+      }
+
       portENTER_CRITICAL(&syncMux);
       int http_snap = sync_mode;
       portEXIT_CRITICAL(&syncMux);
       if (http_snap == eHttpBegin) {
         if (gprs_mode == eGprsSignalOk) {
           if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-            debugln("\n****************\nStarting Automated Data "
-                    "Flow\n****************");
+            debugln("\n****************\nStarting Automated Data Flow\n****************");
             xSemaphoreGive(serialMutex);
           }
           __atomic_store_n(&httpInitiated, true, __ATOMIC_RELEASE); // v5.65 P4: Mark cycle as started for responsive cleanup block
@@ -656,8 +699,7 @@ void gprs(void *pvParameters) {
     }
 
     esp_task_wdt_reset();
-    vTaskDelay(
-        1000 /
-        portTICK_PERIOD_MS); // Reduced from 2000 for faster state transitions
+    vTaskDelay(pdMS_TO_TICKS(500)); // Yield 500ms
+    yield(); // v5.89: Explicit system yield
   }
 }
