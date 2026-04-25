@@ -2,6 +2,7 @@
 # =============================================================================
 # DEPLOY_NOW.sh - Robust Single-Connection Sync
 # =============================================================================
+set -e
 HOST="75.119.148.192"
 
 echo "📦 Bundling files..."
@@ -11,7 +12,8 @@ cp server/seed_db.py server/app/seed_db_internal.py
 tar -cvz -C server app requirements.txt > deploy.tar.gz
 
 echo "🚀 Sending and Deploying (Single Connection)..."
-cat deploy.tar.gz | ssh root@$HOST "
+if ! cat deploy.tar.gz | ssh root@$HOST "
+    set -e
     mkdir -p /opt/spatika-health && \
     cd /opt/spatika-health && \
     cp -a app/SpatikaHealth.db* /tmp/ 2>/dev/null || true && \
@@ -25,7 +27,13 @@ cat deploy.tar.gz | ssh root@$HOST "
     docker exec -i -w /app -e PYTHONPATH=/app spatika-health python3 app/migrate_internal.py && \
     echo '▶ Restoring Fleet Categories (Seeding)...' && \
     docker exec -i -w /app -e PYTHONPATH=/app spatika-health python3 app/seed_db_internal.py
-"
+"; then
+    echo ""
+    echo "❌ DEPLOYMENT FAILED!"
+    echo "Reason: SSH connection failed or permission denied. Check your password."
+    rm -f deploy.tar.gz
+    exit 1
+fi
 
 # Cleanup local tar
 rm deploy.tar.gz

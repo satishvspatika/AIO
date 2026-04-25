@@ -1,5 +1,5 @@
-#define INST_DURATION_SEC 5
-#define BUFFER_SIZE 6
+#define INST_DURATION_SEC 2
+#define BUFFER_SIZE 3
 
 void windSpeed(void *pvParameters) {
   esp_task_wdt_add(NULL);
@@ -59,6 +59,16 @@ void windSpeed(void *pvParameters) {
                              ? (current_count - last_raw_wind_count)
                              : (65536 + current_count - last_raw_wind_count);
     
+    // v5.90 Bounce Gate: Compute the implied speed for this 1-second raw_delta.
+    // If delta exceeds physical limits (MAX_ACCEL_MS2), cap it to prevent phantom spikes.
+    const float MAX_ACCEL_MS2 = 25.0f;
+    if (cur_wind_speed > 0.5f) {
+      float implied_1s = WS_CALIBRATION_FACTOR * ((float)raw_delta / (float)WIND_TEETH_COUNT);
+      if (implied_1s > (cur_wind_speed + MAX_ACCEL_MS2)) {
+        raw_delta = (uint16_t)((cur_wind_speed + MAX_ACCEL_MS2) / WS_CALIBRATION_FACTOR * (float)WIND_TEETH_COUNT);
+      }
+    }
+
     // v5.65 Fix: Atomic protection for 32-bit counter shared with scheduler task
     portENTER_CRITICAL(&windMux);
     total_wind_pulses_32 += raw_delta;
@@ -81,8 +91,8 @@ void windSpeed(void *pvParameters) {
       // average pulses per second over the 5-second window
       // (Using 1 pulse per revolution logic, dividing by teeth count is incorrect)
       float avgPulsesPerSec = delta / (float)INST_DURATION_SEC;
-      // v5.60: 4 Pulses per Revolution 
-      cur_wind_speed = WS_CALIBRATION_FACTOR * (avgPulsesPerSec / 4.0);
+      // v5.96: Use parameterized teeth count from user_config.h
+      cur_wind_speed = WS_CALIBRATION_FACTOR * (avgPulsesPerSec / WIND_TEETH_COUNT);
 
       // Filter spikes
       if (cur_wind_speed > 35.0)

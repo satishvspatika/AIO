@@ -136,7 +136,32 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         
         now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
-        # Summary card counts
+        # v5.89: NUCLEAR DEDUPLICATION & COLLAPSE
+        # Logic: Strip ALL non-alphanumeric chars, then remove leading zeros.
+        import re
+        deduped = {}
+        for r in reports:
+            # Strip everything except A-Z, 0-9
+            s_clean = re.sub(r'[^A-Z0-9]', '', str(r.stn_id or "").upper())
+            if not s_clean: continue
+            
+            norm_id = s_clean.lstrip('0')
+            if not norm_id: norm_id = "0"
+            
+            if norm_id not in deduped:
+                deduped[norm_id] = r
+            else:
+                # Conflict: Keep the one with the more recent reported_at
+                existing = deduped[norm_id]
+                if r.reported_at and existing.reported_at:
+                    if r.reported_at > existing.reported_at:
+                        deduped[norm_id] = r
+                elif r.reported_at:
+                    deduped[norm_id] = r
+        
+        reports = list(deduped.values())
+
+        # Summary card counts (calculated on deduplicated set)
         total       = len(reports)
         alarms      = 0
         low_bat     = 0

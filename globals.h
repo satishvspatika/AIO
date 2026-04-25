@@ -609,7 +609,7 @@ void get_c_file_info(char *cfn, int *cdd, int *cmm, int *cyy);
 void getTimeSnapshot(struct tm *timeinfo); // v5.79: Hardened Time Sync
 int send_at_cmd_data(char *payload, bool robust);
 void send_http_data();
-bool send_health_report(bool useJitter = true);
+bool send_health_report(bool useJitter = true, bool alreadyLocked = false);
 void send_unsent_data();
 void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked = false);
 void start_gprs();
@@ -629,7 +629,7 @@ void trim_whitespace(char *str);
 void saveYearToSPIFFS(int year);
 void configure_sensors_for_awake();
 void configure_sensors_for_sleep();
-void copyFilesFromSPIFFSToSD(const char *dirname);
+bool copyFilesFromSPIFFSToSD(const char *dirname);
 void copyFile(const char *sourcePath, const char *destPath,
               bool alreadyLocked = false); // v5.75
 void flushSerialSIT();

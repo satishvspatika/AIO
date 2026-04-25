@@ -86,16 +86,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if is_protected and not user:
             return RedirectResponse("/login")
             
-        # 4. Supervisor Only Actions (Delete, Edit, OTA locks)
-        supervisor_prefixes = ("/delete", "/clear-queue", "/clear-ota-queue", "/toggle-ota-lock", "/cmd", "/station/*/ota")
-        # Crude check for destructive action
-        is_supervisor_action = any(request.url.path.startswith(p) for p in ("/delete", "/clear-queue", "/clear-ota-queue", "/toggle-ota-lock", "/cmd"))
-        if request.url.path.endswith("/ota") and "station" in request.url.path:
-            is_supervisor_action = True
-            
-        if is_supervisor_action and user and user["role"] != "supervisor":
-            from fastapi.responses import HTMLResponse
-            return HTMLResponse("<h1>403 Forbidden</h1><p>Supervisor privileges required.</p>", status_code=403)
+        # 4. System Actions (System Config, OTA, Delete)
+        # Standardized for all authenticated staff access
+        is_system_action = any(request.url.path.startswith(p) for p in (
+            "/toggle-ota-lock", "/clear-ota-queue", "/delete", "/clear-queue", "/toggle-ota-lock"
+        ))
+        
+        # If it's a system action, we just require a valid authenticated user
+        from fastapi.responses import HTMLResponse
+        if is_system_action and not user:
+             return HTMLResponse("<h1>401 Unauthorized</h1><p>Please login to perform system actions.</p>", status_code=401)
 
         response = await call_next(request)
         return response

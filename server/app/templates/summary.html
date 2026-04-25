@@ -80,110 +80,112 @@
                         <th class="p-3 text-right">Actions</th>
                     </tr>
                 </thead>
-                <tbody class="divide-y divide-slate-800">
-                    {% for r in g.stations %}
-                    <tr class="hover:bg-slate-800/30 transition cursor-pointer"
-                        onclick="window.location='/station/{{ r.stn_id }}'">
-                        <td class="p-3 font-bold text-blue-300">{{ r.stn_id.lstrip('0') if r.stn_id.lstrip('0') else r.stn_id }}</td>
-                        {% if fw.sort_priority < 99 %}
-                        <td class="p-3 text-[11px] font-mono">
-                            <span class="{% if r.calib and r.calib != 'NA' %}text-green-400 font-bold{% else %}text-slate-600{% endif %}">
-                                {{ r.calib or 'NOT CALIBRATED' }}
-                            </span>
-                        </td>
-                        {% endif %}
-                        <td class="p-3 text-xs">
-                            {% if r.eval.verdict == 'OK' %}<span class="badge-ok" title="Server Evaluation: OK">✓ OK</span>
-                            {% else %}
-                            <span class="badge-fail font-bold" title="Reasons: {{ r.eval.reasons|join(', ') }}">✗ {{ r.eval.verdict }}</span>
+                    <tbody class="divide-y divide-slate-800">
+                        {% set rendered_ids = [] %}
+                        {% for r in g.stations %}
+                        {# v5.89: Visual Shield - Standard Jinja2 (No Extensions) #}
+                        {% set norm_id = (r.stn_id|string).strip().lstrip('0') or '0' %}
+                        {% if norm_id not in rendered_ids %}
+                        {{ rendered_ids.append(norm_id) or "" }}
+
+                        <tr class="hover:bg-slate-800/30 transition cursor-pointer"
+                            onclick="window.location='/station/{{ r.stn_id }}'">
+                            <td class="p-3 font-bold text-blue-300">{{ r.stn_id.lstrip('0') if r.stn_id.lstrip('0') else r.stn_id }}</td>
+                            {% if fw.sort_priority < 99 %}
+                            <td class="p-3 text-[11px] font-mono">
+                                <span class="{% if r.calib and r.calib != 'NA' %}text-green-400 font-bold{% else %}text-slate-600{% endif %}">
+                                    {{ r.calib or 'NOT CALIBRATED' }}
+                                </span>
+                            </td>
                             {% endif %}
-                        </td>
-                        <td class="p-3 text-[10px] text-slate-400">
-                            {{ r.health_sts or "OK" }}
-                        </td>
-                        <td class="p-3">
-                            <span class="badge-ver">{{ r.ver or '?' }}</span>
-                            {% if r.ota_needed %}
-                            <span class="badge-ota">OTA↑</span>
-                            {% endif %}
-                        </td>
-                        <td class="p-3">
-                            <div
-                                class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}">
-                                {{ '%.2f'|format(r.bat_v or 0) }}V
-                            </div>
-                            <div class="text-[10px] text-slate-500">
-                                S: {{ '%.1f'|format(r.sol_v or 0) }}V
-                            </div>
-                        </td>
-                        <td class="p-3 font-mono text-center text-slate-300">{{ r.net_cnt or 0 }} / {{ r.net_cnt_prev or
-                            0 }}</td>
-                        <td class="p-3 text-[10px] text-slate-500 font-mono whitespace-nowrap">
-                            {{ r.gps or "-" }}
-                        </td>
-                        <td class="p-3 text-slate-500 text-[11px] whitespace-nowrap">{{ r.time_ago or '?' }}</td>
-                        <td class="p-3 text-right" onclick="event.stopPropagation()">
-                            <div class="relative inline-block text-left dropdown">
-                                <button onclick="toggleDropdown(event, 'drop-{{ fw.category_id }}-{{ r.stn_id }}')"
-                                    class="btn-sm bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center space-x-1">
-                                    <span>⚡ Actions</span>
-                                </button>
-                                <div id="drop-{{ fw.category_id }}-{{ r.stn_id }}"
-                                    class="dropdown-content absolute right-0 mt-2 w-48 rounded-md shadow-2xl bg-slate-900 border border-slate-600 z-[999] py-1">
-                                    {% if request.state.user and (request.state.user.role == 'supervisor' or
-                                    request.state.user.get('role') == 'supervisor') %}
-                                    <a href="/cmd/{{ r.stn_id }}/REBOOT"
-                                        class="block px-4 py-2 text-xs text-red-400 hover:bg-slate-800"
-                                        onclick="return confirm('Reboot {{ r.stn_id }}?')">↺ Reboot</a>
-                                    {% endif %}
-                                    <a href="/cmd/{{ r.stn_id }}/FTP_BACKLOG"
-                                        class="block px-4 py-2 text-xs text-green-400 hover:bg-slate-800">↑ Sync Backlog</a>
-                                    
-                                    <button onclick="promptFtpDaily('{{ r.stn_id }}')"
-                                        class="w-full text-left block px-4 py-2 text-xs text-purple-400 hover:bg-slate-800">↑ Daily Log</button>
-
-                                    <div class="border-t border-slate-700/50 my-1"></div>
-                                    
-                                    <a href="/cmd/{{ r.stn_id }}/GET_GPS"
-                                        class="block px-4 py-2 text-xs text-blue-400 hover:bg-slate-800"
-                                        onclick="return confirm('Force {{ r.stn_id }} to acquire new GPS fix?')">📍 Refresh GPS</a>
-                                    
-                                    <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=15"
-                                        class="block px-4 py-2 text-xs text-amber-400 hover:bg-slate-800"
-                                        onclick="return confirm('Set {{ r.stn_id }} to 15-min reporting?')">⏱ 15 Min Mode</a>
-                                    
-                                    <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=1440"
-                                        class="block px-4 py-2 text-xs text-amber-500 hover:bg-slate-800"
-                                        onclick="return confirm('Set {{ r.stn_id }} to 24-hr reporting?')">⏱ 24 Hr Mode</a>
-
-                                    <div class="border-t border-slate-700/50 my-1"></div>
-
-                                    <a href="/cmd/{{ r.stn_id }}/CLEAR_FTP_QUEUE"
-                                        class="block px-4 py-2 text-xs text-orange-500 hover:bg-slate-800"
-                                        onclick="return confirm('Clear ALL unsent data on {{ r.stn_id }}?')">🗑 Wipe Backlog</a>
-                                    <div class="border-t border-slate-700/50 my-1"></div>
-                                    <a href="/cmd/{{ r.stn_id }}/DELETE_DATA"
-                                         class="block px-4 py-2 text-xs text-orange-600 font-bold hover:bg-orange-900/40"
-                                         onclick="return confirm('CRITICAL: This will trigger a REMOTE FACTORY RESET on {{ r.stn_id }}. All historical data on the device SPIFFS will be deleted. Configuration will be preserved. Proceed?')">⚠ Delete Device Data</a>
-                                     
-                                     {% if request.state.user and (request.state.user.role == 'supervisor' or
-                                    request.state.user.get('role') == 'supervisor') %}
-                                    <div class="border-t border-slate-700 my-1"></div>
-                                     <a href="/delete/{{ r.stn_id }}"
-                                        class="block px-4 py-2 text-xs text-red-500 hover:bg-red-900/50"
-                                        onclick="return confirm('WARNING: Permanently delete ALL records for {{ r.stn_id }} everywhere?')">🗑
-                                        Delete Station (Global)</a>
-
-                                    <a href="/delete-category/{{ r.stn_id }}/{{ fw.unit_type }}/{{ fw.system_mode }}"
-                                        class="block px-4 py-2 text-xs text-orange-400 hover:bg-orange-900/40"
-                                        onclick="return confirm('Surgical Delete: Remove {{ r.stn_id }} ONLY from the {{ fw.display_name }} group? This will fix phantom entries if the device has moved to another category.')">✂ Remove from Group</a>
-                                    {% endif %}
+                            <td class="p-3 text-xs">
+                                {% if r.eval.verdict == 'OK' %}<span class="badge-ok" title="Server Evaluation: OK">✓ OK</span>
+                                {% else %}
+                                <span class="badge-fail font-bold" title="Reasons: {{ r.eval.reasons|join(', ') }}">✗ {{ r.eval.verdict }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="p-3 text-[10px] text-slate-400">
+                                {{ r.health_sts or "OK" }}
+                            </td>
+                            <td class="p-3">
+                                <span class="badge-ver">{{ r.ver or '?' }}</span>
+                                {% if r.ota_needed %}
+                                <span class="badge-ota">OTA↑</span>
+                                {% endif %}
+                            </td>
+                            <td class="p-3">
+                                <div
+                                    class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}">
+                                    {{ '%.2f'|format(r.bat_v or 0) }}V
                                 </div>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
+                                <div class="text-[10px] text-slate-500">
+                                    S: {{ '%.1f'|format(r.sol_v or 0) }}V
+                                </div>
+                            </td>
+                            <td class="p-3 font-mono text-center text-slate-300">{{ r.net_cnt or 0 }} / {{ r.net_cnt_prev or
+                                0 }}</td>
+                            <td class="p-3 text-[10px] text-slate-500 font-mono whitespace-nowrap">
+                                {{ r.gps or "-" }}
+                            </td>
+                            <td class="p-3 text-slate-500 text-[11px] whitespace-nowrap">{{ r.time_ago or '?' }}</td>
+                            <td class="p-3 text-right" onclick="event.stopPropagation()">
+                                <div class="relative inline-block text-left dropdown">
+                                    <button onclick="toggleDropdown(event, 'drop-{{ fw.category_id }}-{{ r.stn_id }}')"
+                                        class="btn-sm bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center space-x-1">
+                                        <span>⚡ Actions</span>
+                                    </button>
+                                    <div id="drop-{{ fw.category_id }}-{{ r.stn_id }}"
+                                        class="dropdown-content absolute right-0 mt-2 w-48 rounded-md shadow-2xl bg-slate-900 border border-slate-600 z-[999] py-1">
+                                        <a href="/cmd/{{ r.stn_id }}/REBOOT"
+                                            class="block px-4 py-2 text-xs text-red-400 hover:bg-slate-800"
+                                            onclick="return confirm('Reboot {{ r.stn_id }}?')">↺ Reboot</a>
+                                        
+                                        <a href="/cmd/{{ r.stn_id }}/FTP_BACKLOG"
+                                            class="block px-4 py-2 text-xs text-green-400 hover:bg-slate-800">↑ Sync Backlog</a>
+                                        
+                                        <button onclick="promptFtpDaily('{{ r.stn_id }}')"
+                                            class="w-full text-left block px-4 py-2 text-xs text-purple-400 hover:bg-slate-800">↑ Daily Log</button>
+
+                                        <div class="border-t border-slate-700/50 my-1"></div>
+                                        
+                                        <a href="/cmd/{{ r.stn_id }}/GET_GPS"
+                                            class="block px-4 py-2 text-xs text-blue-400 hover:bg-slate-800"
+                                            onclick="return confirm('Force {{ r.stn_id }} to acquire new GPS fix?')">📍 Refresh GPS</a>
+                                        
+                                        <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=15"
+                                            class="block px-4 py-2 text-xs text-amber-400 hover:bg-slate-800"
+                                            onclick="return confirm('Set {{ r.stn_id }} to 15-min reporting?')">⏱ 15 Min Mode</a>
+                                        
+                                        <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=1440"
+                                            class="block px-4 py-2 text-xs text-amber-500 hover:bg-slate-800"
+                                            onclick="return confirm('Set {{ r.stn_id }} to 24-hr reporting?')">⏱ 24 Hr Mode</a>
+
+                                        <div class="border-t border-slate-700/50 my-1"></div>
+
+                                        <a href="/cmd/{{ r.stn_id }}/CLEAR_FTP_QUEUE"
+                                            class="block px-4 py-2 text-xs text-orange-500 hover:bg-slate-800"
+                                            onclick="return confirm('Clear ALL unsent data on {{ r.stn_id }}?')">🗑 Wipe Backlog</a>
+                                        <div class="border-t border-slate-700/50 my-1"></div>
+                                        <a href="/cmd/{{ r.stn_id }}/DELETE_DATA"
+                                             class="block px-4 py-2 text-xs text-orange-600 font-bold hover:bg-orange-900/40"
+                                             onclick="return confirm('CRITICAL: This will trigger a REMOTE FACTORY RESET on {{ r.stn_id }}. All historical data on the device SPIFFS will be deleted. Configuration will be preserved. Proceed?')">⚠ Delete Device Data</a>
+                                         
+                                        <div class="border-t border-slate-700 my-1"></div>
+                                         <a href="/delete/{{ r.stn_id }}"
+                                            class="block px-4 py-2 text-xs text-red-500 hover:bg-red-900/50"
+                                            onclick="return confirm('WARNING: Permanently delete ALL records for {{ r.stn_id }} everywhere?')">🗑
+                                            Delete Station (Global)</a>
+
+                                        <a href="/delete-category/{{ r.stn_id }}/{{ fw.unit_type }}/{{ fw.system_mode }}"
+                                            class="block px-4 py-2 text-xs text-orange-400 hover:bg-orange-900/40"
+                                            onclick="return confirm('Surgical Delete: Remove {{ r.stn_id }} ONLY from the {{ fw.display_name }} group? This will fix phantom entries if the device has moved to another category.')">✂ Remove from Group</a>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
             </table>
         </div>
         {% if not g.stations %}

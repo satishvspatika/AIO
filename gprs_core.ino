@@ -56,8 +56,10 @@ void gprs(void *pvParameters) {
       else if (mode_snap == eGPSStart) pending_manual_gps = false;
       else if (mode_snap == eHealthStart) pending_manual_health = false;
 
-      // [HR-C01/M01] Final Hardening: Take modemMutex ONCE for the entire manual trigger sequence.
-      // This protects Power-On, Signal Fetch, and Transmission as a single atomic unit.
+      // [A-09] v5.89: Added 100ms breather to prevent contention timeout 
+      // if an automated task just finished releasing the mutex.
+      vTaskDelay(100 / portTICK_PERIOD_MS); 
+
       if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
         
         if (gprs_mode == eGprsInitial) {
@@ -67,12 +69,18 @@ void gprs(void *pvParameters) {
           
           if (gprs_mode != eGprsSignalOk) {
             debugln("[GPRS] Initialization failed. Aborting trigger.");
+          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             strcpy(ui_data[target_fld].bottomRow, "NETWORK ERROR   ");
             show_now = 1;
-            xSemaphoreGive(modemMutex); 
-            vTaskDelay(3000 / portTICK_PERIOD_MS);
+            xSemaphoreGive(i2cMutex);
+          }
+          xSemaphoreGive(modemMutex); 
+          vTaskDelay(3000 / portTICK_PERIOD_MS);
+          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
             show_now = 1;
+            xSemaphoreGive(i2cMutex);
+          }
             portENTER_CRITICAL(&syncMux);
             sync_mode = eSMSStop;
             portEXIT_CRITICAL(&syncMux);
@@ -98,17 +106,23 @@ void gprs(void *pvParameters) {
           
           prepare_and_send_status(universalNumber, true);
 
-          if (msg_sent) {
-            strcpy(ui_data[target_fld].bottomRow, "SMS SUCCESS     ");
-          } else {
-            strcpy(ui_data[target_fld].bottomRow, "SMS FAILED      ");
+          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            if (msg_sent) {
+              strcpy(ui_data[target_fld].bottomRow, "SMS SUCCESS     ");
+            } else {
+              strcpy(ui_data[target_fld].bottomRow, "SMS FAILED      ");
+            }
+            show_now = 1;
+            xSemaphoreGive(i2cMutex);
           }
           // NOTE: modemMutex released by the single outer xSemaphoreGive below
 
-          show_now = 1;
           vTaskDelay(3000 / portTICK_PERIOD_MS);
-          strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-          show_now = 1;
+          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+            show_now = 1;
+            xSemaphoreGive(i2cMutex);
+          }
 
           if (mode_snap == eSMSStart) {
             portENTER_CRITICAL(&syncMux);
@@ -178,16 +192,19 @@ void gprs(void *pvParameters) {
                strcpy(ui_data[target_fld].bottomRow, "SENDING HEALTH..");
                show_now = 1;
             }
-            bool health_ok = send_health_report(false); // Manual: No Jitter
+            bool health_ok = send_health_report(false, true); // Manual: No Jitter, ALREADY LOCKED
 
             portENTER_CRITICAL(&syncMux);
             health_in_progress = false;
             portEXIT_CRITICAL(&syncMux);
 
             if (target_fld == FLD_SEND_HEALTH) {
-               if (health_ok) strcpy(ui_data[target_fld].bottomRow, "HEALTH SUCCESS! ");
-               else strcpy(ui_data[target_fld].bottomRow, "HEALTH FAILED   ");
-               show_now = 1;
+               if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                 if (health_ok) strcpy(ui_data[target_fld].bottomRow, "HEALTH SUCCESS! ");
+                 else strcpy(ui_data[target_fld].bottomRow, "HEALTH FAILED   ");
+                 show_now = 1;
+                 xSemaphoreGive(i2cMutex);
+               }
                vTaskDelay(3000 / portTICK_PERIOD_MS);
              }
 #else
@@ -199,11 +216,17 @@ void gprs(void *pvParameters) {
       } // Close gprs_mode == eGprsSignalOk
       } else {
         debugln("[GPRS] Error: Modem Mutex Timeout during manual trigger!");
-        strcpy(ui_data[target_fld].bottomRow, "MODEM BUSY      ");
-        show_now = 1;
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          strcpy(ui_data[target_fld].bottomRow, "MODEM BUSY      ");
+          show_now = 1;
+          xSemaphoreGive(i2cMutex);
+        }
         vTaskDelay(3000 / portTICK_PERIOD_MS);
-        strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-        show_now = 1;
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+          show_now = 1;
+          xSemaphoreGive(i2cMutex);
+        }
         
         portENTER_CRITICAL(&syncMux);
         sync_mode = eSMSStop; // Reset state to unlock UI
@@ -213,29 +236,47 @@ void gprs(void *pvParameters) {
       // [HR-C01] Unified Result Display (Ensures LCD updates after modem/mutex release)
       if (msg_sent == 1) {
         if (target_fld == FLD_SEND_GPS) {
-          snprintf(ui_data[target_fld].bottomRow, 17, "%0.3f,%0.3f", lati, longi);
-          show_now = 1;
+          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            snprintf(ui_data[target_fld].bottomRow, 17, "%0.3f,%0.3f", lati, longi);
+            show_now = 1;
+            xSemaphoreGive(i2cMutex);
+          }
           vTaskDelay(4000 / portTICK_PERIOD_MS);
-          strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-          show_now = 1;
+          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+            show_now = 1;
+            xSemaphoreGive(i2cMutex);
+          }
         } else if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
-          strcpy(ui_data[target_fld].bottomRow, "SENT SUCCESS    ");
-          show_now = 1;
+          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            strcpy(ui_data[target_fld].bottomRow, "SENT SUCCESS    ");
+            show_now = 1;
+            xSemaphoreGive(i2cMutex);
+          }
           vTaskDelay(3000 / portTICK_PERIOD_MS);
-          strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-          show_now = 1;
+          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+            show_now = 1;
+            xSemaphoreGive(i2cMutex);
+          }
         }
       } else {
         // If msg_sent is 0, check if we should show failure (excluding auto-tasks)
         if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
             // Note: If gprs_mode was never SignalOk, this provides feedback
-            if (strlen(ui_data[target_fld].bottomRow) == 0 || strstr(ui_data[target_fld].bottomRow, "CONNECTED")) {
-                 strcpy(ui_data[target_fld].bottomRow, "SEND FAILED     ");
+            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+              if (strlen(ui_data[target_fld].bottomRow) == 0 || strstr(ui_data[target_fld].bottomRow, "CONNECTED")) {
+                   strcpy(ui_data[target_fld].bottomRow, "SEND FAILED     ");
+              }
+              show_now = 1;
+              xSemaphoreGive(i2cMutex);
             }
-            show_now = 1;
             vTaskDelay(3000 / portTICK_PERIOD_MS);
-            strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
-            show_now = 1;
+            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+              strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
+              show_now = 1;
+              xSemaphoreGive(i2cMutex);
+            }
         }
       }
       

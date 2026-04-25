@@ -155,7 +155,7 @@ void rtcRead(void *pvParameters) {
     auto_sync_needed = !rtc_daily_sync_done;
     portEXIT_CRITICAL(&rtcTimeMux);
 
-    if (badReads >= 40 || (auto_sync_needed && (hr == 11 || test_health_every_slot == 1))) {
+    if (badReads >= 40 || (auto_sync_needed && hr == 11)) {
       // v5.77: Coordination Guard — Do not sync if sleep is imminent or retry cap reached
       if (sleep_sequence_active) {
         debugln("[RTC] Sleep imminent. Deferring sync.");

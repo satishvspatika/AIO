@@ -102,17 +102,21 @@ void tempHum(void *pvParameters) {
           static int b_idx = 0;
           static bool b_init = false;
 
-          float bmeTemp = bme.readTemperature();
-          float bmeHum = bme.readHumidity();
+        float bmeTemp = NAN, bmeHum = NAN;
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+          bmeTemp = bme.readTemperature();
+          bmeHum = bme.readHumidity();
+          xSemaphoreGive(i2cMutex);
+        }
 
-          if (!isnan(bmeTemp) && bmeTemp > -40.0 && bmeTemp < 85.0 &&
-              !isnan(bmeHum) && bmeHum >= 0.0 && bmeHum <= 100.0) {
-            
-            if (!b_init) { // Prime buffer on first valid read
-              for(int i=0; i<5; i++) { bT_buf[i] = bmeTemp; bH_buf[i] = bmeHum; }
-              b_init = true;
-            }
-            bT_buf[b_idx] = bmeTemp;
+        if (!isnan(bmeTemp) && bmeTemp > -40.0 && bmeTemp < 85.0 &&
+            !isnan(bmeHum) && bmeHum >= 0.0 && bmeHum <= 100.0) {
+          
+          if (!b_init) { // Prime buffer on first valid read
+            for(int i=0; i<5; i++) { bT_buf[i] = bmeTemp; bH_buf[i] = bmeHum; }
+            b_init = true;
+          }
+          bT_buf[b_idx] = bmeTemp;
             bH_buf[b_idx] = bmeHum;
             b_idx = (b_idx + 1) % 5;
 

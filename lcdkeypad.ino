@@ -208,13 +208,22 @@ void refresh_sensor_data() {
     snprintf(ui_data[FLD_BATTERY].bottomRow, 17, "%04.1f", li_bat_val);
     bat_val = li_bat_val;
 
-    if (!wifi_active) {
-       int solar_raw;
-       if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw) == ESP_OK) {
-         solar_val = (solar_raw / 4096.0) * 3.6 * 7.2;
-         snprintf(ui_data[FLD_SOLAR].bottomRow, 17, "%04.1f", solar_val);
-       }
-    }
+     if (!wifi_active) {
+        long solar_sum_ui = 0;
+        int solar_samples_ui = 0;
+        for (int i = 0; i < 10; i++) {
+           int solar_raw_ui;
+           if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw_ui) == ESP_OK) {
+             solar_sum_ui += solar_raw_ui;
+             solar_samples_ui++;
+           }
+           vTaskDelay(2 / portTICK_PERIOD_MS);
+        }
+        if (solar_samples_ui > 0) {
+          solar_val = ((float)solar_sum_ui / solar_samples_ui / 4096.0) * 3.6 * 7.2;
+          snprintf(ui_data[FLD_SOLAR].bottomRow, 17, "%04.1f", solar_val);
+        }
+     }
   }
 
   // Live fields
@@ -396,10 +405,18 @@ void lcdkeypad(void *pvParameters) {
         }
 
         if (verified_press) {
-          wakeup_reason_is = ext0;
-          savedWakeupKey = wakeupKey;
-          debugf("[UI] Wakeup detected. Key: %c\n", (wakeupKey != NO_KEY ? wakeupKey : 'P'));
-          delay(100); 
+          vTaskDelay(20 / portTICK_PERIOD_MS); // v5.98: Increased to 20ms for stronger EMI rejection
+          if (keypad.getState() != PRESSED) {
+             // If the key didn't stay pressed, it was almost certainly a noise spike. Reject.
+             debugln("[UI] Rejecting noise spike/transient keypress.");
+             verified_press = false;
+             wakeupKey = NO_KEY;
+          } else {
+             // Key is stable or went back to NO_KEY (valid short press)
+             wakeup_reason_is = ext0;
+             savedWakeupKey = wakeupKey;
+             debugf("[UI] Verified Key: %c\n", (wakeupKey != NO_KEY ? wakeupKey : 'P'));
+          }
       }
     }
 
@@ -608,7 +625,7 @@ void lcdkeypad(void *pvParameters) {
               }
               // v5.79: Hardened WiFi startup sequence
               setCpuFrequencyMhz(160); // Set frequency BEFORE task starts on Core 0
-              xTaskCreatePinnedToCore(webServer, "webServerTask", 8192, NULL, 1, &webServer_h, 0); // Pin to Core 0
+              xTaskCreatePinnedToCore(webServer, "webServerTask", 8192, NULL, 2, &webServer_h, 0); // Pin to Core 0
             } else {
               if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                 lcd.clear(); lcd.print("WIFI STOPPING...");
@@ -869,16 +886,19 @@ void lcdkeypad(void *pvParameters) {
               lcd.clear(); lcd.print("COPYING TO SD...");
               xSemaphoreGive(i2cMutex); // Release lock BEFORE massive file copy sequence
 
-              // v5.70: Protect SD copy with fsMutex AND block concurrent filesystem mods
-              if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-                debugln("[LCD] User initiated bulk copy from SPIFFS to SD Card...");
-                copyFilesFromSPIFFSToSD("/"); 
-                xSemaphoreGive(fsMutex);
-              } 
+              // v5.89: [FIXED DEADLOCK] copyFilesFromSPIFFSToSD handles its own internal locking in two phases.
+              // Taking it here caused a nested lock timeout              
+              debugln("[LCD] User initiated bulk copy from SPIFFS to SD Card...");
+              bool copy_ok = copyFilesFromSPIFFSToSD("/"); 
               
-              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                 lcd.clear(); lcd.print("SD COPY DONE");
-                 vTaskDelay(2000 / portTICK_PERIOD_MS);
+              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+                 if (copy_ok) {
+                    lcd.clear(); lcd.print("SD COPY DONE");
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
+                 } else {
+                    lcd.clear(); lcd.print("SD COPY FAIL");
+                    vTaskDelay(3000 / portTICK_PERIOD_MS);
+                 }
                  xSemaphoreGive(i2cMutex);
               }
               show_now = 1;

@@ -37,16 +37,15 @@
     <div class="flex space-x-2">
         <button onclick="toggleMap()" class="btn-sm btn-blu" id="map-btn">🗺️ Show Map</button>
         <a href="/csv/summary" class="btn-sm btn-grn">📊 Export All CSV</a>
-        {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') ==
-        'supervisor') %}
+        {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
         <button onclick="openFleetWifiModal()"
             class="btn-sm bg-purple-900/50 hover:bg-purple-800 text-purple-300 border border-purple-700/50">
             🔐 Set Wi-Fi Pass (All)
         </button>
+        {% endif %}
         <button onclick="deleteSelectedStations()"
             class="btn-sm bg-red-900/80 hover:bg-red-700 text-red-200 border border-red-600/50 shadow-lg hidden"
             id="bulk-del-btn">🗑 Delete Selected</button>
-        {% endif %}
     </div>
 </div>
 
@@ -60,12 +59,7 @@
     <table class="w-full text-left text-xs">
         <thead>
             <tr class="text-slate-500 uppercase text-[10px] tracking-widest">
-                {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role')
-                == 'supervisor') %}
                 <th class="p-3 w-8"><input type="checkbox" onclick="toggleAllStations(this)"></th>
-                {% else %}
-                <th class="p-3 w-8"></th>
-                {% endif %}
                 <th class="p-3 text-left whitespace-nowrap">Station</th>
                 <th class="p-3 text-left whitespace-nowrap">Group</th>
                 <th class="p-3 text-left whitespace-nowrap">Carrier</th>
@@ -77,24 +71,24 @@
                 <th class="p-3 text-center whitespace-nowrap"
                     title="Yesterday: On-time HTTP pushes / HTTP+FTP Backlog Recovered">Ydy Live HTTP/Backlogs</th>
                 <th class="p-3 text-left whitespace-nowrap">Last Seen</th>
-                {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role')
-                == 'supervisor') %}
                 <th class="p-3 text-right whitespace-nowrap">Delete</th>
-                {% endif %}
             </tr>
         </thead>
         <tbody class="divide-y divide-slate-800">
+            {% set rendered_ids = [] %}
             {% for r in reports %}
+            {# v5.89: Visual Shield - Standard Jinja2 (No Extensions) #}
+            {% set norm_id = (r.stn_id|string).strip().lstrip('0') or '0' %}
+            {% if norm_id not in rendered_ids %}
+            {{ rendered_ids.append(norm_id) or "" }}
+            
             <tr class="transition cursor-pointer row-item" data-stn="{{ r.stn_id }}"
                 data-status="{% if r.eval.verdict in ('CRITICAL', 'WARN', 'OFFLINE') %}alarm{% else %}ok{% endif %}"
                 data-ota="{{ 'true' if r.ota_needed else 'false' }}"
                 data-lowbat="{{ 'true' if r.bat_v and r.bat_v < 3.6 else 'false' }}"
                 onclick="window.location='/station/{{ r.stn_id }}'">
                 <td class="p-3" onclick="event.stopPropagation()">
-                    {% if request.state.user and (request.state.user.role == 'supervisor' or
-                    request.state.user.get('role') == 'supervisor') %}
                     <input type="checkbox" class="stn-checkbox" value="{{ r.stn_id }}" onchange="updateBulkDeleteBtn()">
-                    {% endif %}
                 </td>
                 <td class="p-3 font-bold text-blue-300 whitespace-nowrap">
                     {{ r.stn_id.lstrip('0') if r.stn_id.lstrip('0') else r.stn_id }}
@@ -141,8 +135,6 @@
                 <td class="p-3 text-slate-500 text-[11px] whitespace-nowrap" title="{{ r.reported_at }}">
                     {{ r.reported_at|ist }}
                 </td>
-                {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role')
-                == 'supervisor') %}
                 <td class="p-3 text-right" onclick="event.stopPropagation()">
                     <a href="/delete/{{ r.stn_id }}"
                         class="btn-sm text-slate-600 hover:text-red-500 transition hover:bg-red-900/30 px-2 py-1"
@@ -151,13 +143,31 @@
                         🗑
                     </a>
                 </td>
-                {% endif %}
             </tr>
+            {% endif %}
             {% endfor %}
         </tbody>
     </table>
 </div>
 
+<div class="mt-8 text-center text-slate-600 text-[10px] uppercase tracking-widest pb-8">
+    Spatika Health Portal — System Version: <span class="text-blue-400">Hardened v5.89 Final Build 3 (2026-04-24)</span>
+</div>
+
+{% endblock %}
+
+{% block extra_head %}
+<style>
+    /* NUCLEAR DEBUG: Force checkboxes to be huge and blue */
+    .stn-checkbox {
+        width: 18px !important;
+        height: 18px !important;
+        accent-color: #3b82f6 !important;
+        outline: 2px solid #3b82f6 !important;
+        outline-offset: 2px !important;
+        cursor: pointer !important;
+    }
+</style>
 {% endblock %}
 
 {% block extra_js %}
@@ -323,22 +333,33 @@
         const checkboxes = document.querySelectorAll('.stn-checkbox:checked');
         const stn_ids = Array.from(checkboxes).map(cb => cb.value);
         if (stn_ids.length === 0) return;
-        if (!confirm(`WARNING: Permanently delete ${stn_ids.length} selected station(s)? This cannot be undone.`)) return;
+        if (!confirm(`⚠️ CRITICAL WARNING: Permanently delete ${stn_ids.length} selected station(s)? This will erase ALL historical records for these IDs. Proceed?`)) return;
+
+        const btn = document.getElementById('bulk-del-btn');
+        btn.disabled = true;
+        btn.textContent = 'Deleting...';
 
         fetch('/delete/bulk-stations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ stn_ids: stn_ids })
         })
-            .then(res => res.json())
-            .then(data => {
-                if (data.status === 'ok') {
+            .then(async res => {
+                if (res.ok) {
                     window.location.reload();
                 } else {
-                    alert('Error deleting stations');
+                    const data = await res.json();
+                    const msg = data.detail || 'Unknown server error';
+                    alert('Error: ' + msg);
+                    btn.disabled = false;
+                    btn.textContent = '🗑 Delete Selected';
                 }
             })
-            .catch(err => alert("Failed to communicate with server."));
+            .catch(err => {
+                alert("Communication Error: Could not reach server.");
+                btn.disabled = false;
+                btn.textContent = '🗑 Delete Selected';
+            });
     };
     // Fleet-wide Wi-Fi Password Modal
     window.openFleetWifiModal = function() {

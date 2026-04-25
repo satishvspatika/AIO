@@ -360,16 +360,21 @@
         if (url.pathname.startsWith("/cmd/") || 
             url.pathname.startsWith("/delete/") ||
             url.pathname.startsWith("/delete-category/") ||
+            url.pathname.startsWith("/delete/record/") ||
             url.pathname.startsWith("/clear-queue/") ||
             url.pathname.startsWith("/clear-ota-queue/") ||
             url.pathname.startsWith("/toggle-ota-lock/")) {
             e.preventDefault();
-            if (confirm("⚠️ SECURITY WARNING: Are you sure you want to execute this destructive command?")) {
+            if (confirm("⚠️ DESTRICTIVE ACTION: Proceed with this command?")) {
                 fetch(url.href, { method: "POST" })
                 .then(res => {
-                    if (res.ok) window.location.reload();
-                    else alert("Command execution failed. Check server logs.");
-                });
+                    if (res.ok || res.status === 303 || res.status === 302) {
+                        window.location.reload();
+                    } else {
+                        res.text().then(txt => alert("Action Failed: " + (txt.includes("403") ? "Permission Denied" : "Server Error")));
+                    }
+                })
+                .catch(err => alert("Communication Failure: Check internet connection."));
             }
         }
     });

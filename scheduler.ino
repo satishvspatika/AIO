@@ -187,7 +187,8 @@ void scheduler(void *pvParameters) {
          is_fresh_boot_entry) && // Allow entry if fresh boot, to handle "Late
                                  // Boot" sleep logic
         snap_timeSyncRequired == false &&
-        (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false)) {
+        (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false) &&
+        !sleep_sequence_active) {
 
       // Turner-Fix: Atomic protection for sync_mode
       portENTER_CRITICAL(&syncMux);
@@ -276,10 +277,19 @@ void scheduler(void *pvParameters) {
       bat_val = li_bat_val;
       snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
       if (!wifi_active && !__atomic_load_n(&gprs_started, __ATOMIC_ACQUIRE)) {
-        int solar_raw_slot;
-        if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw_slot) ==
-            ESP_OK) {
-          solar = solar_raw_slot;
+        // v5.98: Consistently use 10-sample averaging for Solar in loop
+        long solar_sum_slot = 0;
+        int solar_samples_slot = 0;
+        for (int i = 0; i < 10; i++) {
+            int solar_raw_s;
+            if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw_s) == ESP_OK) {
+                solar_sum_slot += solar_raw_s;
+                solar_samples_slot++;
+            }
+            vTaskDelay(2 / portTICK_PERIOD_MS); 
+        }
+        if (solar_samples_slot > 0) {
+          solar = (float)solar_sum_slot / solar_samples_slot;
           solar_val = (solar / 4096.0) * 3.6 * 7.2;
           snprintf(solar_sense, sizeof(solar_sense), "%04.1f", solar_val);
         }
@@ -396,7 +406,7 @@ void scheduler(void *pvParameters) {
           totalWindPulses / AVG_WS_DURATION_SECONDS; // 15 mins = 900s
       cur_avg_wind_speed =
           WS_CALIBRATION_FACTOR *
-          (avgPulsesPerSecond / 4.0); // factor is 2*pi*r (r is 7cms) //
+          (avgPulsesPerSecond / WIND_TEETH_COUNT); // v5.97: Universal Divisor
 
 #if (SYSTEM == 0) || (SYSTEM == 2)
       if (rf_value > 10.0)
@@ -873,8 +883,7 @@ void scheduler(void *pvParameters) {
           diag_ndm_count_prev = diag_ndm_count;
           diag_first_http_count_prev = diag_first_http_count;
           diag_net_data_count_prev = diag_net_data_count;
-          backfill_done =
-              false; // v5.75: Allow mask reconstruction on new day (M-04 fix)
+          backfill_done = false; // v5.75: Allow mask reconstruction on new day (M-04 fix)
 
           // Capture mask
           diag_sent_mask_prev[0] = diag_sent_mask_cur[0];

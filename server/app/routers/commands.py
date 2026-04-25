@@ -76,9 +76,16 @@ def toggle_ota_lock(stn_id: str, db: Session = Depends(get_db)):
 @router.api_route("/delete/{stn_id}", methods=["GET", "POST"])
 def delete_station(stn_id: str, db: Session = Depends(get_db)):
     from app.models import HealthReport, StationSettings
-    db.query(HealthReport).filter_by(stn_id=stn_id).delete()
-    db.query(CommandQueue).filter_by(stn_id=stn_id).delete()
-    db.query(StationSettings).filter_by(stn_id=stn_id).delete()
+    # v5.89 FINAL FIX: Padded String-Only targets
+    s = str(stn_id).strip()
+    target_ids = {s}
+    if s.isdigit():
+        target_ids.add(s.lstrip('0'))
+        target_ids.add(s.zfill(6))
+    
+    db.query(HealthReport).filter(HealthReport.stn_id.in_(list(target_ids))).delete(synchronize_session=False)
+    db.query(CommandQueue).filter(CommandQueue.stn_id.in_(list(target_ids))).delete(synchronize_session=False)
+    db.query(StationSettings).filter(StationSettings.stn_id.in_(list(target_ids))).delete(synchronize_session=False)
     db.commit()
     return RedirectResponse(url="/dashboard")
 
@@ -108,18 +115,62 @@ class BulkDeleteStations(BaseModel):
 
 @router.post("/delete/bulk-records")
 def delete_bulk_records(payload: BulkDeleteRecords, db: Session = Depends(get_db)):
-    db.query(HealthReport).filter(HealthReport.id.in_(payload.ids)).delete(synchronize_session=False)
-    db.commit()
-    return {"status": "ok", "deleted": len(payload.ids)}
+    try:
+        if not payload.ids:
+            return {"status": "ok", "deleted": 0}
+        # Surgical Delete of specific telemetry rows
+        db.query(HealthReport).filter(HealthReport.id.in_(payload.ids)).delete(synchronize_session=False)
+        db.commit()
+        return {"status": "ok", "deleted": len(payload.ids)}
+    except Exception as e:
+        db.rollback()
+        print(f"BULK RECORD DELETE ERROR: {e}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Database error during record deletion: {str(e)}")
 
 @router.post("/delete/bulk-stations")
 def delete_bulk_stations(payload: BulkDeleteStations, db: Session = Depends(get_db)):
-    from app.models import HealthReport, CommandQueue, StationSettings
-    db.query(HealthReport).filter(HealthReport.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
-    db.query(CommandQueue).filter(CommandQueue.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
-    db.query(StationSettings).filter(StationSettings.stn_id.in_(payload.stn_ids)).delete(synchronize_session=False)
-    db.commit()
-    return {"status": "ok", "deleted": len(payload.stn_ids)}
+    try:
+        from app.models import HealthReport, CommandQueue, StationSettings
+        import re
+        
+        # v5.89 ULTIMATE NORMALIZATION: Ensure we delete all variants (001952, 1952, etc.)
+        expanded_targets = set()
+        for stn in payload.stn_ids:
+            if stn is None: continue
+            s_raw = str(stn).strip()
+            if not s_raw: continue
+            
+            # Clean non-alphanumeric
+            s_clean = re.sub(r'[^A-Z0-9]', '', s_raw.upper())
+            if not s_clean: continue
+            
+            # Add all possible matches
+            expanded_targets.add(s_clean)
+            norm = s_clean.lstrip('0')
+            if not norm: norm = "0"
+            expanded_targets.add(norm)
+            expanded_targets.add(norm.zfill(6))
+            expanded_targets.add(s_raw) # Just in case
+
+        if not expanded_targets:
+            return {"status": "ok", "deleted": 0}
+
+        target_list = list(expanded_targets)
+        
+        # v5.90: Atomic multi-table wipe
+        # Order matters: Delete transient data first, then master settings
+        q1 = db.query(CommandQueue).filter(CommandQueue.stn_id.in_(target_list)).delete(synchronize_session=False)
+        q2 = db.query(HealthReport).filter(HealthReport.stn_id.in_(target_list)).delete(synchronize_session=False)
+        q3 = db.query(StationSettings).filter(StationSettings.stn_id.in_(target_list)).delete(synchronize_session=False)
+        
+        db.commit()
+        return {"status": "ok", "deleted": len(payload.stn_ids), "tables_affected": [q1, q2, q3]}
+    except Exception as e:
+        db.rollback()
+        print(f"BULK STATION DELETE ERROR: {e}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Database error during station wipe: {str(e)}")
 
 
 class WifiPassPayload(BaseModel):

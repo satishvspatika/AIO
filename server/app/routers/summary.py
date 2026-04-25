@@ -62,13 +62,34 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
                 .group_by(HealthReport.stn_id)
                 .subquery()
             )
-            latest_reports = (
+            latest_raw = (
                 db.query(HealthReport)
                 .join(subq, (HealthReport.stn_id == subq.c.stn_id) &
                       (HealthReport.reported_at == subq.c.m))
                 .order_by(HealthReport.reported_at.desc())
                 .all()
             )
+
+            # v5.89: NUCLEAR DEDUPLICATION & COLLAPSE
+            import re
+            deduped = {}
+            for r in latest_raw:
+                s_clean = re.sub(r'[^A-Z0-9]', '', str(r.stn_id or "").upper())
+                if not s_clean: continue
+                norm_id = s_clean.lstrip('0')
+                if not norm_id: norm_id = "0"
+                
+                if norm_id not in deduped:
+                    deduped[norm_id] = r
+                else:
+                    existing = deduped[norm_id]
+                    if r.reported_at and existing.reported_at:
+                        if r.reported_at > existing.reported_at:
+                            deduped[norm_id] = r
+            
+            latest_reports = list(deduped.values())
+            # Sort by ID
+            latest_reports.sort(key=lambda x: x.stn_id)
 
             now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             for r in latest_reports:

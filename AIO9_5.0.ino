@@ -1529,9 +1529,19 @@ void initialize_hw() {
                             ADC_ATTEN_DB_11); // GPIO 25 (Solar)
 
   // v5.66: Read Solar ADC immediately before modem power-on to prevent RF/UART contention
-  int solar_raw_initial;
-  if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw_initial) == ESP_OK) {
-    solar = solar_raw_initial;
+  // v5.98: Consistently use 10-sample averaging for Solar at startup
+  long solar_sum_init = 0;
+  int solar_samples_init = 0;
+  for (int i = 0; i < 10; i++) {
+     int solar_raw_s;
+     if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw_s) == ESP_OK) {
+        solar_sum_init += solar_raw_s;
+        solar_samples_init++;
+     }
+     delay(2);
+  }
+  if (solar_samples_init > 0) {
+    solar = (float)solar_sum_init / solar_samples_init;
     solar_val = (solar / 4096.0) * 3.6 * 7.2;
   }
 
@@ -1680,14 +1690,33 @@ void initialize_hw() {
   snprintf(ui_data[FLD_DELETE_DATA].topRow, sizeof(ui_data[FLD_DELETE_DATA].topRow),
            "DELETE DATA?   %c", hw_tag);
 
-  SPI.begin(18, 19, 23, 5);
-  if (!SD.begin(5, SPI, 2000000)) {
-    debugln("[BOOT] SD Card: FAILED (Not Inserted/Hardware)");
+  // v5.89: Hardened SD Initialization (Stubborn Mode)
+  // Try both common CS pins (5 and 13) with retries
+  int sd_pins[] = {5, 13};
+  bool found_sd = false;
+  
+  for (int p = 0; p < 2; p++) {
+    int cs_pin = sd_pins[p];
+    debugf("[BOOT] Testing SD on Pin %d...\n", cs_pin);
+    SPI.begin(18, 19, 23, cs_pin);
+    
+    for (int retry = 1; retry <= 3; retry++) {
+      if (SD.begin(cs_pin, SPI, 16000000)) { // Use robust 16MHz
+        debugf("[BOOT] SD Card: OK on Pin %d (Attempt %d)\n", cs_pin, retry);
+        found_sd = true;
+        sd_card_ok = 1;
+        break;
+      }
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+    
+    if (found_sd) break;
+    SPI.end(); // Try next pin
+  }
+
+  if (!found_sd) {
+    debugln("[BOOT] SD Card: FAILED (Check Pin/Card/Socket)");
     sd_card_ok = 0;
-    SPI.end(); // Save power by releasing SPI peripheral if SD is missing
-  } else {
-    debugln("[BOOT] SD Card: OK");
-    sd_card_ok = 1;
   }
 
   // RE-INITIALIZE Watchdog with a safe 30-second timeout for first-boot tasks
@@ -2135,7 +2164,7 @@ void ULP_COUNTING(uint32_t us) {
 
       // States are different, start debouncing
       I_MOVI(R3, 0), I_ST(R2, R3, U_WIND_PREV_STATE), // prev_state = current
-      I_MOVI(R0, 3),                                  // Debounce optimized to 3 loops (3ms total)
+      I_MOVI(R0, 1),                                  // v5.92: Reduced to 1 loop (1ms) to support fast 4-teeth anemometer
       I_ST(R0, R3, U_WIND_DEBOUNCE_CNT),
       M_BX(5), // Skip to exit while debouncing
 

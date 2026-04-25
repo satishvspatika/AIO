@@ -296,86 +296,142 @@ void set_wakeup_reason() {
   }
 }
 
-void copyFilesFromSPIFFSToSD(const char *dirname) {
+bool copyFilesFromSPIFFSToSD(const char *dirname) {
   if (!sd_card_ok) {
-    debugln("[SD] [ERR] SD Card not ready. Aborting copy.");
-    return;
+    debugln("[SD] Card not ready, attempting re-init (Dual-Pin Scan)...");
+    int sd_pins[] = {5, 13};
+    for (int retry = 0; retry < 3; retry++) { // v5.92: 3 Retries per pin
+      for (int p = 0; p < 2; p++) {
+        int cs_pin = sd_pins[p];
+        SPI.begin(18, 19, 23, cs_pin);
+        vTaskDelay(100 / portTICK_PERIOD_MS); // Stabilization delay
+        if (SD.begin(cs_pin, SPI, 16000000)) {
+          sd_card_ok = true;
+          debugf("[SD] Hot-plug detection SUCCESS on Pin %d.\n", cs_pin);
+          break;
+        }
+        SPI.end();
+        vTaskDelay(500 / portTICK_PERIOD_MS); // Wait before pin swap
+      }
+      if (sd_card_ok) break;
+    }
+    if (!sd_card_ok) {
+      debugln("[SD] [ERR] Re-init FAILED on all pins. Check card.");
+      return false;
+    }
   }
   
-  File root = SPIFFS.open(dirname);
-  if (!root || !root.isDirectory()) {
-    debugln("[SD] [ERR] Failed to open source directory");
-    if (root) root.close();
-    return;
+  // Phase 1: Snapshot Filenames
+  // v5.89: Moved from Stack to Heap to prevent stack overflow (A-06)
+  const int maxFiles = 128;
+  String* fileList = new (std::nothrow) String[maxFiles];
+  if (!fileList) {
+    debugln("[SD] [ERR] Heap allocation failed for snapshot. Aborting.");
+    return false;
+  }
+  int fileCount = 0;
+
+  debugln("[SD] Scanning SPIFFS for snapshot...");
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+    File root = SPIFFS.open(dirname);
+    if (root && root.isDirectory()) {
+      File f = root.openNextFile();
+      while (f && fileCount < maxFiles) {
+        String n = f.name();
+        if (n.endsWith(".txt")) {
+          // v5.89: Enforce leading slash for absolute path identification
+          if (!n.startsWith("/")) n = "/" + n;
+          fileList[fileCount++] = n;
+        }
+        f.close();
+        f = root.openNextFile();
+      }
+      root.close();
+    }
+    xSemaphoreGive(fsMutex);
+    debugf("[SD] Snapshot captured: %d files found.\n", fileCount);
+  } else {
+    debugln("[SD] [ERR] FS Mutex Busy during scan. Aborting.");
+    delete[] fileList; 
+    return false;
   }
 
+  // Phase 2: Serialized Copy
+  // We copy each file one-by-one, releasing the mutex between files to let the system breathe.
   int successCount = 0;
   int failCount = 0;
-  File file = root.openNextFile();
-  while (file) {
+
+  for (int i = 0; i < fileCount; i++) {
     esp_task_wdt_reset();
+    String srcPath = fileList[i];
     
-    // v5.87 Hardening: [C-01] Mutex-Interleaving
-    // We take the lock for EACH file to allow the scheduler to sneak in a log write.
-    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
-      const char* fileName = file.name();
-      size_t fileSize = file.size();
-
-      if (strstr(fileName, ".txt") != NULL) {
-        char destPath[80];
-        if (fileName[0] != '/') {
-          snprintf(destPath, sizeof(destPath), "/%s", fileName);
-        } else {
-          strncpy(destPath, fileName, sizeof(destPath)-1);
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+      if (SPIFFS.exists(srcPath)) {
+        File srcFile = SPIFFS.open(srcPath, FILE_READ);
+        if (srcFile) {
+          size_t fileSize = srcFile.size();
+          char destPath[64];
+          // Ensure destPath starts with a slash for SD library
+          if (srcPath.startsWith("/")) {
+            strncpy(destPath, srcPath.c_str(), sizeof(destPath)-1);
+          } else {
+            snprintf(destPath, sizeof(destPath), "/%s", srcPath.c_str());
+          }
           destPath[sizeof(destPath)-1] = '\0';
-        }
 
-        debugf("[SD] Copying: %s (%d bytes)\n", fileName, (int)fileSize);
+          debugf("[SD] [%d/%d] Copying: %s (%d bytes)\n", i+1, fileCount, destPath, (int)fileSize);
 
-        File destFile = SD.open(destPath, FILE_WRITE);
-        if (destFile) {
-          if (fileSize > 0) {
-            uint8_t buffer[512];
-            size_t totalWritten = 0;
-            while (file.available()) {
-              size_t bytesRead = file.read(buffer, sizeof(buffer));
-              size_t written = destFile.write(buffer, bytesRead);
-              totalWritten += written;
-              esp_task_wdt_reset(); // Keep watchdog happy during large file streams
-              if (written != bytesRead) {
-                debugf("[SD] [ERR] Write mismatch! Read: %d, Wrote: %d\n", (int)bytesRead, (int)written);
-                break;
+          File destFile = SD.open(destPath, FILE_WRITE);
+          if (destFile) {
+            if (fileSize > 0) {
+              uint8_t buffer[512];
+              size_t totalWritten = 0;
+              while (srcFile.available()) {
+                size_t bytesRead = srcFile.read(buffer, sizeof(buffer));
+                size_t written = destFile.write(buffer, bytesRead);
+                totalWritten += written;
+                esp_task_wdt_reset();
+                if (written != bytesRead) {
+                  debugf("[SD] [ERR] Write mismatch! Read: %d, Wrote: %d\n", (int)bytesRead, (int)written);
+                  break;
+                }
               }
-            }
-            destFile.close();
-            if (totalWritten == fileSize) {
-              debugf("[SD] ✅ Success: %d bytes transferred\n", (int)totalWritten);
-              successCount++;
+              destFile.close();
+              if (totalWritten == fileSize) {
+                successCount++;
+              } else {
+                failCount++;
+              }
             } else {
-              debugf("[SD] ⚠️ Incomplete: %d/%d bytes written\n", (int)totalWritten, (int)fileSize);
-              failCount++;
+              destFile.close();
+              successCount++;
             }
           } else {
-            debugln("[SD] Skipping empty file.");
-            destFile.close();
-            successCount++;
+            debugf("[SD] [ERR] Failed to create %s on SD\n", destPath);
+            failCount++;
           }
+          srcFile.close();
         } else {
-          debugf("[SD] [ERR] Failed to create %s on SD\n", destPath);
+          debugf("[SD] [ERR] Failed to open %s\n", srcPath.c_str());
           failCount++;
         }
+      } else {
+        debugf("[SD] [SKIP] File no longer exists: %s\n", srcPath.c_str());
+        // Don't increment failCount for missing files (likely rotated out)
       }
       xSemaphoreGive(fsMutex);
-      vTaskDelay(20 / portTICK_PERIOD_MS); // v5.87: Breathe delay for the scheduler
+      vTaskDelay(50 / portTICK_PERIOD_MS); // v5.88: Mutex Pulse Delay (Let scheduler log data)
     } else {
-      debugln("[SD] [ERR] FS Mutex Busy. Skipping file to prevent UI stall.");
+      debugf("[SD] [ERR] Mutex Busy. Skipping %s\n", srcPath.c_str());
+      failCount++;
     }
-    
-    file.close(); 
-    file = root.openNextFile();
   }
-  root.close();
+
   debugf("[SD] Bulk Copy Finished. Success: %d, Fail: %d\n", successCount, failCount);
+  
+  // v5.89: Cleanup heap allocation
+  delete[] fileList;
+  return (failCount == 0); // Return true if all attempted operations succeeded (or nothing to copy)
 }
 
 void removeFilesFromSPIFFS(const char *dirname) {
@@ -1376,13 +1432,18 @@ float get_calibrated_battery_voltage() {
   static esp_adc_cal_characteristics_t adc_chars;
   static bool initialized = false;
   if (!initialized) {
-    // Characterize ADC at 11dB attenuation — must match adc1_config_channel_atten() in initialize_hw()
     esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars);
     initialized = true;
   }
-  // ADC1_CHANNEL_5 corresponds to GPIO 33
-  uint32_t voltage_mv = esp_adc_cal_raw_to_voltage(adc1_get_raw(ADC1_CHANNEL_5), &adc_chars);
-  // Apply our custom voltage divider ratio: 840K / 620K
+  
+  // v5.98: Multi-sample averaging (10 samples) to prevent noise
+  long sum = 0;
+  for (int i = 0; i < 10; i++) {
+    sum += adc1_get_raw(ADC1_CHANNEL_5);
+    vTaskDelay(2 / portTICK_PERIOD_MS); // v5.98: Non-blocking yield for FreeRTOS
+  }
+  uint32_t avg_raw = sum / 10;
+  uint32_t voltage_mv = esp_adc_cal_raw_to_voltage(avg_raw, &adc_chars);
   return ((float)voltage_mv / 1000.0) * (840.0 / 620.0);
 }
 

@@ -24,17 +24,18 @@ void webServer(void *pvParameters) {
   // Configure ESP32 as an Access Point dynamically with Station ID
   debugln("Configuring access point...");
   // Frequency set by task launcher in lcdkeypad.ino
-  
+
   char ap_name[32];
   snprintf(ap_name, sizeof(ap_name), "SpatikaWeb");
-  
-  // Phase 10 Fix: Assure wifi_active is declared TRUE *before* spinning the radio
-  // so concurrent sensor tasks don't accidentally execute ADC2 hardware reads
-  // into the collapsing voltage lane!
-  wifi_active = true; 
+
+  // Phase 10 Fix: Assure wifi_active is declared TRUE *before* spinning the
+  // radio so concurrent sensor tasks don't accidentally execute ADC2 hardware
+  // reads into the collapsing voltage lane!
+  wifi_active = true;
   last_wifi_activity_time = millis();
 
-  // v5.90: Load AP password dynamically from SPIFFS; fall back to compiled default.
+  // v5.90: Load AP password dynamically from SPIFFS; fall back to compiled
+  // default.
   char ap_pass_buf[64];
   strncpy(ap_pass_buf, AP_PASS, sizeof(ap_pass_buf) - 1);
   ap_pass_buf[sizeof(ap_pass_buf) - 1] = '\0';
@@ -45,7 +46,10 @@ void webServer(void *pvParameters) {
         int n = pf.readBytes(ap_pass_buf, sizeof(ap_pass_buf) - 1);
         ap_pass_buf[n] = '\0';
         // Trim trailing whitespace / newlines
-        for (int i = n - 1; i >= 0 && (ap_pass_buf[i] == '\r' || ap_pass_buf[i] == '\n' || ap_pass_buf[i] == ' '); i--)
+        for (int i = n - 1;
+             i >= 0 && (ap_pass_buf[i] == '\r' || ap_pass_buf[i] == '\n' ||
+                        ap_pass_buf[i] == ' ');
+             i--)
           ap_pass_buf[i] = '\0';
         pf.close();
         debugf1("[WiFi] Custom AP pass loaded from SPIFFS: %s\n", ap_pass_buf);
@@ -177,101 +181,114 @@ void handleRoot() { // v5.70 STREAMING
   String matchDate = "--", matchTime = "--";
 
   if (current_year > 2020) {
-    for (int fIdx = 0; fIdx < 2; fIdx++) {
-      if (SPIFFS.exists(filesToTry[fIdx])) {
-        File f = SPIFFS.open(filesToTry[fIdx], FILE_READ);
-        String lastValidTime = "";
-        matchLine = ""; // Reset for each file check
+    // [C-01] Surgical Mutex: Protect SPIFFS read from concurrent scheduler
+    // writes
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+      for (int fIdx = 0; fIdx < 2; fIdx++) {
+        if (SPIFFS.exists(filesToTry[fIdx])) {
+          File f = SPIFFS.open(filesToTry[fIdx], FILE_READ);
+          String lastValidTime = "";
+          matchLine = ""; // Reset for each file check
 
-        while (f.available()) {
-          String line = f.readStringUntil('\n');
-          line.trim();
-          if (line.length() < 10)
-            continue;
+          while (f.available()) {
+            String line = f.readStringUntil('\n');
+            line.trim();
+            if (line.length() < 10)
+              continue;
 
-          // Flexible parsing to find first Date and first Time in the line
-          int tokenP = 0;
-          String curDate = "--", curTime = "";
-          for (int i = 0; i < 8; i++) {
-            int nextP = line.indexOf(',', tokenP);
-            String val = (nextP == -1) ? line.substring(tokenP)
-                                       : line.substring(tokenP, nextP);
-            val.trim();
-            if (curDate == "--" && val.indexOf('-') != -1 && val.length() >= 8)
-              curDate = val;
-            if (curTime == "" && val.indexOf(':') != -1 && val.length() >= 4)
-              curTime = val;
-            if (curTime != "" && curDate != "--")
-              break;
-            if (nextP == -1)
-              break;
-            tokenP = nextP + 1;
-          }
-
-          if (curTime != "" && curTime.indexOf(':') != -1) {
-            matchLine = line;
-            matchDate = curDate;
-            matchTime = curTime;
-          }
-          esp_task_wdt_reset();
-        }
-        f.close();
-
-        if (matchLine != "") {
-          foundData = true;
-          // Dynamic CSV Parsing of the best match
-          int p = 0;
-          String tokens[15];
-          int tokenCount = 0;
-          int timeIdx = -1;
-
-          for (int i = 0; i < 15; i++) {
-            int nextP = matchLine.indexOf(',', p);
-            if (nextP == -1)
-              nextP = matchLine.length();
-            String val = matchLine.substring(p, nextP);
-            val.trim();
-            tokens[i] = val;
-            if (val.indexOf(':') != -1 && timeIdx == -1)
-              timeIdx = i;
-            tokenCount++;
-            p = nextP + 1;
-            if (nextP == matchLine.length())
-              break;
-          }
-
-          if (timeIdx != -1) {
-            int d = timeIdx + 1;
-            while (d < tokenCount && tokens[d].indexOf(':') != -1) {
-              d++;
+            // Flexible parsing to find first Date and first Time in the line
+            int tokenP = 0;
+            String curDate = "--", curTime = "";
+            for (int i = 0; i < 8; i++) {
+              int nextP = line.indexOf(',', tokenP);
+              String val = (nextP == -1) ? line.substring(tokenP)
+                                         : line.substring(tokenP, nextP);
+              val.trim();
+              if (curDate == "--" && val.indexOf('-') != -1 &&
+                  val.length() >= 8)
+                curDate = val;
+              if (curTime == "" && val.indexOf(':') != -1 && val.length() >= 4)
+                curTime = val;
+              if (curTime != "" && curDate != "--")
+                break;
+              if (nextP == -1)
+                break;
+              tokenP = nextP + 1;
             }
 
-            bool isBihar = (strstr(station_name, "BIHAR_TRG") != NULL);
-
-#if SYSTEM == 0
-            if (isBihar) {
-              rec_rf = (d < tokenCount) ? tokens[d] : "--";
-            } else {
-              rec_rf = (d + 1 < tokenCount) ? tokens[d + 1] : "--";
+            if (curTime != "" && curTime.indexOf(':') != -1) {
+              matchLine = line;
+              matchDate = curDate;
+              matchTime = curTime;
             }
-#elif SYSTEM == 1
-            rec_temp = (d < tokenCount) ? tokens[d] : "--";
-            rec_hum = (d + 1 < tokenCount) ? tokens[d + 1] : "--";
-            rec_ws = (d + 2 < tokenCount) ? tokens[d + 2] : "--";
-            rec_wd = (d + 3 < tokenCount) ? tokens[d + 3] : "--";
-#elif SYSTEM == 2
-            rec_rf = (d < tokenCount) ? tokens[d] : "--";
-            rec_temp = (d + 1 < tokenCount) ? tokens[d + 1] : "--";
-            rec_hum = (d + 2 < tokenCount) ? tokens[d + 2] : "--";
-            rec_ws = (d + 3 < tokenCount) ? tokens[d + 3] : "--";
-            rec_wd = (d + 4 < tokenCount) ? tokens[d + 4] : "--";
-#endif
+            esp_task_wdt_reset();
           }
-          snprintf(timeStr, sizeof(timeStr), "%s %s", matchDate.c_str(),
-                   matchTime.c_str());
-          break; // EXIT loop: We found the latest available file with data
+          f.close();
+
+          if (matchLine != "") {
+            foundData = true;
+            // ... parsing continues ...
+            break; // found it
+          }
         }
       }
+      xSemaphoreGive(fsMutex);
+    } else {
+      debugln("[WiFi] fsMutex timeout in handleRoot. Skipping daily log scan.");
+    }
+
+    // v5.88 Surgical: Post-mutex parsing of the matched line
+    if (foundData && matchLine != "") {
+      // Dynamic CSV Parsing of the best match
+      int p = 0;
+      String tokens[15];
+      int tokenCount = 0;
+      int timeIdx = -1;
+
+      for (int i = 0; i < 15; i++) {
+        int nextP = matchLine.indexOf(',', p);
+        if (nextP == -1)
+          nextP = matchLine.length();
+        String val = matchLine.substring(p, nextP);
+        val.trim();
+        tokens[i] = val;
+        if (val.indexOf(':') != -1 && timeIdx == -1)
+          timeIdx = i;
+        tokenCount++;
+        p = nextP + 1;
+        if (nextP == matchLine.length())
+          break;
+      }
+
+      if (timeIdx != -1) {
+        int d = timeIdx + 1;
+        while (d < tokenCount && tokens[d].indexOf(':') != -1) {
+          d++;
+        }
+
+        bool isBihar = (strstr(station_name, "BIHAR_TRG") != NULL);
+
+#if SYSTEM == 0
+        if (isBihar) {
+          rec_rf = (d < tokenCount) ? tokens[d] : "--";
+        } else {
+          rec_rf = (d + 1 < tokenCount) ? tokens[d + 1] : "--";
+        }
+#elif SYSTEM == 1
+        rec_temp = (d < tokenCount) ? tokens[d] : "--";
+        rec_hum = (d + 1 < tokenCount) ? tokens[d + 1] : "--";
+        rec_ws = (d + 2 < tokenCount) ? tokens[d + 2] : "--";
+        rec_wd = (d + 3 < tokenCount) ? tokens[d + 3] : "--";
+#elif SYSTEM == 2
+        rec_rf = (d < tokenCount) ? tokens[d] : "--";
+        rec_temp = (d + 1 < tokenCount) ? tokens[d + 1] : "--";
+        rec_hum = (d + 2 < tokenCount) ? tokens[d + 2] : "--";
+        rec_ws = (d + 3 < tokenCount) ? tokens[d + 3] : "--";
+        rec_wd = (d + 4 < tokenCount) ? tokens[d + 4] : "--";
+#endif
+      }
+      snprintf(timeStr, sizeof(timeStr), "%s %s", matchDate.c_str(),
+               matchTime.c_str());
     }
   }
 
@@ -287,23 +304,96 @@ void handleRoot() { // v5.70 STREAMING
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server.send(200, "text/html", "");
 
-  server.sendContent("<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'><title>SPATIKA SENSOR DATA</title>");
-  server.sendContent("<style>body{font-family:Helvetica,Arial,sans-serif;text-align:center;background-color:#f0f8ff;color:#333;margin:0;padding:10px;}.container{max-width:800px;margin:0 auto;}.btn{background-color:#17a2b8;color:white;padding:12px 24px;text-align:center;text-decoration:none;display:inline-block;font-size:15px;margin:10px 5px;cursor:pointer;border-radius:5px;border:none;transition:background 0.2s;white-space:nowrap;}.btn:hover{opacity:0.9;}.btn-danger{background-color:#dc3545;}input[type=submit]{background-color:#007bff;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;font-size:15px;transition:background 0.2s;white-space:nowrap;}input[type=submit]:hover{opacity:0.9;}.card{background:white;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.05);padding:10px;margin:5px;display:flex;flex-direction:column;justify-content:center;min-width:140px;flex:1 1 45%;box-sizing:border-box;word-wrap:break-word;white-space:normal;}.value{font-size:1.2em;font-weight:700;color:#007bff;margin-top:5px;}.label{font-size:0.85em;color:#6c757d;text-transform:uppercase;letter-spacing:0.5px;line-height:1.2;}.section-title{font-size:1.1em;color:#555;margin:20px 0 10px;font-weight:bold;text-align:left;border-bottom:2px solid #ddd;padding-bottom:5px;}@media (max-width: 400px) { .card { min-width: 45%; } }.warning-modal {display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:999;text-align:center;padding-top:30%;}.warning-box {background:white;padding:20px;border-radius:10px;display:inline-block;width:80%;max-width:300px;}</style>");
+  server.sendContent("<!DOCTYPE html><html><head><meta charset='UTF-8'><meta "
+                     "name='viewport' content='width=device-width, "
+                     "initial-scale=1.0'><title>SPATIKA SENSOR DATA</title>");
+  server.sendContent(
+      "<style>body{font-family:Helvetica,Arial,sans-serif;text-align:center;"
+      "background-color:#f0f8ff;color:#333;margin:0;padding:10px;}.container{"
+      "max-width:800px;margin:0 "
+      "auto;}.btn{background-color:#17a2b8;color:white;padding:12px "
+      "24px;text-align:center;text-decoration:none;display:inline-block;font-"
+      "size:15px;margin:10px "
+      "5px;cursor:pointer;border-radius:5px;border:none;transition:background "
+      "0.2s;white-space:nowrap;}.btn:hover{opacity:0.9;}.btn-danger{background-"
+      "color:#dc3545;}input[type=submit]{background-color:#007bff;color:white;"
+      "border:none;padding:10px "
+      "20px;border-radius:5px;cursor:pointer;font-size:15px;transition:"
+      "background "
+      "0.2s;white-space:nowrap;}input[type=submit]:hover{opacity:0.9;}.card{"
+      "background:white;border-radius:8px;box-shadow:0 2px 4px "
+      "rgba(0,0,0,0.05);padding:10px;margin:5px;display:flex;flex-direction:"
+      "column;justify-content:center;min-width:140px;flex:1 1 "
+      "45%;box-sizing:border-box;word-wrap:break-word;white-space:normal;}."
+      "value{font-size:1.2em;font-weight:700;color:#007bff;margin-top:5px;}."
+      "label{font-size:0.85em;color:#6c757d;text-transform:uppercase;letter-"
+      "spacing:0.5px;line-height:1.2;}.section-title{font-size:1.1em;color:#"
+      "555;margin:20px 0 "
+      "10px;font-weight:bold;text-align:left;border-bottom:2px solid "
+      "#ddd;padding-bottom:5px;}@media (max-width: 400px) { .card { min-width: "
+      "45%; } }.warning-modal "
+      "{display:none;position:fixed;top:0;left:0;width:100%;height:100%;"
+      "background:rgba(0,0,0,0.8);z-index:999;text-align:center;padding-top:30%"
+      ";}.warning-box "
+      "{background:white;padding:20px;border-radius:10px;display:inline-block;"
+      "width:80%;max-width:300px;}</style>");
 
-  server.sendContent("<script>setInterval(function() { var xhttp = new XMLHttpRequest(); xhttp.onreadystatechange = function() { if (this.readyState == 4 && this.status == 200) { var data = JSON.parse(this.responseText);");
-  server.sendContent("if(document.getElementById('live_rf')) document.getElementById('live_rf').innerHTML = data.rf_inst + ' <span style=\"font-size:0.6em\">mm</span>';");
-  server.sendContent("if(document.getElementById('live_temp')) document.getElementById('live_temp').innerHTML = data.temperature + ' <span style=\"font-size:0.6em\">&deg;C</span>';");
-  server.sendContent("if(document.getElementById('live_hum')) document.getElementById('live_hum').innerHTML = data.humidity + ' <span style=\"font-size:0.6em\">%</span>';");
-  server.sendContent("if(document.getElementById('live_ws')) document.getElementById('live_ws').innerHTML = data.windSpeed + ' <span style=\"font-size:0.6em\">m/s</span>';");
-  server.sendContent("if(document.getElementById('live_wd')) document.getElementById('live_wd').innerHTML = data.windDir + ' <span style=\"font-size:0.6em\">&deg;</span>';");
-  server.sendContent("if(data.bat_v) document.getElementById('live_bat').innerHTML = data.bat_v + ' <span style=\"font-size:0.6em\">V</span>';");
-  server.sendContent("if(data.sol_v) document.getElementById('live_sol').innerHTML = data.sol_v + ' <span style=\"font-size:0.6em\">V</span>';");
-  server.sendContent("if(data.gps_lat) { if(Math.abs(data.gps_lat) < 0.0001) document.getElementById('live_gps').innerHTML = 'SEARCHING...'; else document.getElementById('live_gps').innerHTML = data.gps_lat.toFixed(6) + ', ' + data.gps_lon.toFixed(6); }");
-  server.sendContent("if(data.calib) document.getElementById('live_calib').innerHTML = data.calib;");
-  server.sendContent("if(data.pressure && document.getElementById('live_pres')) { var val = data.pressure.toFixed(2); if(data.mslp) val += ' | ' + data.mslp.toFixed(2); document.getElementById('live_pres').innerHTML = val + ' <span style=\"font-size:0.6em\">hPa</span>'; }");
-  server.sendContent("if(data.wifi_left < 15) { document.getElementById('warnModal').style.display='block'; document.getElementById('timeLeft').innerText = data.wifi_left; } else { document.getElementById('warnModal').style.display='none'; }");
-  server.sendContent("} else if (this.readyState == 4 && (this.status == 0 || this.status == 500)) { document.body.innerHTML = '<div style=\"text-align:center;margin-top:20vh;\"><h1>Offline</h1></div>'; } }; xhttp.open('GET', '/data?t=' + Date.now(), true); xhttp.send(); }, 3000);");
-  server.sendContent("function extendInfo() { fetch('/extend').then(()=>{ document.getElementById('warnModal').style.display='none'; }); }</script></head><body>");
+  server.sendContent(
+      "<script>setInterval(function() { var xhttp = new XMLHttpRequest(); "
+      "xhttp.onreadystatechange = function() { if (this.readyState == 4 && "
+      "this.status == 200) { var data = JSON.parse(this.responseText);");
+  server.sendContent(
+      "if(document.getElementById('live_rf')) "
+      "document.getElementById('live_rf').innerHTML = data.rf_inst + ' <span "
+      "style=\"font-size:0.6em\">mm</span>';");
+  server.sendContent(
+      "if(document.getElementById('live_temp')) "
+      "document.getElementById('live_temp').innerHTML = data.temperature + ' "
+      "<span style=\"font-size:0.6em\">&deg;C</span>';");
+  server.sendContent(
+      "if(document.getElementById('live_hum')) "
+      "document.getElementById('live_hum').innerHTML = data.humidity + ' <span "
+      "style=\"font-size:0.6em\">%</span>';");
+  server.sendContent(
+      "if(document.getElementById('live_ws')) "
+      "document.getElementById('live_ws').innerHTML = data.windSpeed + ' <span "
+      "style=\"font-size:0.6em\">m/s</span>';");
+  server.sendContent(
+      "if(document.getElementById('live_wd')) "
+      "document.getElementById('live_wd').innerHTML = data.windDir + ' <span "
+      "style=\"font-size:0.6em\">&deg;</span>';");
+  server.sendContent(
+      "if(data.bat_v) document.getElementById('live_bat').innerHTML = "
+      "data.bat_v + ' <span style=\"font-size:0.6em\">V</span>';");
+  server.sendContent(
+      "if(data.sol_v) document.getElementById('live_sol').innerHTML = "
+      "data.sol_v + ' <span style=\"font-size:0.6em\">V</span>';");
+  server.sendContent(
+      "if(data.gps_lat) { if(Math.abs(data.gps_lat) < 0.0001) "
+      "document.getElementById('live_gps').innerHTML = 'SEARCHING...'; else "
+      "document.getElementById('live_gps').innerHTML = data.gps_lat.toFixed(6) "
+      "+ ', ' + data.gps_lon.toFixed(6); }");
+  server.sendContent(
+      "if(data.calib) document.getElementById('live_calib').innerHTML = "
+      "data.calib;");
+  server.sendContent(
+      "if(data.pressure && document.getElementById('live_pres')) { var val = "
+      "data.pressure.toFixed(2); if(data.mslp) val += ' | ' + "
+      "data.mslp.toFixed(2); document.getElementById('live_pres').innerHTML = "
+      "val + ' <span style=\"font-size:0.6em\">hPa</span>'; }");
+  server.sendContent(
+      "if(data.wifi_left < 15) { "
+      "document.getElementById('warnModal').style.display='block'; "
+      "document.getElementById('timeLeft').innerText = data.wifi_left; } else "
+      "{ document.getElementById('warnModal').style.display='none'; }");
+  server.sendContent("} else if (this.readyState == 4 && (this.status == 0 || "
+                     "this.status == 500)) { document.body.innerHTML = '<div "
+                     "style=\"text-align:center;margin-top:20vh;\"><h1>Offline<"
+                     "/h1></div>'; } }; xhttp.open('GET', '/data?t=' + "
+                     "Date.now(), true); xhttp.send(); }, 3000);");
+  server.sendContent("function extendInfo() { fetch('/extend').then(()=>{ "
+                     "document.getElementById('warnModal').style.display='none'"
+                     "; }); }</script></head><body>");
 
   String sysType = "";
 #if SYSTEM == 0
@@ -321,59 +411,114 @@ void handleRoot() { // v5.70 STREAMING
       "1.0em;color:#666;font-weight:bold;margin-bottom:20px;'>( " +
       sysType + " )</div>";
 
-  server.sendContent("<h2 style='color:#007bff;font-size:1.5em;margin-bottom:5px;'>Spatika Web Portal</h2>");
+  server.sendContent(
+      "<h2 style='color:#007bff;font-size:1.5em;margin-bottom:5px;'>Spatika "
+      "Web Portal</h2>");
   server.sendContent(stationValue);
 
   // Define translation labels once
-  const char* s_live = isKan ? "\xE0\xB2\xB2\xE0\xB3\x88\xE0\xB2\xB5\xE0\xB3\x8D \xE0\xB2\xAE\xE0\xB2\xBE\xE0\xB2\xB9\xE0\xB2\xBF\xE0\xB2\xA1\xE0\xB2\xBF (Live Monitor)" : "Live Monitor";
-  const char* s_rf = isKan ? "\xE0\xB2\xAE\xE0\xB2\xB3\xE0\xB3\x86 (Instant RF)" : "Instant RF";
-  const char* s_bat = isKan ? "\xE0\xB2\xAC\xE0\xB3\x8D\xE0\xB2\xAF\xE0\xB2\xBE\xE0\xB2\x9F\xE0\xB2\xB0\xE0\xB2\xBF (Battery)" : "Battery";
-  const char* s_sol = isKan ? "\xE0\xB2\xB8\xE0\xB3\x8C\xE0\xB2\xB0 (Solar)" : "Solar";
-  const char* s_gps = isKan ? "\xE0\xB2\xB8\xE0\xB3\x8D\xE0\xB2\xA5\xE0\xB2\xB2 (GPS - Lat, Lon)" : "GPS (Lat, Lon)";
+  const char *s_live = isKan
+                           ? "\xE0\xB2\xB2\xE0\xB3\x88\xE0\xB2\xB5\xE0\xB3\x8D "
+                             "\xE0\xB2\xAE\xE0\xB2\xBE\xE0\xB2\xB9\xE0\xB2\xBF"
+                             "\xE0\xB2\xA1\xE0\xB2\xBF (Live Monitor)"
+                           : "Live Monitor";
+  const char *s_rf = isKan ? "\xE0\xB2\xAE\xE0\xB2\xB3\xE0\xB3\x86 (Instant RF)"
+                           : "Instant RF";
+  const char *s_bat = isKan ? "\xE0\xB2\xAC\xE0\xB3\x8D\xE0\xB2\xAF\xE0\xB2\xBE"
+                              "\xE0\xB2\x9F\xE0\xB2\xB0\xE0\xB2\xBF (Battery)"
+                            : "Battery";
+  const char *s_sol =
+      isKan ? "\xE0\xB2\xB8\xE0\xB3\x8C\xE0\xB2\xB0 (Solar)" : "Solar";
+  const char *s_gps =
+      isKan
+          ? "\xE0\xB2\xB8\xE0\xB3\x8D\xE0\xB2\xA5\xE0\xB2\xB2 (GPS - Lat, Lon)"
+          : "GPS (Lat, Lon)";
 
   server.sendContent("<div class='container'>");
 
   // --- SECTION 1: LIVE MONITOR ---
-  server.sendContent("<div class='section-title'>" + String(s_live) + " <span style='font-size:0.6em;color:#28a745;vertical-align:middle;'>&#9679; updating</span></div>");
+  server.sendContent("<div class='section-title'>" + String(s_live) +
+                     " <span "
+                     "style='font-size:0.6em;color:#28a745;vertical-align:"
+                     "middle;'>&#9679; updating</span></div>");
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
-    server.sendContent("<div style='display:flex;flex-wrap:wrap;justify-content:center;gap:5px;'>");
+    server.sendContent(
+        "<div "
+        "style='display:flex;flex-wrap:wrap;justify-content:center;gap:5px;'>");
 #if SYSTEM == 0 || SYSTEM == 2
-    server.sendContent("<div class='card'><div class='label'>" + String(s_rf) + "</div><div id='live_rf' class='value'>" + String((float)rf_count.val * RF_RESOLUTION, 2) + " <span style='font-size:0.6em'>mm</span></div></div>");
+    server.sendContent("<div class='card'><div class='label'>" + String(s_rf) +
+                       "</div><div id='live_rf' class='value'>" +
+                       String((float)rf_count.val * RF_RESOLUTION, 2) +
+                       " <span style='font-size:0.6em'>mm</span></div></div>");
 #endif
 #if SYSTEM == 1 || SYSTEM == 2
-    server.sendContent("<div class='card'><div class='label'>Temp</div><div id='live_temp' class='value'>" + String(temperature, 1) + " &deg;C</div></div>");
-    server.sendContent("<div class='card'><div class='label'>Humidity</div><div id='live_hum' class='value'>" + String(humidity, 1) + " %</div></div>");
+    server.sendContent("<div class='card'><div class='label'>Temp</div><div "
+                       "id='live_temp' class='value'>" +
+                       String(temperature, 1) + " &deg;C</div></div>");
+    server.sendContent(
+        "<div class='card'><div class='label'>Humidity</div><div id='live_hum' "
+        "class='value'>" +
+        String(humidity, 1) + " %</div></div>");
 #endif
 
-    server.sendContent("<div class='card'><div class='label'>" + String(s_bat) + "</div><div id='live_bat' class='value'>" + String(li_bat_val, 2) + " <span style='font-size:0.6em'>V</span></div></div>");
-    server.sendContent("<div class='card'><div class='label'>" + String(s_sol) + "</div><div id='live_sol' class='value'>" + String(solar_val, 2) + " <span style='font-size:0.6em'>V</span></div></div>");
-    
-    String gps_display = (abs(gps_latitude) < 0.0001) ? "SEARCHING..." : (String(gps_latitude, 6) + ", " + String(gps_longitude, 6));
-    server.sendContent("<div class='card'><div class='label'>" + String(s_gps) + "</div><div id='live_gps' class='value' style='font-size:0.9em;'>" + gps_display + "</div></div>");
-    
+    server.sendContent("<div class='card'><div class='label'>" + String(s_bat) +
+                       "</div><div id='live_bat' class='value'>" +
+                       String(li_bat_val, 2) +
+                       " <span style='font-size:0.6em'>V</span></div></div>");
+    server.sendContent("<div class='card'><div class='label'>" + String(s_sol) +
+                       "</div><div id='live_sol' class='value'>" +
+                       String(solar_val, 2) +
+                       " <span style='font-size:0.6em'>V</span></div></div>");
+
+    String gps_display =
+        (abs(gps_latitude) < 0.0001)
+            ? "SEARCHING..."
+            : (String(gps_latitude, 6) + ", " + String(gps_longitude, 6));
+    server.sendContent(
+        "<div class='card'><div class='label'>" + String(s_gps) +
+        "</div><div id='live_gps' class='value' style='font-size:0.9em;'>" +
+        gps_display + "</div></div>");
+
     char clb_info[32] = "N/A";
     if (calib_year > 2000) {
-        snprintf(clb_info, sizeof(clb_info), "%s (%02d/%02d/%02d)", 
-                 (calib_sts == 1 ? "PASS" : "FAIL"), calib_day, calib_month, calib_year % 100);
+      snprintf(clb_info, sizeof(clb_info), "%s (%02d/%02d/%02d)",
+               (calib_sts == 1 ? "PASS" : "FAIL"), calib_day, calib_month,
+               calib_year % 100);
     }
-    server.sendContent("<div class='card'><div class='label'>RF Calibration</div><div id='live_calib' class='value' style='font-size:0.9em;'>" + String(clb_info) + "</div></div>");
+    server.sendContent(
+        "<div class='card'><div class='label'>RF Calibration</div><div "
+        "id='live_calib' class='value' style='font-size:0.9em;'>" +
+        String(clb_info) + "</div></div>");
     server.sendContent("</div>");
     xSemaphoreGive(i2cMutex);
   }
 
   // --- SECTION 2: LAST RECORDED ---
-  server.sendContent("<div class='section-title'>Last Recorded<br><span style='font-size:0.85em;color:#777;'>@ " + String(timeStr) + "</span></div>");
-  server.sendContent("<div style='display:flex;flex-wrap:wrap;justify-content:center;gap:5px;'>");
+  server.sendContent("<div class='section-title'>Last Recorded<br><span "
+                     "style='font-size:0.85em;color:#777;'>@ " +
+                     String(timeStr) + "</span></div>");
+  server.sendContent(
+      "<div "
+      "style='display:flex;flex-wrap:wrap;justify-content:center;gap:5px;'>");
 #if SYSTEM == 0 || SYSTEM == 2
-  server.sendContent("<div class='card'><div class='label'>Logged RF</div><div class='value' style='color:#666'>" + rec_rf + " mm</div></div>");
+  server.sendContent("<div class='card'><div class='label'>Logged RF</div><div "
+                     "class='value' style='color:#666'>" +
+                     rec_rf + " mm</div></div>");
 #endif
   server.sendContent("</div>");
 
   // --- ACTIONS ---
   server.sendContent("<div class='section-title'>System Control</div>");
-  server.sendContent("<div style='background:white;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);max-width:500px;margin:10px auto;'>");
-  server.sendContent("<a href='/files' class='btn' style='display:block;width:100%;box-sizing:border-box;'>Browse Explorer</a>");
-  server.sendContent("<br><a href='#' onclick=\"if(confirm('Disconnect?')) window.location='/disconnect';\" class='btn btn-danger' style='width:auto;padding:10px 20px;'>Close WiFi</a>");
+  server.sendContent(
+      "<div "
+      "style='background:white;padding:20px;border-radius:8px;box-shadow:0 1px "
+      "3px rgba(0,0,0,0.1);max-width:500px;margin:10px auto;'>");
+  server.sendContent("<a href='/files' class='btn' "
+                     "style='display:block;width:100%;box-sizing:border-box;'>"
+                     "Browse Explorer</a>");
+  server.sendContent("<br><a href='#' onclick=\"if(confirm('Disconnect?')) "
+                     "window.location='/disconnect';\" class='btn btn-danger' "
+                     "style='width:auto;padding:10px 20px;'>Close WiFi</a>");
   server.sendContent("</div></div></body></html>");
   server.sendContent(""); // End
 }
@@ -426,7 +571,9 @@ void handleFileList() {
   String s_sr = isKan ? "ಫಲಿತಾಂಶಗಳು (Search Results for)" : "Search Results for";
   String s_nf = isKan ? "ಫೈಲ್ಸ್ ಸಿಗಲಿಲ್ಲ (No matching files found)"
                       : "No matching files found.";
-  String s_filter = isKan ? "\xE0\xB2\xB9\xE0\xB3\x81\xE0\xB2\xA1\xE0\xB3\x81\xE0\xB2\x95\xE0\xB2\xBF (Search)" : "Search";
+  String s_filter = isKan ? "\xE0\xB2\xB9\xE0\xB3\x81\xE0\xB2\xA1\xE0\xB3\x81"
+                            "\xE0\xB2\x95\xE0\xB2\xBF (Search)"
+                          : "Search";
   String s_bhome =
       isKan ? "ಹೋಮ್ ಪೇಜ್‌ಗೆ ಹೋಗಿ (Back to Home)"
             : "Back to Home";
@@ -493,7 +640,8 @@ void handleFileList() {
         count++;
       }
     }
-    if (count == 0) html += "<p>" + s_nf + "</p>";
+    if (count == 0)
+      html += "<p>" + s_nf + "</p>";
   } else if (year != "" && month == "") {
     // --- MODE: MONTH LIST (YEAR SELECTED) ---
     html += "<h3>" + year + " > " + s_sm + "</h3>";
@@ -517,9 +665,10 @@ void handleFileList() {
       file = root.openNextFile();
     }
 
-    const char *monthNames[] = {
-        "", "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December"};
+    const char *monthNames[] = {"",        "January",   "February", "March",
+                                "April",   "May",       "June",     "July",
+                                "August",  "September", "October",  "November",
+                                "December"};
     for (int i = 1; i <= 12; i++) {
       if (months[i]) {
         String mPad = (i < 10) ? "0" + String(i) : String(i);
@@ -529,46 +678,49 @@ void handleFileList() {
         count++;
       }
     }
-    if (count == 0) html += "<p>No logs found for " + year + ".</p>";
+    if (count == 0)
+      html += "<p>No logs found for " + year + ".</p>";
   } else if (year != "" && month != "") {
     // --- MODE: FILE LIST (YEAR + MONTH SELECTED) ---
     html += "<h3>" + year + " > " + month + "</h3>";
-    String filter = "_" + year + month; 
+    String filter = "_" + year + month;
 
     while (file) {
       String fileName = file.name();
       if (fileName.endsWith(".txt") && fileName.indexOf(filter) != -1) {
-        html += "<a href='/viewfile?file=" + fileName + "' class='folder-item'>" + fileName + "</a>";
+        html += "<a href='/viewfile?file=" + fileName +
+                "' class='folder-item'>" + fileName + "</a>";
         count++;
       }
       file.close();
       file = root.openNextFile();
     }
-    
-    if (count == 0) html += "<p>No logs found for " + year + "-" + month + ".</p>";
+
+    if (count == 0)
+      html += "<p>No logs found for " + year + "-" + month + ".</p>";
   }
-  
+
   // Cleanup any active root traversers
-  if (file) file.close();
+  if (file)
+    file.close();
 
+  html += "<br>";
+  if (month != "") {
+    String btn_back_year =
+        isKan ? "ಹಿಂದಕ್ಕೆ ಹೋಗಿ (Back to " + year + ")" : "Back to " + year;
+    html += "<a href='/files?year=" + year +
+            "' class='btn' style='background-color:#17a2b8;'>" + btn_back_year +
+            "</a> ";
+  }
+  if (year != "")
+    html += "<a href='/files' class='btn' "
+            "style='background-color:#007bff;'>" +
+            s_byears + "</a> ";
+  html += "<a href='/' class='btn' style='background-color:#28a745;'>" +
+          s_bhome + "</a>";
 
-html += "<br>";
-if (month != "") {
-  String btn_back_year =
-      isKan ? "ಹಿಂದಕ್ಕೆ ಹೋಗಿ (Back to " + year + ")" : "Back to " + year;
-  html += "<a href='/files?year=" + year +
-          "' class='btn' style='background-color:#17a2b8;'>" + btn_back_year +
-          "</a> ";
-}
-if (year != "")
-  html += "<a href='/files' class='btn' "
-          "style='background-color:#007bff;'>" +
-          s_byears + "</a> ";
-html += "<a href='/' class='btn' style='background-color:#28a745;'>" + s_bhome +
-        "</a>";
-
-html += "</body></html>";
-server.send(200, "text/html", html);
+  html += "</body></html>";
+  server.send(200, "text/html", html);
 }
 
 // --- Handle File Download (/download?file=...) ---
@@ -579,8 +731,8 @@ void handleFileDownload() {
 
     // v5.70 SECURITY FIX: Prevent path traversal (..)
     if (fileName.indexOf("..") != -1) {
-       server.send(403, "text/plain", "Forbidden: Invalid Path");
-       return;
+      server.send(403, "text/plain", "Forbidden: Invalid Path");
+      return;
     }
 
     if (!fileName.startsWith("/"))
@@ -615,8 +767,8 @@ void handleFileView() {
 
     // v5.70 SECURITY FIX: Prevent path traversal (..)
     if (fileName.indexOf("..") != -1) {
-       server.send(403, "text/plain", "Forbidden: Invalid Path");
-       return;
+      server.send(403, "text/plain", "Forbidden: Invalid Path");
+      return;
     }
 
     if (!fileName.startsWith("/"))
@@ -701,8 +853,8 @@ void handleFileView() {
       // Stream content in chunks to preserve heap
       char buf[512];
       while (file.available()) {
-        int len = file.readBytes(buf, sizeof(buf)-1);
-        buf[len] = 0; 
+        int len = file.readBytes(buf, sizeof(buf) - 1);
+        buf[len] = 0;
         server.sendContent(buf);
       }
 
@@ -982,51 +1134,53 @@ void handleDisconnect() {
 void handleData() {
   String json = "{";
   // v5.87 Hardening: [M-01] Ghost-Lock Removal (Read-Only Global Access)
-  json += "\"time\": \"" + String(current_hour) + ":" + String(current_min) + "\"";
+  json +=
+      "\"time\": \"" + String(current_hour) + ":" + String(current_min) + "\"";
 
 #if SYSTEM == 0
-    json += ", \"rf_inst\": " + String((float)rf_count.val * RF_RESOLUTION, 2);
+  json += ", \"rf_inst\": " + String((float)rf_count.val * RF_RESOLUTION, 2);
 #endif
 
 #if SYSTEM == 1
-    json += ", \"temperature\": " + String(temperature, 1) +
-            ", \"humidity\": " + String(humidity, 1) +
-            ", \"windSpeed\": " + String(cur_wind_speed, 2) +
-            ", \"windDir\": " + String(windDir);
-    if (bmeType != BME_UNKNOWN && pressure > 300.0) {
-      json += ", \"pressure\": " + String(pressure, 2) +
-              ", \"mslp\": " + String(sea_level_pressure, 2);
-    }
+  json += ", \"temperature\": " + String(temperature, 1) +
+          ", \"humidity\": " + String(humidity, 1) +
+          ", \"windSpeed\": " + String(cur_wind_speed, 2) +
+          ", \"windDir\": " + String(windDir);
+  if (bmeType != BME_UNKNOWN && pressure > 300.0) {
+    json += ", \"pressure\": " + String(pressure, 2) +
+            ", \"mslp\": " + String(sea_level_pressure, 2);
+  }
 #endif
 
 #if SYSTEM == 2
-    json += ", \"rf_inst\": " + String((float)rf_count.val * RF_RESOLUTION, 2) +
-            ", \"rf_cum\": " + String(new_current_cumRF, 2) +
-            ", \"temperature\": " + String(temperature, 1) +
-            ", \"humidity\": " + String(humidity, 1) +
-            ", \"windSpeed\": " + String(cur_wind_speed, 2) +
-            ", \"windDir\": " + String(windDir);
-    if (bmeType != BME_UNKNOWN && pressure > 300.0) {
-      json += ", \"pressure\": " + String(pressure, 2) +
-              ", \"mslp\": " + String(sea_level_pressure, 2);
-    }
+  json += ", \"rf_inst\": " + String((float)rf_count.val * RF_RESOLUTION, 2) +
+          ", \"rf_cum\": " + String(new_current_cumRF, 2) +
+          ", \"temperature\": " + String(temperature, 1) +
+          ", \"humidity\": " + String(humidity, 1) +
+          ", \"windSpeed\": " + String(cur_wind_speed, 2) +
+          ", \"windDir\": " + String(windDir);
+  if (bmeType != BME_UNKNOWN && pressure > 300.0) {
+    json += ", \"pressure\": " + String(pressure, 2) +
+            ", \"mslp\": " + String(sea_level_pressure, 2);
+  }
 #endif
 
-    unsigned long elapsed = millis() - last_wifi_activity_time;
-    long left = (elapsed < 180000) ? (180000 - elapsed) / 1000 : 0;
-    json += ", \"bat_v\": " + String(li_bat_val, 2);
-    json += ", \"sol_v\": " + String(solar_val, 2);
-    json += ", \"gps_lat\": " + String(gps_latitude, 8);
-    json += ", \"gps_lon\": " + String(gps_longitude, 8);
-    
-    char clb_json[48] = "N/A";
-    if (calib_year > 2000) {
-        snprintf(clb_json, sizeof(clb_json), "%s (%02d/%02d/%02d)", 
-                 (calib_sts == 1 ? "PASS" : "FAIL"), calib_day, calib_month, calib_year % 100);
-    }
-    json += ", \"calib\": \"" + String(clb_json) + "\"";
+  unsigned long elapsed = millis() - last_wifi_activity_time;
+  long left = (elapsed < 180000) ? (180000 - elapsed) / 1000 : 0;
+  json += ", \"bat_v\": " + String(li_bat_val, 2);
+  json += ", \"sol_v\": " + String(solar_val, 2);
+  json += ", \"gps_lat\": " + String(gps_latitude, 8);
+  json += ", \"gps_lon\": " + String(gps_longitude, 8);
 
-    // Lock removed in v5.87 to prevent UI lag
+  char clb_json[48] = "N/A";
+  if (calib_year > 2000) {
+    snprintf(clb_json, sizeof(clb_json), "%s (%02d/%02d/%02d)",
+             (calib_sts == 1 ? "PASS" : "FAIL"), calib_day, calib_month,
+             calib_year % 100);
+  }
+  json += ", \"calib\": \"" + String(clb_json) + "\"";
+
+  // Lock removed in v5.87 to prevent UI lag
   json += "}";
   server.send(200, "application/json", json);
 }

@@ -1365,7 +1365,9 @@ void send_http_data() {
 
   // v5.64: Pruned buffers & Selective SMS
   SerialSIT.println("AT+HTTPTERM");
-  waitForResponse("OK", 3000);
+  if (waitForResponse("OK", 3000)) {
+    debugln("[HTTP] Session Terminated.");
+  }
   vTaskDelay(1000 / portTICK_PERIOD_MS);
 
   // v5.50: Restore URCs BEFORE releasing mutex (Modem sequence finishing)
@@ -1802,17 +1804,17 @@ int send_at_cmd_data(char *payload, bool robust) {
     }
     vTaskDelay(200 / portTICK_PERIOD_MS);
     
-    // v5.88: Hardened Chunked Write (Sync with Health logic)
+    // v5.88: Restored 128-byte/10ms chunking (Validated for A7672S)
     int payloadLen = i;
     int sentBytes = 0;
     while (sentBytes < payloadLen) {
-      int toWrite = min(32, payloadLen - sentBytes);
+      int toWrite = min(128, payloadLen - sentBytes);
       SerialSIT.write(payload + sentBytes, toWrite);
       sentBytes += toWrite;
       esp_task_wdt_reset();
-      vTaskDelay(40 / portTICK_PERIOD_MS);
+      vTaskDelay(10 / portTICK_PERIOD_MS);
     }
-    SerialSIT.println(); // Finalize buffer if needed by specific firmware stacks
+    // [H-02] v5.88: Removed SerialSIT.println() - corrupts A7672S payload boundaries
 
     if (!waitForResponse("OK", 15000)) {
        debugln("[HTTP] AT+HTTPDATA confirmation timeout. Nuking PDP...");
@@ -1829,13 +1831,22 @@ int send_at_cmd_data(char *payload, bool robust) {
     // v5.67 (Claude's logic fix): Opened up latency window. If DOWNLOAD drops
     // late, we need enough of the 3000ms window remaining to clock the payload
     // JSON.
-    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,3000", i);
+    // v5.92: Breather and flush to ensure DOWNLOAD prompt is caught reliably in Fast Mode
+    flushSerialSIT();
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+
+    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,5000", i); // v5.92: Increased internal modem timeout to 5s
     debugln("[HTTP] Using Fast v3.0 Handshake...");
     SerialSIT.println(cmd_buf);
-    waitForResponse("DOWNLOAD", 1500);
-
-    SerialSIT.println(payload);
-    waitForResponse("OK", 1500);
+    
+    // v5.92: Increased host wait-time to 5s for high-latency BSNL 2G cells
+    if (waitForResponse("DOWNLOAD", 5000)) {
+      SerialSIT.println(payload);
+      waitForResponse("OK", 2000); // v5.92: Increased from 1500ms
+    } else {
+      debugln("[HTTP] Fast DOWNLOAD prompt timeout.");
+      return 0; // Force fallback to robust or retry
+    }
   }
 
   // Fire Action
