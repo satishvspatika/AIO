@@ -1848,12 +1848,7 @@ void initialize_hw() {
                   verWrite.print(sd_ver);
                   verWrite.close();
                 }
-                // v5.83 Field Hardening: Rename with deletion fallback to guarantee break of re-flash loop
-                if (!SD.rename("/firmware.bin", "/firmware.done")) {
-                  debugln("[OTA] WARN: Could not rename firmware.bin — deleting to prevent re-flash loop");
-                  SD.remove("/firmware.bin");
-                }
-                
+                debugln("[OTA] SD Update Successful. SD card reusable for multi-unit deployment.");
                 delay(1000);
                 ESP.restart();
               } else {

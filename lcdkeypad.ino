@@ -530,6 +530,7 @@ void lcdkeypad(void *pvParameters) {
           ui_data[FLD_RF_CALIB].bottomRow[16] = '\0';
           
           vTaskDelay(3000 / portTICK_PERIOD_MS);
+          present_topRow[0] = 0; present_bottomRow[0] = 0;
           show_now = 1;
         }
       } else {
@@ -635,6 +636,7 @@ void lcdkeypad(void *pvParameters) {
               wifi_active = false; 
             }
             vTaskDelay(2000 / portTICK_PERIOD_MS);
+            present_topRow[0] = 0; present_bottomRow[0] = 0;
             show_now = 1;
 #else
             if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
@@ -642,6 +644,7 @@ void lcdkeypad(void *pvParameters) {
               xSemaphoreGive(i2cMutex);
             }
             vTaskDelay(1500 / portTICK_PERIOD_MS);
+            present_topRow[0] = 0; present_bottomRow[0] = 0;
             show_now = 1;
 #endif
           } else if (cur_fld_no == FLD_LCD_OFF) {
@@ -722,6 +725,7 @@ void lcdkeypad(void *pvParameters) {
                  pcb_clear_state = 0;
                  strcpy(ui_data[FLD_HTTP_FAILS].bottomRow, "MUTEX TIMEOUT  ");
               }
+              present_topRow[0] = 0; present_bottomRow[0] = 0;
             }
           } else if (cur_fld_no == FLD_RF_CALIB) {
             if (calib_flag == 0) {
@@ -899,6 +903,7 @@ void lcdkeypad(void *pvParameters) {
                     lcd.clear(); lcd.print("SD COPY FAIL");
                     vTaskDelay(3000 / portTICK_PERIOD_MS);
                  }
+                 present_topRow[0] = 0; present_bottomRow[0] = 0;
                  xSemaphoreGive(i2cMutex);
               }
               show_now = 1;
@@ -1008,6 +1013,7 @@ void lcdkeypad(void *pvParameters) {
                 } else {
                    debugln("[UI] Mutex Timeout: Skipping search.");
                 }
+                present_topRow[0] = 0; present_bottomRow[0] = 0;
                 cur_mode = eEditOff;
              }
           } else {
