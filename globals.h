@@ -24,8 +24,31 @@
 #include "soc/sens_reg.h"
 #include <Arduino.h>
 #include <HardwareSerial.h>
-#include <Keypad.h>
-#include <LiquidCrystal_I2C.h>
+// ==== UI ARCHITECTURE TOGGLE ====
+#if USE_NUVOTON_UI == 1
+  class NuvotonLCD {
+  public:
+      void init();
+      void clear();
+      void setCursor(uint8_t col, uint8_t row);
+      void print(const char* str);
+      void print(String str);
+      void print(char c);
+      void print(int num);
+      void print(float val, int decimals = 2);
+      void blink();
+      void noBlink();
+      void noCursor();
+      void cursor();
+      void display();
+      void backlight();
+      void noBacklight();
+  };
+#else
+  #include <Keypad.h>
+  #include <LiquidCrystal_I2C.h>
+#endif
+// ================================
 #include <MD5Builder.h>
 #include <Preferences.h>
 #include <RTClib.h>
@@ -193,7 +216,11 @@ extern float station_altitude_m;
 #define FILL_SIG_MAX 120
 
 extern HardwareSerial SerialSIT;
+#if USE_NUVOTON_UI == 1
+extern NuvotonLCD lcd;
+#else
 extern LiquidCrystal_I2C lcd;
+#endif
 extern SemaphoreHandle_t i2cMutex;
 extern SemaphoreHandle_t serialMutex;
 extern SemaphoreHandle_t modemMutex;

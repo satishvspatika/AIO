@@ -13,7 +13,7 @@
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 
-#define FIRMWARE_VERSION "5.90"
+#define FIRMWARE_VERSION "6.05"
 
 #define ENABLE_HEALTH_REPORT                                                   \
   0 // Master Switch: Enable automated device health reporting
@@ -21,6 +21,7 @@
   0 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)
 
 // --- 2. COMPILE OPTIONS ---
+#define USE_NUVOTON_UI 1 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
 #define DEBUG 1 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
 #define ENABLE_WEBSERVER                                                       \
   0 // 0: Disable, 1: Enable (requires 8MB flash partition)

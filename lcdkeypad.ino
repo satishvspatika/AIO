@@ -4,21 +4,111 @@
  * LCD - I2C based SCL,SDA,VCC,GND
  * KEYPAD
  */
-#define ROW_NUM 2    // four rows
-#define COLUMN_NUM 3 // four columns
-char keys[ROW_NUM][COLUMN_NUM] = {{'1', '2', '3'}, {'4', '5', '6'}};
 char *key_name[7] = {"NOKEY", "CLEAR", "UP", "SET", "LEFT", "DOWN", "RIGHT"};
-byte pin_rows[ROW_NUM] = {4, 12};           // R1,R2
-byte pin_column[COLUMN_NUM] = {13, 14, 15}; // C1,C2,C3
-Keypad keypad =
-    Keypad(makeKeymap(keys), pin_rows, pin_column, ROW_NUM, COLUMN_NUM);
 int calib_initial = 0;
 
-// Keypad timing configuration for better responsiveness
-void configure_keypad() {
-  keypad.setDebounceTime(50); // 50ms debounce - prevents false triggers
-  keypad.setHoldTime(500);    // 500ms hold time
-}
+#if USE_NUVOTON_UI == 1
+  #ifndef NO_KEY
+  #define NO_KEY '\0'
+  #endif
+  
+  void NuvotonLCD::init() {
+      // Handled in task setup
+  }
+  void NuvotonLCD::clear() {
+      Serial1.write(0x01);
+      Serial1.flush();
+      delay(5);
+  }
+  void NuvotonLCD::setCursor(uint8_t col, uint8_t row) {
+      uint8_t addr = (uint8_t)(row * 64 + col + 128);
+      Serial1.write(addr); // First send (may be dropped if MG51 UART is waking from idle)
+      Serial1.flush();
+      delay(10);
+      Serial1.write(addr); // Second send (guaranteed to be caught and sets cursor correctly)
+      Serial1.flush();
+      delay(10);
+  }
+  void NuvotonLCD::print(const char* str) {
+      while (*str) {
+          uint8_t b = (uint8_t)*str;
+          if (b >= 0x20 && b <= 0x7E) {
+              Serial1.write(b);
+              Serial1.flush();
+              delay(3);
+          }
+          str++;
+      }
+  }
+  void NuvotonLCD::print(String str) { print(str.c_str()); }
+  void NuvotonLCD::print(char c) {
+      if (c >= 0x20 && c <= 0x7E) {
+          Serial1.write(c);
+          Serial1.flush();
+          delay(3);
+      }
+  }
+  void NuvotonLCD::print(int num) {
+      char buf[16];
+      itoa(num, buf, 10);
+      print(buf);
+  }
+  void NuvotonLCD::print(float val, int decimals) {
+      char buf[16];
+      dtostrf(val, 4, decimals, buf);
+      print(buf);
+  }
+  void NuvotonLCD::blink() {
+      Serial1.write(0x0F);
+      Serial1.flush();
+      delay(5);
+  }
+  void NuvotonLCD::noBlink() {
+      Serial1.write(0x0C);
+      Serial1.flush();
+      delay(5);
+  }
+  void NuvotonLCD::cursor() {
+      Serial1.write(0x0E);
+      Serial1.flush();
+      delay(5);
+  }
+  void NuvotonLCD::noCursor() {
+      Serial1.write(0x0C);
+      Serial1.flush();
+      delay(5);
+  }
+  void NuvotonLCD::noBacklight() {}
+
+  char translate_nuvoton_key(char n_key) {
+    switch(n_key) {
+      case '1': return '2'; // UP
+      case '2': return '5'; // DOWN
+      case '3': return '4'; // LEFT
+      case '4': return '6'; // RIGHT
+      case '5': return '3'; // SET
+      case '6': return '1'; // CLEAR
+      default: return '0';
+    }
+  }
+  
+  void configure_keypad() {
+    Serial1.begin(9600, SERIAL_8N1, 14, 4);
+  }
+#else
+  #define ROW_NUM 2    // four rows
+  #define COLUMN_NUM 3 // four columns
+  char keys[ROW_NUM][COLUMN_NUM] = {{'1', '2', '3'}, {'4', '5', '6'}};
+  byte pin_rows[ROW_NUM] = {4, 12};           // R1,R2
+  byte pin_column[COLUMN_NUM] = {13, 14, 15}; // C1,C2,C3
+  Keypad keypad = Keypad(makeKeymap(keys), pin_rows, pin_column, ROW_NUM, COLUMN_NUM);
+
+  // Keypad timing configuration for better responsiveness
+  void configure_keypad() {
+    keypad.setDebounceTime(50); // 50ms debounce - prevents false triggers
+    keypad.setHoldTime(500);    // 500ms hold time
+  }
+#endif
 
 /*
  * UI related
@@ -138,6 +228,7 @@ void draw_current_page() {
       }
 
       // --- LCD Heartbeat (Restore Original Bonus) ---
+#if USE_NUVOTON_UI == 0
       static bool heartState = false;
       static unsigned long lastHeartbeat = 0;
       if (millis() - lastHeartbeat > 1000) {
@@ -145,8 +236,26 @@ void draw_current_page() {
         heartState = !heartState;
         line0[15] = heartState ? '.' : ' '; 
       }
+#endif
 
       // Differential Drawing: Only write if something changed
+#if USE_NUVOTON_UI == 1
+      if (strcmp(line0, present_topRow) != 0) {
+        // Top row changed. Must clear to reset cursor.
+        lcd.clear(); 
+        delay(10);
+        lcd.print(line0);
+        lcd.setCursor(0, 1);
+        lcd.print(line1);
+        strcpy(present_topRow, line0);
+        strcpy(present_bottomRow, line1);
+      } else if (strcmp(line1, present_bottomRow) != 0) {
+        // Only bottom row changed. Use 0xC0 directly.
+        lcd.setCursor(0, 1);
+        lcd.print(line1);
+        strcpy(present_bottomRow, line1);
+      }
+#else
       if (strcmp(line0, present_topRow) != 0) {
         lcd.setCursor(0, 0);
         lcd.print(line0);
@@ -157,17 +266,51 @@ void draw_current_page() {
         lcd.print(line1);
         strcpy(present_bottomRow, line1);
       }
+#endif
 
     } else if (cur_mode == eEditOn) {
       char line0[17], line1[17];
-      lcd.setCursor(0, 0);
       snprintf(line0, sizeof(line0), "%-16s", ui_data[cur_fld_no].topRow);
+      snprintf(line1, sizeof(line1), "%-16s", input_buf);
+
+#if USE_NUVOTON_UI == 1
+      static char last_edit_line0[17] = "";
+      static char last_edit_line1[17] = "";
+      static int last_cur_pos = -1;
+      
+      bool redraw_cursor = false;
+
+      if (strcmp(line0, last_edit_line0) != 0) {
+          // Top row changed (e.g. entering edit mode). Must clear.
+          lcd.clear();
+          delay(10);
+          lcd.print(line0);
+          lcd.setCursor(0, 1);
+          lcd.print(line1);
+          strcpy(last_edit_line0, line0);
+          strcpy(last_edit_line1, line1);
+          redraw_cursor = true;
+      } else if (strcmp(line1, last_edit_line1) != 0) {
+          // Only bottom row changed (e.g. typing a value).
+          lcd.setCursor(0, 1);
+          lcd.print(line1);
+          strcpy(last_edit_line1, line1);
+          redraw_cursor = true;
+      }
+      
+      if (redraw_cursor || cur_pos_no != last_cur_pos) {
+          lcd.setCursor(cur_pos_no, 1);
+          last_cur_pos = cur_pos_no;
+      }
+      lcd.blink();
+#else
+      lcd.setCursor(0, 0);
       lcd.print(line0);
       lcd.setCursor(0, 1);
-      snprintf(line1, sizeof(line1), "%-16s", input_buf);
       lcd.print(line1);
       lcd.setCursor(cur_pos_no, 1);
       lcd.blink();
+#endif
       // Invalidate cache for transition back to EditOff
       present_topRow[0] = 0; present_bottomRow[0] = 0;
     }
@@ -313,7 +456,11 @@ void lcdkeypad(void *pvParameters) {
       lcdkeypad_start = 1;
       portEXIT_CRITICAL(&syncMux);
     } else {
+#if USE_NUVOTON_UI == 1
+      lcd.clear(); // Keep Nuvoton powered to read keys
+#else
       digitalWrite(32, LOW);
+#endif
       portENTER_CRITICAL(&syncMux);
       lcdkeypad_start = 0;
       portEXIT_CRITICAL(&syncMux);
@@ -362,11 +509,15 @@ void lcdkeypad(void *pvParameters) {
     // Phase 7 Fix: Safely execute the deferred LCD power cut with I2C Mutex protection
     if (lcd_power_cut_pending) {
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+#if USE_NUVOTON_UI == 1
+        lcd.clear(); // Clear Nuvoton screen, keeping power ON
+#else
         digitalWrite(32, LOW); // Turn OFF power to LCD (5V) safely
         // Reset the I2C peripheral purely to re-float the pins and avoid diode drops
         Wire.end();
         Wire.begin(I2C_SDA, I2C_SCL, 100000); // Phase 9 Fix: Force exactly 100kHz for DS1307 stability
         Wire.setTimeOut(I2C_TIMEOUT_MS);
+#endif
         xSemaphoreGive(i2cMutex);
         lcd_power_cut_pending = false; // Successfully cleared
       }
@@ -378,6 +529,32 @@ void lcdkeypad(void *pvParameters) {
     }
 
     if (lcdkeypad_start == 0) {
+#if USE_NUVOTON_UI == 1
+      char wakeupKey = '\0';
+      if (Serial1.available()) {
+        int c = Serial1.read();
+        delay(5);
+        if (Serial1.available()) {
+          int c2 = Serial1.read();
+          if (c2 == c && c >= '1' && c <= '6') wakeupKey = translate_nuvoton_key((char)c);
+        } else if (c >= '1' && c <= '6') {
+          wakeupKey = translate_nuvoton_key((char)c);
+        }
+      }
+      bool verified_press = (wakeupKey != '\0');
+      
+      // Mask electrical "Ghost" presses
+      if (verified_press && schedulerBusy && wakeupKey == '\0') {
+         debugln("[UI] Masking electrical ghost-press during background GPRS task.");
+         verified_press = false; 
+      }
+      
+      if (verified_press) {
+         wakeup_reason_is = ext0;
+         savedWakeupKey = wakeupKey;
+         debugf("[UI] Verified Key: %c\n", (wakeupKey != '\0' ? wakeupKey : 'P'));
+      }
+#else
       char wakeupKey = keypad.getKey();
       bool verified_press = (wakeupKey != NO_KEY);
       
@@ -418,6 +595,7 @@ void lcdkeypad(void *pvParameters) {
              debugf("[UI] Verified Key: %c\n", (wakeupKey != NO_KEY ? wakeupKey : 'P'));
           }
       }
+#endif
     }
 
     bool should_activate = (wakeup_reason_is == ext0) || (wired == 1 && wakeup_reason_is == 0 && lcd_timer == NULL);
@@ -439,11 +617,13 @@ void lcdkeypad(void *pvParameters) {
           if (lcd_timer) timerAttachInterrupt(lcd_timer, &lcdTimer);
         }
         
+        #if USE_NUVOTON_UI == 0
         pinMode(4, INPUT_PULLUP);
         pinMode(12, INPUT_PULLUP);
         pinMode(13, OUTPUT);
         pinMode(14, OUTPUT);
         pinMode(15, OUTPUT);
+#endif
 
         if (lcd_timer) {
           timerAlarm(lcd_timer, 180000000, false, 0); // v5.60: 180s default 
@@ -454,6 +634,14 @@ void lcdkeypad(void *pvParameters) {
 
         // v5.85: Increased timeout to 3s and added retry logic to prevent LCD activation failures 
         // when RTC or Temp/Hum tasks are busy on the I2C bus.
+#if USE_NUVOTON_UI == 1
+        Serial1.begin(9600, SERIAL_8N1, 14, 4);
+        delay(100);
+        while (Serial1.available()) Serial1.read();
+        delay(1500);
+        lcd.clear();
+        show_now = 1;
+#else
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
           lcd.init();
           lcd.display();
@@ -468,6 +656,7 @@ void lcdkeypad(void *pvParameters) {
           recoverI2CBus(false);
           lcdkeypad_start = 0; // v5.85: Fallback to OFF if absolutely blocked
         }
+#endif
       } else {
         timerWrite(lcd_timer, 0);
         timerAlarm(lcd_timer, 180000000, false, 0); // v5.60: 180s
@@ -545,11 +734,34 @@ void lcdkeypad(void *pvParameters) {
       }
 
       // --- KEYPAD PROCESSING ---
+#if USE_NUVOTON_UI == 1
+      #ifndef NO_KEY
+      #define NO_KEY '\0'
+      #endif
+      key = NO_KEY;
+      if (Serial1.available()) {
+        int c = Serial1.read();
+        delay(5); // Debounce double-send
+        if (Serial1.available()) {
+          int c2 = Serial1.read();
+          if (c2 == c && c >= '1' && c <= '6') {
+             key = translate_nuvoton_key((char)c);
+          }
+        } else if (c >= '1' && c <= '6') {
+          key = translate_nuvoton_key((char)c);
+        }
+      }
+      if (key == NO_KEY && savedWakeupKey != NO_KEY) {
+        key = savedWakeupKey;
+        savedWakeupKey = NO_KEY;
+      }
+#else
       key = keypad.getKey();
       if (key == NO_KEY && savedWakeupKey != NO_KEY) {
         key = savedWakeupKey;
         savedWakeupKey = NO_KEY;
       }
+#endif
 
       if (key != NO_KEY) {
         extern unsigned long last_key_time;
@@ -648,7 +860,12 @@ void lcdkeypad(void *pvParameters) {
             show_now = 1;
 #endif
           } else if (cur_fld_no == FLD_LCD_OFF) {
-            lcdkeypad_start = 0; digitalWrite(32, LOW);
+            lcdkeypad_start = 0; 
+#if USE_NUVOTON_UI == 1
+            lcd.clear(); // Keep Nuvoton powered
+#else
+            digitalWrite(32, LOW);
+#endif
           } else if (cur_fld_no == FLD_SEND_STATUS) {
             portENTER_CRITICAL(&syncMux);
             if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || sync_mode == eHttpStop || sync_mode == eExceptionHandled) {

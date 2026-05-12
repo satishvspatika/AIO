@@ -1,25 +1,85 @@
-WARNING: library LiquidCrystal I2C claims to run on avr architecture(s) and may be incompatible with your current board which runs on esp32 architecture(s).
+--- Building for 8MB Flash ESP32 (Default) ---
+--- Using partition file: partitions.csv ---
+Sketch uses 1248231 bytes (70%) of program storage space. Maximum is 1769472 bytes.
+Global variables use 57908 bytes (17%) of dynamic memory, leaving 269772 bytes for local variables. Maximum is 327680 bytes.
 
-[92mUsed library[0m            [92mVersion[0m [90mPath[0m
-[93mKeypad[0m                  3.1.1   [90m/Users/satishkripavasan/Documents/Arduino/libraries/Keypad-master[0m
-[93mLiquidCrystal I2C[0m       1.1.2   [90m/Users/satishkripavasan/Documents/Arduino/libraries/LiquidCrystal_I2C[0m
-[93mWire[0m                    3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Wire[0m
-[93mPreferences[0m             3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Preferences[0m
-[93mRTClib[0m                  2.1.4   [90m/Users/satishkripavasan/Documents/Arduino/libraries/RTClib[0m
-[93mAdafruit BusIO[0m          1.17.4  [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_BusIO[0m
-[93mSD[0m                      3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SD[0m
-[93mFS[0m                      3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/FS[0m
-[93mSPI[0m                     3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SPI[0m
-[93mSPIFFS[0m                  3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/SPIFFS[0m
-[93mUpdate[0m                  3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Update[0m
-[93mWiFi[0m                    3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WiFi[0m
-[93mNetworking[0m              3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Network[0m
-[93mWebServer[0m               3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/WebServer[0m
-[93mHULP[0m                    2.0.1   [90m/Users/satishkripavasan/Documents/Arduino/libraries/HULP-master[0m
-[93mAdafruit BME280 Library[0m 2.3.0   [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_BME280_Library[0m
-[93mAdafruit Unified Sensor[0m 1.1.15  [90m/Users/satishkripavasan/Documents/Arduino/libraries/Adafruit_Unified_Sensor[0m
-[93mESPmDNS[0m                 3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/ESPmDNS[0m
-[93mHash[0m                    3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6/libraries/Hash[0m
+--- Compilation Successful (v6.05 / 8mb) ---
+Binary: /tmp/aio_build_8mb/AIO9_5.0.ino.bin
 
-[92mUsed platform[0m [92mVersion[0m [90mPath[0m
-[93mesp32:esp32[0m   3.3.6   [90m/Users/satishkripavasan/Library/Arduino15/packages/esp32/hardware/esp32/3.3.6[0m
+To flash: ./quick_flash.sh [PORT] 8mb
+🔍 Checking if /dev/cu.usbserial-A50285BI is busy...
+fuser: [-cfu] file ...
+	-c	file is treated as mount point
+	-f	the report is only for the named files
+	-u	print username of pid in parenthesis
+🚀 Target Port: /dev/cu.usbserial-A50285BI | Flash: 8mb
+--- QUICK FLASH (App Only at 0x10000) | 8mb | Port: /dev/cu.usbserial-A50285BI ---
+esptool.py v4.7.0
+Serial port /dev/cu.usbserial-A50285BI
+Connecting.....
+Chip is ESP32-D0WD-V3 (revision v3.1)
+Features: WiFi, BT, Dual Core, 240MHz, VRef calibration in efuse, Coding Scheme None
+Crystal is 40MHz
+MAC: 48:e7:29:20:9b:a0
+Uploading stub...
+Running stub...
+Stub running...
+Changing baud rate to 921600
+Changed.
+Configuring flash size...
+Flash will be erased from 0x00010000 to 0x00141fff...
+Compressed 1249312 bytes to 780125...
+Writing at 0x00010000... (2 %)
+Writing at 0x0001a15c... (4 %)
+Writing at 0x0002740a... (6 %)
+Writing at 0x000316d8... (8 %)
+Writing at 0x00038c46... (10 %)
+Writing at 0x0004bfb6... (12 %)
+Writing at 0x00051e51... (14 %)
+Writing at 0x00057b12... (16 %)
+Writing at 0x0005e21d... (18 %)
+Writing at 0x000647fe... (20 %)
+Writing at 0x0006adc3... (22 %)
+Writing at 0x000711e1... (25 %)
+Writing at 0x00076a52... (27 %)
+Writing at 0x0007c980... (29 %)
+Writing at 0x00082152... (31 %)
+Writing at 0x00087bd2... (33 %)
+Writing at 0x0008d47d... (35 %)
+Writing at 0x00092d14... (37 %)
+Writing at 0x00098224... (39 %)
+Writing at 0x0009d80f... (41 %)
+Writing at 0x000a320a... (43 %)
+Writing at 0x000a8a41... (45 %)
+Writing at 0x000add24... (47 %)
+Writing at 0x000b3097... (50 %)
+Writing at 0x000b888d... (52 %)
+Writing at 0x000bde0f... (54 %)
+Writing at 0x000c2eb3... (56 %)
+Writing at 0x000c8776... (58 %)
+Writing at 0x000cdeb1... (60 %)
+Writing at 0x000d3b96... (62 %)
+Writing at 0x000d93f9... (64 %)
+Writing at 0x000de94d... (66 %)
+Writing at 0x000e4346... (68 %)
+Writing at 0x000e9dd5... (70 %)
+Writing at 0x000ef7b3... (72 %)
+Writing at 0x000f4f64... (75 %)
+Writing at 0x000fa908... (77 %)
+Writing at 0x001008a8... (79 %)
+Writing at 0x00106483... (81 %)
+Writing at 0x0010bba6... (83 %)
+Writing at 0x00112b97... (85 %)
+Writing at 0x0011ba0f... (87 %)
+Writing at 0x001215f0... (89 %)
+Writing at 0x0012699f... (91 %)
+Writing at 0x0012c45a... (93 %)
+Writing at 0x00131e5f... (95 %)
+Writing at 0x00137572... (97 %)
+Writing at 0x0013d459... (100 %)
+Wrote 1249312 bytes (780125 compressed) at 0x00010000 in 11.0 seconds (effective 906.1 kbit/s)...
+Hash of data verified.
+
+Leaving...
+Hard resetting via RTS pin...
+--- Quick Flash Complete ---

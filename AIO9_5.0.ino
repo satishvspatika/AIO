@@ -166,7 +166,11 @@ char present_bottomRow[17] = "";
 
 // Definitions of global objects (v5.65 Extern Pass)
 HardwareSerial SerialSIT(2);
+#if USE_NUVOTON_UI == 1
+NuvotonLCD lcd;
+#else
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+#endif
 SemaphoreHandle_t i2cMutex = NULL;
 SemaphoreHandle_t serialMutex = NULL;
 SemaphoreHandle_t modemMutex = NULL;
