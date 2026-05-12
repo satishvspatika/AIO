@@ -130,10 +130,11 @@ extern float RF_RESOLUTION;
 //#define RADIUS_METERS 0.07       // e.g., 7 cm
 //#define PULSES_PER_REV 4
 #define AVG_WS_DURATION_SECONDS 900 // 15 minutes
-#define NUM_OF_TEETH 4
 #define TWO_PI 6.28318530718
-// 2*pi*r (pulses per revolution = 4 and r = 0.07m)
-#define WS_CALIBRATION_FACTOR 0.4398229715026
+// Wind Speed (m/s) = (WS_CALIBRATION_FACTOR * PPS) / WIND_TEETH_COUNT
+// WS_CALIBRATION_FACTOR represents the distance (circumference) per revolution.
+// For r=0.07m: 2 * PI * 0.07 = 0.4398. (Current value 0.45 set by user request)
+#define WS_CALIBRATION_FACTOR 0.45
 
 // Record length constants for different systems (Audit-Hardened v5.75)
 #define RECORD_LENGTH_RF 46    // SYSTEM == 0 (NN,YYYY-MM-DD,HH:MM,II.II,CC.CC,SSSY,BB.BB\r\n)

@@ -13,7 +13,7 @@
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 
-#define FIRMWARE_VERSION "5.90"
+#define FIRMWARE_VERSION "5.91"
 
 #define ENABLE_HEALTH_REPORT                                                   \
   0 // Master Switch: Enable automated device health reporting
@@ -21,7 +21,7 @@
   0 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)
 
 // --- 2. COMPILE OPTIONS ---
-#define DEBUG 1 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
+#define DEBUG 0 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
 #define ENABLE_WEBSERVER                                                       \
   0 // 0: Disable, 1: Enable (requires 8MB flash partition)
 
@@ -29,9 +29,10 @@
 #define ENABLE_PRESSURE_SENSOR 0 // 0: Disable BMP/BME routines, 1: Enable
 #define DEFAULT_RF_RESOLUTION                                                  \
   0.50 // Factory default rain resolution (0.50mm / 0.25mm)
-#define WIND_TEETH_COUNT 2.0 // H-02: Customizable anemometer teeth divisor
-#define ENABLE_CALIB_TEST                                                      \
-  0 // 1: IMD CALIB TEST in UI, 0: Field deployment mode
+#define WIND_TEETH_COUNT 2.0   // H-02: Customizable anemometer teeth divisor
+#define WIND_SAMPLING_US 1000  // ULP wakeup period in microseconds (1000 = 1ms)
+#define WIND_DEBOUNCE_CYCLES 1 // Pulse stability cycles (1 = 1 loop)
+#define ENABLE_CALIB_TEST 0 // 1: IMD CALIB TEST in UI, 0: Field deployment mode
 
 // --- 4. NETWORK BEHAVIOR ---
 #define FILLGAP 1
