@@ -13,7 +13,7 @@
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 
-#define FIRMWARE_VERSION "6.05"
+#define FIRMWARE_VERSION "6.06"
 
 #define ENABLE_HEALTH_REPORT                                                   \
   0 // Master Switch: Enable automated device health reporting
@@ -29,7 +29,7 @@
 // --- 3. HARDWARE CAPABILITIES ---
 #define ENABLE_PRESSURE_SENSOR 0 // 0: Disable BMP/BME routines, 1: Enable
 #define DEFAULT_RF_RESOLUTION                                                  \
-  0.50 // Factory default rain resolution (0.50mm / 0.25mm)
+  0.25 // Factory default rain resolution (0.50mm / 0.25mm)
 #define WIND_TEETH_COUNT 2.0 // H-02: Customizable anemometer teeth divisor
 #define ENABLE_CALIB_TEST                                                      \
   0 // 1: IMD CALIB TEST in UI, 0: Field deployment mode

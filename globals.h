@@ -363,6 +363,17 @@ extern int sd_card_ok;
 extern int send_daily;
 extern float solar_val, solar;
 extern float li_bat, li_bat_val;
+#if USE_NUVOTON_UI == 1
+extern float bat_3v3_val;
+extern float ref_volt_val;
+extern char sys_status[17];
+void set_sys_status(const char *status);
+void read_and_calibrate_voltages();
+#else
+#define set_sys_status(x) ((void)0)
+#endif
+bool is_physical_button_pressed();
+
 
 extern RTC_DATA_ATTR double lati, longi;
 extern RTC_DATA_ATTR double gps_latitude, gps_longitude;
@@ -583,6 +594,7 @@ extern volatile int wakeup_reason_is; // ACTIVE: used by all wakeup logic
 extern volatile int lcdkeypad_start;
 extern int wired;
 extern int temp_count_rf, calib_count_rf, calib_flag;
+extern unsigned long last_nuvoton_power_off_time;
 
 extern char rf_str[10], calib_rf[10], temp_str[16], hum_str[16],
     windSpeedInst_str[16], prevWindSpeedAvg_str[7], windDir_str[16];
@@ -724,7 +736,13 @@ enum UI_FIELD_ID {
   FLD_DELETE_DATA,
   FLD_SD_COPY,
   FLD_BATTERY,
+#if USE_NUVOTON_UI == 1
+  FLD_BATTERY_3V3,
+#endif
   FLD_SOLAR,
+#if USE_NUVOTON_UI == 1
+  FLD_REF_VOLT,
+#endif
   FLD_WIFI_ENABLE,
   FLD_LOG,
   FLD_WIND_DIR,
@@ -735,6 +753,9 @@ enum UI_FIELD_ID {
   FLD_PRESSURE,
   FLD_ALTITUDE,   // #1: Station altitude for MSLP correction (BME only)
   FLD_HTTP_FAILS, // v7.70: Present/Cumulative HTTP failure stats
+#if USE_NUVOTON_UI == 1
+  FLD_SYS_STATUS,
+#endif
   FLD_LCD_OFF,
   FLD_COUNT // Total count
 };

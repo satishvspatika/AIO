@@ -155,7 +155,7 @@ void rtcRead(void *pvParameters) {
     auto_sync_needed = !rtc_daily_sync_done;
     portEXIT_CRITICAL(&rtcTimeMux);
 
-    if (badReads >= 40 || (auto_sync_needed && hr == 11)) {
+    if (badReads >= 10 || (auto_sync_needed && hr == 11)) { // v6.06: reduced from 40 (2min) to 10 (30s) for faster boot RTC sync
       // v5.77: Coordination Guard — Do not sync if sleep is imminent or retry cap reached
       if (sleep_sequence_active) {
         debugln("[RTC] Sleep imminent. Deferring sync.");
@@ -166,7 +166,8 @@ void rtcRead(void *pvParameters) {
         int mode_snap = sync_mode;
         portEXIT_CRITICAL(&syncMux);
         bool gprs_idle = ((mode_snap == eHttpStop || mode_snap == eSMSStop ||
-                           mode_snap == eExceptionHandled) &&
+                           mode_snap == eExceptionHandled ||
+                           mode_snap == eSyncModeInitial) && // v6.06 fix: eSyncModeInitial = GPRS not yet started, safe to sync RTC
                           !health_in_progress && !wifi_active);
         if (gprs_idle) {
           if (badReads >= 40) debugln("[RTC] Too many bad reads — resyncing RTC");
@@ -336,6 +337,9 @@ void parse_and_convert_clbs_response(const char *response, int year1,
   timeinfo.tm_hour = hour1;
   timeinfo.tm_min = minute1;
   timeinfo.tm_sec = seconds1;
+  timeinfo.tm_isdst = 0;
+
+  mktime(&timeinfo); // Normalize structure and calculate tm_wday for accurate day-of-week
 
   // Print the original GMT time
   debugf("Original GMT Time: %s", asctime(&timeinfo));

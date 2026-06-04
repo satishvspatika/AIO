@@ -78,16 +78,35 @@ int calib_initial = 0;
       Serial1.flush();
       delay(5);
   }
-  void NuvotonLCD::noBacklight() {}
+  void NuvotonLCD::backlight() {
+      // HD44780: Display ON, cursor off, blink off (0x08 | D=1 -> 0x0C)
+      Serial1.write(0x0C);
+      Serial1.flush();
+      delay(5);
+  }
+  void NuvotonLCD::noBacklight() {
+      // HD44780: Display OFF — blanks pixels but Nuvoton MCU stays powered
+      // so it can continue scanning keys and wake ESP32 via GPIO27 (ext0)
+      Serial1.write(0x08);
+      Serial1.flush();
+      delay(5);
+  }
 
   char translate_nuvoton_key(char n_key) {
+    // Nuvoton UART output → ESP32 internal key action
+    // Nuvoton '1' (CLR)   → '1' (CLEAR)
+    // Nuvoton '2' (LEFT)  → '4' (LEFT)
+    // Nuvoton '3' (UP)    → '2' (UP)
+    // Nuvoton '4' (DOWN)  → '5' (DOWN)
+    // Nuvoton '5' (RIGHT) → '6' (RIGHT)
+    // Nuvoton '6' (SET)   → '3' (SET)  ← also the GPIO27 wakeup key (KEY_5)
     switch(n_key) {
-      case '1': return '2'; // UP
-      case '2': return '5'; // DOWN
-      case '3': return '4'; // LEFT
-      case '4': return '6'; // RIGHT
-      case '5': return '3'; // SET
-      case '6': return '1'; // CLEAR
+      case '1': return '1'; // CLR   → CLEAR
+      case '2': return '4'; // LEFT  → LEFT
+      case '3': return '2'; // UP    → UP
+      case '4': return '5'; // DOWN  → DOWN
+      case '5': return '6'; // RIGHT → RIGHT
+      case '6': return '3'; // SET   → SET (also wakeup key via GPIO27)
       default: return '0';
     }
   }
@@ -165,6 +184,11 @@ bool isFieldVisible(int fld_id) {
 // Define timer variables
 hw_timer_t *calib_timer = NULL;
 hw_timer_t *lcd_timer = NULL;
+
+uint64_t get_lcd_timeout_val() {
+  bool current_gprs_active = gprs_started || (sync_mode != eSyncModeInitial && sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled);
+  return current_gprs_active ? 300000000ULL : 180000000ULL;
+}
 
 volatile bool timerFlag = false;
 unsigned long calib_start_time = 0;
@@ -342,31 +366,18 @@ void refresh_sensor_data() {
     snprintf(ui_data[FLD_LAST_LOGGED].bottomRow, 17, "%-16s", last_logged);
   }
 
-  // Battery & Solar
+  snprintf(ui_data[FLD_SYS_STATUS].bottomRow, 17, "%-16s", sys_status);
+
+  // Battery, Solar, 3.3V & Zener Ref
   static unsigned long last_bat = 0;
   if (millis() - last_bat > 5000) {
     last_bat = millis();
-    // li_bat ADC reads handled inside get_calibrated_battery_voltage
-    li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
-    snprintf(ui_data[FLD_BATTERY].bottomRow, 17, "%04.1f", li_bat_val);
+    li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC + Zener correction
     bat_val = li_bat_val;
-
-     if (!wifi_active) {
-        long solar_sum_ui = 0;
-        int solar_samples_ui = 0;
-        for (int i = 0; i < 10; i++) {
-           int solar_raw_ui;
-           if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw_ui) == ESP_OK) {
-             solar_sum_ui += solar_raw_ui;
-             solar_samples_ui++;
-           }
-           vTaskDelay(2 / portTICK_PERIOD_MS);
-        }
-        if (solar_samples_ui > 0) {
-          solar_val = ((float)solar_sum_ui / solar_samples_ui / 4096.0) * 3.6 * 7.2;
-          snprintf(ui_data[FLD_SOLAR].bottomRow, 17, "%04.1f", solar_val);
-        }
-     }
+    snprintf(ui_data[FLD_BATTERY].bottomRow, 17, "%0.2f V", li_bat_val);
+    snprintf(ui_data[FLD_SOLAR].bottomRow, 17, "%0.2f V", solar_val);
+    snprintf(ui_data[FLD_BATTERY_3V3].bottomRow, 17, "%0.2f V", bat_3v3_val);
+    snprintf(ui_data[FLD_REF_VOLT].bottomRow, 17, "%0.2f V", ref_volt_val);
   }
 
   // Live fields
@@ -457,7 +468,9 @@ void lcdkeypad(void *pvParameters) {
       portEXIT_CRITICAL(&syncMux);
     } else {
 #if USE_NUVOTON_UI == 1
-      lcd.clear(); // Keep Nuvoton powered to read keys
+      digitalWrite(32, LOW);
+      Serial1.end();
+      last_nuvoton_power_off_time = millis();
 #else
       digitalWrite(32, LOW);
 #endif
@@ -506,11 +519,34 @@ void lcdkeypad(void *pvParameters) {
   for (;;) {
     esp_task_wdt_reset();
 
+    // Dynamic LCD Timeout Extension when GPRS status changes
+    static bool last_gprs_active_state = false;
+    bool current_gprs_active_state = gprs_started || (sync_mode != eSyncModeInitial && sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled);
+    if (lcdkeypad_start == 1 && lcd_timer != NULL) {
+      if (current_gprs_active_state && !last_gprs_active_state) {
+        timerAlarm(lcd_timer, 300000000ULL, false, 0); // extend to 5 mins
+        timerWrite(lcd_timer, 0); // restart count
+        debugln("[UI] GPRS task active - extended LCD timeout to 5 mins.");
+      } else if (!current_gprs_active_state && last_gprs_active_state) {
+        timerAlarm(lcd_timer, 180000000ULL, false, 0); // reset to 3 mins
+        timerWrite(lcd_timer, 0); // restart count
+        debugln("[UI] GPRS task finished - reset LCD timeout to 3 mins.");
+      }
+    }
+    last_gprs_active_state = current_gprs_active_state;
+
     // Phase 7 Fix: Safely execute the deferred LCD power cut with I2C Mutex protection
     if (lcd_power_cut_pending) {
+      debugln("[UI] Deferred LCD power cut pending...");
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
 #if USE_NUVOTON_UI == 1
-        lcd.clear(); // Clear Nuvoton screen, keeping power ON
+        debugln("[UI] Cutting power to Nuvoton on pin 32 (idle)...");
+        lcd.noBacklight();
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+        digitalWrite(32, LOW); // Cut power to Nuvoton
+        Serial1.end();         // End Serial1 to prevent pin leakage
+        last_nuvoton_power_off_time = millis();
+        debugln("[UI] Nuvoton power cut complete.");
 #else
         digitalWrite(32, LOW); // Turn OFF power to LCD (5V) safely
         // Reset the I2C peripheral purely to re-float the pins and avoid diode drops
@@ -531,7 +567,11 @@ void lcdkeypad(void *pvParameters) {
     if (lcdkeypad_start == 0) {
 #if USE_NUVOTON_UI == 1
       char wakeupKey = '\0';
-      if (Serial1.available()) {
+      if (is_physical_button_pressed()) {
+        // User pressed physical button (KEY_5 / EXT0 wakeup)
+        wakeupKey = '5'; 
+        vTaskDelay(200 / portTICK_PERIOD_MS); // Debounce
+      } else if (Serial1.available()) {
         int c = Serial1.read();
         delay(5);
         if (Serial1.available()) {
@@ -626,7 +666,7 @@ void lcdkeypad(void *pvParameters) {
 #endif
 
         if (lcd_timer) {
-          timerAlarm(lcd_timer, 180000000, false, 0); // v5.60: 180s default 
+          timerAlarm(lcd_timer, get_lcd_timeout_val(), false, 0); // Dynamic timeout default
           timerWrite(lcd_timer, 0);
         }
         // cur_fld_no = 0 already handled in wakeup block
@@ -639,7 +679,8 @@ void lcdkeypad(void *pvParameters) {
         delay(100);
         while (Serial1.available()) Serial1.read();
         delay(1500);
-        lcd.clear();
+        lcd.backlight(); // Turn display pixels back ON after wakeup
+        lcd.clear();     // Reset cursor to home (0x01)
         show_now = 1;
 #else
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
@@ -659,7 +700,7 @@ void lcdkeypad(void *pvParameters) {
 #endif
       } else {
         timerWrite(lcd_timer, 0);
-        timerAlarm(lcd_timer, 180000000, false, 0); // v5.60: 180s
+        timerAlarm(lcd_timer, get_lcd_timeout_val(), false, 0); // Dynamic timeout
       }
       wakeup_reason_is = timer;
     }
@@ -768,7 +809,7 @@ void lcdkeypad(void *pvParameters) {
         last_key_time = millis();
         if (lcd_timer) {
           timerWrite(lcd_timer, 0);
-          timerAlarm(lcd_timer, 180000000, false, 0);
+          timerAlarm(lcd_timer, get_lcd_timeout_val(), false, 0);
         }
 
         int i = (int)key - 48;
@@ -860,9 +901,15 @@ void lcdkeypad(void *pvParameters) {
             show_now = 1;
 #endif
           } else if (cur_fld_no == FLD_LCD_OFF) {
+            debugln("[UI] TURN OFF LCD selected and SET pressed. Cutting Nuvoton power...");
             lcdkeypad_start = 0; 
 #if USE_NUVOTON_UI == 1
-            lcd.clear(); // Keep Nuvoton powered
+            lcd.noBacklight();
+            vTaskDelay(200 / portTICK_PERIOD_MS);
+            digitalWrite(32, LOW); // Cut power to Nuvoton
+            Serial1.end();         // End Serial1 to prevent pin leakage
+            last_nuvoton_power_off_time = millis();
+            debugln("[UI] Nuvoton power cut complete.");
 #else
             digitalWrite(32, LOW);
 #endif

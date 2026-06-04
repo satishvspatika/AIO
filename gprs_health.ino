@@ -209,6 +209,7 @@ full_discovery:
 }
 
 void get_registration() {
+  set_sys_status("GPRS REGISTER");
   esp_task_wdt_reset();
   debugln();
   debugln("************************");
@@ -642,10 +643,12 @@ void get_registration() {
     if (time_taken > diag_reg_worst)
       diag_reg_worst = time_taken;
     gprs_mode = eGprsSignalOk;
+    set_sys_status("GPRS REG OK");
     debugln("Registration Successful.");
     // v5.86: PDP Breather — give the modem 800ms to settle its IP stack after registration
     vTaskDelay(800 / portTICK_PERIOD_MS);
   } else {
+    set_sys_status("GPRS REG FAIL");
     diag_gprs_fails++;
     diag_consecutive_reg_fails++;
     gprs_mode = eGprsSignalForStoringOnly;

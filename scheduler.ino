@@ -7,15 +7,15 @@ void scheduler(void *pvParameters) {
   bool curFileExists = false;
   bool fs_locked = false; // v5.70: Mutex state tracker (C-01 Fix)
 
-  //    li_bat,li_bat_val;
-  // Battery Sense
-  // li_bat ADC reads are handled fully inside get_calibrated_battery_voltage()
-  li_bat_val =
-      get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
-  float hum_output = 0.0; // v5.79: Global function scope for goto safety
-
+#if USE_NUVOTON_UI == 1
+  set_sys_status("SCHEDULER INIT");
+  li_bat_val = get_calibrated_battery_voltage();
+  bat_val = li_bat_val;
+  snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
+  snprintf(solar_sense, sizeof(solar_sense), "%04.1f", solar_val);
+#else
+  li_bat_val = get_calibrated_battery_voltage();
   if (!wifi_active && !__atomic_load_n(&gprs_started, __ATOMIC_ACQUIRE)) {
-    // v5.93: Multi-sample averaging for Solar ADC to prevent transient sags
     long solar_sum = 0;
     int solar_samples = 0;
     for (int i = 0; i < 10; i++) {
@@ -24,19 +24,17 @@ void scheduler(void *pvParameters) {
             solar_sum += solar_raw;
             solar_samples++;
         }
-        vTaskDelay(5 / portTICK_PERIOD_MS); // Noise rejection breather
+        vTaskDelay(5 / portTICK_PERIOD_MS);
     }
     if (solar_samples > 0) {
       solar = solar_sum / solar_samples;
-      solar_val = (solar / 4096.0) * 3.6 * 7.2; // Matches AIO9_3.0 formula
+      solar_val = (solar / 4096.0) * 3.6 * 7.2;
     }
   }
-  // Else: keep existing solar_val (captured before WiFi enable)
-
-  bat_val = li_bat_val; // For HTTP payload
-
+  bat_val = li_bat_val;
   snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
   snprintf(solar_sense, sizeof(solar_sense), "%04.1f", solar_val);
+#endif
   debug("[PWR] Battery: ");
   debug(li_bat_val);
   debug("V | Solar: ");
@@ -234,7 +232,7 @@ void scheduler(void *pvParameters) {
         for (int i = 0; i < 100; i++) {
           // Check for button press (LOW) OR Task Active OR wakeup_reason became
           // ext0 (from ISR)
-          if (digitalRead(27) == LOW || lcdkeypad_start == 1 ||
+          if (is_physical_button_pressed() || lcdkeypad_start == 1 ||
               wakeup_reason_is == ext0) {
             ui_requested = true;
             wakeup_reason_is =
@@ -272,6 +270,12 @@ void scheduler(void *pvParameters) {
       // every record after the first boot would be stale. Re-reading here
       // ensures each 15-min HTTP payload carries the actual voltage right now.
       // li_bat ADC reads handled inside get_calibrated_battery_voltage
+#if USE_NUVOTON_UI == 1
+      li_bat_val = get_calibrated_battery_voltage();
+      bat_val = li_bat_val;
+      snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
+      snprintf(solar_sense, sizeof(solar_sense), "%04.1f", solar_val);
+#else
       li_bat_val =
           get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
       bat_val = li_bat_val;
@@ -294,6 +298,7 @@ void scheduler(void *pvParameters) {
           snprintf(solar_sense, sizeof(solar_sense), "%04.1f", solar_val);
         }
       }
+#endif
 
 #if (SYSTEM == 0) || (SYSTEM == 2)
       // 32-bit RF Accumulation (Handles 16-bit ULP wrap without reset)
@@ -470,9 +475,9 @@ void scheduler(void *pvParameters) {
 
           // Poll for UI Request (EXT0) every 100ms
           for (int i = 0; i < 10; i++) {
-            if (digitalRead(27) == LOW) {
+            if (is_physical_button_pressed()) {
               vTaskDelay(20 / portTICK_PERIOD_MS); // v5.85 P13: Reduced from 200ms for responsiveness
-              if (digitalRead(27) == LOW) {
+              if (is_physical_button_pressed()) {
                 wakeup_reason_is = ext0; // Trigger LCD task
               }
             }

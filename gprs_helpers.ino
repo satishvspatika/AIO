@@ -736,12 +736,18 @@ void start_gprs() {
   // v5.82 Surgical Hardening: Retry with Hard Reset if first boot fails
   for (int attempt = 0; attempt < 2; attempt++) {
     // Power ON GPRS
+    set_sys_status("GPRS POWERING");
     digitalWrite(26, HIGH);               // Power on GPRS module
     // v5.83 Optimization: 3s on first cold boot, 500ms on retry (caps already charged)
     vTaskDelay((attempt == 0 ? 3000 : 500) / portTICK_PERIOD_MS); 
     
-    if (attempt > 0) debugln("[GPRS] RETRY: Hardware Resetting Modem (Attempt 2)...");
-    else debugln("[GPRS] Waiting for active UART...");
+    if (attempt > 0) {
+      set_sys_status("GPRS HARD RESET");
+      debugln("[GPRS] RETRY: Hardware Resetting Modem (Attempt 2)...");
+    } else {
+      set_sys_status("UART POLLING");
+      debugln("[GPRS] Waiting for active UART...");
+    }
 
     bool modem_ready = false;
     for (int i = 0; i < 15; i++) {
@@ -768,12 +774,14 @@ void start_gprs() {
     }
 
     // PROACTIVE SIM POLLING
+    set_sys_status("SIM POLLING");
     debugln("[GPRS] Polling for SIM (CPIN)...");
     for (int i = 0; i < 10; i++) {
       esp_task_wdt_reset(); // v5.83: Prevent WDT trigger during long recovery windows
       SerialSIT.println("AT+CPIN?");
       if (waitForResponse("+CPIN: READY", 1000)) {
         sim_ready = true;
+        set_sys_status("SIM READY");
         // Note: Actual loop duration is approx (i+1)*3000ms including delays
         debugf1("[GPRS] SIM ready in %d ms!\n", (i+1)*3000); 
         break;

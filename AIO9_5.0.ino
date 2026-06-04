@@ -102,6 +102,19 @@ char battery[10] = "0.0";
 char solar_sense[10] = "0.0";
 float solar_val = 0.0, solar = 0.0;
 float li_bat = 0.0, li_bat_val = 0.0;
+#if USE_NUVOTON_UI == 1
+float bat_3v3_val = 0.0;
+float ref_volt_val = 0.0;
+char sys_status[17] = "BOOTING";
+RTC_DATA_ATTR float last_cal_factor = 1.0;
+
+void set_sys_status(const char *status) {
+  snprintf(sys_status, sizeof(sys_status), "%-16s", status);
+#if DEBUG == 1
+  Serial.printf("[STATUS] %s\n", status);
+#endif
+}
+#endif
 char httpPostRequest[256] = "";
 char httpContent[12] = "";
 char append_text[160] = "";
@@ -366,23 +379,32 @@ ui_data_t ui_data[FLD_COUNT] = {
     {15, "SEND LAT/LONG", "YES ?", eDisplayOnly},    // 9
     {28, "SEND HEALTH", "YES ?", eDisplayOnly},      // 10
     {7, "RF CALIBRATION", "Yes?", eLive},            // 11
-    {25, "RF RESOLUTION", "0.50", eNumeric},         // 12
+    {25, "RF RESOLUTION", "0.25", eNumeric},         // 12
     {11, "DELETE DATA?", "YES?", eNumeric},          // 13
     {12, "COPY TO SDCARD?", "YES?", eDisplayOnly},   // 14
-    {13, "BATTERY VOLTAGE", "0", eLive},             // 15
-    {14, "SOLAR VOLTAGE", "0", eLive},               // 16
-    {23, "ENABLE WIFI", "PRESS SET", eDisplayOnly},  // 17
-    {21, "LOG (DT TM)", "20260205 08:30", eNumeric}, // 18
-    {16, "WIND DIRECTION", "NA", eLive},             // 19
-    {17, "INST WIND SPEED", "NA", eLive},            // 20
-    {18, "AVG WIND SPEED", "NA", eLive},             // 21
-    {19, "TEMPERATURE", "NA", eLive},                // 22
-    {20, "HUMIDITY", "NA", eLive},                   // 23
-    {24, "PRESSURE", "NA", eLive},                   // 24
-    {26, "STATION ALT", "900", eNumeric},            // 25 BME only
+    {13, "GPRS POWER", "0", eLive},                  // 15
+#if USE_NUVOTON_UI == 1
+    {29, "MCU POWER", "0", eLive},                   // 16
+#endif
+    {14, "SOLAR POWER", "0", eLive},                 // 17
+#if USE_NUVOTON_UI == 1
+    {30, "REF VOLT", "0", eLive},                    // 18
+#endif
+    {23, "ENABLE WIFI", "PRESS SET", eDisplayOnly},  // 19
+    {21, "LOG (DT TM)", "20260205 08:30", eNumeric}, // 20
+    {16, "WIND DIRECTION", "NA", eLive},             // 21
+    {17, "INST WIND SPEED", "NA", eLive},            // 22
+    {18, "AVG WIND SPEED", "NA", eLive},             // 23
+    {19, "TEMPERATURE", "NA", eLive},                // 24
+    {20, "HUMIDITY", "NA", eLive},                   // 25
+    {24, "PRESSURE", "NA", eLive},                   // 27
+    {26, "STATION ALT", "900", eNumeric},            // 28 BME only
     {27, "HTTP FAIL STATS", "                ",
-     eLive},                                         // 26 v7.70: HTTP fail counters
-    {22, "TURN OFF LCD", "YES?", eDisplayOnly}       // 27
+     eLive},                                         // 29 v7.70: HTTP fail counters
+#if USE_NUVOTON_UI == 1
+    {31, "SYS STATUS", "BOOTING", eDisplayOnly},     // 30
+#endif
+    {22, "TURN OFF LCD", "YES?", eDisplayOnly}       // 31
 };
 
 #if SYSTEM == 0
@@ -421,6 +443,8 @@ volatile int wakeup_reason_is = 0;
 volatile int lcdkeypad_start = 0;
 // --- End Volatile Definitions ---
 
+unsigned long last_nuvoton_power_off_time = 0;
+
 // --- System Configuration & Counters (v5.65 ODR Fix) ---
 int test_health_every_slot = TEST_HEALTH_DEFAULT;
 float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
@@ -446,6 +470,7 @@ char pres_str[20] = "NA";
 // --- End System Definitions ---
 
 void setup() {
+  set_sys_status("BOOTING");
   // v5.77 Hardened [UI-WAKE]: Instant LCD Activation
   // If we woke up by EXT0 (User Button), flip the 5V rail ON immediately
   // before the 5s safety delay to prevent the 'Double-Press' requirement.
@@ -1493,6 +1518,7 @@ void setup() {
   // Counting on Pin 27. ULP handles counting.
   debugln("ULP Counting Enabled (attachInterrupt 27 Disabled).");
   delay(1000);
+  set_sys_status("IDLE");
 
   // Should be called only after getting the correct RF count from SPIFF. If
   // no RF is present, make rf_count.val = 0 and call this ()
@@ -1518,6 +1544,7 @@ void progressCallBack(size_t currSize, size_t totalSize) {
 }
 
 void initialize_hw() {
+  set_sys_status("HW INIT");
   RESET_REASON rr = rtc_get_reset_reason(0);
   if (rr == DEEPSLEEP_RESET) {
       vTaskDelay(500 / portTICK_PERIOD_MS); // Warm wakeup: 500ms sufficient
@@ -1527,13 +1554,16 @@ void initialize_hw() {
 
   // Setup Legacy ADC (To prevent driver_ng conflicts in Core 3.x)
   adc1_config_width(ADC_WIDTH_BIT_12);
-  adc1_config_channel_atten(ADC1_CHANNEL_5,
-                            ADC_ATTEN_DB_11); // GPIO 33 (Battery)
-  adc2_config_channel_atten(ADC2_CHANNEL_8,
-                            ADC_ATTEN_DB_11); // GPIO 25 (Solar)
-
-  // v5.66: Read Solar ADC immediately before modem power-on to prevent RF/UART contention
-  // v5.98: Consistently use 10-sample averaging for Solar at startup
+  adc1_config_channel_atten(ADC1_CHANNEL_5, ADC_ATTEN_DB_11); // GPIO 33 (3.7V Battery)
+#if USE_NUVOTON_UI == 1
+  adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_11); // GPIO 36 (3.3V SENSOR_VP)
+  adc2_config_channel_atten(ADC2_CHANNEL_8, ADC_ATTEN_DB_11); // GPIO 25 (Solar)
+  adc2_config_channel_atten(ADC2_CHANNEL_4, ADC_ATTEN_DB_11); // GPIO 13 (2.7V Zener Ref)
+  adc2_config_channel_atten(ADC2_CHANNEL_7, ADC_ATTEN_DB_11); // GPIO 27 (KEY_5 button analog check)
+  read_and_calibrate_voltages();
+#else
+  adc2_config_channel_atten(ADC2_CHANNEL_8, ADC_ATTEN_DB_11); // GPIO 25 (Solar)
+  // legacy solar startup read
   long solar_sum_init = 0;
   int solar_samples_init = 0;
   for (int i = 0; i < 10; i++) {
@@ -1548,6 +1578,7 @@ void initialize_hw() {
     solar = (float)solar_sum_init / solar_samples_init;
     solar_val = (solar / 4096.0) * 3.6 * 7.2;
   }
+#endif
 
 #if DEBUG == 1
   Serial.begin(115200);

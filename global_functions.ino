@@ -22,6 +22,7 @@ void trim_whitespace(char *str) {
 }
 
 void start_deep_sleep() {
+    set_sys_status("SLEEPING");
     sleep_sequence_active = true; // [v5.77 Signal] Block background syncs
     // v5.75: Self-Healing Maintenance — Reset crash guard on 'Golden Path' success.
     // If we've made it this far, the system has successfully completed its duties.
@@ -121,9 +122,11 @@ void start_deep_sleep() {
       // Shut down I2C bus BEFORE cutting LCD power
       // Prevents PCF8574 ESD diodes from corrupting in-flight RTC/HDC transactions
       Wire.end();                  // Release SDA/SCL before PCF8574 loses power
-      digitalWrite(32, LOW);       // Now safe to cut 5V — bus is idle
-      
-      // Hardware Hold: Capture the LOW state for the duration of the sleep
+#if USE_NUVOTON_UI == 1
+      Serial1.end();               // Release UART pins to prevent back-powering Nuvoton
+#endif
+      digitalWrite(32, LOW);       // Cut power to Nuvoton / LCD during deep sleep
+      // Hardware Hold: Capture the state for the duration of the sleep
       gpio_hold_en(GPIO_NUM_32);
       gpio_hold_en(GPIO_NUM_26); // Modem was cut in graceful_modem_shutdown()
       gpio_hold_en(GPIO_NUM_16); // v5.70: Fix H-02 ESD diode bleed through UART pins
@@ -141,7 +144,7 @@ void start_deep_sleep() {
       live_sec = current_sec;
       portEXIT_CRITICAL(&rtcTimeMux);
 
-      digitalWrite(32, LOW);       // Fallback cut if mutex totally hung
+      digitalWrite(32, LOW);       // Fallback cut if mutex totally hung / Path B power down
       gpio_hold_en(GPIO_NUM_32);
       gpio_hold_en(GPIO_NUM_26);
       gpio_hold_en(GPIO_NUM_16);
@@ -1428,23 +1431,90 @@ int get_total_backlogs(bool force = false) {
   return total;
 }
 
-float get_calibrated_battery_voltage() {
-  static esp_adc_cal_characteristics_t adc_chars;
+void read_and_calibrate_voltages() {
+  static esp_adc_cal_characteristics_t adc_chars_unit1;
+  static esp_adc_cal_characteristics_t adc_chars_unit2;
   static bool initialized = false;
   if (!initialized) {
-    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars);
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars_unit1);
+    esp_adc_cal_characterize(ADC_UNIT_2, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars_unit2);
     initialized = true;
   }
-  
-  // v5.98: Multi-sample averaging (10 samples) to prevent noise
-  long sum = 0;
+
+  // 1. Read 2.7V Zener reference on GPIO13 (ADC2_CHANNEL_4)
+  long ref_sum = 0;
+  int ref_samples = 0;
   for (int i = 0; i < 10; i++) {
-    sum += adc1_get_raw(ADC1_CHANNEL_5);
-    vTaskDelay(2 / portTICK_PERIOD_MS); // v5.98: Non-blocking yield for FreeRTOS
+    int raw;
+    if (adc2_get_raw(ADC2_CHANNEL_4, ADC_WIDTH_BIT_12, &raw) == ESP_OK) {
+      ref_sum += raw;
+      ref_samples++;
+    }
+    vTaskDelay(2 / portTICK_PERIOD_MS);
   }
-  uint32_t avg_raw = sum / 10;
-  uint32_t voltage_mv = esp_adc_cal_raw_to_voltage(avg_raw, &adc_chars);
-  return ((float)voltage_mv / 1000.0) * (840.0 / 620.0);
+  
+  float ref_volt_measured = 0.0;
+  if (ref_samples > 0) {
+    uint32_t avg_ref_raw = ref_sum / ref_samples;
+    uint32_t ref_mv = esp_adc_cal_raw_to_voltage(avg_ref_raw, &adc_chars_unit2);
+    ref_volt_measured = (float)ref_mv / 1000.0;
+  }
+
+  // If GPRS is powered on, the Zener diode provides a stable 2.7V reference.
+  // We calibrate the ADC using this reference.
+  if (ref_volt_measured > 1.5) {
+    last_cal_factor = 2.7 / ref_volt_measured;
+  }
+
+  // Update REF VOLT value (apply calibration factor to the raw/measured reading)
+  ref_volt_val = ref_volt_measured * last_cal_factor;
+
+  // 2. Read 3.7V Battery on GPIO33 (ADC1_CHANNEL_5)
+  long bat_sum = 0;
+  for (int i = 0; i < 10; i++) {
+    bat_sum += adc1_get_raw(ADC1_CHANNEL_5);
+    vTaskDelay(2 / portTICK_PERIOD_MS);
+  }
+  uint32_t avg_bat_raw = bat_sum / 10;
+  uint32_t bat_mv = esp_adc_cal_raw_to_voltage(avg_bat_raw, &adc_chars_unit1);
+  float bat_pin_volt = (float)bat_mv / 1000.0;
+  li_bat_val = bat_pin_volt * (840.0 / 620.0) * last_cal_factor;
+  li_bat = li_bat_val;
+
+  // 3. Read 3.3V Rail on GPIO36 (ADC1_CHANNEL_0)
+  long v33_sum = 0;
+  for (int i = 0; i < 10; i++) {
+    v33_sum += adc1_get_raw(ADC1_CHANNEL_0);
+    vTaskDelay(2 / portTICK_PERIOD_MS);
+  }
+  uint32_t avg_v33_raw = v33_sum / 10;
+  uint32_t v33_mv = esp_adc_cal_raw_to_voltage(avg_v33_raw, &adc_chars_unit1);
+  float v33_pin_volt = (float)v33_mv / 1000.0;
+  bat_3v3_val = v33_pin_volt * (840.0 / 620.0) * last_cal_factor;
+
+  // 4. Read Solar on GPIO25 (ADC2_CHANNEL_8)
+  if (!wifi_active) {
+    long solar_sum = 0;
+    int solar_samples = 0;
+    for (int i = 0; i < 10; i++) {
+      int raw;
+      if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &raw) == ESP_OK) {
+        solar_sum += raw;
+        solar_samples++;
+      }
+      vTaskDelay(2 / portTICK_PERIOD_MS);
+    }
+    if (solar_samples > 0) {
+      float solar_pin_volt = (float)esp_adc_cal_raw_to_voltage(solar_sum / solar_samples, &adc_chars_unit2) / 1000.0;
+      solar_val = solar_pin_volt * 7.2 * last_cal_factor;
+      solar = solar_sum / solar_samples;
+    }
+  }
+}
+
+float get_calibrated_battery_voltage() {
+  read_and_calibrate_voltages();
+  return li_bat_val;
 }
 
 void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
@@ -1539,4 +1609,39 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
   }
 
   if (!alreadyLocked) xSemaphoreGive(fsMutex);
+}
+
+bool is_physical_button_pressed() {
+#if USE_NUVOTON_UI == 1
+  if (millis() - last_nuvoton_power_off_time < 1000) {
+    return false; // ignore transient spikes during Nuvoton power discharge
+  }
+  // When Nuvoton is unpowered, its ESD diode clamps GPIO27 to ~0.7V.
+  // The ESP32 12-bit ADC reads 0V as 0 and 3.3V as 4095.
+  // 0.7V translates to around 868.
+  // When the physical button is pressed, it connects GPIO27 directly to GND (0V / ADC < 200).
+  // We MUST use the legacy API (adc2_get_raw) to avoid driver_ng conflicts in Core 3.x.
+  int val = 4095;
+  if (!wifi_active) {
+    rtc_gpio_init(GPIO_NUM_27);
+    rtc_gpio_set_direction(GPIO_NUM_27, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en(GPIO_NUM_27);
+    rtc_gpio_pulldown_dis(GPIO_NUM_27);
+
+    if (adc2_get_raw(ADC2_CHANNEL_7, ADC_WIDTH_BIT_12, &val) != ESP_OK) {
+      val = 4095; // default to unpressed if read failed
+    }
+
+    rtc_gpio_deinit(GPIO_NUM_27);
+    pinMode(27, INPUT_PULLUP);
+  } else {
+    // If WiFi is active, ADC2 cannot be used. But since WiFi is active,
+    // Nuvoton is already powered ON and the screen is active, so we fallback
+    // to digitalRead to avoid conflicts.
+    val = (digitalRead(27) == LOW) ? 0 : 4095;
+  }
+  return (val < 200);
+#else
+  return (digitalRead(27) == LOW);
+#endif
 }

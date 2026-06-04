@@ -86,3 +86,24 @@ During testing, the user noticed that pressing UP/DOWN while editing a field (li
 ### 2. Cursor Commands Implemented
 - **Issue:** The `NuvotonLCD` class had empty placeholder functions for `blink()` and `cursor()`, meaning the user had no visual indicator of their cursor position while editing.
 - **Resolution:** Implemented `blink()`, `noBlink()`, `cursor()`, and `noCursor()` inside the `NuvotonLCD` wrapper using standard HD44780 display control bytes (`0x0F`, `0x0C`, `0x0E`). The MG51 firmware successfully passes these bytes through, restoring full cursor visibility.
+
+## Phase 6: Proper Display Sleep/Wake + Deep-Sleep Power Policy (Current)
+
+This phase implements correct LCD blanking/wake using HD44780 display control commands and ensures the Nuvoton MG51 remains powered during ESP32 deep sleep so the keypad can wake the system.
+
+### Architecture: Wakeup via GPIO27 (ext0)
+- The Nuvoton MG51 is wired to **ESP32 GPIO27** via a dedicated INT output pin.
+- When a key is pressed, the MG51 pulls its INT pin LOW, triggering the ESP32 `ext0` wakeup.
+- The ESP32 was already configured: `esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW)` — **no change needed**.
+- This means the Nuvoton must **always stay powered** (5V via GPIO32 HIGH) so it can scan keys.
+
+### 1. `lcdkeypad.ino`
+- **Fixed:** Implemented `NuvotonLCD::noBacklight()` to transmit HD44780 Display OFF command (`0x08`) via UART. Previously it was an empty no-op, so the display never turned off.
+- **Added:** Implemented `NuvotonLCD::backlight()` to transmit HD44780 Display ON command (`0x0C`) via UART. This was declared but never implemented — was an unresolved linker issue if called from a Nuvoton block.
+- **Modified:** `lcd_power_cut_pending` handler: changed `lcd.clear()` to `lcd.noBacklight()` so the display pixels blank properly when the timer fires.
+- **Modified:** `FLD_LCD_OFF` handler: changed `lcd.clear()` to `lcd.noBacklight()` for consistent screen-off behavior.
+- **Modified:** LCD wake-up block: added `lcd.backlight()` before `lcd.clear()` to explicitly restore display after ESP32 wakes from sleep.
+
+### 2. `global_functions.ino`
+- **Modified:** In `start_deep_sleep()`, the `digitalWrite(32, LOW)` + `gpio_hold_en(GPIO_NUM_32)` calls are now gated with `#if USE_NUVOTON_UI == 1`. When Nuvoton is active, GPIO32 is held **HIGH** during deep sleep so the MG51 stays powered for key scanning. When Nuvoton is not active (`USE_NUVOTON_UI == 0`), the original `LOW` behavior is preserved.
+- This applies to both the normal (mutex-taken) path and the fallback (mutex-timeout) path.
