@@ -934,6 +934,7 @@ void process_sms(char msg_no) {
 }
 
 void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
+  set_sys_status("SENDING SMS");
   if (!alreadyLocked) {
     if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
       debugln("[SMS] FAILED: Modem Busy. Deferring Status request.");
@@ -1053,6 +1054,7 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
 }
 
 void get_gps_coordinates() {
+  set_sys_status("GETTING GPS");
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
     debugln("[GPS] Error: Modem Mutex Timeout - skipping GPS request");
     return;
@@ -1117,6 +1119,7 @@ void get_gps_coordinates() {
 }
 
 void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
+  set_sys_status("GETTING GPS");
   if (!alreadyLocked) {
     if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
       debugln("[GPS] FAILED: Modem Busy. Deferring GPS request.");
@@ -1225,6 +1228,7 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
 }
 
 bool send_health_report(bool useJitter, bool alreadyLocked) {
+  set_sys_status("SENDING HEALTH");
 #if ENABLE_HEALTH_REPORT == 1
   if (schedulerBusy) {
     debugln("[Health] Deferring: scheduler mid-write.");

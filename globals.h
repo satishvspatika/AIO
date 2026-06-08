@@ -372,7 +372,10 @@ void read_and_calibrate_voltages();
 #else
 #define set_sys_status(x) ((void)0)
 #endif
+int get_total_backlogs(bool force = false);
+int countStored(const char *fName);
 bool is_physical_button_pressed();
+
 
 
 extern RTC_DATA_ATTR double lati, longi;
@@ -740,9 +743,6 @@ enum UI_FIELD_ID {
   FLD_BATTERY_3V3,
 #endif
   FLD_SOLAR,
-#if USE_NUVOTON_UI == 1
-  FLD_REF_VOLT,
-#endif
   FLD_WIFI_ENABLE,
   FLD_LOG,
   FLD_WIND_DIR,

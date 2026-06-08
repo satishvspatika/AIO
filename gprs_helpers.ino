@@ -770,7 +770,7 @@ void start_gprs() {
     if (modem_ready) {
       SerialSIT.println("AT+CMEE=2"); // v5.82 Diagnostic: Enable verbose error messages
       waitForResponse("OK", 500);
-      vTaskDelay(500 / portTICK_PERIOD_MS); // Brief settle
+      vTaskDelay(3000 / portTICK_PERIOD_MS); // v7.88: Allow SIM reader to settle before polling (reduced CME errors)
     }
 
     // PROACTIVE SIM POLLING
@@ -932,9 +932,13 @@ void graceful_modem_shutdown() {
   gprs_started = false;
   gprs_mode = eGprsSleepMode; // Prevent Ghost Restart during sleep entry
   portEXIT_CRITICAL(&syncMux);
+  if (!sleep_sequence_active) {
+    set_sys_status("IDLE");
+  }
 }
 
 void send_sms() {
+  set_sys_status("CHECKING SMS");
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
   vTaskDelay(500 /
              portTICK_PERIOD_MS); // TRG8-3.0.5g reduced from 1min to 500ms

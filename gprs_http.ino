@@ -799,6 +799,7 @@ void send_http_data() {
     diag_modem_mutex_fails++;
     return;
   }
+  set_sys_status("SENDING HTTP");
 
   // Clear any stale TCP errors from previous runs to prevent false-positive
   // network nuke loops
@@ -1266,6 +1267,9 @@ void send_http_data() {
 
         // Set the data mode
         data_mode = eUnsentData;
+        char bk_buf[17];
+        snprintf(bk_buf, 17, "HTTP BKLOG(%d/%d)", backlog_processed_count, total_unsent);
+        set_sys_status(bk_buf);
         prepare_data_and_send();
 
         // v5.82 LTS: Atomic update MUST happen after the send attempt.

@@ -1381,7 +1381,7 @@ void reset_all_diagnostics() {
   debugln("[SYS] Diagnostics cleaned.");
 }
 
-int get_total_backlogs(bool force = false) {
+int get_total_backlogs(bool force) {
   static unsigned long last_backlog_check = 0;
   // If we checked in the last 10 seconds, return the cached value
   if (!force && last_backlog_check > 0 && (millis() - last_backlog_check < 10000)) {

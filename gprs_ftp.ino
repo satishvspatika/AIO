@@ -1,6 +1,7 @@
 #include "globals.h"
 
 void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
+  set_sys_status("FTP UPLOAD");
   int modem_ftp_handle = 0; // Turner-Fix: Persistent handle scope to prevent leak (C-04)
   int saved_send_daily = send_daily; // Backup to prevent credential-loss on retry
   bool cid9_bounced = false; // Turner-Fix

@@ -387,9 +387,6 @@ ui_data_t ui_data[FLD_COUNT] = {
     {29, "MCU POWER", "0", eLive},                   // 16
 #endif
     {14, "SOLAR POWER", "0", eLive},                 // 17
-#if USE_NUVOTON_UI == 1
-    {30, "REF VOLT", "0", eLive},                    // 18
-#endif
     {23, "ENABLE WIFI", "PRESS SET", eDisplayOnly},  // 19
     {21, "LOG (DT TM)", "20260205 08:30", eNumeric}, // 20
     {16, "WIND DIRECTION", "NA", eLive},             // 21
@@ -592,6 +589,7 @@ void setup() {
       total_wind_pulses_32 = 0;
       last_raw_wind_count = 0;  // P3 fix v5.65: Was a duplicate total_wind_pulses_32=0 — missing reset
       total_rf_pulses_32 = 0;
+      last_raw_rf_count = 0;    // v6.08: Reset RF anchor to match rf_count.val = 0
       rtc_daily_cum_rf = 0.0;
       last_valid_wd = 0;
 
@@ -1915,14 +1913,31 @@ void loop() {
   // wakeups.
   bool safe_to_sleep_sync = false;
   
-  int snap_min, snap_sec;
+  int snap_min, snap_sec, snap_hr;
   portENTER_CRITICAL(&rtcTimeMux);
   snap_min = current_min;
   snap_sec = current_sec;
+  snap_hr  = current_hour;
   portEXIT_CRITICAL(&rtcTimeMux);
 
   int seconds_to_next_15 = (15 - (snap_min % 15)) * 60 - snap_sec;
-  bool too_close_to_slot = (seconds_to_next_15 < 45); 
+  bool too_close_to_slot = (seconds_to_next_15 < 45);
+
+  // v6.08: Unprocessed-Slot Guard
+  // If the scheduler just finished processing slot N (duplicate or otherwise)
+  // but the RTC has now advanced to slot N+1 that hasn't been logged yet,
+  // block sleep so the scheduler loop can run for the new slot.
+  // Scenario: boot at xx:58, process sampleNo=12 (dup), RTC ticks to xx:00 
+  // (sampleNo=13), loop() wrongly sleeps for 15 min → sample 13 missed.
+  {
+    int loop_slot_total = (snap_hr * 60 + (snap_min / 15) * 15);
+    int loop_sample_idx = (snap_hr * 4 + snap_min / 15 + (60 + 1)) % 96;
+    if (loop_sample_idx != last_processed_sample_idx && !too_close_to_slot) {
+      too_close_to_slot = true; // New unprocessed slot — keep awake for scheduler
+      debugf("[PWR] Unprocessed slot %d detected (last=%d). Holding awake for scheduler.\n",
+             loop_sample_idx, last_processed_sample_idx);
+    }
+  }
 
   portENTER_CRITICAL(&syncMux);
   safe_to_sleep_sync = ((sync_mode == eHttpStop) || (sync_mode == eSMSStop) || (sync_mode == eExceptionHandled)) && !too_close_to_slot;

@@ -194,6 +194,7 @@ void rtcRead(void *pvParameters) {
 }
 
 void resync_time() {
+  set_sys_status("RESYNC TIME");
   int response_no;
   int tmp, tmp3;
   char tmp2[16];

@@ -366,18 +366,94 @@ void refresh_sensor_data() {
     snprintf(ui_data[FLD_LAST_LOGGED].bottomRow, 17, "%-16s", last_logged);
   }
 
+  // Dynamic SYS STATUS Top Row Issue reporting with marquee scrolling for issues
+  const char* active_issues[16];
+  int issue_count = 0;
+  char http_err_buf[17] = "";
+
+  if (low_bat_mode_active) active_issues[issue_count++] = "LOW BAT MODE";
+  if (!diag_rtc_battery_ok) active_issues[issue_count++] = "RTC FAULT";
+  if (bat_3v3_val > 0.1 && bat_3v3_val < 3.0) active_issues[issue_count++] = "MCU BATTERY LOW";
+  if (li_bat_val > 0.1 && li_bat_val < 3.6) active_issues[issue_count++] = "GPRS BATTERY LOW";
+  
+  if (solar_val < 2.0) {
+    active_issues[issue_count++] = "SOL DISCONNECT";
+  } else if (solar_val < 11.0) {
+    active_issues[issue_count++] = "SOLAR LOW";
+  }
+
+  bool is_charging = (solar_val > li_bat_val + 0.3f && solar_val >= 4.0f);
+  if (is_charging) {
+    active_issues[issue_count++] = "BAT CHRG";
+  } else {
+    active_issues[issue_count++] = "BAT NOT CHRG";
+  }
+
+  if (diag_consecutive_sim_fails > 0 || strcmp(reg_status, "REG FAIL") == 0) active_issues[issue_count++] = "SIM ERROR";
+  if (diag_consecutive_reg_fails > 0) active_issues[issue_count++] = "REG FAIL";
+  if (diag_gprs_fails > 0) active_issues[issue_count++] = "GPRS FAIL";
+  if (sd_card_ok == 0) active_issues[issue_count++] = "SD CARD ERROR";
+  if (strcmp(diag_cdm_status, "FAIL") == 0) active_issues[issue_count++] = "CDM FAULT";
+  if (diag_rain_jump) active_issues[issue_count++] = "ESJ (RAIN JUMP)";
+  
+  if (SYSTEM != 0) {
+    if (diag_temp_erv || diag_hum_erv || diag_ws_erv) active_issues[issue_count++] = "ERV (RANGE ERR)";
+    if (diag_temp_erz || diag_hum_erz) active_issues[issue_count++] = "ERZ (ZERO ERR)";
+    if (diag_temp_cv || diag_hum_cv || diag_ws_cv) active_issues[issue_count++] = "CV (FREEZE ERR)";
+    if (bmeType == BME_UNKNOWN && hdcType == HDC_UNKNOWN) active_issues[issue_count++] = "SENSOR ERROR";
+  }
+
+  if (diag_http_present_fails > 0) {
+    if (strlen(diag_http_fail_reason) > 0 && strcmp(diag_http_fail_reason, "NONE") != 0) {
+      snprintf(http_err_buf, 17, "HTTP ERR: %s", diag_http_fail_reason);
+    } else {
+      snprintf(http_err_buf, 17, "HTTP FAIL: %d", diag_http_present_fails);
+    }
+    active_issues[issue_count++] = http_err_buf;
+  }
+
+  char issue_msg[17] = "SYS STATUS";
+  if (issue_count > 0) {
+    // Rotate through each issue, showing one in full every 3 seconds.
+    // Single issue: displayed statically (no rotation needed).
+    // This avoids character-level marquee which causes lcd.clear() blink on Nuvoton.
+    static int  issue_idx          = 0;
+    static unsigned long last_issue_time = 0;
+
+    if (issue_count == 1) {
+      // Only one issue — always show it, no rotation
+      issue_idx = 0;
+    } else {
+      // Multiple issues — rotate every 3 seconds
+      if (millis() - last_issue_time > 3000) {
+        last_issue_time = millis();
+        issue_idx = (issue_idx + 1) % issue_count;
+      }
+    }
+
+    // Guard against stale index if issue_count suddenly drops
+    if (issue_idx >= issue_count) issue_idx = 0;
+
+    snprintf(issue_msg, 17, "%-16s", active_issues[issue_idx]);
+  } else {
+    // Reset index so it starts from first issue next time
+    strncpy(issue_msg, "SYS STATUS", 16);
+    issue_msg[16] = '\0';
+  }
+
+  snprintf(ui_data[FLD_SYS_STATUS].topRow, 17, "%-16s", issue_msg);
   snprintf(ui_data[FLD_SYS_STATUS].bottomRow, 17, "%-16s", sys_status);
 
-  // Battery, Solar, 3.3V & Zener Ref
+  // Battery, Solar, 3.3V
   static unsigned long last_bat = 0;
   if (millis() - last_bat > 5000) {
     last_bat = millis();
     li_bat_val = get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC + Zener correction
     bat_val = li_bat_val;
-    snprintf(ui_data[FLD_BATTERY].bottomRow, 17, "%0.2f V", li_bat_val);
+    bool is_charging_now = (solar_val > li_bat_val + 0.3f && solar_val >= 4.0f);
+    snprintf(ui_data[FLD_BATTERY].bottomRow, 17, "%0.2fV %s", li_bat_val, is_charging_now ? "CHRG" : "NOT CHRG");
     snprintf(ui_data[FLD_SOLAR].bottomRow, 17, "%0.2f V", solar_val);
     snprintf(ui_data[FLD_BATTERY_3V3].bottomRow, 17, "%0.2f V", bat_3v3_val);
-    snprintf(ui_data[FLD_REF_VOLT].bottomRow, 17, "%0.2f V", ref_volt_val);
   }
 
   // Live fields
@@ -877,6 +953,7 @@ void lcdkeypad(void *pvParameters) {
                 lcd.clear(); lcd.print("WIFI STARTING...");
                 xSemaphoreGive(i2cMutex);
               }
+              set_sys_status("WIFI ACTIVE");
               // v5.79: Hardened WiFi startup sequence
               setCpuFrequencyMhz(160); // Set frequency BEFORE task starts on Core 0
               xTaskCreatePinnedToCore(webServer, "webServerTask", 8192, NULL, 2, &webServer_h, 0); // Pin to Core 0
@@ -887,6 +964,7 @@ void lcdkeypad(void *pvParameters) {
               }
               // Signal graceful Watchdog teardown; webServerTask murders itself safely
               wifi_active = false; 
+              set_sys_status("IDLE");
             }
             vTaskDelay(2000 / portTICK_PERIOD_MS);
             present_topRow[0] = 0; present_bottomRow[0] = 0;

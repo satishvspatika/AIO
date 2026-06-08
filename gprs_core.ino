@@ -680,6 +680,7 @@ void gprs(void *pvParameters) {
         gprs_started = false;
         portEXIT_CRITICAL(&syncMux);
         __atomic_store_n(&httpInitiated, false, __ATOMIC_RELEASE);
+        set_sys_status("IDLE");
         
         // v5.83 Hardening: Clear success flag after 2s so it doesn't linger as 'Stale'
         vTaskDelay(2000 / portTICK_PERIOD_MS);

@@ -35,9 +35,11 @@ void scheduler(void *pvParameters) {
   snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
   snprintf(solar_sense, sizeof(solar_sense), "%04.1f", solar_val);
 #endif
-  debug("[PWR] Battery: ");
+  debug("[PWR] MCU Battery : ");
+  debug(bat_3v3_val);
+  debug("V | GPRS Battery : ");
   debug(li_bat_val);
-  debug("V | Solar: ");
+  debug("V | Solar : ");
   debug(solar_val);
   debugln("V");
 
@@ -1974,6 +1976,29 @@ void scheduler(void *pvParameters) {
         // some rf-close date. SPIFFs file for the rf_close_dd is also NOT
         // THERE. SO CREATE A NEW ONE.
 
+        // FRESH BOOT / NEW FILE SCENARIO
+        // This is handled at top of block now, but valid_window check is
+        // still useful here as a redundant safety if logic changes above.
+        // Actually, the check above (mins_into > 0) is stricter for Fresh
+        // Boot. This check handles GENERAL "Too Late" scenario for new file
+        // creation.
+        if (!is_valid_window) {
+          debugln("Outside valid window for new file. Skipping retroactive "
+                  "logging.");
+          data_writing_initiated = 0;
+
+          // Phase 13 Fix: Cannot goto and bypass the holistic xSemaphoreGive at
+          // the bottom! Must cleanly decouple the SPIFFS handle before jumping
+          // out of this block.
+          if (fs_locked) {
+            xSemaphoreGive(fsMutex);
+            fs_locked = false; // Fix Path B: Reset flag before double-give at
+                               // TRIGGER_HTTP
+          }
+
+          goto TRIGGER_HTTP;
+        }
+
         debugln();
         debugln("********** CREATING NEW FILE .. DEVICE STARTED AFTER A FEW "
                 "DAYS  ***********");
@@ -2000,34 +2025,6 @@ void scheduler(void *pvParameters) {
         if (sd_card_ok && !sd1) {
           debugln("Failed to open new SD file");
         } // #TRUEFIX
-
-        // FRESH BOOT / NEW FILE SCENARIO
-        // This is handled at top of block now, but valid_window check is
-        // still useful here as a redundant safety if logic changes above.
-        // Actually, the check above (mins_into > 0) is stricter for Fresh
-        // Boot. This check handles GENERAL "Too Late" scenario for new file
-        // creation.
-        if (!is_valid_window) {
-          debugln("Outside valid window for new file. Skipping retroactive "
-                  "logging.");
-          data_writing_initiated = 0;
-
-          // Phase 13 Fix: Cannot goto and bypass the holistic xSemaphoreGive at
-          // the bottom! Must cleanly decouple the SPIFFS handle before jumping
-          // out of this block.
-          if (fs_locked) {
-            if (file1)
-              file1.close();
-            xSemaphoreGive(fsMutex);
-            fs_locked = false; // Fix Path B: Reset flag before double-give at
-                               // TRIGGER_HTTP
-          }
-          if (sd_card_ok && sd1) {
-            sd1.close();
-          }
-
-          goto TRIGGER_HTTP;
-        }
 
         if (sampleNo == 0) { // First Sample . New file
           debugln("**It is the VERY FIRST DATA . Creating a new file ...");
@@ -3032,6 +3029,7 @@ void scheduler(void *pvParameters) {
 #if (SYSTEM == 0) || (SYSTEM == 2)
       rf_count.val =
           0; // Need to make it zero to capture instantaneous RF every 15 mins
+      last_raw_rf_count = 0; // v6.08: Reset anchor to 0 to prevent negative delta spikes/ignored tips
       rf_value =
           0; // Need to make it zero to capture instantaneous RF every 15 mins
 #endif
@@ -3157,7 +3155,15 @@ void scheduler(void *pvParameters) {
         if (SPIFFS.exists(unsent_file)) {
           File file4 = SPIFFS.open(unsent_file, FILE_READ);
           if (file4) {
-            debugln("\n--- UNSENT DATA START ---");
+            int total_records = 0;
+            char temp_cnt_buf[128];
+            while (file4.available()) {
+              int r_len = file4.readBytesUntil('\n', temp_cnt_buf, sizeof(temp_cnt_buf) - 1);
+              if (r_len > 10) {
+                total_records++;
+              }
+            }
+            debugf("\n--- UNSENT DATA START (Total Records: %d) ---\n", total_records);
             if (file4.size() > 0) {
               int seekPos = (file4.size() > 500) ? file4.size() - 500 : 0;
               file4.seek(seekPos);
@@ -3182,7 +3188,15 @@ void scheduler(void *pvParameters) {
         if (SPIFFS.exists(ftpunsent_file)) {
           File file4 = SPIFFS.open(ftpunsent_file, FILE_READ);
           if (file4) {
-            debugln("\n--- UNSENT DATA START ---");
+            int total_records = 0;
+            char temp_cnt_buf[128];
+            while (file4.available()) {
+              int r_len = file4.readBytesUntil('\n', temp_cnt_buf, sizeof(temp_cnt_buf) - 1);
+              if (r_len > 10) {
+                total_records++;
+              }
+            }
+            debugf("\n--- UNSENT DATA START (Total Records: %d) ---\n", total_records);
             if (file4.size() > 0) {
               int seekPos = (file4.size() > 500) ? file4.size() - 500 : 0;
               file4.seek(seekPos);

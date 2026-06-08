@@ -65,6 +65,7 @@ void webServer(void *pvParameters) {
   debugln(IP);
 
   if (MDNS.begin("spatika")) {
+    MDNS.addService("http", "tcp", 80);
     debugln("MDNS responder started");
   }
 
@@ -133,6 +134,7 @@ void webServer(void *pvParameters) {
       WiFi.softAPdisconnect(true);
       setCpuFrequencyMhz(80); // Back to power-save mode
       wifi_active = false;
+      set_sys_status("IDLE");
       webServerStarted = false; // Allow re-creation if logic permits (though
                                 // this kills the task)
       esp_task_wdt_delete(
@@ -363,8 +365,13 @@ void handleRoot() { // v5.70 STREAMING
       "document.getElementById('live_wd').innerHTML = data.windDir + ' <span "
       "style=\"font-size:0.6em\">&deg;</span>';");
   server.sendContent(
-      "if(data.bat_v) document.getElementById('live_bat').innerHTML = "
-      "data.bat_v + ' <span style=\"font-size:0.6em\">V</span>';");
+      "if(data.bat_v) { "
+      "var bat_txt = data.bat_v + ' V'; "
+      "if(data.bat_status) { "
+      "bat_txt += ' <span style=\"font-size:0.75em;font-weight:bold;color:' + (data.bat_status === 'CHRG' ? '#28a745' : '#dc3545') + '\">' + data.bat_status + '</span>'; "
+      "} "
+      "document.getElementById('live_bat').innerHTML = bat_txt; "
+      "}");
   server.sendContent(
       "if(data.sol_v) document.getElementById('live_sol').innerHTML = "
       "data.sol_v + ' <span style=\"font-size:0.6em\">V</span>';");
@@ -386,6 +393,22 @@ void handleRoot() { // v5.70 STREAMING
       "document.getElementById('warnModal').style.display='block'; "
       "document.getElementById('timeLeft').innerText = data.wifi_left; } else "
       "{ document.getElementById('warnModal').style.display='none'; }");
+  server.sendContent(
+      "if(data.sys_status) document.getElementById('live_sys_status').innerText = data.sys_status; "
+      "if(data.issues) { var el = document.getElementById('live_issues'); el.innerText = data.issues; el.style.color = (data.issues === 'NONE') ? 'green' : 'red'; } "
+      "if(data.reg_status) document.getElementById('live_reg_status').innerText = data.reg_status; "
+      "if(data.carrier) { var netInfo = data.carrier; if (data.apn) netInfo += ' (' + data.apn + ')'; document.getElementById('live_net_info').innerText = netInfo; } "
+      "if(data.iccid) document.getElementById('live_iccid').innerText = data.iccid; "
+      "if(data.signal_strength !== undefined) document.getElementById('live_rssi').innerText = data.signal_strength + ' dBm'; "
+      "if(data.http_present_fails !== undefined) document.getElementById('live_http_p').innerText = data.http_present_fails; "
+      "if(data.http_cum_fails !== undefined) document.getElementById('live_http_c').innerText = data.http_cum_fails; "
+      "if(data.unsent_http_count !== undefined) document.getElementById('live_bk_http').innerText = data.unsent_http_count; "
+      "if(data.unsent_ftp_count !== undefined) document.getElementById('live_bk_ftp').innerText = data.unsent_ftp_count; "
+      "if(data.sd_card_ok !== undefined) { var el = document.getElementById('live_sd'); el.innerText = (data.sd_card_ok === 1) ? 'OK' : 'ERROR'; el.style.color = (data.sd_card_ok === 1) ? 'green' : 'red'; } "
+      "if(data.rtc_battery_ok !== undefined) { var el = document.getElementById('live_rtc_bat'); el.innerText = (data.rtc_battery_ok === 1) ? 'OK' : 'FAULT'; el.style.color = (data.rtc_battery_ok === 1) ? 'green' : 'red'; } "
+      "if(data.reset_reason) document.getElementById('live_reset_reason').innerText = data.reset_reason; "
+      "if(data.mcu_bat_v !== undefined) document.getElementById('live_mcu_bat').innerText = data.mcu_bat_v.toFixed(2) + ' V'; "
+  );
   server.sendContent("} else if (this.readyState == 4 && (this.status == 0 || "
                      "this.status == 500)) { document.body.innerHTML = '<div "
                      "style=\"text-align:center;margin-top:20vh;\"><h1>Offline<"
@@ -461,10 +484,11 @@ void handleRoot() { // v5.70 STREAMING
         String(humidity, 1) + " %</div></div>");
 #endif
 
+    bool is_charging_now = (solar_val > li_bat_val + 0.3f && solar_val >= 4.0f);
+    String bat_html = String(li_bat_val, 2) + " V <span style='font-size:0.75em;font-weight:bold;color:" + String(is_charging_now ? "#28a745" : "#dc3545") + "'>" + String(is_charging_now ? "CHRG" : "NOT CHRG") + "</span>";
     server.sendContent("<div class='card'><div class='label'>" + String(s_bat) +
                        "</div><div id='live_bat' class='value'>" +
-                       String(li_bat_val, 2) +
-                       " <span style='font-size:0.6em'>V</span></div></div>");
+                       bat_html + "</div></div>");
     server.sendContent("<div class='card'><div class='label'>" + String(s_sol) +
                        "</div><div id='live_sol' class='value'>" +
                        String(solar_val, 2) +
@@ -505,6 +529,24 @@ void handleRoot() { // v5.70 STREAMING
                      "class='value' style='color:#666'>" +
                      rec_rf + " mm</div></div>");
 #endif
+  server.sendContent("</div>");
+
+  // --- SECTION 3: SYSTEM DIAGNOSTICS ---
+  server.sendContent("<div class='section-title'>System Diagnostics</div>");
+  server.sendContent(
+      "<div style='display:flex;flex-wrap:wrap;justify-content:center;gap:5px;'>");
+  server.sendContent("<div class='card'><div class='label'>Sys Stage</div><div id='live_sys_status' class='value' style='font-size:1.1em;'>--</div></div>");
+  server.sendContent("<div class='card' style='flex:1 1 100%;'><div class='label'>Active Alarms</div><div id='live_issues' class='value' style='font-size:1.0em;'>--</div></div>");
+  server.sendContent("<div class='card'><div class='label'>Network</div><div id='live_reg_status' class='value' style='font-size:1.1em;'>--</div></div>");
+  server.sendContent("<div class='card'><div class='label'>Carrier (APN)</div><div id='live_net_info' class='value' style='font-size:1.0em;'>--</div></div>");
+  server.sendContent("<div class='card'><div class='label'>SIM ICCID</div><div id='live_iccid' class='value' style='font-size:0.9em; word-break:break-all;'>--</div></div>");
+  server.sendContent("<div class='card'><div class='label'>Signal Strength</div><div id='live_rssi' class='value' style='font-size:1.1em;'>--</div></div>");
+  server.sendContent("<div class='card'><div class='label'>HTTP Fails</div><div class='value' style='font-size:1.0em; color:#555;'>Pres: <span id='live_http_p'>0</span> | Cum: <span id='live_http_c'>0</span></div></div>");
+  server.sendContent("<div class='card'><div class='label'>Unsent Backlog</div><div class='value' style='font-size:1.0em; color:#555;'>HTTP: <span id='live_bk_http'>0</span> | FTP: <span id='live_bk_ftp'>0</span></div></div>");
+  server.sendContent("<div class='card'><div class='label'>SD Card</div><div id='live_sd' class='value' style='font-size:1.1em;'>--</div></div>");
+  server.sendContent("<div class='card'><div class='label'>RTC Battery</div><div id='live_rtc_bat' class='value' style='font-size:1.1em;'>--</div></div>");
+  server.sendContent("<div class='card'><div class='label'>MCU 3.3V Rail</div><div id='live_mcu_bat' class='value' style='font-size:1.1em;'>--</div></div>");
+  server.sendContent("<div class='card'><div class='label'>Reset Reason</div><div id='live_reset_reason' class='value' style='font-size:1.1em;'>--</div></div>");
   server.sendContent("</div>");
 
   // --- ACTIONS ---
@@ -1117,6 +1159,7 @@ void handleDisconnect() {
   vTaskDelay(1000 / portTICK_PERIOD_MS); // Allow HTTP response to flush
   WiFi.softAPdisconnect(true);
   wifi_active = false;
+  set_sys_status("IDLE");
   webServerStarted = false;
 
   // Update LCD directly so it jumps back to Station ID
@@ -1168,6 +1211,8 @@ void handleData() {
   unsigned long elapsed = millis() - last_wifi_activity_time;
   long left = (elapsed < 180000) ? (180000 - elapsed) / 1000 : 0;
   json += ", \"bat_v\": " + String(li_bat_val, 2);
+  bool is_charging_now = (solar_val > li_bat_val + 0.3f && solar_val >= 4.0f);
+  json += ", \"bat_status\": \"" + String(is_charging_now ? "CHRG" : "NOT CHRG") + "\"";
   json += ", \"sol_v\": " + String(solar_val, 2);
   json += ", \"gps_lat\": " + String(gps_latitude, 8);
   json += ", \"gps_lon\": " + String(gps_longitude, 8);
@@ -1179,6 +1224,83 @@ void handleData() {
              calib_year % 100);
   }
   json += ", \"calib\": \"" + String(clb_json) + "\"";
+
+  // Detailed Diagnostics for Field Engineer
+  json += ", \"sys_status\": \"" + String(sys_status) + "\"";
+  
+  String issues = "";
+  if (low_bat_mode_active) { if(issues.length()>0) issues += ", "; issues += "LOW BAT MODE"; }
+  if (!diag_rtc_battery_ok) { if(issues.length()>0) issues += ", "; issues += "RTC FAULT"; }
+  if (bat_3v3_val > 0.1 && bat_3v3_val < 3.0) { if(issues.length()>0) issues += ", "; issues += "MCU BATTERY LOW"; }
+  if (li_bat_val > 0.1 && li_bat_val < 3.6) { if(issues.length()>0) issues += ", "; issues += "GPRS BATTERY LOW"; }
+  
+  if (solar_val < 2.0) {
+    if(issues.length()>0) issues += ", ";
+    issues += "SOL DISCONNECT";
+  } else if (solar_val < 11.0) {
+    if(issues.length()>0) issues += ", ";
+    issues += "SOLAR LOW";
+  }
+
+  if (is_charging_now) {
+    if(issues.length()>0) issues += ", ";
+    issues += "BAT CHRG";
+  } else {
+    if(issues.length()>0) issues += ", ";
+    issues += "BAT NOT CHRG";
+  }
+
+  if (diag_consecutive_sim_fails > 0 || strcmp(reg_status, "REG FAIL") == 0) { if(issues.length()>0) issues += ", "; issues += "SIM ERROR"; }
+  if (diag_consecutive_reg_fails > 0) { if(issues.length()>0) issues += ", "; issues += "REG FAIL"; }
+  if (diag_gprs_fails > 0) { if(issues.length()>0) issues += ", "; issues += "GPRS FAIL"; }
+  if (sd_card_ok == 0) { if(issues.length()>0) issues += ", "; issues += "SD CARD ERROR"; }
+  if (strcmp(diag_cdm_status, "FAIL") == 0) { if(issues.length()>0) issues += ", "; issues += "CDM FAULT"; }
+  if (diag_rain_jump) { if(issues.length()>0) issues += ", "; issues += "ESJ (RAIN JUMP)"; }
+  if (SYSTEM != 0) {
+    if (diag_temp_erv || diag_hum_erv || diag_ws_erv) { if(issues.length()>0) issues += ", "; issues += "ERV (RANGE ERR)"; }
+    if (diag_temp_erz || diag_hum_erz) { if(issues.length()>0) issues += ", "; issues += "ERZ (ZERO ERR)"; }
+    if (diag_temp_cv || diag_hum_cv || diag_ws_cv) { if(issues.length()>0) issues += ", "; issues += "CV (FREEZE ERR)"; }
+    if (bmeType == BME_UNKNOWN && hdcType == HDC_UNKNOWN) { if(issues.length()>0) issues += ", "; issues += "SENSOR ERROR"; }
+  }
+  if (diag_http_present_fails > 0) {
+    if (issues.length()>0) issues += ", ";
+    if (strlen(diag_http_fail_reason) > 0 && strcmp(diag_http_fail_reason, "NONE") != 0) {
+      issues += "HTTP ERR: " + String(diag_http_fail_reason);
+    } else {
+      issues += "HTTP FAIL: " + String(diag_http_present_fails);
+    }
+  }
+  if (issues.length() == 0) {
+    issues = "NONE";
+  }
+  json += ", \"issues\": \"" + issues + "\"";
+  
+  json += ", \"apn\": \"" + String(apn_str) + "\"";
+  json += ", \"carrier\": \"" + String(carrier) + "\"";
+  json += ", \"iccid\": \"" + String(cached_iccid) + "\"";
+  json += ", \"signal_strength\": " + String(signal_strength);
+  json += ", \"reg_status\": \"" + String(reg_status) + "\"";
+  json += ", \"sd_card_ok\": " + String(sd_card_ok);
+  json += ", \"rtc_battery_ok\": " + String(diag_rtc_battery_ok ? 1 : 0);
+  json += ", \"cdm_status\": \"" + String(diag_cdm_status) + "\"";
+  json += ", \"http_present_fails\": " + String(diag_http_present_fails);
+  json += ", \"http_cum_fails\": " + String(diag_http_cum_fails);
+  json += ", \"mcu_bat_v\": " + String(bat_3v3_val, 2);
+  json += ", \"ref_volt_v\": " + String(ref_volt_val, 2);
+  
+  json += ", \"unsent_http_count\": " + String(get_total_backlogs(false));
+  json += ", \"unsent_ftp_count\": " + String(countStored("/ftpunsent.txt"));
+  
+  char reset_reason_desc[32];
+  RESET_REASON rr = rtc_get_reset_reason(0);
+  switch (rr) {
+    case POWERON_RESET: strcpy(reset_reason_desc, "POWERON"); break;
+    case SW_RESET: strcpy(reset_reason_desc, "SOFTWARE"); break;
+    case OWDT_RESET: strcpy(reset_reason_desc, "WATCHDOG"); break;
+    case DEEPSLEEP_RESET: strcpy(reset_reason_desc, "DEEPSLEEP"); break;
+    default: snprintf(reset_reason_desc, sizeof(reset_reason_desc), "REASON %d", (int)rr); break;
+  }
+  json += ", \"reset_reason\": \"" + String(reset_reason_desc) + "\"";
 
   // Lock removed in v5.87 to prevent UI lag
   json += "}";
