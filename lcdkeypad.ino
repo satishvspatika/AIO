@@ -757,6 +757,7 @@ void lcdkeypad(void *pvParameters) {
         delay(1500);
         lcd.backlight(); // Turn display pixels back ON after wakeup
         lcd.clear();     // Reset cursor to home (0x01)
+        present_topRow[0] = 0; present_bottomRow[0] = 0; // Invalidate display cache to force full redraw
         show_now = 1;
 #else
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
@@ -766,6 +767,7 @@ void lcdkeypad(void *pvParameters) {
           lcd.clear();
           lcd.noCursor();
           lcd.noBlink();
+          present_topRow[0] = 0; present_bottomRow[0] = 0; // Invalidate display cache to force full redraw
           show_now = 1;
           xSemaphoreGive(i2cMutex);
         } else {
