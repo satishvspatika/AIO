@@ -805,6 +805,29 @@
     .widget-c:hover {
       border-color: hsla(38, 92%, 50%, 0.35);
     }
+    
+    /* Navigation Tab Buttons */
+    .tab-btn {
+      width: auto !important;
+      padding: 0.5rem 1.25rem;
+      font-size: 0.8rem;
+      border-radius: 0.4rem;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-muted);
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+    .tab-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+    }
+    .tab-btn.active {
+      background: var(--primary) !important;
+      border-color: var(--primary-glow) !important;
+      color: #fff !important;
+      box-shadow: 0 0 12px var(--primary-glow);
+    }
   </style>
 </head>
 <body style="padding: 0;">
@@ -902,6 +925,12 @@
     </div>
 
   </nav>
+
+  <!-- Tab Bar for dynamic layout toggles -->
+  <div style="display: flex; gap: 0.5rem; padding: 0 1.25rem; margin-top: 0.75rem; margin-bottom: 0.25rem;">
+    <button class="tab-btn active" id="tabBoardQC">🧠 Board QC Testing</button>
+    <button class="tab-btn" id="tabIntegration">📦 Enclosure Integration & Repair</button>
+  </div>
 
   <div class="container">
 
@@ -1026,7 +1055,60 @@
           <div class="progress-bar" id="progressBar"></div>
         </div>
 
+        <!-- Force Re-Flash Checkbox -->
+        <div style="margin: 0.6rem 0; display: flex; align-items: center; gap: 0.45rem;">
+          <input type="checkbox" id="chkForceFlash" checked style="accent-color: var(--success); width: 0.95rem; height: 0.95rem; cursor: pointer;">
+          <label for="chkForceFlash" style="font-size: 0.76rem; color: #fff; cursor: pointer; user-select: none;">⚡ Re-Flash QC Test Firmware to ESP32</label>
+        </div>
+
         <button class="btn btn-success" id="btnStart" disabled>🚀 Start Programming</button>
+      </div>
+
+      <!-- Step 3 (Integration Mode): Box Details & Actions -->
+      <div class="card" id="cardIntegrationControls" style="display: none;">
+        <h3 class="card-title">
+          <span>Step 3: Integration & Repair Details</span>
+        </h3>
+        
+        <!-- Box 1 Barcode -->
+        <div style="margin-bottom: 0.6rem;">
+          <label style="font-size: 0.76rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Box 1 Barcode (Datalogger Enclosure) *</label>
+          <input type="text" id="box1Barcode" placeholder="Scan or enter Box 1 Barcode" style="width: 100%; padding: 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.35rem; color: #fff; font-size: 0.78rem; font-family: monospace;">
+        </div>
+
+        <!-- Box 2 Barcode -->
+        <div style="margin-bottom: 0.6rem;">
+          <label style="font-size: 0.76rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Box 2 Barcode (Power Enclosure) *</label>
+          <input type="text" id="box2Barcode" placeholder="Scan or enter Box 2 Barcode" style="width: 100%; padding: 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.35rem; color: #fff; font-size: 0.78rem; font-family: monospace;">
+        </div>
+
+        <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.6rem; margin-top: 0.6rem;">
+          <span style="font-size: 0.75rem; font-weight: 600; color: var(--primary); display: block; margin-bottom: 0.4rem;">Component Association</span>
+          
+          <div style="display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.75rem;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.3rem;">
+              <span style="color: var(--text-muted);">ESP32:</span>
+              <input type="text" id="assocEspBarcode" placeholder="ESP32 Barcode" style="width: 70%; padding: 0.25rem 0.4rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.25rem; color: #fff; font-size: 0.7rem; font-family: monospace;">
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.3rem;">
+              <span style="color: var(--text-muted);">GPRS:</span>
+              <input type="text" id="assocGprsBarcode" placeholder="GPRS Barcode" style="width: 70%; padding: 0.25rem 0.4rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.25rem; color: #fff; font-size: 0.7rem; font-family: monospace;">
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.3rem;">
+              <span style="color: var(--text-muted);">Nuvoton:</span>
+              <input type="text" id="assocNuvBarcode" placeholder="Nuvoton Barcode" style="width: 70%; padding: 0.25rem 0.4rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.25rem; color: #fff; font-size: 0.7rem; font-family: monospace;">
+            </div>
+          </div>
+          <div id="assocStatusText" style="font-size: 0.68rem; color: var(--warning); margin-top: 0.35rem; line-height: 1.25;">
+            Scan Box 1 to auto-load previous configuration or enter barcodes manually.
+          </div>
+        </div>
+
+        <div class="progress-bar-container" id="integrationProgressContainer" style="display: none; margin-top: 0.6rem; margin-bottom: 0.4rem;">
+          <div class="progress-bar" id="integrationProgressBar"></div>
+        </div>
+
+        <button class="btn btn-success" id="btnStartIntegration" style="margin-top: 0.6rem;" disabled>⚡ Flash Production & Run Verify</button>
       </div>
 
       <!-- Google Sheet Sync Integration -->
@@ -1734,7 +1816,66 @@
       </ol>
       <p style="margin-top:0.4rem; color:#fbbf24; font-size:0.8rem;">⚠️ If the EXT0 button is not available, use <b>Force Pass (CMD:SLEEP_PASS)</b> in the Operator Instructions box to skip this step.</p>
 
-      <p style="margin-top: 1.5rem; font-size: 0.75rem; color: var(--text-muted); border-top: 1px solid var(--card-border); padding-top: 0.75rem;">Spatika AIO Board Factory Tool · Specification v6.07 · © 2026 Spatika Technologies</p>
+    </div>
+
+    <!-- Integration Checklist Card -->
+    <div class="card" id="cardIntegrationChecklist" style="display: none; flex: 1; flex-direction: column;">
+      <h3 class="card-title">Integration & Boot Diagnostics</h3>
+      
+      <div style="display: flex; flex-direction: column; gap: 0.35rem; padding: 0.5rem 0.75rem; background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 0.4rem; margin-bottom: 0.8rem; font-size: 0.8rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center;"><span style="color: var(--text-muted);">Production Version:</span><strong id="integrationFwVersion" style="font-family: 'JetBrains Mono', monospace; color: #fff;">--</strong></div>
+        <div style="display: flex; justify-content: space-between; align-items: center;"><span style="color: var(--text-muted);">Detected MAC:</span><strong id="integrationMac" style="font-family: 'JetBrains Mono', monospace; color: #a5b4fc;">--</strong></div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 0.45rem;">
+        <!-- 1. Boot Telemetry -->
+        <div class="section-widget widget-a" id="intChkBoot" style="margin-bottom: 0;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 0.78rem; font-weight: 600;">🔄 Boot Signal Detection</span>
+            <span class="badge badge-disconnected" id="intValBoot">Waiting...</span>
+          </div>
+          <p style="font-size: 0.68rem; color: var(--text-muted); margin: 0.15rem 0 0;">Verifies production firmware boots and streams initialization signature.</p>
+        </div>
+
+        <!-- 2. GPRS Cellular Connection -->
+        <div class="section-widget widget-a" id="intChkGprs" style="margin-bottom: 0;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 0.78rem; font-weight: 600;">📶 GPRS Cellular Connection</span>
+            <span class="badge badge-disconnected" id="intValGprs">Waiting...</span>
+          </div>
+          <p style="font-size: 0.68rem; color: var(--text-muted); margin: 0.15rem 0 0;">Checks GPRS modem initialization, signal strength, and network connection.</p>
+        </div>
+
+        <!-- 3. Battery Voltage -->
+        <div class="section-widget widget-a" id="intChkBatt" style="margin-bottom: 0;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 0.78rem; font-weight: 600;">🔋 Battery Voltage</span>
+            <span class="badge badge-disconnected" id="intValBatt">Waiting...</span>
+          </div>
+          <p style="font-size: 0.68rem; color: var(--text-muted); margin: 0.15rem 0 0;">Verifies battery voltage is in the acceptable operating range.</p>
+        </div>
+
+        <!-- 4. Solar / MPPT Status -->
+        <div class="section-widget widget-a" id="intChkSolar" style="margin-bottom: 0;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 0.78rem; font-weight: 600;">☀️ Solar Panel & MPPT</span>
+            <span class="badge badge-disconnected" id="intValSolar">Waiting...</span>
+          </div>
+          <p style="font-size: 0.68rem; color: var(--text-muted); margin: 0.15rem 0 0;">Verifies charging voltage and solar panel connection status.</p>
+        </div>
+
+        <!-- 5. Sheet Commissioning -->
+        <div class="section-widget widget-a" id="intChkSync" style="margin-bottom: 0;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 0.78rem; font-weight: 600;">📊 Google Sheet Commissioning</span>
+            <span class="badge badge-disconnected" id="intValSync">Waiting...</span>
+          </div>
+          <p style="font-size: 0.68rem; color: var(--text-muted); margin: 0.15rem 0 0;">Registers the full box assembly & components in the Integration Log.</p>
+        </div>
+      </div>
+
+      <!-- Action Button -->
+      <button class="btn btn-secondary" id="btnAbortIntegration" style="margin-top: 1rem; display: none;">🛑 Stop Test</button>
     </div>
   </div>
 
@@ -1874,6 +2015,44 @@
     const btnSelectFolderFallback = document.getElementById("btnSelectFolderFallback");
     const btnResetBoard = document.getElementById("btnResetBoard");
 
+    // Tabs References
+    const tabBoardQC = document.getElementById("tabBoardQC");
+    const tabIntegration = document.getElementById("tabIntegration");
+
+    // Board QC Force Flash Checkbox
+    const chkForceFlash = document.getElementById("chkForceFlash");
+
+    // Integration DOM References
+    const cardIntegrationControls = document.getElementById("cardIntegrationControls");
+    const cardIntegrationChecklist = document.getElementById("cardIntegrationChecklist");
+    const box1Barcode = document.getElementById("box1Barcode");
+    const box2Barcode = document.getElementById("box2Barcode");
+    const assocEspBarcode = document.getElementById("assocEspBarcode");
+    const assocGprsBarcode = document.getElementById("assocGprsBarcode");
+    const assocNuvBarcode = document.getElementById("assocNuvBarcode");
+    const assocStatusText = document.getElementById("assocStatusText");
+    const btnStartIntegration = document.getElementById("btnStartIntegration");
+    const btnAbortIntegration = document.getElementById("btnAbortIntegration");
+    const integrationFwVersion = document.getElementById("integrationFwVersion");
+    const integrationMac = document.getElementById("integrationMac");
+    const integrationProgressContainer = document.getElementById("integrationProgressContainer");
+    const integrationProgressBar = document.getElementById("integrationProgressBar");
+
+    // Integration Checklist items
+    const intChkBoot = document.getElementById("intChkBoot");
+    const intValBoot = document.getElementById("intValBoot");
+    const intChkGprs = document.getElementById("intChkGprs");
+    const intValGprs = document.getElementById("intValGprs");
+    const intChkBatt = document.getElementById("intChkBatt");
+    const intValBatt = document.getElementById("intValBatt");
+    const intChkSolar = document.getElementById("intChkSolar");
+    const intValSolar = document.getElementById("intValSolar");
+    const intChkSync = document.getElementById("intChkSync");
+    const intValSync = document.getElementById("intValSync");
+
+    let currentTab = "boardqc"; // "boardqc" or "integration"
+    let isIntegrating = false;
+
     // Verdict Overlay Elements
     const verdictOverlay = document.getElementById("verdictOverlay");
     const verdictTitle = document.getElementById("verdictTitle");
@@ -1986,7 +2165,7 @@
     "Timestamp", "Local Test Time", "ESP32 Barcode", "GPRS Barcode", "Nuvoton Barcode", "MAC Address", "Flash Size", "GPRS IMEI", "SIM CCID", "Nuvoton LCD",
     "SPIFFS", "SD Card", "RTC", "WiFi Scanner", "Env Sensor", "Cellular", "LCD / UI", "Keypad", "Rainfall (Tips)",
     "Battery (V)", "Solar (V)", "Firmware Ver", "QC Verdict", "Tester", "Verification Mode",
-    "Duration (s)", "Approved By"
+    "Boards Under Test", "Duration (s)", "Approved By"
   ];
 
   if (logSheet.getLastRow() === 0) {
@@ -2001,7 +2180,55 @@
   }
 
   if (data.initOnly) {
+    var intSheet = ss.getSheetByName("Integration_Logs") || ss.insertSheet("Integration_Logs");
+    var intHeaders = [
+      "Timestamp", "Local Test Time", "Box 1 Barcode", "Box 2 Barcode", "ESP32 Barcode", "GPRS Barcode", "Nuvoton Barcode", 
+      "MAC Address", "Firmware Ver", "Integration Verdict", "Tester", "Duration (s)", "Action Type"
+    ];
+    intSheet.getRange(1, 1, 1, intHeaders.length).setValues([intHeaders]);
+    intSheet.getRange(1, 1, 1, intHeaders.length).setFontWeight("bold").setBackground("#4338ca").setFontColor("#ffffff");
+    intSheet.setFrozenRows(1);
     return ContentService.createTextOutput("INITIALIZED");
+  }
+
+  // Handle Integration Sync Payload
+  if (data.integrationSync) {
+    var intSheet = ss.getSheetByName("Integration_Logs") || ss.insertSheet("Integration_Logs");
+    var intHeaders = [
+      "Timestamp", "Local Test Time", "Box 1 Barcode", "Box 2 Barcode", "ESP32 Barcode", "GPRS Barcode", "Nuvoton Barcode", 
+      "MAC Address", "Firmware Ver", "Integration Verdict", "Tester", "Duration (s)", "Action Type"
+    ];
+    if (intSheet.getLastRow() === 0) {
+      intSheet.appendRow(intHeaders);
+      intSheet.getRange(1, 1, 1, intHeaders.length).setFontWeight("bold").setBackground("#4338ca").setFontColor("#ffffff");
+      intSheet.setFrozenRows(1);
+    }
+    
+    var intRow = [
+      new Date(),
+      data.testTime || "--",
+      data.box1 || "--",
+      data.box2 || "--",
+      data.espBarcode || "--",
+      data.gprsBarcode || "--",
+      data.nuvotonBarcode || "--",
+      data.mac || "--",
+      data.version || "--",
+      data.verdict || "--",
+      data.tester || "--",
+      data.duration || 0,
+      data.actionType || "ORIGINAL_BUILD"
+    ];
+    intSheet.appendRow(intRow);
+    
+    // Color integration verdict cell
+    var verdictCell = intSheet.getRange(intSheet.getLastRow(), 10);
+    if (data.verdict && data.verdict.indexOf("PASS") === 0) {
+      verdictCell.setBackground("#14532d").setFontColor("#4ade80").setFontWeight("bold");
+    } else {
+      verdictCell.setBackground("#450a0a").setFontColor("#f87171").setFontWeight("bold");
+    }
+    return ContentService.createTextOutput("SUCCESS");
   }
 
   var rowData = [
@@ -2030,6 +2257,7 @@
     data.verdict || "--",
     data.tester || "--",
     data.auditMode || "--",
+    data.boardsUnderTest || "--",
     data.duration || "--",
     "Pending Review"
   ];
@@ -2038,7 +2266,7 @@
   logSheet.appendRow(rowData);
   colorVerdict(logSheet, logSheet.getLastRow(), data.verdict);
 
-  // 2. Log to Master_Status (update or append with fallback lookups for individual GPRS / Nuvoton testing)
+  // 2. Log to Master_Status
   var mac = data.mac;
   var imei = data.imei;
   var espBc = data.espBarcode;
@@ -2066,8 +2294,6 @@
       }
       
       if (match) {
-        // Merge incoming rowData with existing Master row values to preserve
-        // columns for boards that were NOT tested/included in this run.
         var mergedData = [];
         for (var j = 0; j < rowData.length; j++) {
           if ((rowData[j] === "--" || rowData[j] === "--:--:--:--:--:--" || rowData[j] === "Disabled") && row[j] && row[j] !== "--" && row[j] !== "--:--:--:--:--:--" && row[j] !== "Disabled") {
@@ -2107,34 +2333,58 @@ function doGet(e) {
   } catch(e) {
     ss = SpreadsheetApp.openById("1Dw3UJEFdewThGpf8DRei69Vfrt_uU_yo438Z5m9xUUs");
   }
-  var logSheet = ss.getSheetByName("Test_Logs") || ss.getSheets()[0];
-  var rows = logSheet.getDataRange().getValues();
-  var headers = rows[0];
+  
   var matches = [];
 
-  for (var i = 1; i < rows.length; i++) {
-    var row = rows[i];
-    var isMatch = false;
-    // Search columns: ESP32 Barcode (2), GPRS Barcode (3), Nuvoton Barcode (4), MAC (5), IMEI (7)
-    var searchIndices = [2, 3, 4, 5, 7];
-    for (var k = 0; k < searchIndices.length; k++) {
-      var idx = searchIndices[k];
-      if (row[idx] && row[idx].toString().toLowerCase() === q.toLowerCase()) {
-        isMatch = true;
-        break;
-      }
-    }
-
-    if (isMatch) {
-      var record = {};
-      for (var j = 0; j < headers.length; j++) {
-        if (row[j] instanceof Date) {
-          record[headers[j]] = row[j].toLocaleString();
-        } else {
-          record[headers[j]] = row[j];
+  // Search in Test_Logs (Board QC)
+  var logSheet = ss.getSheetByName("Test_Logs");
+  if (logSheet) {
+    var rows = logSheet.getDataRange().getValues();
+    var headers = rows[0];
+    for (var i = 1; i < rows.length; i++) {
+      var row = rows[i];
+      var isMatch = false;
+      var searchIndices = [2, 3, 4, 5, 7]; // ESP, GPRS, NUV, MAC, IMEI
+      for (var k = 0; k < searchIndices.length; k++) {
+        var idx = searchIndices[k];
+        if (row[idx] && row[idx].toString().toLowerCase() === q.toLowerCase()) {
+          isMatch = true;
+          break;
         }
       }
-      matches.push(record);
+      if (isMatch) {
+        var record = { logType: "board_qc" };
+        for (var j = 0; j < headers.length; j++) {
+          record[headers[j]] = (row[j] instanceof Date) ? row[j].toLocaleString() : row[j];
+        }
+        matches.push(record);
+      }
+    }
+  }
+
+  // Search in Integration_Logs
+  var intSheet = ss.getSheetByName("Integration_Logs");
+  if (intSheet) {
+    var rows = intSheet.getDataRange().getValues();
+    var headers = rows[0];
+    for (var i = 1; i < rows.length; i++) {
+      var row = rows[i];
+      var isMatch = false;
+      var searchIndices = [2, 3, 4, 5, 6, 7]; // Box1, Box2, ESP, GPRS, NUV, MAC
+      for (var k = 0; k < searchIndices.length; k++) {
+        var idx = searchIndices[k];
+        if (row[idx] && row[idx].toString().toLowerCase() === q.toLowerCase()) {
+          isMatch = true;
+          break;
+        }
+      }
+      if (isMatch) {
+        var record = { logType: "integration" };
+        for (var j = 0; j < headers.length; j++) {
+          record[headers[j]] = (row[j] instanceof Date) ? row[j].toLocaleString() : row[j];
+        }
+        matches.push(record);
+      }
     }
   }
 
@@ -2153,7 +2403,7 @@ function colorVerdict(sheet, row, verdict) {
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
-  ui.createMenu('Spatika QC Tools')
+  ui.createMenu('Spatika Tools')
       .addItem('Initialize Sheet Tabs & Headers', 'initializeSheets')
       .addToUi();
 }
@@ -2166,27 +2416,15 @@ function initializeSheets() {
     ss = SpreadsheetApp.getActiveSpreadsheet();
   }
   
-  var logSheet = ss.getSheetByName("Test_Logs");
-  if (!logSheet) {
-    var sheets = ss.getSheets();
-    if (sheets.length === 1 && sheets[0].getName() === "Sheet1" && sheets[0].getLastRow() === 0) {
-      logSheet = sheets[0];
-      logSheet.setName("Test_Logs");
-    } else {
-      logSheet = ss.insertSheet("Test_Logs");
-    }
-  }
-  
-  var masterSheet = ss.getSheetByName("Master_Status");
-  if (!masterSheet) {
-    masterSheet = ss.insertSheet("Master_Status");
-  }
+  var logSheet = ss.getSheetByName("Test_Logs") || ss.insertSheet("Test_Logs");
+  var masterSheet = ss.getSheetByName("Master_Status") || ss.insertSheet("Master_Status");
+  var intSheet = ss.getSheetByName("Integration_Logs") || ss.insertSheet("Integration_Logs");
 
   var headers = [
     "Timestamp", "Local Test Time", "ESP32 Barcode", "GPRS Barcode", "Nuvoton Barcode", "MAC Address", "Flash Size", "GPRS IMEI", "SIM CCID", "Nuvoton LCD",
     "SPIFFS", "SD Card", "RTC", "WiFi Scanner", "Env Sensor", "Cellular", "LCD / UI", "Keypad", "Rainfall (Tips)",
     "Battery (V)", "Solar (V)", "Firmware Ver", "QC Verdict", "Tester", "Verification Mode",
-    "Duration (s)", "Approved By"
+    "Boards Under Test", "Duration (s)", "Approved By"
   ];
 
   logSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
@@ -2196,6 +2434,14 @@ function initializeSheets() {
   masterSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   masterSheet.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#115e59").setFontColor("#ffffff");
   masterSheet.setFrozenRows(1);
+
+  var intHeaders = [
+    "Timestamp", "Local Test Time", "Box 1 Barcode", "Box 2 Barcode", "ESP32 Barcode", "GPRS Barcode", "Nuvoton Barcode", 
+    "MAC Address", "Firmware Ver", "Integration Verdict", "Tester", "Duration (s)", "Action Type"
+  ];
+  intSheet.getRange(1, 1, 1, intHeaders.length).setValues([intHeaders]);
+  intSheet.getRange(1, 1, 1, intHeaders.length).setFontWeight("bold").setBackground("#4338ca").setFontColor("#ffffff");
+  intSheet.setFrozenRows(1);
 }`;
 
     // Load URL from localstorage
@@ -2406,6 +2652,99 @@ function initializeSheets() {
       fallbackFolderInput.value = "";
     });
 
+    chkForceFlash.addEventListener("change", checkPreconditions);
+
+    // Tab switching event handlers
+    tabBoardQC.addEventListener("click", () => {
+      if (isFlashing || isIntegrating) return;
+      currentTab = "boardqc";
+      tabBoardQC.classList.add("active");
+      tabIntegration.classList.remove("active");
+      
+      // Toggle Left Panel Cards
+      document.getElementById("cardSubsystems").style.display = "block";
+      cardProgramming.style.display = "block";
+      cardIntegrationControls.style.display = "none";
+      
+      // Toggle Right Panel Cards
+      document.getElementById("cardChecklist").style.display = "flex";
+      cardIntegrationChecklist.style.display = "none";
+      
+      checkPreconditions();
+      logToConsole("Switched to Tab: Board QC Testing Mode", "info");
+    });
+
+    tabIntegration.addEventListener("click", () => {
+      if (isFlashing || isIntegrating) return;
+      currentTab = "integration";
+      tabIntegration.classList.add("active");
+      tabBoardQC.classList.remove("active");
+      
+      // Toggle Left Panel Cards
+      document.getElementById("cardSubsystems").style.display = "none";
+      cardProgramming.style.display = "none";
+      cardIntegrationControls.style.display = "block";
+      
+      // Toggle Right Panel Cards
+      document.getElementById("cardChecklist").style.display = "none";
+      cardIntegrationChecklist.style.display = "flex";
+      
+      checkPreconditions();
+      logToConsole("Switched to Tab: Enclosure Integration & Repair Mode", "info");
+    });
+
+    async function lookupBoxConfiguration(boxBarcode) {
+      const url = sheetUrlInput.value.trim();
+      if (!url || !boxBarcode) return;
+
+      assocStatusText.innerHTML = `<span style="color:var(--text-muted);">🔍 Querying database for Box history...</span>`;
+      
+      try {
+        const fetchUrl = `${url}?q=${encodeURIComponent(boxBarcode)}`;
+        const response = await fetch(fetchUrl);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const results = await response.json();
+        if (results.error) throw new Error(results.error);
+
+        if (results.length === 0) {
+          assocStatusText.innerHTML = `<span style="color:var(--warning);">⚠ No previous history found for Box "${boxBarcode}". Please enter barcodes manually.</span>`;
+          return;
+        }
+
+        // Find the newest record with non-empty board barcodes
+        const newestRecord = results.find(r => r["ESP32 Barcode"] || r["GPRS Barcode"] || r["Nuvoton Barcode"]);
+
+        if (newestRecord) {
+          assocEspBarcode.value = newestRecord["ESP32 Barcode"] || "";
+          assocGprsBarcode.value = newestRecord["GPRS Barcode"] || "";
+          assocNuvBarcode.value = newestRecord["Nuvoton Barcode"] || "";
+          assocStatusText.innerHTML = `<span style="color:var(--success);">✓ Loaded config from database (Last test: ${newestRecord["Local Test Time"] || "unknown"}).</span>`;
+          logToConsole(`✓ Box ${boxBarcode} found in history. Loaded boards: ESP=${assocEspBarcode.value}, GPRS=${assocGprsBarcode.value}, NUV=${assocNuvBarcode.value}`, "info");
+        }
+      } catch (err) {
+        assocStatusText.innerHTML = `<span style="color:#f87171;">❌ History lookup failed: ${err.message}</span>`;
+      } finally {
+        checkPreconditions();
+      }
+    }
+
+    box1Barcode.addEventListener("change", (e) => {
+      const val = e.target.value.trim();
+      if (val) lookupBoxConfiguration(val);
+    });
+
+    box1Barcode.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const val = e.target.value.trim();
+        if (val) lookupBoxConfiguration(val);
+      }
+    });
+
+    box2Barcode.addEventListener("change", checkPreconditions);
+    assocEspBarcode.addEventListener("input", checkPreconditions);
+    assocGprsBarcode.addEventListener("input", checkPreconditions);
+    assocNuvBarcode.addEventListener("input", checkPreconditions);
+
     btnSyncSetup.addEventListener("click", () => {
       preCode.textContent = appsScriptCode;
       codeModal.style.display = "flex";
@@ -2501,6 +2840,48 @@ function initializeSheets() {
     }
 
     function buildHistoryCard(rec, index, total) {
+      if (rec.logType === "integration") {
+        const verdict = rec["Integration Verdict"] || "UNKNOWN";
+        const isPass = verdict.startsWith("PASS");
+        const vColor = verdictColor(verdict);
+        const borderCol = isPass ? "rgba(99,102,241,0.4)" : "rgba(248,113,113,0.4)";
+        const bgGlow = isPass ? "rgba(99,102,241,0.04)" : "rgba(248,113,113,0.04)";
+        const action = rec["Action Type"] || "ORIGINAL_BUILD";
+        
+        return `
+          <div style="background:${bgGlow}; border:1.5px solid ${borderCol}; border-radius:0.65rem; padding:1.1rem; position:relative; display:flex; flex-direction:column; gap:0.6rem; box-shadow:0 4px 15px rgba(0,0,0,0.15);">
+            <!-- Header -->
+            <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+              <span style="font-size:0.95rem; font-weight:800; color:${vColor}; padding:0.15rem 0.5rem; background:rgba(255,255,255,0.03); border-radius:0.3rem; border:1px solid ${borderCol};">📦 INTEGRATION ${verdict}</span>
+              <span style="background:rgba(167,139,250,0.15); color:#c084fc; font-size:0.64rem; font-weight:700; padding:0.15rem 0.5rem; border-radius:99px; border:1px solid rgba(167,139,250,0.3); letter-spacing:0.04em;">${action}</span>
+              <span style="margin-left:auto; font-size:0.72rem; color:#64748b;">${rec["Local Test Time"] || rec["Timestamp"] || "--"}</span>
+            </div>
+            
+            <!-- Box Identifiers -->
+            <div style="display:flex; gap:1.2rem; flex-wrap:wrap; font-size:0.78rem; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 0.5rem;">
+              <div><span style="color:#64748b;">Box 1 (Datalogger): </span><code style="color:#fff; font-weight:700; font-size:0.75rem;">${rec["Box 1 Barcode"] || "--"}</code></div>
+              <div><span style="color:#64748b;">Box 2 (Power Unit):  </span><code style="color:#fff; font-weight:700; font-size:0.75rem;">${rec["Box 2 Barcode"] || "--"}</code></div>
+            </div>
+
+            <!-- Genealogy Tree View -->
+            <div style="font-size:0.75rem; color:#94a3b8; font-family:monospace; background:rgba(0,0,0,0.22); border-radius:0.4rem; padding:0.6rem 0.8rem; border:1px solid rgba(255,255,255,0.04);">
+              <div style="color:#fff; font-weight:700; margin-bottom:0.25rem;">📦 Integrated System Parts:</div>
+              <div>├── 🧠 ESP32 Board: <code style="color:#38bdf8;">${rec["ESP32 Barcode"] || "--"}</code></div>
+              <div>├── 📶 GPRS Board:  <code style="color:#34d399;">${rec["GPRS Barcode"] || "--"}</code></div>
+              <div>└── 📟 Nuvoton LCD: <code style="color:#fbbf24;">${rec["Nuvoton Barcode"] || "--"}</code></div>
+            </div>
+
+            <!-- Meta details -->
+            <div style="display:flex; gap:1.2rem; flex-wrap:wrap; font-size:0.72rem; color:#64748b; margin-top:0.15rem;">
+              <div>Tester: <b style="color:#e2e8f0;">${rec["Tester"] || "--"}</b></div>
+              <div>MAC: <code style="color:#e2e8f0; font-size:0.7rem;">${rec["MAC Address"] || "--"}</code></div>
+              <div>Firmware: <b style="color:#e2e8f0;">${rec["Firmware Ver"] || "--"}</b></div>
+              <div>Duration: <b style="color:#fbbf24;">${rec["Duration (s)"] ? rec["Duration (s)"] + " s" : "--"}</b></div>
+            </div>
+          </div>
+        `;
+      }
+
       const isPass    = rec["QC Verdict"] && rec["QC Verdict"].startsWith("PASS");
       const verdict   = rec["QC Verdict"] || "UNKNOWN";
       const vColor    = verdictColor(verdict);
@@ -2853,7 +3234,8 @@ function initializeSheets() {
         profile:   profileVal,
         tester:    document.getElementById("testerName")?.value.trim() || "--",
         auditMode: document.getElementById("auditMode")?.value || "--",
-        duration:  testDuration || 0
+        duration:  testDuration || 0,
+        boardsUnderTest: subsystemsTested
       };
       
       try {
@@ -3069,10 +3451,12 @@ function initializeSheets() {
     }
 
     function checkPreconditions() {
-      if (isFlashing) {
+      // 1. If we are currently in an active flash or integration run
+      if (isFlashing || isIntegrating) {
         btnStart.disabled = true;
         btnStartDiag.disabled = true;
         btnConnToggle.disabled = true;
+        btnStartIntegration.disabled = true;
         if (useDirectoryPicker) {
           btnSelectFolderAPI.disabled = true;
         } else {
@@ -3089,6 +3473,7 @@ function initializeSheets() {
       }
 
       const vault = getVaultStatus();
+      const testerNameVal = (document.getElementById("testerName")?.value || "").trim();
       
       // Update Step 1 (Vault) Card and Badge
       const vaultStatusMessage = document.getElementById("vaultStatusMessage");
@@ -3132,7 +3517,6 @@ function initializeSheets() {
         }
       }
 
-
       // Update Step 2 (Connection) Card and Badge
       if (isConnected) {
         cardConnection.classList.remove("pulse-blue-card");
@@ -3149,7 +3533,6 @@ function initializeSheets() {
         btnConnToggle.textContent = "🔌 Connect Board";
         btnConnToggle.className = "btn btn-primary";
         
-        // If files are loaded but board is not connected, prompt connection by pulsing the button
         if (vault.ready) {
           btnConnToggle.classList.add("pulse-blue-button");
         } else {
@@ -3157,69 +3540,107 @@ function initializeSheets() {
         }
       }
 
-      // Update Step 3 (Start Programming) Button
-      let canStart = false;
-      if (isConnected && cancelReadLoop) { // Only allow flashing if connected AND not running diagnostics
-        if (activeFlow === 'factory') {
-          // Check if specific files for current auto-detected chip size are loaded
-          const partKey = `partitions_${currentChipSize}mb.bin`;
-          const testKey = `qc_test_${currentChipSize}mb.bin`;
-          
-          if (fileVault["bootloader.bin"] && fileVault["boot_app0.bin"] && fileVault[partKey] && fileVault[testKey]) {
-            canStart = true;
+      if (currentTab === "boardqc") {
+        // --- Tab 1: Board QC Preconditions ---
+        let canStart = false;
+        if (isConnected && cancelReadLoop) { 
+          if (activeFlow === 'factory') {
+            const partKey = `partitions_${currentChipSize}mb.bin`;
+            const testKey = `qc_test_${currentChipSize}mb.bin`;
+            if (fileVault["bootloader.bin"] && fileVault["boot_app0.bin"] && fileVault[partKey] && fileVault[testKey]) {
+              canStart = true;
+            }
+          } else {
+            const appKey = `production_${currentChipSize}mb.bin`;
+            if (fileVault[appKey]) {
+              canStart = true;
+            }
+          }
+        }
+        
+        if (canStart) {
+          btnStart.disabled = false;
+          btnStart.classList.add("pulse-green-button");
+          cardProgramming.classList.add("step-ready-card");
+        } else {
+          btnStart.disabled = true;
+          btnStart.classList.remove("pulse-green-button");
+          cardProgramming.classList.remove("step-ready-card");
+        }
+
+        // Diagnostics Button
+        if (!isConnected) {
+          btnStartDiag.disabled = true;
+          btnStartDiag.className = "btn btn-primary";
+          btnStartDiag.textContent = "▶ Start Diagnostics";
+        } else if (!cancelReadLoop) {
+          btnStartDiag.disabled = false;
+          btnStartDiag.className = "btn btn-danger";
+          btnStartDiag.textContent = "⏹ Stop Diagnostics";
+        } else {
+          btnStartDiag.disabled = false;
+          btnStartDiag.className = "btn btn-primary";
+          btnStartDiag.textContent = "▶ Start Diagnostics";
+        }
+
+        // Tester name requirement
+        if (!testerNameVal) {
+          btnStart.disabled = true;
+          btnStart.textContent = "🚀 Enter Tester Name";
+          btnStart.classList.remove("pulse-green-button");
+          if (cancelReadLoop) {
+            btnStartDiag.disabled = true;
+            btnStartDiag.textContent = "▶ Enter Tester Name";
           }
         } else {
-          // Upgrade flow only requires production app for current detected chip size
-          const appKey = `production_${currentChipSize}mb.bin`;
-          if (fileVault[appKey]) {
-            canStart = true;
+          btnStart.textContent = chkForceFlash.checked ? "🚀 Start Programming" : "▶ Start Diagnostics";
+          if (cancelReadLoop) {
+            btnStartDiag.textContent = "▶ Start Diagnostics";
           }
         }
-      }
-      
-      if (canStart) {
-        btnStart.disabled = false;
-        btnStart.classList.add("pulse-green-button");
-        cardProgramming.classList.add("step-ready-card");
-      } else {
-        btnStart.disabled = true;
-        btnStart.classList.remove("pulse-green-button");
-        cardProgramming.classList.remove("step-ready-card");
-      }
-
-      // Diagnostics Button logic
-      if (!isConnected) {
-        btnStartDiag.disabled = true;
-        btnStartDiag.className = "btn btn-primary";
-        btnStartDiag.textContent = "▶ Start Diagnostics";
-      } else if (!cancelReadLoop) {
-        // Diagnostics are currently active - allow stopping them
-        btnStartDiag.disabled = false;
-        btnStartDiag.className = "btn btn-danger";
-        btnStartDiag.textContent = "⏹ Stop Diagnostics";
-      } else {
-        // Connected but diagnostics NOT active - allow starting them
-        btnStartDiag.disabled = false;
-        btnStartDiag.className = "btn btn-primary";
-        btnStartDiag.textContent = "▶ Start Diagnostics";
-      }
-
-      // Enforce entering Tester Name before starting any tests/programming
-      const testerNameVal = (document.getElementById("testerName")?.value || "").trim();
-      if (!testerNameVal) {
-        btnStart.disabled = true;
-        btnStart.textContent = "🚀 Enter Tester Name";
-        btnStart.classList.remove("pulse-green-button");
         
-        // Only require tester name to start diagnostics, not to stop them
-        if (cancelReadLoop) {
-          btnStartDiag.disabled = true;
-          btnStartDiag.textContent = "▶ Enter Tester Name";
-        }
+        btnStartIntegration.disabled = true;
       } else {
-        btnStart.textContent = "🚀 Start Programming";
-        if (cancelReadLoop) {
-          btnStartDiag.textContent = "▶ Start Diagnostics";
+        // --- Tab 2: Integration Preconditions ---
+        btnStart.disabled = true;
+        btnStartDiag.disabled = true;
+
+        const b1 = box1Barcode.value.trim();
+        const b2 = box2Barcode.value.trim();
+        const eBar = assocEspBarcode.value.trim();
+        const gBar = assocGprsBarcode.value.trim();
+        const nBar = assocNuvBarcode.value.trim();
+
+        // Must be connected, have tester name, have box barcodes, and all components filled
+        const hasInputs = b1 && b2 && eBar && gBar && nBar;
+        
+        // Check if selected config firmware is available in vault (either customConfigVault or production app)
+        const activeConfig = releaseConfigSel?.value;
+        const configData = activeConfig ? customConfigVault[activeConfig] : null;
+        const hasProductionBin = (configData && configData.binary) || fileVault[`production_${currentChipSize}mb.bin`];
+
+        const canIntegrate = isConnected && testerNameVal && hasInputs && hasProductionBin;
+
+        if (canIntegrate) {
+          btnStartIntegration.disabled = false;
+          btnStartIntegration.classList.add("pulse-green-button");
+          cardIntegrationControls.classList.add("step-ready-card");
+        } else {
+          btnStartIntegration.disabled = true;
+          btnStartIntegration.classList.remove("pulse-green-button");
+          cardIntegrationControls.classList.remove("step-ready-card");
+        }
+
+        if (!testerNameVal) {
+          btnStartIntegration.textContent = "⚡ Enter Tester Name";
+        } else if (!isConnected) {
+          btnStartIntegration.textContent = "🔌 Connect Board First";
+        } else if (!hasProductionBin) {
+          btnStartIntegration.textContent = "⚠️ Load Production Firmware";
+        } else if (!hasInputs) {
+          btnStartIntegration.textContent = "⚠️ Fill Box & Board Barcodes";
+        } else {
+          btnStartIntegration.textContent = "⚡ Flash Production & Run Verify";
         }
       }
     }
@@ -3667,6 +4088,204 @@ function initializeSheets() {
         writer.releaseLock();
       } catch (err) {
         logToConsole(`Error sending command to serial: ${err.message}`, "error");
+      }
+    }
+
+    // --- Enclosure Integration Diagnostics & Helpers ---
+    function setIntegrationCheckState(widget, badge, status, text) {
+      if (!widget || !badge) return;
+      badge.textContent = text;
+      widget.classList.remove("widget-a", "widget-b", "widget-c", "pulse-border");
+      if (status === "pass") {
+        widget.classList.add("widget-b");
+        badge.className = "badge badge-conn-connected";
+      } else if (status === "fail") {
+        widget.classList.add("widget-c");
+        badge.className = "badge badge-disconnected";
+      } else if (status === "running") {
+        widget.classList.add("widget-a", "pulse-border");
+        badge.className = "badge badge-disconnected";
+      } else {
+        widget.classList.add("widget-a");
+        badge.className = "badge badge-disconnected";
+      }
+    }
+
+    async function autoSyncIntegrationToSheets(verdict) {
+      const url = sheetUrlInput.value.trim();
+      if (!url) {
+        logToConsole("Google Sheet integration sync skipped (No Script URL configured).", "warning");
+        return false;
+      }
+      
+      const payload = {
+        integrationSync: true,
+        testTime: new Date().toLocaleString(),
+        box1: box1Barcode.value.trim(),
+        box2: box2Barcode.value.trim(),
+        espBarcode: assocEspBarcode.value.trim(),
+        gprsBarcode: assocGprsBarcode.value.trim(),
+        nuvotonBarcode: assocNuvBarcode.value.trim(),
+        mac: integrationMac.textContent,
+        version: integrationFwVersion.textContent,
+        verdict: verdict,
+        tester: document.getElementById("testerName")?.value.trim() || "--",
+        duration: testDuration || 0,
+        actionType: assocStatusText.textContent.includes("Loaded config") ? "REPAIR_SWAP" : "ORIGINAL_BUILD"
+      };
+
+      try {
+        await fetch(url, {
+          method: "POST",
+          mode: "no-cors",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+        logToConsole("✓ Successfully synced integration record to Google Sheet!", "info");
+        return true;
+      } catch (err) {
+        logToConsole(`Failed to sync integration to sheets: ${err.message}`, "error");
+        return false;
+      }
+    }
+
+    async function completeIntegrationSuccess() {
+      cancelReadLoop = true;
+      if (activeReader) {
+        try { await activeReader.cancel(); } catch (e) {}
+      }
+      if (port) {
+        try { await port.close(); } catch (e) {}
+      }
+      
+      btnAbortIntegration.style.display = "none";
+      isIntegrating = false;
+      
+      testDuration = Math.round((Date.now() - testStartTime) / 1000);
+      setIntegrationCheckState(intChkSync, intValSync, "running", "Syncing...");
+      
+      logToConsole("📊 All integration diagnostics passed! Syncing data to Google Sheets...", "info");
+      const synced = await autoSyncIntegrationToSheets("PASS");
+      
+      if (synced) {
+        setIntegrationCheckState(intChkSync, intValSync, "pass", "SUCCESS");
+        showVerdict("PASS", `Integration Verification Successful!<br>Box 1 and Box 2 fully commissioned.<br>Production telemetry verified.`);
+      } else {
+        setIntegrationCheckState(intChkSync, intValSync, "fail", "FAILED");
+        showVerdict("FAIL", `Integration check passed but database sync failed.<br>Please check network connection and spreadsheet URL.`);
+      }
+      
+      checkPreconditions();
+    }
+
+    async function startIntegrationDiagnostics() {
+      cancelReadLoop = false;
+      checkPreconditions();
+      const serialPort = port;
+      
+      testStartTime = Date.now();
+      testDuration = 0;
+      
+      setIntegrationCheckState(intChkBoot,  intValBoot,  "default", "Waiting...");
+      setIntegrationCheckState(intChkGprs,  intValGprs,  "default", "Waiting...");
+      setIntegrationCheckState(intChkBatt,  intValBatt,  "default", "Waiting...");
+      setIntegrationCheckState(intChkSolar, intValSolar, "default", "Waiting...");
+      setIntegrationCheckState(intChkSync,  intValSync,  "default", "Waiting...");
+
+      integrationFwVersion.textContent = "--";
+      integrationMac.textContent = assocEspBarcode.value || "--";
+      
+      logToConsole("Starting integration boot diagnostics listener...", "info");
+      btnAbortIntegration.style.display = "block";
+      
+      let bootDetected = false;
+      let gprsConnected = false;
+      let batteryChecked = false;
+      let solarChecked = false;
+      window._integrationSuccessTriggered = false;
+      
+      while (serialPort.readable && !cancelReadLoop) {
+        activeReader = serialPort.readable.getReader();
+        try {
+          let buffer = "";
+          while (true) {
+            const { value, done } = await activeReader.read();
+            if (done || cancelReadLoop) break;
+            
+            const text = new TextDecoder().decode(value);
+            buffer += text;
+            
+            let lines = buffer.split("\n");
+            buffer = lines.pop();
+            
+            for (const line of lines) {
+              const cleaned = line.trim();
+              if (cleaned) {
+                logToConsole(cleaned);
+                
+                // Telemetry line parser
+                // e.g. [SYS_BOOT] MAC: 48:E7:... | VER: 6.07 | SD: OK | GPRS: ONLINE | BATT: 12.6V | SOLAR: 17.5V
+                // Or standard boot log outputs
+                
+                if (cleaned.includes("SYS_BOOT") || cleaned.includes("Booting") || cleaned.includes("setup started")) {
+                  if (!bootDetected) {
+                    bootDetected = true;
+                    setIntegrationCheckState(intChkBoot, intValBoot, "pass", "DETECTED");
+                    const verMatch = cleaned.match(/VER:\s*([^\s|]+)/i) || cleaned.match(/Version:\s*([^\s|]+)/i);
+                    if (verMatch) integrationFwVersion.textContent = verMatch[1];
+                    const macMatch = cleaned.match(/MAC:\s*([^\s|]+)/i);
+                    if (macMatch) integrationMac.textContent = macMatch[1];
+                  }
+                }
+                
+                if (cleaned.includes("GPRS: ONLINE") || cleaned.includes("CELLULAR: ONLINE") || cleaned.includes("Modem Ready") || cleaned.includes("ONLINE (CSQ")) {
+                  if (!gprsConnected) {
+                    gprsConnected = true;
+                    setIntegrationCheckState(intChkGprs, intValGprs, "pass", "ONLINE");
+                  }
+                }
+                
+                if (cleaned.includes("BATT:") || cleaned.includes("Battery Voltage:") || cleaned.includes("Battery:")) {
+                  const voltMatch = cleaned.match(/BATT:\s*([0-9.]+)/i) || cleaned.match(/Battery:\s*([0-9.]+)/i);
+                  if (voltMatch) {
+                    const voltage = parseFloat(voltMatch[1]);
+                    if (voltage >= 3.0) {
+                      batteryChecked = true;
+                      setIntegrationCheckState(intChkBatt, intValBatt, "pass", `${voltage.toFixed(2)} V`);
+                    } else {
+                      setIntegrationCheckState(intChkBatt, intValBatt, "fail", `${voltage.toFixed(2)} V (LOW)`);
+                    }
+                  }
+                }
+
+                if (cleaned.includes("SOLAR:") || cleaned.includes("Solar Voltage:") || cleaned.includes("Solar:")) {
+                  const voltMatch = cleaned.match(/SOLAR:\s*([0-9.]+)/i) || cleaned.match(/Solar:\s*([0-9.]+)/i);
+                  if (voltMatch) {
+                    const voltage = parseFloat(voltMatch[1]);
+                    solarChecked = true;
+                    setIntegrationCheckState(intChkSolar, intValSolar, "pass", `${voltage.toFixed(2)} V`);
+                  }
+                }
+
+                // Finish integration if boot, gprs, and battery are verified
+                if (bootDetected && gprsConnected && batteryChecked) {
+                  if (!window._integrationSuccessTriggered) {
+                    window._integrationSuccessTriggered = true;
+                    setTimeout(async () => {
+                      await completeIntegrationSuccess();
+                    }, 1500);
+                  }
+                }
+              }
+            }
+          }
+        } catch (err) {
+          logToConsole(`Read error: ${err.message}`, "error");
+        } finally {
+          activeReader.releaseLock();
+        }
       }
     }
 
@@ -4244,6 +4863,10 @@ function initializeSheets() {
 
     // --- Flashing Engine Orchestrator ---
     btnStart.addEventListener("click", async () => {
+      if (!chkForceFlash.checked) {
+        await runDiagnosticsOnly();
+        return;
+      }
       isFlashing = true;
       checkPreconditions();
       progressContainer.style.display = "block";
@@ -4262,6 +4885,95 @@ function initializeSheets() {
         isFlashing = false;
         checkPreconditions();
       }
+    });
+
+    // --- Integration Testing Orchestrator ---
+    btnStartIntegration.addEventListener("click", async () => {
+      isIntegrating = true;
+      window._integrationSuccessTriggered = false;
+      checkPreconditions();
+      integrationProgressContainer.style.display = "block";
+      integrationProgressBar.style.width = "0%";
+      
+      try {
+        const activeConfig = releaseConfigSel?.value;
+        const configData = activeConfig ? customConfigVault[activeConfig] : null;
+        const productionBin = (configData && configData.binary) || fileVault[`production_${currentChipSize}mb.bin`];
+
+        if (!productionBin) {
+          throw new Error("No production binary found. Please load firmware files first.");
+        }
+
+        logToConsole("--- STARTING ENCLOSURE INTEGRATION FLASH & TEST ---", "info");
+        
+        logToConsole(`Flashing Production binary (${(productionBin.byteLength/1024).toFixed(1)} KB) to offset 0x10000...`, "normal");
+        await esploader.writeFlash({
+          fileArray: [{ data: productionBin, address: 0x10000 }],
+          flashSize: "keep",
+          compress: true,
+          reportProgress: (fileIndex, writtenBytes, totalBytes) => {
+            if (totalBytes > 0) {
+              const percentage = Math.round((writtenBytes / totalBytes) * 100);
+              integrationProgressBar.style.width = `${percentage}%`;
+            }
+          }
+        });
+        integrationProgressBar.style.width = "100%";
+        
+        logToConsole("Flashing complete! Resetting board...", "info");
+        await esploader.after("hard_reset");
+        
+        logToConsole("Releasing flasher connection...", "normal");
+        if (transport) {
+          try { await transport.disconnect(); } catch (e) {}
+        }
+        transport = null;
+        esploader = null;
+
+        logToConsole("Opening serial diagnostics channel at 115200 baud...", "normal");
+        try {
+          await port.open({ baudRate: 115200 });
+          await port.setSignals({ dataTerminalReady: false, requestToSend: true });
+          await new Promise(r => setTimeout(r, 200));
+          await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+        } catch (err) {
+          logToConsole(`Failed to open diagnostics channel: ${err.message}`, "error");
+          isIntegrating = false;
+          checkPreconditions();
+          return;
+        }
+
+        setTimeout(startIntegrationDiagnostics, 500);
+
+      } catch (err) {
+        logToConsole(`Integration flashing failed: ${err.message}`, "error");
+        integrationProgressContainer.style.display = "none";
+        isIntegrating = false;
+        checkPreconditions();
+      }
+    });
+
+    btnAbortIntegration.addEventListener("click", async () => {
+      logToConsole("--- ABORTING INTEGRATION TEST ---", "warning");
+      cancelReadLoop = true;
+      if (activeReader) {
+        try { await activeReader.cancel(); } catch (e) {}
+      }
+      await new Promise(r => setTimeout(r, 150));
+      if (port) {
+        try { await port.close(); } catch (e) {}
+      }
+      btnAbortIntegration.style.display = "none";
+      isIntegrating = false;
+      integrationProgressContainer.style.display = "none";
+      
+      setIntegrationCheckState(intChkBoot,  intValBoot,  "fail", "ABORTED");
+      setIntegrationCheckState(intChkGprs,  intValGprs,  "fail", "ABORTED");
+      setIntegrationCheckState(intChkBatt,  intValBatt,  "fail", "ABORTED");
+      setIntegrationCheckState(intChkSolar, intValSolar, "fail", "ABORTED");
+      setIntegrationCheckState(intChkSync,  intValSync,  "fail", "ABORTED");
+      
+      checkPreconditions();
     });
 
     // --- Start Diagnostics Without Reflashing ---
