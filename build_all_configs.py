@@ -7,6 +7,8 @@ Requires: arduino-cli (install: brew install arduino-cli)
 
 import os
 import sys
+import re
+import json
 import argparse
 import subprocess
 import shutil
@@ -24,7 +26,7 @@ BACKUP_CONFIG = SKETCH_DIR / "user_config.h.bak"
 CONFIGS = [
     (0, "KSNDMC_TRG", "KSNDMC_TRG"),
     (0, "BIHAR_TRG", "BIHAR_TRG"),
-    (2, "SPATIKA_GEN", "SPATIKA_TWSRF"),
+    (2, "SPATIKA_GEN", "SPATIKA_GEN"),
     (1, "KSNDMC_TWS", "KSNDMC_TWS"),
     (2, "KSNDMC_ADDON", "KSNDMC_ADDON"),
 ]
@@ -117,6 +119,55 @@ def update_config(system, unit, disable_webserver=False):
     
     print(f"  SYSTEM set to: {system}")
     print(f"  UNIT set to: {unit}")
+
+def extract_build_defines(config_h_path):
+    """Parse key compile-time defines from user_config.h.
+    Handles multi-line defines joined with backslash continuations.
+    Returns a dict of human-readable settings.
+    """
+    with open(config_h_path, 'r') as f:
+        raw = f.read()
+
+    # Join backslash-continuation lines into single logical lines
+    joined = re.sub(r'\\\s*\n\s*', ' ', raw)
+
+    def get_int(name):
+        m = re.search(rf'#define {name}\s+(\d+)', joined)
+        return int(m.group(1)) if m else None
+
+    def get_float(name):
+        m = re.search(rf'#define {name}\s+([0-9.]+)', joined)
+        return float(m.group(1)) if m else None
+
+    def get_str(name):
+        m = re.search(rf'#define {name}\s+"([^"]+)"', joined)
+        return m.group(1) if m else None
+
+    debug_val       = get_int('DEBUG')
+    webserver_val   = get_int('ENABLE_WEBSERVER')
+    nuvoton_val     = get_int('USE_NUVOTON_UI')
+    health_val      = get_int('TEST_HEALTH_DEFAULT')
+    health_en_val   = get_int('ENABLE_HEALTH_REPORT')
+    rf_res_val      = get_float('DEFAULT_RF_RESOLUTION')
+    wind_teeth_val  = get_float('WIND_TEETH_COUNT')
+    pressure_val    = get_int('ENABLE_PRESSURE_SENSOR')
+    calib_val       = get_int('ENABLE_CALIB_TEST')
+    fw_ver_val      = get_str('FIRMWARE_VERSION')
+
+    health_freq_map = {0: 'Daily (11am)', 1: 'Every 15 mins', 2: 'Disabled'}
+
+    return {
+        'firmware_version':    fw_ver_val or 'UNKNOWN',
+        'debug':               bool(debug_val) if debug_val is not None else None,
+        'enable_webserver':    bool(webserver_val) if webserver_val is not None else None,
+        'use_nuvoton_ui':      bool(nuvoton_val) if nuvoton_val is not None else None,
+        'enable_health_report':bool(health_en_val) if health_en_val is not None else None,
+        'health_report_freq':  health_freq_map.get(health_val, 'Unknown') if health_val is not None else None,
+        'rf_resolution_mm':    rf_res_val,
+        'wind_teeth_count':    wind_teeth_val,
+        'enable_pressure_sensor': bool(pressure_val) if pressure_val is not None else None,
+        'enable_calib_test':   bool(calib_val) if calib_val is not None else None,
+    }
 
 def check_arduino_cli():
     """Check if arduino-cli is installed"""
@@ -215,6 +266,41 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
             with open(fw_version_file, 'w') as f:
                 f.write(full_version)
             print_success(f"Version file created: fw_version.txt ({full_version})")
+
+            # --- Generate metadata.json ---
+            build_defines = extract_build_defines(USER_CONFIG_H)
+            metadata = {
+                'config':           output_name,
+                'unit_cfg':         unit,
+                'system_type':      ['TRG', 'TWS', 'TWS-RF'][system] if system in [0,1,2] else str(system),
+                'flash_size':       flash_size,
+                'full_version':     full_version,
+                'binary_size_bytes':size,
+                'build_timestamp':  datetime.now().isoformat(timespec='seconds'),
+                **build_defines
+            }
+            meta_file = output_dir / "metadata.json"
+            with open(meta_file, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            print_success(f"Metadata file created: metadata.json")
+
+            # ── Print compile-time settings summary ────────────────────────────────
+            d = metadata
+            def yn(v): return f"{Colors.GREEN}YES{Colors.NC}" if v else f"{Colors.RED}NO{Colors.NC}"
+            print(f"\n  ┌{'':─<54}┐")
+            print(f"  │  {Colors.YELLOW}COMPILE-TIME SETTINGS for {output_name}_{flash_size}{Colors.NC}")
+            print(f"  ├{'':─<54}┤")
+            print(f"  │  Debug Logs (DEBUG)          : {yn(d.get('debug'))}")
+            print(f"  │  Web Server (ENABLE_WEBSERVER): {yn(d.get('enable_webserver'))}")
+            print(f"  │  Nuvoton UI  (USE_NUVOTON_UI) : {yn(d.get('use_nuvoton_ui'))}")
+            print(f"  │  Health Rpt  (ENABLE_HEALTH_REPORT): {yn(d.get('enable_health_report'))}")
+            print(f"  │  Health Freq (TEST_HEALTH_DEFAULT) : {d.get('health_report_freq','--')}")
+            print(f"  │  RF Res (DEFAULT_RF_RESOLUTION): {d.get('rf_resolution_mm','--')} mm")
+            print(f"  │  Wind Teeth (WIND_TEETH_COUNT) : {d.get('wind_teeth_count','--')}")
+            print(f"  │  Pressure Sensor              : {yn(d.get('enable_pressure_sensor'))}")
+            print(f"  │  Calib Test                   : {yn(d.get('enable_calib_test'))}")
+            print(f"  │  Binary Size                   : {size_mb:.2f} MB")
+            print(f"  └{'':─<54}┘\n")
 
             # [BUILD-05] POST-COMPILATION IDENTITY CHECK
             # Verify that the generated version prefix matches the intended system type
@@ -338,6 +424,9 @@ def main():
                         shutil.copy(source_bin, target_dir / "firmware.bin")
                         if source_ver.exists():
                             shutil.copy(source_ver, target_dir / "fw_version.txt")
+                        source_meta = config_dir / "metadata.json"
+                        if source_meta.exists():
+                            shutil.copy(source_meta, target_dir / "metadata.json")
             
             # 2. Copy flash_files (Required for ESPTool)
             source_flash = SKETCH_DIR / "flash_files"

@@ -8,20 +8,9 @@ void windSpeed(void *pvParameters) {
 
   // READ WIND SPEED TWS & TWS-RF
 #if (SYSTEM == 1) || (SYSTEM == 2)
-  // v5.70: Fix Issue 24 - Protect boot-time SPIFFS read with fsMutex
-  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-    if (SPIFFS.exists("/prevWindSpeed.txt")) {
-      File fileTemp5 = SPIFFS.open("/prevWindSpeed.txt", FILE_READ);
-      if (fileTemp5) {
-        // v5.81 Surgical: Replace String with zero-heap char buffer read
-        size_t bytesRead = fileTemp5.readBytesUntil('\n', prevWindSpeedAvg_str, sizeof(prevWindSpeedAvg_str)-1);
-        prevWindSpeedAvg_str[bytesRead] = '\0';
-        fileTemp5.close();
-        debugf("[FS] Loaded Prev Wind Speed Avg: %s\n", prevWindSpeedAvg_str);
-      }
-    }
-    xSemaphoreGive(fsMutex);
-  }
+  // v6.09: Load previous average from RTC memory instead of SPIFFS to prevent flash wear
+  snprintf(prevWindSpeedAvg_str, sizeof(prevWindSpeedAvg_str), "%.1f", rtc_prev_wind_speed_avg);
+  debugf("[RTC] Loaded Prev Wind Speed Avg: %s\n", prevWindSpeedAvg_str);
 #endif
 
   strcpy(windSpeedInst_str, "00.00");

@@ -345,6 +345,7 @@ RTC_DATA_ATTR float last_valid_temp = 0.0;
 RTC_DATA_ATTR float last_valid_hum = 0.0;
 RTC_DATA_ATTR int last_valid_wd = 0;
 RTC_DATA_ATTR float rtc_daily_cum_rf = 0.0;
+RTC_DATA_ATTR float rtc_prev_wind_speed_avg = 0.0; // v6.09: Prev Wind Speed Avg cached in RTC memory
 
 RTC_DATA_ATTR int last_recorded_dd = 0;
 RTC_DATA_ATTR int last_recorded_mm = 0;

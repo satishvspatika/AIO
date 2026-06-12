@@ -114,10 +114,10 @@ void start_deep_sleep() {
       
       portENTER_CRITICAL(&rtcTimeMux);
       live_min = now.minute();
-      current_min = live_min; // Update globals for accurate calc
-      portEXIT_CRITICAL(&rtcTimeMux);
-      
       live_sec = now.second();
+      current_min = live_min; // Update globals for accurate calc
+      current_sec = live_sec;
+      portEXIT_CRITICAL(&rtcTimeMux);
       
       // Shut down I2C bus BEFORE cutting LCD power
       // Prevents PCF8574 ESD diodes from corrupting in-flight RTC/HDC transactions

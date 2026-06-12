@@ -556,6 +556,7 @@ extern RTC_DATA_ATTR float last_valid_temp;
 extern RTC_DATA_ATTR float last_valid_hum;
 extern RTC_DATA_ATTR int last_valid_wd;      // v5.59: WD Rescue Anchor
 extern RTC_DATA_ATTR float rtc_daily_cum_rf; // v5.59: RF Golden Anchor
+extern RTC_DATA_ATTR float rtc_prev_wind_speed_avg; // v6.09: Prev Wind Speed Avg cached in RTC memory
 
 // RF
 extern float rf_value, current_rf_value, calib_rf_float;

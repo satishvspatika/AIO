@@ -413,6 +413,8 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
             SPIFFS.remove("/ftpunsent.txt");
             if (SPIFFS.exists("/ftpremain.txt")) SPIFFS.rename("/ftpremain.txt", "/ftpunsent.txt");
           }
+          // v6.09: Recount backlog after successful upload to prevent monotonic growth desync
+          get_total_backlogs(true);
 
           // v13.4: After successful daily FTP, purge old data/daily txt files
           // Uses two-pass: collect first, delete after — safe SPIFFS iterator pattern (Bug 5 fix)
@@ -1440,30 +1442,3 @@ char *parse_http_head(char *response, char *check) {
   }
   return search_str;
 }
-
-void send_daily_file(
-    const char *dateStr) { // v5.80: Send /dailyftp_YYYYMMDD.txt
-  char dailyFile[32];
-  snprintf(dailyFile, sizeof(dailyFile), "/dailyftp_%s.txt", dateStr);
-
-  if (SPIFFS.exists(dailyFile)) {
-    debugf1("[FTP] Found daily file: %s. Initiating upload...\n", dailyFile);
-    // Signal guard: skip 24-retry loop if signal already known to be dead
-    if (signal_lvl <= -98) {
-      debugf("[FTP] Skip Daily: Signal too weak (%d dBm).\n", signal_lvl);
-      return;
-    }
-    get_registration();
-    if (gprs_mode == eGprsSignalOk) {
-      get_a7672s();
-      vTaskDelay(3000 / portTICK_PERIOD_MS);
-      esp_task_wdt_reset();
-      send_ftp_file(dailyFile, true);
-    } else {
-      debugln("[FTP] Skip Daily: No Network.");
-    }
-  } else {
-    debugf1("[FTP] Daily file NOT FOUND: %s\n", dailyFile);
-  }
-}
-

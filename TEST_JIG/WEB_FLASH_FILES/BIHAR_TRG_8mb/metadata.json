@@ -1,0 +1,19 @@
+{
+  "config": "BIHAR_TRG",
+  "unit_cfg": "BIHAR_TRG",
+  "system_type": "TRG",
+  "flash_size": "8mb",
+  "full_version": "TRG9-BIH-6.07",
+  "binary_size_bytes": 1276080,
+  "build_timestamp": "2026-06-11T16:50:35",
+  "firmware_version": "6.07",
+  "debug": false,
+  "enable_webserver": true,
+  "use_nuvoton_ui": true,
+  "enable_health_report": false,
+  "health_report_freq": "Daily (11am)",
+  "rf_resolution_mm": 0.25,
+  "wind_teeth_count": 2.0,
+  "enable_pressure_sensor": false,
+  "enable_calib_test": false
+}

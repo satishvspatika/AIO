@@ -6,6 +6,8 @@ void scheduler(void *pvParameters) {
   // Replaced with local arrays where needed.
   bool curFileExists = false;
   bool fs_locked = false; // v5.70: Mutex state tracker (C-01 Fix)
+  static bool reconstruct_attempted = false; // v6.09: One-shot mask reconstruction guard
+  float hum_output = 0.0; // v5.79: Global function scope for goto safety
 
 #if USE_NUVOTON_UI == 1
   set_sys_status("SCHEDULER INIT");
@@ -172,7 +174,7 @@ void scheduler(void *pvParameters) {
 
     // Calculate how many minutes we are into the current 15-minute interval
     minutes_into_interval = cur_min % 15;
-    is_valid_window = (minutes_into_interval <= 10);
+    is_valid_window = (minutes_into_interval <= 12); // v6.09: Extended window to absorb timer drift
 
     // Check for Fresh Boot entry override
     is_fresh_boot_entry = (wakeup_reason_is == 0); // PowerOn
@@ -562,7 +564,7 @@ void scheduler(void *pvParameters) {
         diag_hum_erz = false;
       }
 
-      if (check_hum != 0.0 && abs(check_hum - prev_15min_hum) < 0.01) { // v5.75: M-04 Smart Guard (Skip if HW absent)
+      if (check_hum != 0.0 && check_hum < 99.0 && abs(check_hum - prev_15min_hum) < 0.01) { // v6.09: Skip stuck check if saturated
         hum_same_count++;
         if (hum_same_count >= HUM_SAME_COUNT_THRESHOLD)
           diag_hum_cv = true;
@@ -688,7 +690,8 @@ void scheduler(void *pvParameters) {
             check_hum = 100.0;
           debugf1("[RESCUE] Hum corrected to %.1f (fault)\n", check_hum);
         } else {
-          last_valid_hum = check_hum;
+          if (check_hum <= 100.0) last_valid_hum = check_hum;
+          else last_valid_hum = 99.9f; // Saturated but valid — anchor at ceiling
           prev_15min_hum = check_hum;
           hum_same_count = 0;
           diag_hum_cv = false;
@@ -763,18 +766,8 @@ void scheduler(void *pvParameters) {
 
       { // Save state
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          // LTS-14.2: Atomic Write Pattern (tmp -> rename)
-          File fTmp = SPIFFS.open("/prevWS.tmp", FILE_WRITE);
-          if (fTmp) {
-            fTmp.print(cur_avg_wind_speed);
-            fTmp.close();
-            SPIFFS.remove("/prevWindSpeed.txt");
-            if (!SPIFFS.rename("/prevWS.tmp", "/prevWindSpeed.txt")) {
-              debugln("[SPIFFS] WARN: prevWS rename failed. Retrying...");
-              vTaskDelay(100 / portTICK_PERIOD_MS);
-              SPIFFS.rename("/prevWS.tmp", "/prevWindSpeed.txt");
-            }
-          }
+          // v6.09: Skip expensive SPIFFS write, cache in RTC memory to prevent flash wear
+          rtc_prev_wind_speed_avg = cur_avg_wind_speed;
           xSemaphoreGive(fsMutex);
         }
       }
@@ -926,6 +919,7 @@ void scheduler(void *pvParameters) {
           diag_sent_mask_cur[0] = 0;
           diag_sent_mask_cur[1] = 0;
           diag_sent_mask_cur[2] = 0;
+          reconstruct_attempted = false; // v6.09: Reset mask reconstruction one-shot on rollover
           last_unsent_sampleNo =
               -1; // v5.73 Fix: Reset cross-day dedup guard on rollover
           last_ftp_unsent_sampleNo = -1; // [REG-01] FTP Guard Reset
@@ -973,7 +967,8 @@ void scheduler(void *pvParameters) {
       // v7.82 Reconstruction: Recover sent mask from SPIFFS (Cold Boot or
       // Recovery or Midnight) Must happen AFTER rollover check to prevent
       // recovered counts from being wiped.
-      if (diag_pd_count == 0 && current_year > 2024) {
+      if (!reconstruct_attempted && diag_pd_count == 0 && current_year > 2024) {
+        reconstruct_attempted = true;
         reconstructSentMasks(); // v5.70: Removed index guard to fix M-04
         fresh_boot_check_done = true;
       }
@@ -1695,8 +1690,7 @@ void scheduler(void *pvParameters) {
               }
 
               // Calculate fill_sig as negative for consistent formatting
-              fill_sig = -((rand() % (FILL_SIG_MAX - FILL_SIG_MIN + 1)) +
-                           FILL_SIG_MIN);
+              fill_sig = SIGNAL_STRENGTH_GAP_FILLED;  // -113, matches analyzeFileHealth() constant
 
 #if SYSTEM == 0
               snprintf(append_text, sizeof(append_text),
@@ -1713,7 +1707,7 @@ void scheduler(void *pvParameters) {
                   q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
                   fill_inst_wd,
-                  (q == sampleNo) ? signal_lvl : SIGNAL_STRENGTH_GAP_FILLED,
+                  (q == sampleNo) ? signal_strength : SIGNAL_STRENGTH_GAP_FILLED, // v6.09: use signal_strength directly for current slot
                   bat_val);
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
@@ -1721,7 +1715,7 @@ void scheduler(void *pvParameters) {
                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
                   fill_inst_wd,
-                  (q == sampleNo) ? signal_lvl : SIGNAL_STRENGTH_GAP_FILLED,
+                  (q == sampleNo) ? signal_strength : SIGNAL_STRENGTH_GAP_FILLED, // v6.09: use signal_strength directly for current slot
                   bat_val);
 #endif
 
@@ -1734,8 +1728,8 @@ void scheduler(void *pvParameters) {
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                        fill_cum_rf, fill_inst_temp, fill_inst_hum,
                        fill_avg_wind_speed, fill_inst_wd,
-                       (q == sampleNo) ? signal_lvl
-                                       : SIGNAL_STRENGTH_GAP_FILLED,
+                       (q == sampleNo) ? signal_strength
+                                       : SIGNAL_STRENGTH_GAP_FILLED, // v6.09: use signal_strength directly for current slot
                        bat_val);
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
@@ -1743,7 +1737,7 @@ void scheduler(void *pvParameters) {
                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   fill_ftpcum_rf, fill_inst_temp, fill_inst_hum,
                   fill_avg_wind_speed, fill_inst_wd,
-                  (q == sampleNo) ? signal_lvl : SIGNAL_STRENGTH_GAP_FILLED,
+                  (q == sampleNo) ? signal_strength : SIGNAL_STRENGTH_GAP_FILLED, // v6.09: use signal_strength directly for current slot
                   bat_val);
 #endif
             }
@@ -2055,7 +2049,7 @@ void scheduler(void *pvParameters) {
 
 // TWS-RF
 #if SYSTEM == 2
-          snprintf(cum_rf, sizeof(cum_rf), "%06.1f", float(rf_value));
+          snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(rf_value)); // v6.09: Corrected precision to 2 decimals
           cum_rf[6] = 0;
           snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(rf_value));
           ftpcum_rf[5] = 0;
@@ -2717,9 +2711,9 @@ void scheduler(void *pvParameters) {
                 } else {
                   min_val = fill_AvgWS - 0.2;
                   max_val = fill_AvgWS + 0.2;
-                  fill_AvgWS =
-                      ((float)rand() / RAND_MAX) * (max_val - min_val) +
-                      min_val;
+                   fill_AvgWS =
+                       ((float)(esp_random() & 0xFFFFFF) / 16777215.0f) * (max_val - min_val) +
+                       min_val; // v6.09: Use esp_random() instead of standard rand()
                   if (fill_AvgWS < 0.1)
                     fill_AvgWS = 0.1;
                   // Removed the artificial 2.2 cap
@@ -2973,6 +2967,7 @@ void scheduler(void *pvParameters) {
 
         if (sampleNo != 0) {
           if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            pruneFile(temp_file, 98 * record_length, true); // v6.09: Size cap staging file to prevent disk full
             File ftp_file = SPIFFS.open(temp_file, FILE_APPEND);
             if (ftp_file) {
               ftp_file.print(
@@ -3030,6 +3025,8 @@ void scheduler(void *pvParameters) {
       rf_count.val =
           0; // Need to make it zero to capture instantaneous RF every 15 mins
       last_raw_rf_count = 0; // v6.08: Reset anchor to 0 to prevent negative delta spikes/ignored tips
+      total_rf_pulses_32 = 0;       // v6.09: Reset accumulator to prevent carryover
+      last_sched_rf_pulses_32 = 0;  // v6.09: Reset scheduler anchor
       rf_value =
           0; // Need to make it zero to capture instantaneous RF every 15 mins
 #endif
@@ -3062,7 +3059,7 @@ void scheduler(void *pvParameters) {
                 "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%04.1f\r\n",
                 sampleNo, temp_year, temp_month, temp_day, record_hr,
                 record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed,
-                inst_wd, signal_lvl, bat_val);
+                inst_wd, signal_strength, bat_val); // v6.09: Use signal_strength directly
 #endif
             file5.print(append_text);
             file5.close();
