@@ -1070,38 +1070,50 @@
           <span>Step 3: Integration & Repair Details</span>
         </h3>
         
-        <!-- Box 1 Barcode -->
-        <div style="margin-bottom: 0.6rem;">
-          <label style="font-size: 0.76rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Box 1 Barcode (Datalogger Enclosure) *</label>
-          <input type="text" id="box1Barcode" placeholder="Scan or enter Box 1 Barcode" style="width: 100%; padding: 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.35rem; color: #fff; font-size: 0.78rem; font-family: monospace;">
-        </div>
-
-        <!-- Box 2 Barcode -->
-        <div style="margin-bottom: 0.6rem;">
-          <label style="font-size: 0.76rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Box 2 Barcode (Power Enclosure) *</label>
-          <input type="text" id="box2Barcode" placeholder="Scan or enter Box 2 Barcode" style="width: 100%; padding: 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.35rem; color: #fff; font-size: 0.78rem; font-family: monospace;">
-        </div>
-
-        <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.6rem; margin-top: 0.6rem;">
-          <span style="font-size: 0.75rem; font-weight: 600; color: var(--primary); display: block; margin-bottom: 0.4rem;">Component Association</span>
+        <!-- Box 1 (DL Box) Group -->
+        <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 0.5rem; padding: 0.75rem; margin-bottom: 0.8rem;">
+          <label style="font-size: 0.76rem; font-weight: 700; color: var(--primary); display: block; margin-bottom: 0.45rem; text-transform: uppercase; letter-spacing: 0.03em;">📦 Box 1 (DL Box Enclosure) *</label>
+          <input type="text" id="box1Barcode" placeholder="Scan DL Box Barcode" style="width: 100%; padding: 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.35rem; color: #fff; font-size: 0.78rem; font-family: monospace; margin-bottom: 0.6rem;">
           
-          <div style="display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.75rem;">
-            <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.3rem;">
-              <span style="color: var(--text-muted);">ESP32:</span>
-              <input type="text" id="assocEspBarcode" placeholder="ESP32 Barcode" style="width: 70%; padding: 0.25rem 0.4rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.25rem; color: #fff; font-size: 0.7rem; font-family: monospace;">
+          <div style="display: flex; flex-direction: column; gap: 0.45rem; padding-left: 0.5rem; border-left: 2px solid rgba(99,102,241,0.25);">
+            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
+              <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em;">🧠 ESP32 Board Barcode</label>
+              <input type="text" id="assocEspBarcode" placeholder="Scan ESP32 Board Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
             </div>
-            <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.3rem;">
-              <span style="color: var(--text-muted);">GPRS:</span>
-              <input type="text" id="assocGprsBarcode" placeholder="GPRS Barcode" style="width: 70%; padding: 0.25rem 0.4rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.25rem; color: #fff; font-size: 0.7rem; font-family: monospace;">
+            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
+              <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em;">📶 GPRS Modem Board Barcode</label>
+              <input type="text" id="assocGprsBarcode" placeholder="Scan GPRS Board Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
             </div>
-            <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.3rem;">
-              <span style="color: var(--text-muted);">Nuvoton:</span>
-              <input type="text" id="assocNuvBarcode" placeholder="Nuvoton Barcode" style="width: 70%; padding: 0.25rem 0.4rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.25rem; color: #fff; font-size: 0.7rem; font-family: monospace;">
+            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
+              <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em;">📟 Nuvoton Board Barcode</label>
+              <input type="text" id="assocNuvBarcode" placeholder="Scan Nuvoton Board Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
             </div>
           </div>
-          <div id="assocStatusText" style="font-size: 0.68rem; color: var(--warning); margin-top: 0.35rem; line-height: 1.25;">
-            Scan Box 1 to auto-load previous configuration or enter barcodes manually.
+        </div>
+
+        <!-- Box 2 (PS Box) Group -->
+        <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 0.5rem; padding: 0.75rem; margin-bottom: 0.6rem;">
+          <label style="font-size: 0.76rem; font-weight: 700; color: hsl(142, 70%, 45%); display: block; margin-bottom: 0.45rem; text-transform: uppercase; letter-spacing: 0.03em;">⚡ Box 2 (PS Box Enclosure) *</label>
+          <input type="text" id="box2Barcode" placeholder="Scan PS Box Barcode" style="width: 100%; padding: 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.35rem; color: #fff; font-size: 0.78rem; font-family: monospace; margin-bottom: 0.6rem;">
+          
+          <div style="display: flex; flex-direction: column; gap: 0.45rem; padding-left: 0.5rem; border-left: 2px solid rgba(34,197,94,0.25);">
+            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
+              <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em;">🔋 Battery 1 (3.2V ESP32 Battery) [Optional]</label>
+              <input type="text" id="assocBatt1Barcode" placeholder="Scan Battery 1 Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
+              <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em;">🔋 Battery 2 (3.7V GPRS Battery) [Optional]</label>
+              <input type="text" id="assocBatt2Barcode" placeholder="Scan Battery 2 Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
+              <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em;">🔌 MPPT Board Barcode *</label>
+              <input type="text" id="assocMpptBarcode" placeholder="Scan MPPT Board Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
+            </div>
           </div>
+        </div>
+
+        <div id="assocStatusText" style="font-size: 0.68rem; color: var(--warning); margin-top: 0.35rem; line-height: 1.25; margin-bottom: 0.6rem;">
+          Scan Box 1 to auto-load previous configuration or enter barcodes manually.
         </div>
 
         <div class="progress-bar-container" id="integrationProgressContainer" style="display: none; margin-top: 0.6rem; margin-bottom: 0.4rem;">
@@ -1161,16 +1173,35 @@
       <div class="card" id="cardChecklist" style="flex: 1;">
         <h3 class="card-title">Live Diagnostics checklist</h3>
         
-        <!-- Board Meta Box -->
-        <!-- Board Meta Box -->
-        <div style="display: flex; flex-direction: column; gap: 0.35rem; padding: 0.5rem 0.75rem; background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 0.4rem; margin-bottom: 0.8rem; font-size: 0.8rem;">
-          <div style="display: flex; justify-content: space-between; align-items: center;"><span style="color: var(--text-muted);">Firmware Version:</span><strong id="metaFwVersion" style="font-family: 'JetBrains Mono', monospace; color: #fff;">--</strong></div>
-          <div style="display: flex; justify-content: space-between; align-items: center;"><span style="color: var(--text-muted);">ESP32 MAC ID:</span><strong id="metaMac" style="font-family: 'JetBrains Mono', monospace; color: #fff;">--:--:--:--:--:--</strong></div>
-          <div style="display: flex; justify-content: space-between; align-items: center;"><span style="color: var(--text-muted);">Flash Capacity:</span><strong id="metaFlashSize" style="font-family: 'JetBrains Mono', monospace; color: #fff;">-- MB</strong></div>
-          <div style="display: flex; justify-content: space-between; align-items: center;"><span style="color: var(--text-muted);">GPRS IMEI:</span><strong id="metaImei" style="font-family: 'JetBrains Mono', monospace; color: #fff;">---------------</strong></div>
-          <div style="display: flex; justify-content: space-between; align-items: center;"><span style="color: var(--text-muted);">SIM CCID:</span><strong id="metaCcid" style="font-family: 'JetBrains Mono', monospace; color: #fff;">--------------------</strong></div>
-          <div style="display: flex; justify-content: space-between; align-items: center;"><span style="color: var(--text-muted);">SIM Carrier:</span><strong id="metaCarrier" style="font-family: 'JetBrains Mono', monospace; color: #fff;">UNKNOWN</strong></div>
-          <div style="display: flex; justify-content: space-between; align-items: center;"><span style="color: var(--text-muted);">Nuvoton LCD:</span><strong id="metaNuvoton" style="font-family: 'JetBrains Mono', monospace; color: #fff;">---------</strong></div>
+        <div style="display: flex; flex-direction: column; gap: 0.45rem; padding: 0.55rem 0.75rem; background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 0.4rem; margin-bottom: 0.8rem; font-size: 0.8rem;">
+          <div>
+            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.05rem;">Firmware Version</span>
+            <strong id="metaFwVersion" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.78rem;">--</strong>
+          </div>
+          <div style="border-top: 1px solid rgba(255,255,255,0.04); padding-top: 0.3rem;">
+            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.05rem;">ESP32 MAC ID</span>
+            <strong id="metaMac" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.78rem;">--:--:--:--:--:--</strong>
+          </div>
+          <div style="border-top: 1px solid rgba(255,255,255,0.04); padding-top: 0.3rem;">
+            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.05rem;">Flash Capacity</span>
+            <strong id="metaFlashSize" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.78rem;">-- MB</strong>
+          </div>
+          <div style="border-top: 1px solid rgba(255,255,255,0.04); padding-top: 0.3rem;">
+            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.05rem;">GPRS IMEI</span>
+            <strong id="metaImei" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.78rem;">---------------</strong>
+          </div>
+          <div style="border-top: 1px solid rgba(255,255,255,0.04); padding-top: 0.3rem;">
+            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.05rem;">SIM CCID</span>
+            <strong id="metaCcid" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.78rem;">--------------------</strong>
+          </div>
+          <div style="border-top: 1px solid rgba(255,255,255,0.04); padding-top: 0.3rem;">
+            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.05rem;">SIM Carrier</span>
+            <strong id="metaCarrier" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.78rem;">UNKNOWN</strong>
+          </div>
+          <div style="border-top: 1px solid rgba(255,255,255,0.04); padding-top: 0.3rem;">
+            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.05rem;">Nuvoton LCD</span>
+            <strong id="metaNuvoton" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.78rem;">---------</strong>
+          </div>
         </div>
 
         <!-- Peripherals Grid -->
@@ -1822,9 +1853,15 @@
     <div class="card" id="cardIntegrationChecklist" style="display: none; flex: 1; flex-direction: column;">
       <h3 class="card-title">Integration & Boot Diagnostics</h3>
       
-      <div style="display: flex; flex-direction: column; gap: 0.35rem; padding: 0.5rem 0.75rem; background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 0.4rem; margin-bottom: 0.8rem; font-size: 0.8rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center;"><span style="color: var(--text-muted);">Production Version:</span><strong id="integrationFwVersion" style="font-family: 'JetBrains Mono', monospace; color: #fff;">--</strong></div>
-        <div style="display: flex; justify-content: space-between; align-items: center;"><span style="color: var(--text-muted);">Detected MAC:</span><strong id="integrationMac" style="font-family: 'JetBrains Mono', monospace; color: #a5b4fc;">--</strong></div>
+      <div style="display: flex; flex-direction: column; gap: 0.45rem; padding: 0.55rem 0.75rem; background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 0.4rem; margin-bottom: 0.8rem; font-size: 0.8rem;">
+        <div>
+          <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.05rem;">Production Version</span>
+          <strong id="integrationFwVersion" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.78rem;">--</strong>
+        </div>
+        <div style="border-top: 1px solid rgba(255,255,255,0.04); padding-top: 0.3rem;">
+          <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.05rem;">Detected MAC</span>
+          <strong id="integrationMac" style="font-family: 'JetBrains Mono', monospace; color: #a5b4fc; font-size: 0.78rem;">--</strong>
+        </div>
       </div>
 
       <div style="display: flex; flex-direction: column; gap: 0.45rem;">
@@ -2030,6 +2067,9 @@
     const assocEspBarcode = document.getElementById("assocEspBarcode");
     const assocGprsBarcode = document.getElementById("assocGprsBarcode");
     const assocNuvBarcode = document.getElementById("assocNuvBarcode");
+    const assocBatt1Barcode = document.getElementById("assocBatt1Barcode");
+    const assocBatt2Barcode = document.getElementById("assocBatt2Barcode");
+    const assocMpptBarcode = document.getElementById("assocMpptBarcode");
     const assocStatusText = document.getElementById("assocStatusText");
     const btnStartIntegration = document.getElementById("btnStartIntegration");
     const btnAbortIntegration = document.getElementById("btnAbortIntegration");
@@ -2183,7 +2223,7 @@
     var intSheet = ss.getSheetByName("Integration_Logs") || ss.insertSheet("Integration_Logs");
     var intHeaders = [
       "Timestamp", "Local Test Time", "Box 1 Barcode", "Box 2 Barcode", "ESP32 Barcode", "GPRS Barcode", "Nuvoton Barcode", 
-      "MAC Address", "Firmware Ver", "Integration Verdict", "Tester", "Duration (s)", "Action Type"
+      "Battery 1 Barcode", "Battery 2 Barcode", "MPPT Barcode", "MAC Address", "Firmware Ver", "Integration Verdict", "Tester", "Duration (s)", "Action Type"
     ];
     intSheet.getRange(1, 1, 1, intHeaders.length).setValues([intHeaders]);
     intSheet.getRange(1, 1, 1, intHeaders.length).setFontWeight("bold").setBackground("#4338ca").setFontColor("#ffffff");
@@ -2196,7 +2236,7 @@
     var intSheet = ss.getSheetByName("Integration_Logs") || ss.insertSheet("Integration_Logs");
     var intHeaders = [
       "Timestamp", "Local Test Time", "Box 1 Barcode", "Box 2 Barcode", "ESP32 Barcode", "GPRS Barcode", "Nuvoton Barcode", 
-      "MAC Address", "Firmware Ver", "Integration Verdict", "Tester", "Duration (s)", "Action Type"
+      "Battery 1 Barcode", "Battery 2 Barcode", "MPPT Barcode", "MAC Address", "Firmware Ver", "Integration Verdict", "Tester", "Duration (s)", "Action Type"
     ];
     if (intSheet.getLastRow() === 0) {
       intSheet.appendRow(intHeaders);
@@ -2212,6 +2252,9 @@
       data.espBarcode || "--",
       data.gprsBarcode || "--",
       data.nuvotonBarcode || "--",
+      data.batt1Barcode || "--",
+      data.batt2Barcode || "--",
+      data.mpptBarcode || "--",
       data.mac || "--",
       data.version || "--",
       data.verdict || "--",
@@ -2222,7 +2265,7 @@
     intSheet.appendRow(intRow);
     
     // Color integration verdict cell
-    var verdictCell = intSheet.getRange(intSheet.getLastRow(), 10);
+    var verdictCell = intSheet.getRange(intSheet.getLastRow(), 13);
     if (data.verdict && data.verdict.indexOf("PASS") === 0) {
       verdictCell.setBackground("#14532d").setFontColor("#4ade80").setFontWeight("bold");
     } else {
@@ -2370,7 +2413,7 @@ function doGet(e) {
     for (var i = 1; i < rows.length; i++) {
       var row = rows[i];
       var isMatch = false;
-      var searchIndices = [2, 3, 4, 5, 6, 7]; // Box1, Box2, ESP, GPRS, NUV, MAC
+      var searchIndices = [2, 3, 4, 5, 6, 7, 8, 9, 10]; // Box1, Box2, ESP, GPRS, NUV, Batt1, Batt2, MPPT, MAC
       for (var k = 0; k < searchIndices.length; k++) {
         var idx = searchIndices[k];
         if (row[idx] && row[idx].toString().toLowerCase() === q.toLowerCase()) {
@@ -2437,7 +2480,7 @@ function initializeSheets() {
 
   var intHeaders = [
     "Timestamp", "Local Test Time", "Box 1 Barcode", "Box 2 Barcode", "ESP32 Barcode", "GPRS Barcode", "Nuvoton Barcode", 
-    "MAC Address", "Firmware Ver", "Integration Verdict", "Tester", "Duration (s)", "Action Type"
+    "Battery 1 Barcode", "Battery 2 Barcode", "MPPT Barcode", "MAC Address", "Firmware Ver", "Integration Verdict", "Tester", "Duration (s)", "Action Type"
   ];
   intSheet.getRange(1, 1, 1, intHeaders.length).setValues([intHeaders]);
   intSheet.getRange(1, 1, 1, intHeaders.length).setFontWeight("bold").setBackground("#4338ca").setFontColor("#ffffff");
@@ -2718,8 +2761,11 @@ function initializeSheets() {
           assocEspBarcode.value = newestRecord["ESP32 Barcode"] || "";
           assocGprsBarcode.value = newestRecord["GPRS Barcode"] || "";
           assocNuvBarcode.value = newestRecord["Nuvoton Barcode"] || "";
+          assocBatt1Barcode.value = newestRecord["Battery 1 Barcode"] || "";
+          assocBatt2Barcode.value = newestRecord["Battery 2 Barcode"] || "";
+          assocMpptBarcode.value = newestRecord["MPPT Barcode"] || "";
           assocStatusText.innerHTML = `<span style="color:var(--success);">✓ Loaded config from database (Last test: ${newestRecord["Local Test Time"] || "unknown"}).</span>`;
-          logToConsole(`✓ Box ${boxBarcode} found in history. Loaded boards: ESP=${assocEspBarcode.value}, GPRS=${assocGprsBarcode.value}, NUV=${assocNuvBarcode.value}`, "info");
+          logToConsole(`✓ Box ${boxBarcode} found in history. Loaded: ESP=${assocEspBarcode.value}, GPRS=${assocGprsBarcode.value}, NUV=${assocNuvBarcode.value}, B1=${assocBatt1Barcode.value}, B2=${assocBatt2Barcode.value}, MPPT=${assocMpptBarcode.value}`, "info");
         }
       } catch (err) {
         assocStatusText.innerHTML = `<span style="color:#f87171;">❌ History lookup failed: ${err.message}</span>`;
@@ -2744,6 +2790,9 @@ function initializeSheets() {
     assocEspBarcode.addEventListener("input", checkPreconditions);
     assocGprsBarcode.addEventListener("input", checkPreconditions);
     assocNuvBarcode.addEventListener("input", checkPreconditions);
+    assocBatt1Barcode.addEventListener("input", checkPreconditions);
+    assocBatt2Barcode.addEventListener("input", checkPreconditions);
+    assocMpptBarcode.addEventListener("input", checkPreconditions);
 
     btnSyncSetup.addEventListener("click", () => {
       preCode.textContent = appsScriptCode;
@@ -2866,9 +2915,15 @@ function initializeSheets() {
             <!-- Genealogy Tree View -->
             <div style="font-size:0.75rem; color:#94a3b8; font-family:monospace; background:rgba(0,0,0,0.22); border-radius:0.4rem; padding:0.6rem 0.8rem; border:1px solid rgba(255,255,255,0.04);">
               <div style="color:#fff; font-weight:700; margin-bottom:0.25rem;">📦 Integrated System Parts:</div>
-              <div>├── 🧠 ESP32 Board: <code style="color:#38bdf8;">${rec["ESP32 Barcode"] || "--"}</code></div>
-              <div>├── 📶 GPRS Board:  <code style="color:#34d399;">${rec["GPRS Barcode"] || "--"}</code></div>
-              <div>└── 📟 Nuvoton LCD: <code style="color:#fbbf24;">${rec["Nuvoton Barcode"] || "--"}</code></div>
+              <div style="margin-left:0.5rem; color:#a5b4fc; font-weight:600; margin-bottom:0.15rem;">📦 DL Box (Box 1):</div>
+              <div style="margin-left:0.5rem;">├── 🧠 ESP32 Board: <code style="color:#38bdf8;">${rec["ESP32 Barcode"] || "--"}</code></div>
+              <div style="margin-left:0.5rem;">├── 📶 GPRS Board:  <code style="color:#34d399;">${rec["GPRS Barcode"] || "--"}</code></div>
+              <div style="margin-left:0.5rem; margin-bottom:0.35rem;">└── 📟 Nuvoton LCD: <code style="color:#fbbf24;">${rec["Nuvoton Barcode"] || "--"}</code></div>
+              
+              <div style="margin-left:0.5rem; color:#4ade80; font-weight:600; margin-bottom:0.15rem;">⚡ PS Box (Box 2):</div>
+              <div style="margin-left:0.5rem;">├── 🔋 Battery 1:   <code style="color:#cbd5e1;">${rec["Battery 1 Barcode"] || "--"}</code></div>
+              <div style="margin-left:0.5rem;">├── 🔋 Battery 2:   <code style="color:#cbd5e1;">${rec["Battery 2 Barcode"] || "--"}</code></div>
+              <div style="margin-left:0.5rem;">└── 🔌 MPPT Board:  <code style="color:#cbd5e1;">${rec["MPPT Barcode"] || "--"}</code></div>
             </div>
 
             <!-- Meta details -->
@@ -3610,9 +3665,10 @@ function initializeSheets() {
         const eBar = assocEspBarcode.value.trim();
         const gBar = assocGprsBarcode.value.trim();
         const nBar = assocNuvBarcode.value.trim();
+        const mpptBar = assocMpptBarcode.value.trim();
 
-        // Must be connected, have tester name, have box barcodes, and all components filled
-        const hasInputs = b1 && b2 && eBar && gBar && nBar;
+        // Must be connected, have tester name, have box barcodes, and required components filled
+        const hasInputs = b1 && b2 && eBar && gBar && nBar && mpptBar;
         
         // Check if selected config firmware is available in vault (either customConfigVault or production app)
         const activeConfig = releaseConfigSel?.value;
@@ -4126,6 +4182,9 @@ function initializeSheets() {
         espBarcode: assocEspBarcode.value.trim(),
         gprsBarcode: assocGprsBarcode.value.trim(),
         nuvotonBarcode: assocNuvBarcode.value.trim(),
+        batt1Barcode: assocBatt1Barcode.value.trim(),
+        batt2Barcode: assocBatt2Barcode.value.trim(),
+        mpptBarcode: assocMpptBarcode.value.trim(),
         mac: integrationMac.textContent,
         version: integrationFwVersion.textContent,
         verdict: verdict,
