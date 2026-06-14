@@ -770,6 +770,10 @@ void start_gprs() {
     if (modem_ready) {
       SerialSIT.println("AT+CMEE=2"); // v5.82 Diagnostic: Enable verbose error messages
       waitForResponse("OK", 500);
+      SerialSIT.println("AT+CSDT=0"); // Disable mechanical SIM detect for BSNL/etc
+      waitForResponse("OK", 500);
+      SerialSIT.println("AT+UIMHOTSWAPON=0"); // Disable mechanical SIM hot-swap detect for SIM7600/A7672S
+      waitForResponse("OK", 500);
       vTaskDelay(3000 / portTICK_PERIOD_MS); // v7.88: Allow SIM reader to settle before polling (reduced CME errors)
     }
 

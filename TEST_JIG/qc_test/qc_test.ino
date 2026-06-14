@@ -473,6 +473,34 @@ void goToIdleSleep() {
   esp_deep_sleep_start();
 }
 
+void printPartitionInfo() {
+  uint32_t flashSize = ESP.getFlashChipSize();
+  uint32_t appUsed = ESP.getSketchSize();
+  uint32_t appTotal = appUsed + ESP.getFreeSketchSpace();
+  
+  float flashSizeMB = (float)flashSize / (1024.0 * 1024.0);
+  float appUsedMB = (float)appUsed / (1024.0 * 1024.0);
+  float appTotalMB = (float)appTotal / (1024.0 * 1024.0);
+  
+  float spiffsTotalMB = 0.0;
+  float spiffsUsedKB = 0.0;
+  bool spiffsMounted = SPIFFS.begin(false);
+  if (spiffsMounted) {
+    spiffsTotalMB = (float)SPIFFS.totalBytes() / (1024.0 * 1024.0);
+    spiffsUsedKB = (float)SPIFFS.usedBytes() / 1024.0;
+  }
+  
+  // Clean, compact boot format matching the approved plan:
+  // PARTITION:8MB(APP:1.01MB/1.69MB,SPIFF:1.20KB/4.56MB)
+  if (spiffsMounted) {
+    Serial.printf("[QC_JIG] PARTITION: %.0fMB(APP:%.2fMB/%.2fMB, SPIFF:%.2fKB/%.2fMB)\n",
+                  flashSizeMB, appUsedMB, appTotalMB, spiffsUsedKB, spiffsTotalMB);
+  } else {
+    Serial.printf("[QC_JIG] PARTITION: %.0fMB(APP:%.2fMB/%.2fMB, SPIFF:UNFORMATTED)\n",
+                  flashSizeMB, appUsedMB, appTotalMB);
+  }
+}
+
 void setup() {
   // Initialize Serial Monitor (UART0)
   Serial.begin(115200);
@@ -512,6 +540,7 @@ void setup() {
   // Get MAC ID reliably using WiFi helper class
   String macStr = WiFi.macAddress();
   Serial.printf("[QC_JIG] ESP32 Unique MAC: %s\n", macStr.c_str());
+  printPartitionInfo();
   Serial.println("[QC_JIG] ======================================");
   
   // Handshake to receive test configuration from serial dashboard (loops indefinitely to prevent standalone autostart)
@@ -758,6 +787,9 @@ void setup() {
 
       // Enable verbose error messages
       sendModemAT("AT+CMEE=2", 500);
+      // Disable mechanical hot-plug SIM detect (forces electrical detect for BSNL/etc)
+      sendModemAT("AT+CSDT=0", 500);
+      sendModemAT("AT+UIMHOTSWAPON=0", 500);
       showProgress("DIAG: SIM CPIN", "SETTLING 3s");
       delay(3000);
 

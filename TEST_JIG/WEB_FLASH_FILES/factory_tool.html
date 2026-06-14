@@ -4167,11 +4167,11 @@ function getManageRecordsHtml() {
     function updateFlowADesc() {
       const flowADesc = document.getElementById("flowADesc");
       if (!flowADesc) return;
-      if (qcFirmwareAlreadyOnBoard) {
+      if (chkEraseFlash && chkEraseFlash.checked) {
+        flowADesc.textContent = `Wipes the chip completely, installs QC test firmware, runs all checks, then installs production software.`;
+      } else if (qcFirmwareAlreadyOnBoard) {
         // QC firmware already on board — wipe is irrelevant, always skipped
         flowADesc.innerHTML = `QC firmware already on board. Runs all checks and installs production software. <strong style="color:#34d399;">Chip wipe skipped</strong> (auto-disabled since QC firmware exists).`;
-      } else if (chkEraseFlash && chkEraseFlash.checked) {
-        flowADesc.textContent = `Wipes the chip completely, installs QC test firmware, runs all checks, then installs production software.`;
       } else {
         flowADesc.textContent = `Installs test software, runs all checks, then installs production software without wiping the chip.`;
       }
@@ -9010,7 +9010,7 @@ function getManageRecordsHtml() {
       logToConsole("--- OPTION 1: FACTORY FLASHING SEQUENCE START ---", "info");
 
       // ── FAST PATH: QC firmware already on board — skip all flashing ──
-      if (qcFirmwareAlreadyOnBoard) {
+      if (qcFirmwareAlreadyOnBoard && !chkEraseFlash.checked) {
         logToConsole("✅ QC firmware already loaded on board — skipping flash step. Booting into diagnostics directly...", "info");
         
         // Ensure esptool transport is disconnected
