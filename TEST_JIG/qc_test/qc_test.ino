@@ -42,8 +42,13 @@ enum QCState {
   STATE_RF_WAIT_JUMPER,
   STATE_RF_RUNNING,
   STATE_RF_CONFIRM,
-  STATE_COMPLETE
+  STATE_COMPLETE,
+  STATE_FAILED
 };
+
+#define INACTIVITY_TIMEOUT_MS 300000
+RTC_DATA_ATTR bool expecting_test_wakeup = false;
+unsigned long last_activity_time = 0;
 
 QCState currentState = STATE_AUTO_TESTS;
 volatile int rf_pulse_count = 0;
@@ -54,6 +59,7 @@ volatile unsigned long last_wind_pulse_time = 0;
 
 int rf_last_logged_count = -1;      // tracks last tip count sent to serial
 unsigned long rf_test_start_time = 0;  // for 60s timeout
+
 
 // Selective configuration flags (updated during serial handshake)
 bool enableESP = true;
@@ -106,6 +112,16 @@ void lcdPrint(const char* str) {
       delay(3);
     }
     str++;
+  }
+}
+
+void showProgress(const char* line1, const char* line2) {
+  if (enableNuvoton) {
+    lcdClear();
+    lcdSetCursor(0, 0);
+    lcdPrint(line1);
+    lcdSetCursor(0, 1);
+    lcdPrint(line2);
   }
 }
 
@@ -313,6 +329,30 @@ String sendModemAT(const char* cmd, uint32_t timeoutMs) {
   return response;
 }
 
+// Parse registration status from CREG/CGREG responses
+int parseRegStatus(String response, String prefix) {
+  int idx = response.indexOf(prefix);
+  if (idx < 0) return -1;
+  
+  int endLine = response.indexOf("\n", idx);
+  if (endLine < 0) endLine = response.length();
+  
+  String line = response.substring(idx + prefix.length(), endLine);
+  line.trim();
+  
+  int commaIdx = line.indexOf(",");
+  if (commaIdx >= 0) {
+    int nextComma = line.indexOf(",", commaIdx + 1);
+    if (nextComma >= 0) {
+      return line.substring(commaIdx + 1, nextComma).toInt();
+    } else {
+      return line.substring(commaIdx + 1).toInt();
+    }
+  } else {
+    return line.toInt();
+  }
+}
+
 // Manual RF tip test — operator manually tips the rain gauge
 void startRfManualTest() {
   rf_pulse_count = 0;
@@ -403,6 +443,29 @@ void startDeepSleepTest() {
   digitalWrite(GPRS_CTRL_PIN, LOW);
   delay(100);
   
+  // Set the flag so we know this sleep was for the test verification wakeup
+  expecting_test_wakeup = true;
+  
+  // Enable EXT0 wakeup on GPIO 27 (SET key, pulls LOW when pressed)
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)KEYPAD_INT_PIN, 0);
+  
+  // Enter Deep Sleep
+  esp_deep_sleep_start();
+}
+
+void goToIdleSleep() {
+  Serial.println("[QC_JIG] Inactivity/Idle timeout reached. Going to deep sleep...");
+  Serial.flush();
+  delay(500);
+  
+  // Cut power to LCD and GPRS PMOS gates (active-HIGH PMOS gate, write LOW to turn off)
+  digitalWrite(LCD_CTRL_PIN, LOW);
+  digitalWrite(GPRS_CTRL_PIN, LOW);
+  delay(100);
+  
+  // This is a power-saving sleep, not the test verification wakeup
+  expecting_test_wakeup = false;
+  
   // Enable EXT0 wakeup on GPIO 27 (SET key, pulls LOW when pressed)
   esp_sleep_enable_ext0_wakeup((gpio_num_t)KEYPAD_INT_PIN, 0);
   
@@ -416,7 +479,9 @@ void setup() {
   delay(100);
   
   // Check if we woke up from Deep Sleep via EXT0 trigger
-  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0 && expecting_test_wakeup) {
+    expecting_test_wakeup = false; // Reset the flag
+    
     // Power ON LCD
     pinMode(LCD_CTRL_PIN, OUTPUT);
     digitalWrite(LCD_CTRL_PIN, HIGH);
@@ -436,10 +501,9 @@ void setup() {
     Serial.println("[QC_JIG] [QC_RESULT: PASS] QC Test sequence completed successfully!");
     Serial.println("[QC_JIG] ======================================");
     
-    // Hold forever
-    while (true) {
-      delay(1000);
-    }
+    currentState = STATE_COMPLETE;
+    last_activity_time = millis();
+    return; // Go straight to loop() and bypass setup checks
   }
 
   Serial.println("\n[QC_JIG] ======================================");
@@ -450,17 +514,28 @@ void setup() {
   Serial.printf("[QC_JIG] ESP32 Unique MAC: %s\n", macStr.c_str());
   Serial.println("[QC_JIG] ======================================");
   
-  // Handshake to receive test configuration from serial dashboard
-  Serial.println("[QC_JIG] [READY] WAITING_FOR_CONFIG");
-  uint32_t startWait = millis();
+  // Handshake to receive test configuration from serial dashboard (loops indefinitely to prevent standalone autostart)
   String configStr = "";
-  while (millis() - startWait < 1500) {
+  unsigned long lastPrintTime = 0;
+  
+  Serial.println("[QC_JIG] [READY] WAITING_FOR_CONFIG");
+  lastPrintTime = millis();
+  
+  while (true) {
+    if (millis() - lastPrintTime >= 2000) {
+      Serial.println("[QC_JIG] [READY] WAITING_FOR_CONFIG");
+      lastPrintTime = millis();
+    }
+    
     if (Serial.available()) {
       char c = Serial.read();
       if (c == '\n' || c == '\r') {
-        if (configStr.startsWith("CFG:")) {
+        int cfgIdx = configStr.indexOf("CFG:");
+        if (cfgIdx >= 0) {
+          configStr = configStr.substring(cfgIdx); // Strip leading garbage
           break;
         }
+        configStr = ""; // Clear non-config lines (noise)
       } else {
         configStr += c;
       }
@@ -468,39 +543,32 @@ void setup() {
     delay(1);
   }
   
-  if (configStr.startsWith("CFG:")) {
-    enableESP = (configStr.indexOf("ESP") >= 0);
-    enableGPRS = (configStr.indexOf("GPRS") >= 0);
-    enableNuvoton = (configStr.indexOf("NUV") >= 0);
-    
-    // Parse Profile
-    int profileIdx = configStr.indexOf("PROFILE:");
-    isTRG = false;
-    isTWS = false;
-    isTWSRF = false;
-    if (profileIdx >= 0) {
-      String profile = configStr.substring(profileIdx + 8);
-      profile.trim();
-      if (profile == "TRG") {
-        isTRG = true;
-      } else if (profile == "TWS") {
-        isTWS = true;
-      } else if (profile == "TWS-RF") {
-        isTWSRF = true;
-      }
-    } else {
-      isTRG = true; // default
+  enableESP = (configStr.indexOf("ESP") >= 0);
+  enableGPRS = (configStr.indexOf("GPRS") >= 0);
+  enableNuvoton = (configStr.indexOf("NUV") >= 0);
+  
+  // Parse Profile
+  int profileIdx = configStr.indexOf("PROFILE:");
+  isTRG = false;
+  isTWS = false;
+  isTWSRF = false;
+  if (profileIdx >= 0) {
+    String profile = configStr.substring(profileIdx + 8);
+    profile.trim();
+    if (profile == "TRG") {
+      isTRG = true;
+    } else if (profile == "TWS") {
+      isTWS = true;
+    } else if (profile == "TWS-RF") {
+      isTWSRF = true;
     }
-    Serial.printf("[QC_JIG] Received Config: ESP=%d, GPRS=%d, NUV=%d, PROFILE=%s (isTRG=%d, isTWS=%d, isTWSRF=%d)\n", 
-                  enableESP, enableGPRS, enableNuvoton, 
-                  isTRG ? "TRG" : (isTWS ? "TWS" : "TWS-RF"), 
-                  isTRG, isTWS, isTWSRF);
   } else {
-    Serial.println("[QC_JIG] No config received. Defaulting to TRG tests.");
-    isTRG = true;
-    isTWS = false;
-    isTWSRF = false;
+    isTRG = true; // default
   }
+  Serial.printf("[QC_JIG] Received Config: ESP=%d, GPRS=%d, NUV=%d, PROFILE=%s (isTRG=%d, isTWS=%d, isTWSRF=%d)\n", 
+                enableESP, enableGPRS, enableNuvoton, 
+                isTRG ? "TRG" : (isTWS ? "TWS" : "TWS-RF"), 
+                isTRG, isTWS, isTWSRF);
   
   // Power Controls
   pinMode(GPRS_CTRL_PIN, OUTPUT);
@@ -530,77 +598,103 @@ void setup() {
     delay(100);
     
     // Initialize LCD display
-    lcdClear();
-    lcdSetCursor(0, 0);
-    lcdPrint("SPATIKA QC TEST");
-    lcdSetCursor(0, 1);
-    lcdPrint("BOOTING SYSTEM..");
+    showProgress("SPATIKA QC TEST", "BOOTING SYSTEM..");
   }
+
+  bool hardware_check_failed = false;
 
   // 1. SPIFFS Test
   if (enableESP) {
+    showProgress("DIAG: SPIFFS", "TESTING...");
     Serial.print("[QC_JIG] Testing SPIFFS... ");
     if (testSPIFFS()) {
       Serial.println("[PASS] SPIFFS_CHECK: OK");
+      showProgress("DIAG: SPIFFS", "PASS");
     } else {
       Serial.println("[FAIL] SPIFFS_CHECK: FAIL");
+      showProgress("DIAG: SPIFFS", "FAIL");
+      hardware_check_failed = true;
     }
+    delay(500);
   } else {
     Serial.println("[QC_STEP] SPIFFS_CHECK: IGNORED");
   }
   
   // 2. SD Card Test (Pins 5 and 13 CS)
   if (enableESP) {
+    showProgress("DIAG: SD CARD", "TESTING...");
     Serial.print("[QC_JIG] Testing SD Card on CS 5... ");
     bool sdOk = testSD(5);
     if (!sdOk) {
       Serial.print("failed CS 5, trying CS 13... ");
+      showProgress("DIAG: SD CARD", "TRYING CS 13...");
       sdOk = testSD(13);
     }
     if (sdOk) {
       Serial.println("[PASS] SD_CHECK: OK");
+      showProgress("DIAG: SD CARD", "PASS");
     } else {
       Serial.println("[FAIL] SD_CHECK: FAIL");
+      showProgress("DIAG: SD CARD", "FAIL");
+      hardware_check_failed = true;
     }
+    delay(500);
   } else {
     Serial.println("[QC_STEP] SD_CHECK: IGNORED");
   }
   
   // 3. RTC Clock Test
   if (enableESP) {
+    showProgress("DIAG: RTC I2C", "TESTING...");
     Serial.print("[QC_JIG] Testing RTC (0x68) I2C... ");
     if (testRTC()) {
       Serial.println("[PASS] RTC_CHECK: OK");
+      showProgress("DIAG: RTC I2C", "PASS");
     } else {
       Serial.println("[FAIL] RTC_CHECK: FAIL");
+      showProgress("DIAG: RTC I2C", "FAIL");
+      hardware_check_failed = true;
     }
+    delay(500);
   } else {
     Serial.println("[QC_STEP] RTC_CHECK: IGNORED");
   }
   
   // 3a. WiFi Scan Test
   if (enableESP) {
+    showProgress("DIAG: WIFI SCAN", "SCANNING...");
     Serial.print("[QC_JIG] Testing WiFi Scan... ");
     if (testWiFi()) {
+      showProgress("DIAG: WIFI SCAN", "PASS");
       // Printed inside testWiFi
     } else {
       Serial.println("[FAIL] WIFI_CHECK: FAIL");
+      showProgress("DIAG: WIFI SCAN", "FAIL");
+      hardware_check_failed = true;
     }
+    delay(500);
   } else {
     Serial.println("[QC_STEP] WIFI_CHECK: IGNORED");
   }
 
   // 3b. Environmental Sensor Test (I2C)
   if (enableESP && !isTRG) {
+    showProgress("DIAG: ENV SENSOR", "TESTING...");
     Serial.print("[QC_JIG] Testing Env Sensor I2C... ");
     String sensorName = "";
     float temp = 0.0;
     float hum = 0.0;
     if (testTempHum(sensorName, temp, hum)) {
       Serial.printf("[PASS] SENSOR_CHECK: OK (%s: Temp=%.1fC, Hum=%.1f%%)\n", sensorName.c_str(), temp, hum);
+      char tempHumBuf[32];
+      snprintf(tempHumBuf, sizeof(tempHumBuf), "P:%.1fC %.1f%%", temp, hum);
+      showProgress("DIAG: ENV SENSOR", tempHumBuf);
     } else {
       Serial.println("[FAIL] SENSOR_CHECK: FAIL");
+      showProgress("DIAG: ENV SENSOR", "FAIL");
+      hardware_check_failed = true;
     }
+    delay(500);
   } else {
     Serial.println("[QC_STEP] SENSOR_CHECK: IGNORED");
   }
@@ -634,12 +728,22 @@ void setup() {
   
   // 5. GPRS Modem Setup and Test
   if (enableGPRS) {
+    showProgress("DIAG: GPRS MDM", "DISCHARGING 4s");
+    delay(4000);                       // Keep GPRS off for 4 seconds to fully discharge
+    digitalWrite(GPRS_CTRL_PIN, HIGH); // Power ON GPRS board
+    showProgress("DIAG: GPRS MDM", "STABILIZING 3s");
+    delay(3000);                       // Wait 3 seconds for power rails to stabilize
+    
+    showProgress("DIAG: GPRS MDM", "INITIALIZING...");
     Serial.println("[QC_JIG] Initializing GPRS Modem UART2...");
     Serial2.begin(115200, SERIAL_8N1, GPRS_RX_PIN, GPRS_TX_PIN);
     
     bool modem_init_ok = false;
     // Poll AT up to 15 times to wait for boot
     for (int i = 0; i < 15; i++) {
+      char statusBuf[32];
+      snprintf(statusBuf, sizeof(statusBuf), "POLL AT %d/15", i + 1);
+      showProgress("DIAG: GPRS MDM", statusBuf);
       String res = sendModemAT("AT", 500);
       if (res.indexOf("OK") >= 0) {
         modem_init_ok = true;
@@ -650,23 +754,49 @@ void setup() {
     
     if (modem_init_ok) {
       Serial.println("[PASS] MODEM_INIT: OK");
-      
-      // Wait for SIM Profile to stabilize
+      showProgress("DIAG: GPRS MDM", "AT OK");
+
+      // Enable verbose error messages
+      sendModemAT("AT+CMEE=2", 500);
+      showProgress("DIAG: SIM CPIN", "SETTLING 3s");
+      delay(3000);
+
+      // Verify SIM is ready before CCID fetch (up to 15 retries for slow SIM on power-on)
+      showProgress("DIAG: SIM CPIN", "CHECKING...");
       bool sim_ready = false;
       for (int i = 0; i < 15; i++) {
-        String res = sendModemAT("AT+CPIN?", 1000);
-        if (res.indexOf("READY") >= 0) {
+        char cpinBuf[32];
+        snprintf(cpinBuf, sizeof(cpinBuf), "CPIN POLL %d/15", i + 1);
+        showProgress("DIAG: SIM CPIN", cpinBuf);
+        String cpinResp = sendModemAT("AT+CPIN?", 1000);
+        cpinResp.trim();
+        Serial.printf("[QC_JIG] CPIN Response %d: %s\n", i + 1, cpinResp.c_str());
+        if (cpinResp.indexOf("READY") >= 0) {
           sim_ready = true;
           break;
         }
+        
+        // Software reset interface recovery if protocol lock "SIM failure" (CME 13) is detected
+        if (cpinResp.indexOf("SIM failure") >= 0 || cpinResp.indexOf(" 13") >= 0) {
+          Serial.println("[QC_JIG] GPRS: Detected SIM failure lock. Attempting Software Interface Reset (CFUN 0/1)...");
+          sendModemAT("AT+CFUN=0", 2000);
+          delay(2000);
+          sendModemAT("AT+CFUN=1", 2000);
+          delay(2000);
+        }
         delay(1000);
       }
-      
+
+      if (sim_ready) {
+        showProgress("DIAG: SIM CPIN", "READY");
+      } else {
+        showProgress("DIAG: SIM CPIN", "NOT READY");
+      }
+      delay(500);
+
       // Read IMEI
-      String res = sendModemAT("AT+CGSN", 1000);
-      res.replace("\r", "");
-      res.trim();
-      // Locate IMEI numeric response
+      showProgress("DIAG: IMEI", "READING...");
+      String res = sendModemAT("AT+GSN", 1000);
       String imei = "UNKNOWN";
       for (int i = 0; i < (int)res.length() - 14; i++) {
         if (isDigit(res[i]) && isDigit(res[i+14])) {
@@ -675,46 +805,57 @@ void setup() {
         }
       }
       Serial.printf("[QC_JIG] MODEM_IMEI: %s\n", imei.c_str());
+      showProgress("DIAG: IMEI", imei.c_str());
+      delay(500);
       
-      // Read CCID safely (Try AT+CICCID first for A7672, fallback to AT+CCID)
-      res = sendModemAT("AT+CICCID", 1000);
-      int headerLen = 8;
-      int ccidIdx = res.indexOf("+CICCID:");
-      if (ccidIdx < 0) {
-        ccidIdx = res.indexOf("+ICCID:");
-        headerLen = 7;
-      }
-      if (ccidIdx < 0) {
-        res = sendModemAT("AT+CCID", 1000);
-        ccidIdx = res.indexOf("+CCID:");
-        headerLen = 6;
-      }
-      if (ccidIdx < 0) {
-        ccidIdx = res.indexOf("+ICCID:");
-        headerLen = 7;
-      }
-      
+      // Read CCID safely with retry (SIM card boot delay check)
+      showProgress("DIAG: CCID", "READING...");
       String ccid = "NO_SIM";
-      if (ccidIdx >= 0) {
-        ccid = res.substring(ccidIdx + headerLen);
-        ccid.trim();
-        // Keep only digits and up to 22 characters
-        String cleanCcid = "";
-        for (int i = 0; i < ccid.length(); i++) {
-          if (isDigit(ccid[i])) {
-            cleanCcid += ccid[i];
-          } else if (cleanCcid.length() > 0) {
-            break;
+      for (int retry = 0; retry < 5; retry++) {
+        char ccidPollBuf[32];
+        snprintf(ccidPollBuf, sizeof(ccidPollBuf), "CCID POLL %d/5", retry + 1);
+        showProgress("DIAG: CCID", ccidPollBuf);
+        res = sendModemAT("AT+CICCID", 1000);
+        res.trim();
+        Serial.printf("[QC_JIG] CCID Attempt %d Response: %s\n", retry + 1, res.c_str());
+        int headerLen = 8;
+        int ccidIdx = res.indexOf("+CICCID:");
+        if (ccidIdx < 0) {
+          ccidIdx = res.indexOf("+ICCID:");
+          headerLen = 7;
+        }
+        if (ccidIdx < 0) {
+          res = sendModemAT("AT+CCID", 1000);
+          res.trim();
+          Serial.printf("[QC_JIG] CCID Backup Attempt %d Response: %s\n", retry + 1, res.c_str());
+          ccidIdx = res.indexOf("+CCID:");
+          headerLen = 6;
+        }
+        if (ccidIdx < 0) {
+          ccidIdx = res.indexOf("+ICCID:");
+          headerLen = 7;
+        }
+        
+        if (ccidIdx >= 0) {
+          String tempCcid = res.substring(ccidIdx + headerLen);
+          tempCcid.trim();
+          String cleanCcid = "";
+          for (int i = 0; i < tempCcid.length(); i++) {
+            if (isDigit(tempCcid[i])) {
+              cleanCcid += tempCcid[i];
+            } else if (cleanCcid.length() > 0) {
+              break;
+            }
+          }
+          if (cleanCcid.length() >= 10) {
+            ccid = cleanCcid;
+            break; // Successfully read CCID
           }
         }
-        if (cleanCcid.length() >= 10) {
-          ccid = cleanCcid;
-        } else {
-          ccid = "NO_SIM";
-        }
-      } else {
-        // Safe non-overflow digit sequence finder
+        
+        // Fallback digit finder
         int len = (int)res.length();
+        bool foundDigits = false;
         if (len >= 19) {
           for (int i = 0; i <= len - 19; i++) {
             bool allDigits = true;
@@ -734,14 +875,33 @@ void setup() {
                 }
               }
               ccid = cleanCcid;
+              foundDigits = true;
               break;
             }
           }
         }
+        if (foundDigits) {
+          break; // Successfully read CCID
+        }
+        
+        Serial.println("[QC_JIG] SIM not ready yet. Retrying CCID read...");
+        delay(1000);
       }
       Serial.printf("[QC_JIG] MODEM_CCID: %s\n", ccid.c_str());
 
+      if (ccid == "NO_SIM") {
+        showProgress("DIAG: CCID", "NO_SIM");
+      } else {
+        String shortCcid = ccid;
+        if (shortCcid.length() > 10) {
+          shortCcid = shortCcid.substring(shortCcid.length() - 10);
+        }
+        showProgress("DIAG: CCID", shortCcid.c_str());
+      }
+      delay(500);
+
       // Get Carrier info (Airtel / BSNL / Jio / Vi)
+      showProgress("DIAG: CARRIER", "CHECKING...");
       String cops = sendModemAT("AT+COPS?", 1500);
       cops.toLowerCase();
       String simCarrier = "UNKNOWN";
@@ -764,8 +924,11 @@ void setup() {
         }
       }
       Serial.printf("[QC_JIG] MODEM_CARRIER: %s\n", simCarrier.c_str());
+      showProgress("DIAG: CARRIER", simCarrier.c_str());
+      delay(500);
       
       // Check signal strength RSSI
+      showProgress("DIAG: SIGNAL", "CHECKING...");
       res = sendModemAT("AT+CSQ", 1000);
       int csqVal = -99;
       int dbmVal = -111;
@@ -778,12 +941,166 @@ void setup() {
       }
       if (csqVal == 99 || csqVal == -99) {
         Serial.println("[QC_JIG] MODEM_CSQ: 99 (unknown)");
+        showProgress("DIAG: SIGNAL", "UNKNOWN");
       } else {
         Serial.printf("[QC_JIG] MODEM_CSQ: %d (%d dBm)\n", csqVal, dbmVal);
+        char csqBuf[32];
+        snprintf(csqBuf, sizeof(csqBuf), "CSQ:%d (%ddBm)", csqVal, dbmVal);
+        showProgress("DIAG: SIGNAL", csqBuf);
       }
+      delay(500);
+
+      // Configure dynamic APN context based on carrier
+      String expectedApn = "airtelgprs.com";
+      String proto = "IP";
+      if (simCarrier == "Jio") {
+        expectedApn = "jionet";
+        proto = "IPV4V6";
+      } else if (simCarrier == "BSNL") {
+        expectedApn = "bsnlnet";
+      } else if (simCarrier == "Vi") {
+        expectedApn = "www";
+      } else if (simCarrier == "Airtel") {
+        // Airtel M2M/IoT SIM check (uses airteliot.com instead of commercial airtelgprs.com)
+        if (ccid.startsWith("899116") || ccid.startsWith("899110") || ccid.startsWith("899145")) {
+          expectedApn = "airteliot.com";
+        }
+      }
+
+      bool is_registered = false;
+
+      // 1. Fast-track check: If modem already registered, bypass full setup
+      showProgress("DIAG: REG", "FAST CHECK...");
+      String fastCgreg = sendModemAT("AT+CGREG?", 1000);
+      int fastStatus = parseRegStatus(fastCgreg, "+CGREG:");
+      if (fastStatus == 1 || fastStatus == 5) {
+        Serial.println("[QC_JIG] Fast-Track: Modem already registered! Bypassing setup block.");
+        is_registered = true;
+        showProgress("DIAG: REG", "FAST PASS");
+      }
+
+      if (!is_registered) {
+        // Run full setup block
+        showProgress("DIAG: REG", "INIT MODEM REG...");
+        sendModemAT("AT+CFUN=1", 1000);
+        sendModemAT("AT+CSCLK=0", 500);
+        sendModemAT("AT+CGDCONT=8,\"IP\",\"\"", 1000);
+        sendModemAT("AT+CGDCONT=9,\"IP\",\"\"", 1000);
+        
+        // Dynamic APN configuration for CID 1 to guarantee attachment
+        sendModemAT(("AT+CGDCONT=1,\"" + proto + "\",\"" + expectedApn + "\"").c_str(), 1000);
+        
+        sendModemAT("AT+CNMP=2", 1000);
+        delay(500); // Radio settle delay
+        sendModemAT("AT+CMNB=3", 1000);
+        sendModemAT("AT+CGATT=1", 5000);
+        sendModemAT("AT+CREG=1", 1000);
+        sendModemAT("AT+CEREG=2", 1000);
+        sendModemAT("AT+CEMODE=2", 1000);
+        sendModemAT("AT+CPSMS=0", 1000);
+        delay(1000); // Let it settle
+      }
+
+      // Netlight logic (Ensures pulse even if Fast-Tracked)
+      sendModemAT("AT+CNETLIGHT=0", 500);
+      sendModemAT("AT+CNETLIGHT=1", 500);
+
+      // Registration Loop: max 24 retries
+      int retries = 0;
+      int no_of_retries = 24;
       
+      while (!is_registered && (retries < no_of_retries)) {
+        char regBuf[32];
+        snprintf(regBuf, sizeof(regBuf), "WAIT REG %d/%d", retries + 1, no_of_retries);
+        showProgress("DIAG: NETWORK", regBuf);
+
+        // Parse registration status
+        int r2 = parseRegStatus(sendModemAT("AT+CREG?", 1000), "+CREG:");
+        int r4 = parseRegStatus(sendModemAT("AT+CEREG?", 1000), "+CEREG:");
+        int cgreg = parseRegStatus(sendModemAT("AT+CGREG?", 1000), "+CGREG:");
+
+        // CEREG=3 handling (Airtel 4G towers deny CS voice but are visible)
+        if (r4 == 3) {
+          String ceregQuery = sendModemAT("AT+CEREG?", 1000);
+          int prefixIdx = ceregQuery.indexOf("+CEREG:");
+          if (prefixIdx >= 0) {
+            int firstComma = ceregQuery.indexOf(",", prefixIdx);
+            if (firstComma >= 0) {
+              int secondComma = ceregQuery.indexOf(",", firstComma + 1);
+              if (secondComma >= 0) {
+                Serial.println("[GPRS] CEREG=3 but cell info visible. Pushing CGATT...");
+                sendModemAT("AT+CGATT=1", 3000);
+                r4 = 0; // Normalize to searching
+              }
+            }
+          }
+        }
+
+        if (r2 == 1 || r2 == 5 || r4 == 1 || r4 == 5 || cgreg == 1 || cgreg == 5) {
+          is_registered = true;
+          showProgress("DIAG: NETWORK", "REG OK");
+          delay(500);
+          break;
+        }
+
+        // Tiered recovery every 5 retries (Carrier-Aware)
+        if (retries > 0 && retries % 5 == 0) {
+          if (retries == 5) {
+            if (simCarrier == "BSNL") {
+              Serial.println("[GPRS] Tier1 @ iter5: BSNL Locking to GSM-only (CNMP=13)...");
+              showProgress("DIAG: RECOVERY", "BSNL 2G LOCK...");
+              sendModemAT("AT+CNMP=13", 1000);
+            } else {
+              Serial.println("[GPRS] Tier1 @ iter5: Airtel/Jio/Vi Auto Mode stalled. Refreshing operator (COPS=0)...");
+              showProgress("DIAG: RECOVERY", "COPS=0 RESET...");
+            }
+            sendModemAT("AT+COPS=0", 5000);
+            sendModemAT("AT+CGATT=1", 3000);
+          } else if (retries == 10) {
+            Serial.println("[GPRS] Tier2 @ iter10: Radio-Off SIM Scrub...");
+            showProgress("DIAG: RECOVERY", "RADIO RESET...");
+            sendModemAT("AT+CFUN=0", 5000);
+            sendModemAT("AT+CRSM=214,28539,0,0,12,\"FFFFFFFFFFFFFFFFFFFFFFFF\"", 2000);
+            sendModemAT("AT+CFUN=1", 5000);
+            sendModemAT("AT+COPS=0", 5000);
+            sendModemAT("AT+CGATT=1", 3000);
+          } else if (retries == 15) {
+            if (simCarrier == "BSNL") {
+              Serial.println("[GPRS] BSNL Tier3 @ iter15: Skipping LTE probe. Refreshing GSM connection...");
+              showProgress("DIAG: RECOVERY", "BSNL RE-SCAN...");
+              sendModemAT("AT+COPS=0", 5000);
+            } else {
+              Serial.println("[GPRS] Tier3 @ iter15: Testing LTE-Only Mode (AT+CNMP=38)...");
+              showProgress("DIAG: RECOVERY", "LTE-ONLY MODE...");
+              sendModemAT("AT+CNMP=38", 2000);
+              sendModemAT("AT+COPS=0", 5000);
+            }
+            sendModemAT("AT+CGATT=1", 3000);
+          } else if (retries == 23) {
+            Serial.println("[GPRS] Tier4 @ iter23: Restoring Auto-Mode (CNMP=2, COPS=0)...");
+            showProgress("DIAG: RECOVERY", "AUTO-MODE RESTORE");
+            sendModemAT("AT+CNMP=2", 1000);
+            sendModemAT("AT+COPS=0", 5000);
+            sendModemAT("AT+CGATT=1", 3000);
+          }
+        }
+
+        delay(5000);
+        retries++;
+      }
+
+      if (is_registered) {
+        Serial.println("[PASS] MODEM_INIT: REG_OK");
+        showProgress("DIAG: MODEM_INIT", "PASS");
+      } else {
+        Serial.println("[FAIL] MODEM_INIT: REG_FAIL");
+        showProgress("DIAG: MODEM_INIT", "REG FAIL");
+        hardware_check_failed = true;
+      }
     } else {
       Serial.println("[FAIL] MODEM_INIT: FAIL");
+      showProgress("DIAG: MODEM_INIT", "FAIL");
+      hardware_check_failed = true;
     }
   } else {
     Serial.println("[QC_STEP] MODEM_INIT: IGNORED");
@@ -805,6 +1122,22 @@ void setup() {
   // Configure simulation pulse generator pin
   pinMode(RAIN_SIM_PIN, OUTPUT);
   digitalWrite(RAIN_SIM_PIN, HIGH);
+  
+  if (hardware_check_failed) {
+    Serial.println("\n[QC_JIG] ======================================");
+    Serial.println("[QC_JIG] [QC_RESULT: FAIL] Hardware peripheral check(s) failed!");
+    Serial.println("[QC_JIG] ======================================");
+    if (enableNuvoton) {
+      lcdClear();
+      lcdSetCursor(0, 0);
+      lcdPrint("QC FAILED!");
+      lcdSetCursor(0, 1);
+      lcdPrint("INSPECT BOARD");
+    }
+    currentState = STATE_FAILED;
+    last_activity_time = millis();
+    return; // Exit setup() to loop() which handles idle timeout
+  }
   
   // Initialize interactive test state machine based on configuration
   if (enableNuvoton) {
@@ -834,11 +1167,14 @@ void setup() {
     Serial.println("[QC_STEP] EXT0_WAKEUP: IGNORED");
     Serial.println("[QC_JIG] [QC_RESULT: PASS] QC Test sequence completed successfully!");
   }
+  
+  last_activity_time = millis();
 }
 
 void loop() {
   // 1. Listen for serial commands from UART0 (web dashboard)
   if (Serial.available()) {
+    last_activity_time = millis();
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
     if (cmd == "CMD:START_RF") {
@@ -891,9 +1227,12 @@ void loop() {
       Serial.println("[QC_JIG] Received CMD:SLEEP_PASS serial override.");
       Serial.println("[QC_STEP] EXT0_WAKEUP: PASS");
       Serial.println("[QC_JIG] [QC_RESULT: PASS] QC Test sequence completed successfully!");
-      while (true) {
-        delay(1000);
-      }
+      currentState = STATE_COMPLETE;
+      last_activity_time = millis();
+    } else if (cmd == "CMD:GOTO_SLEEP") {
+      Serial.println("[QC_JIG] Received CMD:GOTO_SLEEP serial command. Entering deep sleep...");
+      Serial.flush();
+      goToIdleSleep();
     }
   }
 
@@ -903,6 +1242,7 @@ void loop() {
     static bool lastIntState = HIGH;
     bool intState = digitalRead(KEYPAD_INT_PIN);
     if (intState == LOW && lastIntState == HIGH) {
+      last_activity_time = millis();
       Serial.println("[QC_JIG] KEYPAD_INT_TRIGGERED: GPIO27 PULLED LOW");
       delay(50); // Debounce
     }
@@ -910,6 +1250,7 @@ void loop() {
 
     char rawKey = '\0';
     if (Serial1.available()) {
+      last_activity_time = millis();
       rawKey = Serial1.read();
       delay(5);
       // Debounce double-char sends if present
@@ -1043,6 +1384,7 @@ void loop() {
 
     // Log each new tip to serial (dashboard parses [QC_JIG] RF_TIP: N)
     if (currentCount != rf_last_logged_count) {
+      last_activity_time = millis();
       rf_last_logged_count = currentCount;
       Serial.printf("[QC_JIG] RF_TIP: %d\n", currentCount);
       if (enableNuvoton) {
@@ -1059,6 +1401,11 @@ void loop() {
     if (millis() - rf_test_start_time >= 60000UL) {
       tallyRfTest();
     }
+  }
+
+  // Check for inactivity/idle timeout
+  if (millis() - last_activity_time >= INACTIVITY_TIMEOUT_MS) {
+    goToIdleSleep();
   }
 
   delay(10);
