@@ -367,6 +367,7 @@ void refresh_sensor_data() {
   }
 
   // Dynamic SYS STATUS Top Row Issue reporting with marquee scrolling for issues
+#if USE_NUVOTON_UI == 1
   const char* active_issues[16];
   int issue_count = 0;
   char http_err_buf[17] = "";
@@ -443,6 +444,7 @@ void refresh_sensor_data() {
 
   snprintf(ui_data[FLD_SYS_STATUS].topRow, 17, "%-16s", issue_msg);
   snprintf(ui_data[FLD_SYS_STATUS].bottomRow, 17, "%-16s", sys_status);
+#endif
 
   // Battery, Solar, 3.3V
   static unsigned long last_bat = 0;
@@ -453,7 +455,9 @@ void refresh_sensor_data() {
     bool is_charging_now = (solar_val > li_bat_val + 0.3f && solar_val >= 4.0f);
     snprintf(ui_data[FLD_BATTERY].bottomRow, 17, "%0.2fV %s", li_bat_val, is_charging_now ? "CHRG" : "NOT CHRG");
     snprintf(ui_data[FLD_SOLAR].bottomRow, 17, "%0.2f V", solar_val);
+#if USE_NUVOTON_UI == 1
     snprintf(ui_data[FLD_BATTERY_3V3].bottomRow, 17, "%0.2f V", bat_3v3_val);
+#endif
   }
 
   // Live fields

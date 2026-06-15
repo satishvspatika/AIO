@@ -1226,12 +1226,18 @@ void handleData() {
   json += ", \"calib\": \"" + String(clb_json) + "\"";
 
   // Detailed Diagnostics for Field Engineer
+#if USE_NUVOTON_UI == 1
   json += ", \"sys_status\": \"" + String(sys_status) + "\"";
+#else
+  json += ", \"sys_status\": \"N/A\"";
+#endif
   
   String issues = "";
   if (low_bat_mode_active) { if(issues.length()>0) issues += ", "; issues += "LOW BAT MODE"; }
   if (!diag_rtc_battery_ok) { if(issues.length()>0) issues += ", "; issues += "RTC FAULT"; }
+#if USE_NUVOTON_UI == 1
   if (bat_3v3_val > 0.1 && bat_3v3_val < 3.0) { if(issues.length()>0) issues += ", "; issues += "MCU BATTERY LOW"; }
+#endif
   if (li_bat_val > 0.1 && li_bat_val < 3.6) { if(issues.length()>0) issues += ", "; issues += "GPRS BATTERY LOW"; }
   
   if (solar_val < 2.0) {
@@ -1285,8 +1291,13 @@ void handleData() {
   json += ", \"cdm_status\": \"" + String(diag_cdm_status) + "\"";
   json += ", \"http_present_fails\": " + String(diag_http_present_fails);
   json += ", \"http_cum_fails\": " + String(diag_http_cum_fails);
+#if USE_NUVOTON_UI == 1
   json += ", \"mcu_bat_v\": " + String(bat_3v3_val, 2);
   json += ", \"ref_volt_v\": " + String(ref_volt_val, 2);
+#else
+  json += ", \"mcu_bat_v\": 0.0";
+  json += ", \"ref_volt_v\": 0.0";
+#endif
   
   json += ", \"unsent_http_count\": " + String(get_total_backlogs(false));
   json += ", \"unsent_ftp_count\": " + String(countStored("/ftpunsent.txt"));

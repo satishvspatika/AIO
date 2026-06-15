@@ -38,7 +38,11 @@ void scheduler(void *pvParameters) {
   snprintf(solar_sense, sizeof(solar_sense), "%04.1f", solar_val);
 #endif
   debug("[PWR] MCU Battery : ");
+#if USE_NUVOTON_UI == 1
   debug(bat_3v3_val);
+#else
+  debug("N/A");
+#endif
   debug("V | GPRS Battery : ");
   debug(li_bat_val);
   debug("V | Solar : ");

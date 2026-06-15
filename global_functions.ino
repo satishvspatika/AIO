@@ -1431,6 +1431,7 @@ int get_total_backlogs(bool force) {
   return total;
 }
 
+#if USE_NUVOTON_UI == 1
 void read_and_calibrate_voltages() {
   static esp_adc_cal_characteristics_t adc_chars_unit1;
   static esp_adc_cal_characteristics_t adc_chars_unit2;
@@ -1511,11 +1512,26 @@ void read_and_calibrate_voltages() {
     }
   }
 }
+#endif
 
 float get_calibrated_battery_voltage() {
+#if USE_NUVOTON_UI == 1
   read_and_calibrate_voltages();
   return li_bat_val;
+#else
+  static esp_adc_cal_characteristics_t adc_chars;
+  static bool initialized = false;
+  if (!initialized) {
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars);
+    initialized = true;
+  }
+  uint32_t voltage_mv = esp_adc_cal_raw_to_voltage(adc1_get_raw(ADC1_CHANNEL_5), &adc_chars);
+  li_bat_val = ((float)voltage_mv / 1000.0) * (840.0 / 620.0);
+  li_bat = li_bat_val;
+  return li_bat_val;
+#endif
 }
+
 
 void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
   // v5.85.1 Hardened: fsMutex is NOT recursive. If alreadyLocked is true,
