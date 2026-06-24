@@ -1781,11 +1781,11 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
 
 int send_at_cmd_data(char *payload, bool robust) {
   uint32_t start_time = millis();
-  strcpy(diag_http_fail_reason, "NONE"); // v5.81 Surgical: Clear stale context
   if (!http_ready) {
     debugln("[HTTP] HTTP session not ready. Fast-fail to backlog.");
     return 0;
   }
+  strcpy(diag_http_fail_reason, "NONE"); // v5.81 Surgical: Clear stale context
   int i = strlen(payload);
   char cmd_buf[80];
 
@@ -1891,8 +1891,8 @@ int send_at_cmd_data(char *payload, bool robust) {
     if (strstr(response, "706") != NULL || strstr(response, "713") != NULL ||
         strstr(response, "714") != NULL || strstr(response, "601") != NULL) {
       
-      diag_http_zombie_count++;
-      debugf("HTTP Zombie Error (%s). Count: %d/3. Clean stack requested.\n", diag_http_fail_reason, diag_http_zombie_count);
+      int current_zombies = __atomic_add_fetch(&diag_http_zombie_count, 1, __ATOMIC_SEQ_CST);
+      debugf("HTTP Zombie Error (%s). Count: %d/3. Clean stack requested.\n", diag_http_fail_reason, current_zombies);
       
       SerialSIT.println("AT+HTTPTERM");
       waitForResponse("OK", 2000);
@@ -1908,13 +1908,13 @@ int send_at_cmd_data(char *payload, bool robust) {
       http_ready = false; // Housekeeping: State follows destroyed stack
       vTaskDelay(2000 / portTICK_PERIOD_MS); 
 
-      if (diag_http_zombie_count >= 3) {
+      if (current_zombies >= 3) {
          debugln("[CRIT] Persistent Zombie detected. Triggering Radio Refresh...");
-         diag_http_zombie_count = 0;
+         __atomic_store_n(&diag_http_zombie_count, 0, __ATOMIC_SEQ_CST);
          verify_bearer_or_recover(); // Triggers radio refresh internally if APN fails
       }
     } else {
-      diag_http_zombie_count = 0; // Reset on other errors
+      __atomic_store_n(&diag_http_zombie_count, 0, __ATOMIC_SEQ_CST); // Reset on other errors
     }
     // ISSUE-M3 fix v5.65: Do NOT increment diag_daily_http_fails here.
     // prepare_data_and_send() (the caller) increments it at line ~1155.

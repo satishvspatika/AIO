@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 function test() {
-    const htmlPath = '/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0/TEST_JIG/factory_tool.html';
+    const htmlPath = path.join(__dirname, 'factory_tool.html');
     const html = fs.readFileSync(htmlPath, 'utf8');
     
     // Extract script contents
@@ -42,7 +42,10 @@ function test() {
         location: { protocol: 'http:' },
         AudioContext: function() {
             return {
-                createGain: () => ({ gain: { exponentialRampToValueAtTime: () => {} } }),
+                createGain: () => ({ 
+                    gain: { exponentialRampToValueAtTime: () => {} },
+                    connect: () => {}
+                }),
                 currentTime: 0
             };
         }

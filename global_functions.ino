@@ -23,7 +23,7 @@ void trim_whitespace(char *str) {
 
 void start_deep_sleep() {
     set_sys_status("SLEEPING");
-    sleep_sequence_active = true; // [v5.77 Signal] Block background syncs
+    __atomic_store_n(&sleep_sequence_active, true, __ATOMIC_RELEASE); // [v5.77 Signal] Block background syncs
     // v5.75: Self-Healing Maintenance — Reset crash guard on 'Golden Path' success.
     // If we've made it this far, the system has successfully completed its duties.
     diag_crash_count = 0;
@@ -43,14 +43,14 @@ void start_deep_sleep() {
       (snap_sync != eHttpStop && snap_sync != eSMSStop && snap_sync != eExceptionHandled && snap_sync != eSyncModeInitial) || 
       snap_http) {
     debugln("[PWR] Communication or Activity in progress. Deferring sleep.");
-    sleep_sequence_active = false; // [v5.77 Signal Reset] Release background syncs
+    __atomic_store_n(&sleep_sequence_active, false, __ATOMIC_RELEASE); // [v5.77 Signal Reset] Release background syncs
     return;
   }
   
   // v5.85: Final gprs_started check. If we are NOT in eHttpStop but gprs is active, defer.
   if (snap_gprs && snap_sync != eHttpStop) {
     debugln("[PWR] Modem starting or searching. Deferring sleep.");
-    sleep_sequence_active = false; // [v5.77 Signal Reset]
+    __atomic_store_n(&sleep_sequence_active, false, __ATOMIC_RELEASE); // [v5.77 Signal Reset]
     return;
   }
 
@@ -89,7 +89,7 @@ void start_deep_sleep() {
   portEXIT_CRITICAL(&syncMux);
   if (final_sync != eHttpStop && final_sync != eSyncModeInitial && final_sync != eSMSStop && final_sync != eExceptionHandled) {
      debugln("[PWR] [CRIT] New cycle started during shutdown! Aborting Power-Cut.");
-     sleep_sequence_active = false;
+     __atomic_store_n(&sleep_sequence_active, false, __ATOMIC_RELEASE); // [v5.77 Signal Reset]
      return; // Emergency Abort
   }
 
@@ -227,7 +227,7 @@ void start_deep_sleep() {
 
   if (schedulerBusy || gprs_started || httpInitiated || race_sync_invalid || health_in_progress || modemMutexTaken || fsMutexTaken) {
       debugln("[PWR] [CRIT] RACE PREVENTED: Activity detected during final shutdown. Aborting sleep to process task.");
-      sleep_sequence_active = false; // [v5.77 Signal Reset]
+      __atomic_store_n(&sleep_sequence_active, false, __ATOMIC_RELEASE); // [v5.77 Signal Reset]
       // Phase 10 Fix: Instead of a violent reboot, we just return. 
       // Hardware state (Modem/I2C power cut) must be restored by the task that took control.
       return; 
@@ -1608,7 +1608,7 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
     // Releasing a caller's lock violates the ownership contract and stalls the station.
     esp_task_wdt_reset();
     if (!alreadyLocked) xSemaphoreGive(fsMutex); 
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
     
     if (!alreadyLocked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
         debugln("[SPIFFS] pruneFile: FAILED to retake mutex after VFS delay!");

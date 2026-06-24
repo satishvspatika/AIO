@@ -21,6 +21,17 @@ if [ ! -f "$APP_BIN" ]; then
     exit 1
 fi
 
+# Release port if busy
+echo "🔍 Checking if $PORT is busy..."
+PID=$(lsof -t "$PORT")
+if [ -n "$PID" ]; then
+    echo "⚠️  Port $PORT is being used by PID: $PID. Releasing..."
+    kill -9 $PID
+    sleep 1
+else
+    fuser -k "$PORT" 2>/dev/null || true
+fi
+
 echo "--- QUICK FLASH (App Only at 0x10000) | ${FLASH_SIZE} | Port: $PORT ---"
 esptool.py --chip esp32 --port "$PORT" --baud 921600 write_flash 0x10000 "$APP_BIN"
 echo "--- Quick Flash Complete ---"

@@ -251,7 +251,7 @@ bool try_activate_apn(const char *apn) {
 
 bool verify_bearer_or_recover() {
   // v5.78 Hardening [P4]: Delay recovery if 15-min interval logging is active
-  if (sleep_sequence_active) {
+  if (__atomic_load_n(&sleep_sequence_active, __ATOMIC_ACQUIRE)) {
     debugln("[RECOVERY] Delaying bearer recovery for 10s to protect interval logging window...");
     for (int i = 0; i < 10; i++) {
       vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -936,7 +936,7 @@ void graceful_modem_shutdown() {
   gprs_started = false;
   gprs_mode = eGprsSleepMode; // Prevent Ghost Restart during sleep entry
   portEXIT_CRITICAL(&syncMux);
-  if (!sleep_sequence_active) {
+  if (!__atomic_load_n(&sleep_sequence_active, __ATOMIC_ACQUIRE)) {
     set_sys_status("IDLE");
   }
 }

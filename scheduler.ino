@@ -194,7 +194,7 @@ void scheduler(void *pvParameters) {
                                  // Boot" sleep logic
         snap_timeSyncRequired == false &&
         (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false) &&
-        !sleep_sequence_active) {
+        !__atomic_load_n(&sleep_sequence_active, __ATOMIC_ACQUIRE)) {
 
       // Turner-Fix: Atomic protection for sync_mode
       portENTER_CRITICAL(&syncMux);
@@ -202,7 +202,7 @@ void scheduler(void *pvParameters) {
           sync_mode != eStartupGPS && sync_mode != eHealthStart) {
         sync_mode = eHttpTrigger; // v5.48: Mark as Busy
       }
-      schedulerBusy = true; // v5.65: Lock system awake during 15-min processing
+      __atomic_store_n(&schedulerBusy, true, __ATOMIC_RELEASE); // v5.65: Lock system awake during 15-min processing
       portEXIT_CRITICAL(&syncMux);
 
       // v6.88: FS Collision Guard - Wait if OTA is writing to SPIFFS
@@ -257,8 +257,7 @@ void scheduler(void *pvParameters) {
 
           // We must ensure 'scheduler' doesn't try to wait for GPRS below.
           // We jump to TRIGGER_HTTP to exit "gracefully" from this iteration.
-          schedulerBusy =
-              false; // Phase 12 Fix: Prevent sleep gate leak on fragile goto
+          __atomic_store_n(&schedulerBusy, false, __ATOMIC_RELEASE); // Phase 12 Fix: Prevent sleep gate leak on fragile goto
           goto TRIGGER_HTTP;
         } else {
           debugln("No UI request. Going straight to sleep.");
@@ -452,13 +451,13 @@ void scheduler(void *pvParameters) {
 
       // v5.85: P6 - Low Battery Survival Mode (3.4V threshold)
       if (li_bat_val > 0.5f && li_bat_val < 3.4f) {
-        low_bat_mode_active = true;
+        __atomic_store_n(&low_bat_mode_active, true, __ATOMIC_RELEASE);
         low_bat_skip_count++;
         if (low_bat_skip_count < 4) {
           debugln(
               "[PWR] Survival Mode (3.4V): Storing locally, skipping modem.");
           skip_primary_http = true;
-          signal_lvl = -111; // v5.85: Explicit MISSING_DATA marker
+          signal_lvl = SIGNAL_STRENGTH_MISSING_DATA; // v5.85: Explicit MISSING_DATA marker
         } else {
           low_bat_skip_count = 0; // Every 4th slot: allow modem
           debugln(
@@ -933,7 +932,9 @@ void scheduler(void *pvParameters) {
           total_rf_pulses_32 = 0;
           last_sched_rf_pulses_32 = 0;
           last_raw_rf_count = rf_count.val;
+          portENTER_CRITICAL(&rtcTimeMux);
           rtc_daily_cum_rf = 0.0;
+          portEXIT_CRITICAL(&rtcTimeMux);
 
           diag_sensor_fault_sent_today = false; // Reset daily fault report flag
           diag_first_http_count = 0;
@@ -2373,6 +2374,7 @@ void scheduler(void *pvParameters) {
             if (file1)
               file1.close();
             xSemaphoreGive(fsMutex); // Final holistic release
+            fs_locked = false;
           }
           if (sd_card_ok && sd1)
             sd1.close();

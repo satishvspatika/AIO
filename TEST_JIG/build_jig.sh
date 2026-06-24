@@ -6,8 +6,8 @@
 #   2. Production Application (4MB, 8MB, 16MB)
 # And bundles them into the self-contained WEB_FLASH_FILES/ directory.
 
-# Ensure we run from the TEST_JIG directory or workspace root
-WORKSPACE_ROOT="/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/ALL_IN_ONE/AIO9_5.0"
+# Ensure we run from the TEST_JIG directory or workspace root dynamically
+WORKSPACE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_JIG_DIR="$WORKSPACE_ROOT/TEST_JIG"
 OUT_DIR="$TEST_JIG_DIR/WEB_FLASH_FILES"
 ARDUINO_CLI="/usr/local/bin/arduino-cli"
@@ -26,21 +26,29 @@ if [ ! -f "$ARDUINO_CLI" ]; then
 fi
 
 QC_ONLY=false
-EIGHT_MB_ONLY=false
+BUILD_8MB=true
+BUILD_16MB=true
 
 for arg in "$@"; do
     if [ "$arg" == "--qc-only" ] || [ "$arg" == "qc-only" ]; then
         QC_ONLY=true
     elif [ "$arg" == "--8mb-only" ] || [ "$arg" == "--8mb" ] || [ "$arg" == "8mb-only" ]; then
-        EIGHT_MB_ONLY=true
+        BUILD_8MB=true
+        BUILD_16MB=false
+    elif [ "$arg" == "--16mb-only" ] || [ "$arg" == "--16mb" ] || [ "$arg" == "16mb-only" ]; then
+        BUILD_8MB=false
+        BUILD_16MB=true
     fi
 done
 
 if [ "$QC_ONLY" = true ]; then
     echo "⚡ QC-Only flag detected. Skipping production application and config builds."
 fi
-if [ "$EIGHT_MB_ONLY" = true ]; then
-    echo "⚡ 8MB-Only flag detected. Skipping 4MB and 16MB builds."
+if [ "$BUILD_8MB" = true ] && [ "$BUILD_16MB" = false ]; then
+    echo "⚡ 8MB-Only flag detected. Skipping 16MB builds."
+fi
+if [ "$BUILD_16MB" = true ] && [ "$BUILD_8MB" = false ]; then
+    echo "⚡ 16MB-Only flag detected. Skipping 8MB builds."
 fi
 
 # Create target directories
@@ -54,42 +62,44 @@ rm -rf "$QC_BUILD_BASE" "$APP_BUILD_BASE"
 # --- 1. COMPILE QC TEST FIRMWARE (4MB, 8MB, 16MB) ---
 echo "--- Compiling QC Self-Test Firmware ---"
 
-# Compile 4MB QC Test
-if [ "$EIGHT_MB_ONLY" = false ]; then
-  echo "→ Building 4MB QC Test..."
-  cp "$WORKSPACE_ROOT/partitions_4mb.csv" "$TEST_JIG_DIR/qc_test/partitions.csv"
+# Compile 4MB QC Test - skipped (not required)
+# if [ "$EIGHT_MB_ONLY" = false ]; then
+#   echo "→ Building 4MB QC Test..."
+#   cp "$WORKSPACE_ROOT/partitions_4mb.csv" "$TEST_JIG_DIR/qc_test/partitions.csv"
+#   $ARDUINO_CLI compile \
+#       --fqbn "esp32:esp32:esp32:FlashSize=4M,PartitionScheme=custom" \
+#       --build-property "build.partitions=custom" \
+#       --build-property "upload.maximum_size=1310720" \
+#       --build-path "$QC_BUILD_BASE/4mb" \
+#       "$TEST_JIG_DIR/qc_test/qc_test.ino"
+# 
+#   if [ $? -ne 0 ]; then
+#       echo "❌ QC 4MB compile failed!"
+#       rm -f "$TEST_JIG_DIR/qc_test/partitions.csv"
+#       exit 1
+#   fi
+# fi
+
+# Compile 8MB QC Test
+if [ "$BUILD_8MB" = true ]; then
+  echo "→ Building 8MB QC Test..."
+  cp "$WORKSPACE_ROOT/partitions.csv" "$TEST_JIG_DIR/qc_test/partitions.csv"
   $ARDUINO_CLI compile \
-      --fqbn "esp32:esp32:esp32:FlashSize=4M,PartitionScheme=custom" \
+      --fqbn "esp32:esp32:esp32:FlashSize=8M,PartitionScheme=custom" \
       --build-property "build.partitions=custom" \
-      --build-property "upload.maximum_size=1310720" \
-      --build-path "$QC_BUILD_BASE/4mb" \
+      --build-property "upload.maximum_size=1769472" \
+      --build-path "$QC_BUILD_BASE/8mb" \
       "$TEST_JIG_DIR/qc_test/qc_test.ino"
 
   if [ $? -ne 0 ]; then
-      echo "❌ QC 4MB compile failed!"
+      echo "❌ QC 8MB compile failed!"
       rm -f "$TEST_JIG_DIR/qc_test/partitions.csv"
       exit 1
   fi
 fi
 
-# Compile 8MB QC Test
-echo "→ Building 8MB QC Test..."
-cp "$WORKSPACE_ROOT/partitions.csv" "$TEST_JIG_DIR/qc_test/partitions.csv"
-$ARDUINO_CLI compile \
-    --fqbn "esp32:esp32:esp32:FlashSize=8M,PartitionScheme=custom" \
-    --build-property "build.partitions=custom" \
-    --build-property "upload.maximum_size=1769472" \
-    --build-path "$QC_BUILD_BASE/8mb" \
-    "$TEST_JIG_DIR/qc_test/qc_test.ino"
-
-if [ $? -ne 0 ]; then
-    echo "❌ QC 8MB compile failed!"
-    rm -f "$TEST_JIG_DIR/qc_test/partitions.csv"
-    exit 1
-fi
-
 # Compile 16MB QC Test
-if [ "$EIGHT_MB_ONLY" = false ]; then
+if [ "$BUILD_16MB" = true ]; then
   echo "→ Building 16MB QC Test..."
   cp "$WORKSPACE_ROOT/partitions_16mb.csv" "$TEST_JIG_DIR/qc_test/partitions.csv"
   $ARDUINO_CLI compile \
@@ -110,74 +120,44 @@ fi
 rm -f "$TEST_JIG_DIR/qc_test/partitions.csv"
 
 
-# --- 2. COMPILE PRODUCTION APP (4MB, 8MB, 16MB) ---
+# --- 2. COMPILE PRODUCTION APP ---
 if [ "$QC_ONLY" = false ]; then
   echo "--- Compiling Production Application ---"
   
-  # Save original user_config.h and partitions.csv
-  cp "$WORKSPACE_ROOT/user_config.h" /tmp/user_config_backup.h
-  cp "$WORKSPACE_ROOT/partitions.csv" /tmp/partitions_backup.csv
-  
-  # Build 4MB Production App (Patching WebServer OFF to fit slot)
-  if [ "$EIGHT_MB_ONLY" = false ]; then
-    echo "→ Building 4MB Production Application..."
-    python3 -c 'import re; p="'"$WORKSPACE_ROOT"'/user_config.h"; c=open(p).read(); c=re.sub(r"(#define ENABLE_WEBSERVER\s*\\?\s*\n?\s*)1", r"\g<1>0", c); open(p,"w").write(c)'
-    cp "$WORKSPACE_ROOT/partitions_4mb.csv" "$WORKSPACE_ROOT/partitions.csv"
-    
-    $ARDUIDE_CLI compile \
-        --fqbn "esp32:esp32:esp32:FlashSize=4M,PartitionScheme=custom" \
+  if [ "$BUILD_8MB" = true ]; then
+    # Build 8MB Production App
+    echo "→ Building 8MB Production Application..."
+    $ARDUINO_CLI compile \
+        --fqbn "esp32:esp32:esp32:FlashSize=8M,PartitionScheme=custom" \
         --build-property "build.partitions=custom" \
-        --build-property "upload.maximum_size=1310720" \
-        --build-path "$APP_BUILD_BASE/4mb" \
+        --build-property "upload.maximum_size=1769472" \
+        --build-path "$APP_BUILD_BASE/8mb" \
         "$WORKSPACE_ROOT"
     
     if [ $? -ne 0 ]; then
-        echo "❌ App 4MB compile failed!"
-        cp /tmp/user_config_backup.h "$WORKSPACE_ROOT/user_config.h"
-        cp /tmp/partitions_backup.csv "$WORKSPACE_ROOT/partitions.csv"
-        exit 1
+        echo "❌ App 8MB compile failed!"
+        exit 1;
     fi
-    
-    # Restore original files
-    cp /tmp/user_config_backup.h "$WORKSPACE_ROOT/user_config.h"
-    cp /tmp/partitions_backup.csv "$WORKSPACE_ROOT/partitions.csv"
   fi
-  
-  # Build 8MB Production App
-  echo "→ Building 8MB Production Application..."
-  $ARDUINO_CLI compile \
-      --fqbn "esp32:esp32:esp32:FlashSize=8M,PartitionScheme=custom" \
-      --build-property "build.partitions=custom" \
-      --build-property "upload.maximum_size=1769472" \
-      --build-path "$APP_BUILD_BASE/8mb" \
-      "$WORKSPACE_ROOT"
-  
-  if [ $? -ne 0 ]; then
-      echo "❌ App 8MB compile failed!"
-      exit 1;
-  fi
-  
-  # Build 16MB Production App
-  if [ "$EIGHT_MB_ONLY" = false ]; then
+
+  if [ "$BUILD_16MB" = true ]; then
+    # Build 16MB Production App
     echo "→ Building 16MB Production Application..."
+    cp "$WORKSPACE_ROOT/partitions.csv" /tmp/partitions_backup.csv 2>/dev/null || true
     cp "$WORKSPACE_ROOT/partitions_16mb.csv" "$WORKSPACE_ROOT/partitions.csv"
-    
     $ARDUINO_CLI compile \
         --fqbn "esp32:esp32:esp32:FlashSize=16M,PartitionScheme=custom" \
         --build-property "build.partitions=custom" \
         --build-property "upload.maximum_size=2097152" \
         --build-path "$APP_BUILD_BASE/16mb" \
         "$WORKSPACE_ROOT"
-    
-    if [ $? -ne 0 ]; then
+    COMPILE_STATUS=$?
+    cp /tmp/partitions_backup.csv "$WORKSPACE_ROOT/partitions.csv" 2>/dev/null || true
+    if [ $COMPILE_STATUS -ne 0 ]; then
         echo "❌ App 16MB compile failed!"
-        cp /tmp/partitions_backup.csv "$WORKSPACE_ROOT/partitions.csv"
         exit 1
     fi
   fi
-  
-  # Restore original root partitions
-  cp /tmp/partitions_backup.csv "$WORKSPACE_ROOT/partitions.csv"
 else
   echo "--- Skipping Production Application Compilation ---"
 fi
@@ -186,40 +166,67 @@ fi
 # --- 3. GATHER AND BUNDLE TARGET ARTIFACTS ---
 echo "--- Gathering and Bundling Artifacts ---"
 
-# Copy common boot sector files from the 8MB compile path
-cp "$QC_BUILD_BASE/8mb/qc_test.ino.bootloader.bin" "$OUT_DIR/bootloader.bin"
+# Copy common boot sector files
+if [ "$BUILD_8MB" = true ]; then
+  cp "$QC_BUILD_BASE/8mb/qc_test.ino.bootloader.bin" "$OUT_DIR/bootloader_8mb.bin"
+  cp "$QC_BUILD_BASE/8mb/qc_test.ino.bootloader.bin" "$OUT_DIR/bootloader.bin"
+fi
+if [ "$BUILD_16MB" = true ]; then
+  cp "$QC_BUILD_BASE/16mb/qc_test.ino.bootloader.bin" "$OUT_DIR/bootloader_16mb.bin"
+  if [ "$BUILD_8MB" = false ]; then
+    cp "$QC_BUILD_BASE/16mb/qc_test.ino.bootloader.bin" "$OUT_DIR/bootloader.bin"
+  fi
+fi
 cp "$WORKSPACE_ROOT/flash_files/boot_app0.bin" "$OUT_DIR/boot_app0.bin"
 
 # Copy compiled partition binaries
-if [ "$EIGHT_MB_ONLY" = false ]; then
-  cp "$QC_BUILD_BASE/4mb/qc_test.ino.partitions.bin" "$OUT_DIR/partitions_4mb.bin"
+if [ "$BUILD_8MB" = true ]; then
+  cp "$QC_BUILD_BASE/8mb/qc_test.ino.partitions.bin" "$OUT_DIR/partitions_8mb.bin"
 fi
-cp "$QC_BUILD_BASE/8mb/qc_test.ino.partitions.bin" "$OUT_DIR/partitions_8mb.bin"
-if [ "$EIGHT_MB_ONLY" = false ]; then
+if [ "$BUILD_16MB" = true ]; then
   cp "$QC_BUILD_BASE/16mb/qc_test.ino.partitions.bin" "$OUT_DIR/partitions_16mb.bin"
 fi
 
 # Copy QC self-test app binaries
-if [ "$EIGHT_MB_ONLY" = false ]; then
-  cp "$QC_BUILD_BASE/4mb/qc_test.ino.bin" "$OUT_DIR/qc_test_4mb.bin"
+if [ "$BUILD_8MB" = true ]; then
+  cp "$QC_BUILD_BASE/8mb/qc_test.ino.bin" "$OUT_DIR/qc_test_8mb.bin"
 fi
-cp "$QC_BUILD_BASE/8mb/qc_test.ino.bin" "$OUT_DIR/qc_test_8mb.bin"
-if [ "$EIGHT_MB_ONLY" = false ]; then
+if [ "$BUILD_16MB" = true ]; then
   cp "$QC_BUILD_BASE/16mb/qc_test.ino.bin" "$OUT_DIR/qc_test_16mb.bin"
 fi
 
 # Copy Production app binaries
 if [ "$QC_ONLY" = false ]; then
-  if [ "$EIGHT_MB_ONLY" = false ]; then
-    cp "$APP_BUILD_BASE/4mb/AIO9_5.0.bin" "$OUT_DIR/production_4mb.bin" 2>/dev/null || cp "$APP_BUILD_BASE/4mb/AIO9_5.0.ino.bin" "$OUT_DIR/production_4mb.bin"
+  if [ "$BUILD_8MB" = true ]; then
+    cp "$APP_BUILD_BASE/8mb/AIO9_5.0.bin" "$OUT_DIR/production_8mb.bin" 2>/dev/null || cp "$APP_BUILD_BASE/8mb/AIO9_5.0.ino.bin" "$OUT_DIR/production_8mb.bin"
   fi
-  cp "$APP_BUILD_BASE/8mb/AIO9_5.0.bin" "$OUT_DIR/production_8mb.bin" 2>/dev/null || cp "$APP_BUILD_BASE/8mb/AIO9_5.0.ino.bin" "$OUT_DIR/production_8mb.bin"
-  if [ "$EIGHT_MB_ONLY" = false ]; then
+  if [ "$BUILD_16MB" = true ]; then
     cp "$APP_BUILD_BASE/16mb/AIO9_5.0.bin" "$OUT_DIR/production_16mb.bin" 2>/dev/null || cp "$APP_BUILD_BASE/16mb/AIO9_5.0.ino.bin" "$OUT_DIR/production_16mb.bin"
   fi
 else
   echo "→ QC-Only mode: retaining existing production application binaries."
 fi
+
+# Verify the HTML structure and unbalanced diffs before packaging
+echo "--------------------------------------------------"
+echo "          VERIFYING FACTORY_TOOL.HTML            "
+echo "--------------------------------------------------"
+# Change to workspace root for Python script files search to work
+cd "$WORKSPACE_ROOT"
+python3 "$TEST_JIG_DIR/verify_html.py"
+HTML_VERIFY_STATUS=$?
+if [ $HTML_VERIFY_STATUS -ne 0 ]; then
+    echo "❌ Error: HTML structure verification failed!"
+    exit 1
+fi
+
+python3 "$TEST_JIG_DIR/find_unbalanced_diff.py"
+HTML_DIFF_STATUS=$?
+if [ $HTML_DIFF_STATUS -ne 0 ]; then
+    echo "❌ Error: HTML unbalanced braces/diff markers check failed!"
+    exit 1
+fi
+echo "✅ HTML verification passed successfully!"
 
 # Copy the HTML serial portal dashboard
 cp "$TEST_JIG_DIR/factory_tool.html" "$OUT_DIR/factory_tool.html"
@@ -241,9 +248,14 @@ if [ "$QC_ONLY" = false ]; then
   echo "=================================================="
   
   if [ -f "$WORKSPACE_ROOT/build_all_configs.py" ]; then
-      echo "→ Running build_all_configs.py (8MB targets)..."
+      FLASH_ARG="8mb"
+      if [ "$BUILD_8MB" = false ] && [ "$BUILD_16MB" = true ]; then
+          FLASH_ARG="16mb"
+      fi
+
+      echo "→ Running build_all_configs.py (${FLASH_ARG} targets)..."
       cd "$WORKSPACE_ROOT"
-      python3 build_all_configs.py --flash 8mb
+      python3 build_all_configs.py --flash $FLASH_ARG --configs KSNDMC_TRG
       BUILD_STATUS=$?
   
       if [ $BUILD_STATUS -ne 0 ]; then
@@ -260,13 +272,47 @@ if [ "$QC_ONLY" = false ]; then
               src_meta="$config_dir/metadata.json"
   
               if [ -f "$src_bin" ]; then
-                  dest="$OUT_DIR/$config_name"
-                  mkdir -p "$dest"
-                  cp "$src_bin" "$dest/firmware.bin"
-                  [ -f "$src_ver"  ] && cp "$src_ver"  "$dest/fw_version.txt"
-                  [ -f "$src_meta" ] && cp "$src_meta" "$dest/metadata.json"
-                  SIZE=$(du -sh "$src_bin" | cut -f1)
-                  echo "  ✓ $config_name ($SIZE)"
+                  if [ "$FLASH_ARG" == "8mb" ]; then
+                      # Package 8MB Folder
+                      dest8="$OUT_DIR/$config_name"
+                      mkdir -p "$dest8"
+                      cp "$src_bin" "$dest8/firmware.bin"
+                      [ -f "$src_ver"  ] && cp "$src_ver"  "$dest8/fw_version.txt"
+                      [ -f "$src_meta" ] && cp "$src_meta" "$dest8/metadata.json"
+
+                      # Package 16MB Folder (reusing the same binaries)
+                      if [ "$BUILD_16MB" = true ]; then
+                          base_name=$(echo "$config_name" | sed 's/_8mb$//')
+                          dest16="$OUT_DIR/${base_name}_16mb"
+                          mkdir -p "$dest16"
+                          cp "$src_bin" "$dest16/firmware.bin"
+                          [ -f "$src_ver" ] && cp "$src_ver" "$dest16/fw_version.txt"
+                          if [ -f "$src_meta" ]; then
+                               python3 -c "
+import json
+with open('$src_meta') as f:
+    m = json.load(f)
+m['flash_size'] = '16mb'
+with open('$dest16/metadata.json', 'w') as f:
+    json.dump(m, f, indent=2)
+"
+                          fi
+                          SIZE=$(du -sh "$src_bin" | cut -f1)
+                          echo "  ✓ $config_name ($SIZE) and ${base_name}_16mb ($SIZE)"
+                      else
+                          SIZE=$(du -sh "$src_bin" | cut -f1)
+                          echo "  ✓ $config_name ($SIZE)"
+                      fi
+                  else
+                      # FLASH_ARG is 16mb
+                      dest16="$OUT_DIR/$config_name"
+                      mkdir -p "$dest16"
+                      cp "$src_bin" "$dest16/firmware.bin"
+                      [ -f "$src_ver"  ] && cp "$src_ver"  "$dest16/fw_version.txt"
+                      [ -f "$src_meta" ] && cp "$src_meta" "$dest16/metadata.json"
+                      SIZE=$(du -sh "$src_bin" | cut -f1)
+                      echo "  ✓ $config_name ($SIZE)"
+                  fi
               fi
           done
           echo "→ Named configs packaged."

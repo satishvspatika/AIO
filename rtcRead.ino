@@ -157,7 +157,7 @@ void rtcRead(void *pvParameters) {
 
     if (badReads >= 10 || (auto_sync_needed && hr == 11)) { // v6.06: reduced from 40 (2min) to 10 (30s) for faster boot RTC sync
       // v5.77: Coordination Guard — Do not sync if sleep is imminent or retry cap reached
-      if (sleep_sequence_active) {
+       if (__atomic_load_n(&sleep_sequence_active, __ATOMIC_ACQUIRE)) {
         debugln("[RTC] Sleep imminent. Deferring sync.");
       } else if (rtc_daily_sync_count >= 3) {
         debugln("[RTC] Daily sync retry cap reached. Deferring.");
@@ -177,7 +177,7 @@ void rtcRead(void *pvParameters) {
           }
           badReads = -1;
           resync_time();
-        } else if (!sleep_sequence_active) {
+         } else if (!__atomic_load_n(&sleep_sequence_active, __ATOMIC_ACQUIRE)) {
           // v5.88: Hardened Log Silencing — Only spam once every 60s
           static unsigned long last_defer_msg_time = 0;
           if (millis() - last_defer_msg_time > 60000) {

@@ -217,7 +217,7 @@ void IRAM_ATTR ext0_isr() {
 // day-change. Tracking variables like last_processed_sample_idx and
 // fresh_boot_check_done are now in globals.h (RTC_DATA_ATTR) for
 // persistence.
-RTC_DATA_ATTR uint8_t ulp_code_reserve[512] = {0}; // Moved from globals.h (Bug#3 Fix)
+RTC_DATA_ATTR uint8_t ulp_code_reserve[2092] = {0}; // Moved from globals.h (Bug#3 Fix)
 
 // --- Global Variable Definitions (v5.65 ODR Fix) ---
 bool webServerStarted = false;
@@ -1606,7 +1606,7 @@ void initialize_hw() {
 #endif
 
   // DISABLE Watchdog during long mount/format operations
-  esp_task_wdt_deinit();
+  esp_task_wdt_delete(NULL);
 
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
     if (!rtc.begin()) {
@@ -1759,7 +1759,7 @@ void initialize_hw() {
                                       .idle_core_mask =
                                           (1 << portNUM_PROCESSORS) - 1,
                                       .trigger_panic = true};
-  esp_task_wdt_init(&wdt_config);
+  esp_task_wdt_reconfigure(&wdt_config);
   esp_task_wdt_add(NULL);
   esp_task_wdt_reset();
 
@@ -1935,14 +1935,18 @@ void loop() {
     int loop_sample_idx = (snap_hr * 4 + snap_min / 15 + (60 + 1)) % 96;
     if (loop_sample_idx != last_processed_sample_idx && !too_close_to_slot) {
       too_close_to_slot = true; // New unprocessed slot — keep awake for scheduler
-      debugf("[PWR] Unprocessed slot %d detected (last=%d). Holding awake for scheduler.\n",
-             loop_sample_idx, last_processed_sample_idx);
+      static int last_printed_slot = -1;
+      if (last_printed_slot != loop_sample_idx) {
+        last_printed_slot = loop_sample_idx;
+        debugf("[PWR] Unprocessed slot %d detected (last=%d). Holding awake for scheduler.\n",
+               loop_sample_idx, last_processed_sample_idx);
+      }
     }
   }
 
   portENTER_CRITICAL(&syncMux);
   safe_to_sleep_sync = ((sync_mode == eHttpStop) || (sync_mode == eSMSStop) || (sync_mode == eExceptionHandled)) && !too_close_to_slot;
-  bool snap_schedulerBusy = schedulerBusy; // v5.74 Fix #2: snapshot inside syncMux for atomicity
+  bool snap_schedulerBusy = __atomic_load_n(&schedulerBusy, __ATOMIC_ACQUIRE); // v5.74 Fix #2: snapshot inside syncMux for atomicity
   portEXIT_CRITICAL(&syncMux);
 
   // v5.85: P7 - Dynamic Sleep Optimization (5s -> 2s for timer wakeups)
@@ -1961,7 +1965,7 @@ void loop() {
   // AND protect active manual tasks (Calibration, Manual Syncs, OTA).
   bool manualTaskActive;
   portENTER_CRITICAL(&syncMux);
-  manualTaskActive = (pending_manual_status || pending_manual_gps || pending_manual_health || force_ota || ota_writing_active || (calib_flag == 1));
+  manualTaskActive = (pending_manual_status || pending_manual_gps || pending_manual_health || force_ota || ota_writing_active || (calib_flag == 1) || (cur_mode == eEditOn));
   portEXIT_CRITICAL(&syncMux);
 
   bool uiIsGhosting = (wakeup_reason_is != ext0 && lcdkeypad_start == 1 && !manualTaskActive && (millis() - last_key_time > 60000) && (millis() > 60000));
@@ -2011,12 +2015,13 @@ void loop() {
 
     if (sys_busy) {
         // v5.85: Final Safety Valve — Forced Duty Cycle Cap to protect battery.
-        bool awake_cap_reached = (millis() > 300000); // 5 minutes absolute max
+        // Set to exactly 5 minutes 15 seconds (315000ms) to safely align with the 5-minute RF Calibration test.
+        bool awake_cap_reached = (millis() > 315000); // 5 mins 15 secs absolute max
         bool idle_cap_reached = (millis() - last_activity_time > 180000); // 3 mins idle
 
         // v5.75: Mutex Hang Recovery
         if (awake_cap_reached && (modemIsBusy || fsIsBusy)) {
-            debugln("[PWR] LOCKUP RECOVERY: Mutex held by hung task > 5min. Forcing Reboot...");
+            debugln("[PWR] LOCKUP RECOVERY: Mutex held by hung task > 5min 15s. Forcing Reboot...");
             ESP.restart();
         }
 
@@ -2027,13 +2032,13 @@ void loop() {
         bool scheduled_wake = (wakeup_reason_is != ext0);
         bool forced_sleep_allowed = scheduled_wake && safe_to_sleep_sync && !manualTaskActive && (millis() - last_key_time > 60000) && (millis() > 60000);
 
-        if ((lcdkeypad_start == 0 || forced_sleep_allowed) && (awake_cap_reached || idle_cap_reached) && !too_close_to_slot) {
+        if ((lcdkeypad_start == 0 || forced_sleep_allowed || awake_cap_reached) && (awake_cap_reached || idle_cap_reached) && !too_close_to_slot) {
             debugln("[PWR] SAFETY VALVE: Duty-Cycle Cap or Forced Scheduled Sleep reached. Forcing Sleep...");
             // Force-reset all blockers
             portENTER_CRITICAL(&syncMux);
             gprs_started = false;
             sync_mode = eHttpStop;
-            schedulerBusy = false;
+            __atomic_store_n(&schedulerBusy, false, __ATOMIC_RELEASE);
             __atomic_store_n(&httpInitiated, false, __ATOMIC_RELEASE);
             health_in_progress = false;
             portEXIT_CRITICAL(&syncMux);

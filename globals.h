@@ -109,7 +109,7 @@ extern volatile uint32_t last_activity_time; // v5.85: Safety Heartbeat Timer
 
 // SAFETY BUFFER: Reserve 512 bytes at the start of RTC Memory to prevent
 // ULP Program Code (loaded at offset 0) from overwriting C variables.
-extern RTC_DATA_ATTR uint8_t ulp_code_reserve[512];
+extern RTC_DATA_ATTR uint8_t ulp_code_reserve[2092];
 
 // ESP-NOW permanently disabled (v5.40+) - includes removed
 // #include <esp_now.h>
@@ -171,11 +171,11 @@ extern float RF_RESOLUTION;
 
 // Signal strength constants
 #define SIGNAL_STRENGTH_NO_DATA                                                \
-  -112 // v5.51: Was -87 (shifted to avoid real signal overlap)
-#define SIGNAL_STRENGTH_GAP_FILLED -113   // v5.51: Was -88
-#define SIGNAL_STRENGTH_MISSING_DATA -111 // Official "No Data" marker
-#define SIGNAL_STRENGTH_PREV_DAY_GAP -114 // v5.51: Was -89
-#define SIGNAL_STRENGTH_MIN_RANGE -130
+  -142 // Shifted below -140 to avoid real signal overlap
+#define SIGNAL_STRENGTH_GAP_FILLED -143   
+#define SIGNAL_STRENGTH_MISSING_DATA -141 // Official "No Data" marker
+#define SIGNAL_STRENGTH_PREV_DAY_GAP -144 
+#define SIGNAL_STRENGTH_MIN_RANGE -140
 #define SIGNAL_STRENGTH_MAX_RANGE -110
 
 // Temperature/Humidity constants
@@ -314,8 +314,6 @@ extern char universalNumber[20];
 extern HDC_Type hdcType;
 extern BME_Type bmeType;
 extern volatile bool health_in_progress;
-extern volatile bool
-    schedulerBusy; // Prevents sleep during 15-min slot processing
 extern volatile bool primary_data_delivered;
 extern volatile RTC_DATA_ATTR bool skip_primary_http;
 extern volatile bool sleep_sequence_active;    // v5.77: Sleep Gate signal

@@ -2746,6 +2746,8 @@
     // Binary file database (stores ArrayBuffers loaded by drag/drop)
     const fileVault = {
       "bootloader.bin": null,
+      "bootloader_8mb.bin": null,
+      "bootloader_16mb.bin": null,
       "boot_app0.bin": null,
       // Partitions
       "partitions_4mb.bin": null,
@@ -2778,9 +2780,15 @@
     // Custom config binary vault: keyed by config folder name
     // Each entry: { binary: Uint8Array|null, version: string|null, metadata: object|null }
     const customConfigVault = {};
-    for (const configs of Object.values(PROFILE_CONFIGS))
-      for (const c of configs)
-        customConfigVault[c] = { binary: null, version: null, metadata: null };
+    for (const configs of Object.values(PROFILE_CONFIGS)) {
+      for (const c of configs) {
+        customConfigVault[c] = {
+          "4mb": { binary: null, version: null, metadata: null },
+          "8mb": { binary: null, version: null, metadata: null },
+          "16mb": { binary: null, version: null, metadata: null }
+        };
+      }
+    }
 
     // DOM References
     const browserWarning = document.getElementById("browserWarning");
@@ -3822,13 +3830,15 @@ function getManageRecordsHtml() {
     function renderConfigMetadata() {
       const cfg = releaseConfigSel?.value;
       const entry = cfg ? customConfigVault[cfg] : null;
+      const currentSizeKey = currentChipSize ? `${currentChipSize}mb` : "8mb";
+      const sizeEntry = entry ? (entry[currentSizeKey] || entry["8mb"]) : null;
 
       // Update the LOADED badge in the navbar
       if (configLoadedBadge) {
-        configLoadedBadge.style.display = (entry?.binary) ? "inline" : "none";
+        configLoadedBadge.style.display = (sizeEntry?.binary) ? "inline" : "none";
       }
 
-      if (!entry || (!entry.binary && !entry.metadata)) {
+      if (!sizeEntry || (!sizeEntry.binary && !sizeEntry.metadata)) {
         // No data yet — prompt user in console
         logBox([
           { text: `Config selected: ${cfg}`, type: "info" },
@@ -3837,13 +3847,13 @@ function getManageRecordsHtml() {
         return;
       }
 
-      const meta   = entry.metadata || {};
-      const ver    = entry.version  || meta.full_version || "--";
+      const meta   = sizeEntry.metadata || {};
+      const ver    = sizeEntry.version  || meta.full_version || "--";
       const yn     = v => (v === null || v === undefined) ? "--" : (v ? "YES" : "NO");
-      const binKB  = entry.binary ? (entry.binary.byteLength / 1024).toFixed(1) + " KB" : "--";
+      const binKB  = sizeEntry.binary ? (sizeEntry.binary.byteLength / 1024).toFixed(1) + " KB" : "--";
 
       // Size check
-      const binSize = entry.binary ? entry.binary.byteLength : (meta.binary_size_bytes || 0);
+      const binSize = sizeEntry.binary ? sizeEntry.binary.byteLength : (meta.binary_size_bytes || 0);
       const limit   = APP_SIZE_LIMIT_BYTES[currentChipSize] || APP_SIZE_LIMIT_BYTES[8];
       const sizeOK  = !currentChipSize || binSize === 0 || binSize <= limit;
 
@@ -3939,10 +3949,14 @@ function getManageRecordsHtml() {
             const parentFolder = parts[parts.length - 2];
             const configBase = parentFolder.replace(/_?(4|8|16)mb$/i, '');
             if (customConfigVault.hasOwnProperty(configBase)) {
+              const flashMatch = parentFolder.match(/_?(4|8|16)mb$/i);
+              const flashSize = flashMatch ? flashMatch[1].toLowerCase() + "mb" : "8mb";
+
               if (!configFileMap[configBase]) configFileMap[configBase] = {};
-              if (name === 'firmware.bin')   configFileMap[configBase].firmware = file;
-              if (name === 'fw_version.txt') configFileMap[configBase].version  = file;
-              if (name === 'metadata.json')  configFileMap[configBase].metadata = file;
+              if (!configFileMap[configBase][flashSize]) configFileMap[configBase][flashSize] = {};
+              if (name === 'firmware.bin')   configFileMap[configBase][flashSize].firmware = file;
+              if (name === 'fw_version.txt') configFileMap[configBase][flashSize].version  = file;
+              if (name === 'metadata.json')  configFileMap[configBase][flashSize].metadata = file;
             }
           }
         }
@@ -3950,26 +3964,28 @@ function getManageRecordsHtml() {
 
       // Load config-specific binaries
       let loadedConfigsCount = 0;
-      for (const [cfg, cfgFiles] of Object.entries(configFileMap)) {
-        if (cfgFiles.firmware) {
-          try {
-            const buf = await cfgFiles.firmware.arrayBuffer();
-            customConfigVault[cfg].binary = new Uint8Array(buf);
-            logToConsole(`✓ Config loaded: ${cfg}/firmware.bin (${(cfgFiles.firmware.size/1024).toFixed(1)} KB)`, "info");
-            loadedConfigsCount++;
-          } catch (err) {
-            logToConsole(`Failed to read config ${cfg}: ${err.message}`, "error");
+      for (const [cfg, sizeMap] of Object.entries(configFileMap)) {
+        for (const [size, cfgFiles] of Object.entries(sizeMap)) {
+          if (cfgFiles.firmware) {
+            try {
+              const buf = await cfgFiles.firmware.arrayBuffer();
+              customConfigVault[cfg][size].binary = new Uint8Array(buf);
+              logToConsole(`✓ Config loaded: ${cfg}_${size}/firmware.bin (${(cfgFiles.firmware.size/1024).toFixed(1)} KB)`, "info");
+              loadedConfigsCount++;
+            } catch (err) {
+              logToConsole(`Failed to read config ${cfg} (${size}): ${err.message}`, "error");
+            }
           }
-        }
-        if (cfgFiles.version) {
-          try {
-            customConfigVault[cfg].version = (await cfgFiles.version.text()).trim();
-          } catch(_) {}
-        }
-        if (cfgFiles.metadata) {
-          try {
-            customConfigVault[cfg].metadata = JSON.parse(await cfgFiles.metadata.text());
-          } catch(_) {}
+          if (cfgFiles.version) {
+            try {
+              customConfigVault[cfg][size].version = (await cfgFiles.version.text()).trim();
+            } catch(_) {}
+          }
+          if (cfgFiles.metadata) {
+            try {
+              customConfigVault[cfg][size].metadata = JSON.parse(await cfgFiles.metadata.text());
+            } catch(_) {}
+          }
         }
       }
 
@@ -4104,10 +4120,14 @@ function getManageRecordsHtml() {
             const configFolder = parts[parts.length - 2];
             const configBase = configFolder.replace(/_?(4|8|16)mb$/i, '');
             if (customConfigVault.hasOwnProperty(configBase)) {
+              const flashMatch = configFolder.match(/_?(4|8|16)mb$/i);
+              const flashSize = flashMatch ? flashMatch[1].toLowerCase() + "mb" : "8mb";
+
               if (!configFileMap[configBase]) configFileMap[configBase] = {};
-              if (name === 'firmware.bin')   configFileMap[configBase].firmware = file;
-              if (name === 'fw_version.txt') configFileMap[configBase].version  = file;
-              if (name === 'metadata.json')  configFileMap[configBase].metadata = file;
+              if (!configFileMap[configBase][flashSize]) configFileMap[configBase][flashSize] = {};
+              if (name === 'firmware.bin')   configFileMap[configBase][flashSize].firmware = file;
+              if (name === 'fw_version.txt') configFileMap[configBase][flashSize].version  = file;
+              if (name === 'metadata.json')  configFileMap[configBase][flashSize].metadata = file;
             }
           }
         } else if (entry.isDirectory) {
@@ -4132,17 +4152,19 @@ function getManageRecordsHtml() {
       }
 
       // Load config-specific binaries
-      for (const [cfg, cfgFiles] of Object.entries(configFileMap)) {
-        if (cfgFiles.firmware) {
-          const buf = await cfgFiles.firmware.arrayBuffer();
-          customConfigVault[cfg].binary = new Uint8Array(buf);
-          logToConsole(`✓ Config loaded (Drop): ${cfg}/firmware.bin (${(cfgFiles.firmware.size/1024).toFixed(1)} KB)`, "info");
-        }
-        if (cfgFiles.version) {
-          customConfigVault[cfg].version = (await cfgFiles.version.text()).trim();
-        }
-        if (cfgFiles.metadata) {
-          try { customConfigVault[cfg].metadata = JSON.parse(await cfgFiles.metadata.text()); } catch(_) {}
+      for (const [cfg, sizeMap] of Object.entries(configFileMap)) {
+        for (const [size, cfgFiles] of Object.entries(sizeMap)) {
+          if (cfgFiles.firmware) {
+            const buf = await cfgFiles.firmware.arrayBuffer();
+            customConfigVault[cfg][size].binary = new Uint8Array(buf);
+            logToConsole(`✓ Config loaded (Drop): ${cfg}_${size}/firmware.bin (${(cfgFiles.firmware.size/1024).toFixed(1)} KB)`, "info");
+          }
+          if (cfgFiles.version) {
+            customConfigVault[cfg][size].version = (await cfgFiles.version.text()).trim();
+          }
+          if (cfgFiles.metadata) {
+            try { customConfigVault[cfg][size].metadata = JSON.parse(await cfgFiles.metadata.text()); } catch(_) {}
+          }
         }
       }
 
@@ -5148,14 +5170,14 @@ function getManageRecordsHtml() {
           status: newStatus
         };
 
-        await fetch(url, {
+        await fetchWithTimeout(url, {
           method: "POST",
           mode: "no-cors",
           headers: {
             "Content-Type": "application/json"
           },
           body: JSON.stringify(payload)
-        });
+        }, 8000);
 
         logToConsole(`✓ Successfully updated status to ${newStatus}. Refreshing inventory...`, "info");
         
@@ -5804,6 +5826,23 @@ function getManageRecordsHtml() {
       }
     });
 
+    // fetch helper with AbortController timeout
+    async function fetchWithTimeout(url, options, timeoutMs = 8000) {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, {
+          ...options,
+          signal: controller.signal
+        });
+        clearTimeout(id);
+        return response;
+      } catch (err) {
+        clearTimeout(id);
+        throw err;
+      }
+    }
+
     // Offline Sync Queue Helpers
     function getOfflineQueue() {
       try {
@@ -5856,14 +5895,14 @@ function getManageRecordsHtml() {
       let successfulIds = [];
       for (const item of queue) {
         try {
-          await fetch(item.url, {
+          await fetchWithTimeout(item.url, {
             method: "POST",
             mode: "no-cors",
             headers: {
               "Content-Type": "application/json"
             },
             body: JSON.stringify(item.payload)
-          });
+          }, 8000);
           successfulIds.push(item.id);
           logToConsole(`✓ Offline record synced to Google Sheets.`, "info");
         } catch (err) {
@@ -5930,14 +5969,14 @@ function getManageRecordsHtml() {
       };
       
       try {
-        await fetch(url, {
+        await fetchWithTimeout(url, {
           method: "POST",
           mode: "no-cors",
           headers: {
             "Content-Type": "application/json"
           },
           body: JSON.stringify(payload)
-        });
+        }, 8000);
         logToConsole("✓ Successfully synced data to Google Sheet!", "info");
         return true;
       } catch (err) {
@@ -5967,6 +6006,9 @@ function getManageRecordsHtml() {
     const _shownPhases = new Set();
 
     function logToConsole(message, type = "normal") {
+      if (message && (message.includes("Failed to execute 'open'") || message.includes("Failed to open serial port"))) {
+        message += " — ⚠️ PORT LOCKED: This serial port is likely occupied by another process (e.g. Arduino IDE Serial Monitor, or another terminal/app). Please close all conflicting programs and try again.";
+      }
       // Inject phase separator heading if this line triggers a new phase
       for (const [trigger, label, color] of PHASE_TRIGGERS) {
         if (!_shownPhases.has(trigger) && message.includes(trigger)) {
@@ -5980,7 +6022,9 @@ function getManageRecordsHtml() {
       }
 
       const p = document.createElement("div");
-      if (type === "error") p.className = "console-err";
+      if (message.includes("QC TEST FIRMWARE") && message.includes("START")) {
+        p.style.cssText = "color: hsl(200, 95%, 65%); font-weight: bold; font-size: 0.95rem; text-shadow: 0 0 8px rgba(0, 180, 255, 0.4); border-bottom: 1px solid rgba(0, 180, 255, 0.3); padding-bottom: 3px; margin: 8px 0;";
+      } else if (type === "error") p.className = "console-err";
       else if (type === "warning") p.className = "console-warn";
       else if (type === "info") p.className = "console-info";
 
@@ -6148,7 +6192,8 @@ function getManageRecordsHtml() {
     });
 
     function getVaultStatus() {
-      const hasCore = fileVault["bootloader.bin"] && fileVault["boot_app0.bin"];
+      const hasBoot = fileVault["bootloader.bin"] || fileVault["bootloader_8mb.bin"] || fileVault["bootloader_16mb.bin"];
+      const hasCore = hasBoot && fileVault["boot_app0.bin"];
       const has4 = fileVault["partitions_4mb.bin"] && fileVault["qc_test_4mb.bin"] && fileVault["production_4mb.bin"];
       const has8 = fileVault["partitions_8mb.bin"] && fileVault["qc_test_8mb.bin"] && fileVault["production_8mb.bin"];
       const has16 = fileVault["partitions_16mb.bin"] && fileVault["qc_test_16mb.bin"] && fileVault["production_16mb.bin"];
@@ -6307,7 +6352,8 @@ function getManageRecordsHtml() {
             if (activeFlow === 'factory') {
               const partKey = `partitions_${currentChipSize}mb.bin`;
               const testKey = `qc_test_${currentChipSize}mb.bin`;
-              if (fileVault["bootloader.bin"] && fileVault["boot_app0.bin"] && fileVault[partKey] && fileVault[testKey]) {
+              const bootKey = fileVault[`bootloader_${currentChipSize}mb.bin`] ? `bootloader_${currentChipSize}mb.bin` : "bootloader.bin";
+              if (fileVault[bootKey] && fileVault["boot_app0.bin"] && fileVault[partKey] && fileVault[testKey]) {
                 canStart = true;
               }
             } else {
@@ -6429,8 +6475,8 @@ function getManageRecordsHtml() {
         
         // Check if selected config firmware is available in vault (either customConfigVault or production app)
         const activeConfig = releaseConfigSel?.value;
-        const configData = activeConfig ? customConfigVault[activeConfig] : null;
-        const hasProductionBin = (configData && configData.binary) || fileVault[`production_${currentChipSize}mb.bin`];
+        const sizeEntry = activeConfig ? (customConfigVault[activeConfig][`${currentChipSize}mb`] || customConfigVault[activeConfig]["8mb"]) : null;
+        const hasProductionBin = (sizeEntry && sizeEntry.binary) || fileVault[`production_${currentChipSize}mb.bin`];
 
         const needBin = shouldFlashEsp32;
         const binOk = !needBin || hasProductionBin;
@@ -6492,8 +6538,8 @@ function getManageRecordsHtml() {
 
         // Check if selected config firmware is available in vault
         const activeConfig = releaseConfigSel?.value;
-        const configData = activeConfig ? customConfigVault[activeConfig] : null;
-        const hasProductionBin = (configData && configData.binary) || fileVault[`production_${currentChipSize}mb.bin`];
+        const sizeEntry = activeConfig ? (customConfigVault[activeConfig][`${currentChipSize}mb`] || customConfigVault[activeConfig]["8mb"]) : null;
+        const hasProductionBin = (sizeEntry && sizeEntry.binary) || fileVault[`production_${currentChipSize}mb.bin`];
 
         const canRepair = isConnected && testerNameVal && hasInputs && hasProductionBin && !hasInventoryBlocker && !isDuplicateBox && !isDuplicateBoard;
 
@@ -6730,41 +6776,46 @@ function getManageRecordsHtml() {
       // Attempt to auto-load all config releases from server
       const configKeys = Object.keys(customConfigVault);
       let loadedConfigsCount = 0;
-      const configPromises = configKeys.map(async (cfg) => {
-        const folderName = `${cfg}_8mb`;
-        try {
-          // Resolve correct prefix path
-          let prefix = `./${folderName}`;
-          let binRes = await fetch(`${prefix}/firmware.bin`);
-          if (!binRes.ok) {
-            prefix = `./WEB_FLASH_FILES/${folderName}`;
-            binRes = await fetch(`${prefix}/firmware.bin`);
-          }
+      const configPromises = [];
+      for (const cfg of configKeys) {
+        for (const size of ["4mb", "8mb", "16mb"]) {
+          configPromises.push((async () => {
+            const folderName = `${cfg}_${size}`;
+            try {
+              // Resolve correct prefix path
+              let prefix = `./${folderName}`;
+              let binRes = await fetch(`${prefix}/firmware.bin`);
+              if (!binRes.ok) {
+                prefix = `./WEB_FLASH_FILES/${folderName}`;
+                binRes = await fetch(`${prefix}/firmware.bin`);
+              }
 
-          if (binRes.ok) {
-            const [verRes, metaRes] = await Promise.all([
-              fetch(`${prefix}/fw_version.txt`),
-              fetch(`${prefix}/metadata.json`)
-            ]);
+              if (binRes.ok) {
+                const [verRes, metaRes] = await Promise.all([
+                  fetch(`${prefix}/fw_version.txt`),
+                  fetch(`${prefix}/metadata.json`)
+                ]);
 
-            if (verRes.ok && metaRes.ok) {
-              const [binBuf, verTxt, metaJson] = await Promise.all([
-                binRes.arrayBuffer(),
-                verRes.text(),
-                metaRes.json()
-              ]);
+                if (verRes.ok && metaRes.ok) {
+                  const [binBuf, verTxt, metaJson] = await Promise.all([
+                    binRes.arrayBuffer(),
+                    verRes.text(),
+                    metaRes.json()
+                  ]);
 
-              customConfigVault[cfg].binary = new Uint8Array(binBuf);
-              customConfigVault[cfg].version = verTxt.trim();
-              customConfigVault[cfg].metadata = metaJson;
-              loadedConfigsCount++;
-              logToConsole(`✓ Auto-loaded config "${cfg}" from "${prefix}/"`, "info");
+                  customConfigVault[cfg][size].binary = new Uint8Array(binBuf);
+                  customConfigVault[cfg][size].version = verTxt.trim();
+                  customConfigVault[cfg][size].metadata = metaJson;
+                  loadedConfigsCount++;
+                  logToConsole(`✓ Auto-loaded config "${cfg}" (${size}) from "${prefix}/"`, "info");
+                }
+              }
+            } catch (err) {
+              // Quietly ignore if this config isn't on the server
             }
-          }
-        } catch (err) {
-          // Quietly ignore if this config isn't on the server
+          })());
         }
-      });
+      }
 
       await Promise.all([...loadPromises, loadVerPromise, ...configPromises]);
       
@@ -6806,7 +6857,7 @@ function getManageRecordsHtml() {
       for (let depth = 0; depth < 3; depth++) {
         let hasCoreFiles = false;
         for await (const entry of targetDirHandle.values()) {
-          if (entry.kind === 'file' && (entry.name === 'bootloader.bin' || entry.name === 'boot_app0.bin')) {
+          if (entry.kind === 'file' && (entry.name === 'bootloader.bin' || entry.name.startsWith('bootloader_') || entry.name === 'boot_app0.bin')) {
             hasCoreFiles = true;
             break;
           }
@@ -6866,6 +6917,9 @@ function getManageRecordsHtml() {
         const configBase = entry.name.replace(/_?(4|8|16)mb$/i, '');
         if (!customConfigVault.hasOwnProperty(configBase)) continue;
 
+        const flashMatch = entry.name.match(/_?(4|8|16)mb$/i);
+        const flashSize = flashMatch ? flashMatch[1].toLowerCase() + "mb" : "8mb";
+
         // Scan files inside this config subdirectory
         try {
           const subDir = await targetDirHandle.getDirectoryHandle(entry.name);
@@ -6874,15 +6928,15 @@ function getManageRecordsHtml() {
             const subFile = await subEntry.getFile();
             if (subEntry.name === 'firmware.bin') {
               const buf = await subFile.arrayBuffer();
-              customConfigVault[configBase].binary = new Uint8Array(buf);
-              logToConsole(`✓ Config loaded: ${configBase}/firmware.bin (${(subFile.size/1024).toFixed(1)} KB)`, "info");
+              customConfigVault[configBase][flashSize].binary = new Uint8Array(buf);
+              logToConsole(`✓ Config loaded: ${configBase}_${flashSize}/firmware.bin (${(subFile.size/1024).toFixed(1)} KB)`, "info");
               configCount++;
             }
             if (subEntry.name === 'fw_version.txt') {
-              customConfigVault[configBase].version = (await subFile.text()).trim();
+              customConfigVault[configBase][flashSize].version = (await subFile.text()).trim();
             }
             if (subEntry.name === 'metadata.json') {
-              try { customConfigVault[configBase].metadata = JSON.parse(await subFile.text()); } catch(_) {}
+              try { customConfigVault[configBase][flashSize].metadata = JSON.parse(await subFile.text()); } catch(_) {}
             }
           }
         } catch (err) {
@@ -7700,14 +7754,14 @@ function getManageRecordsHtml() {
       };
 
       try {
-        await fetch(url, {
+        await fetchWithTimeout(url, {
           method: "POST",
           mode: "no-cors",
           headers: {
             "Content-Type": "application/json"
           },
           body: JSON.stringify(payload)
-        });
+        }, 8000);
         logToConsole("✓ Successfully synced integration record to Google Sheet!", "info");
         return true;
       } catch (err) {
@@ -7971,6 +8025,12 @@ function getManageRecordsHtml() {
     }
 
     async function parseLogLine(line) {
+      if (line.includes("PARTITION:")) {
+        const match = line.match(/PARTITION:\s*(.*)/);
+        if (match) {
+          metaFlashSize.textContent = match[1];
+        }
+      }
       // Handshake parser
       if (line.includes("WAITING_FOR_CONFIG")) {
         const espVal = testCfgEsp.checked ? "ESP" : "";
@@ -8500,7 +8560,7 @@ function getManageRecordsHtml() {
 
       // PERIPHERAL FAILURES — auto-sync immediately with FAIL verdict
       const criticalFails = [
-        "SPIFFS_CHECK: FAIL", "SD_CHECK: FAIL", "RTC_CHECK: FAIL", "MODEM_INIT: FAIL", "MODEM_INIT: REG_FAIL", "WIFI_CHECK: FAIL", "SENSOR_CHECK: FAIL"
+        "SPIFFS_CHECK: FAIL", "RTC_CHECK: FAIL", "MODEM_INIT: FAIL", "MODEM_INIT: REG_FAIL", "WIFI_CHECK: FAIL", "SENSOR_CHECK: FAIL"
       ];
       if (criticalFails.some(f => line.includes(f))) {
         window._qcHasFailedInSession = true; // Mark session as failed
@@ -8658,8 +8718,8 @@ function getManageRecordsHtml() {
       try {
         if (shouldFlashEsp32) {
           const activeConfig = releaseConfigSel?.value;
-          const configData = activeConfig ? customConfigVault[activeConfig] : null;
-          const productionBin = (configData && configData.binary) || fileVault[`production_${currentChipSize}mb.bin`];
+          const sizeEntry = activeConfig ? (customConfigVault[activeConfig][`${currentChipSize}mb`] || customConfigVault[activeConfig]["8mb"]) : null;
+          const productionBin = (sizeEntry && sizeEntry.binary) || fileVault[`production_${currentChipSize}mb.bin`];
 
           if (!productionBin) {
             throw new Error("No production binary found. Please load firmware files first.");
@@ -8740,8 +8800,8 @@ function getManageRecordsHtml() {
       
       try {
         const activeConfig = releaseConfigSel?.value;
-        const configData = activeConfig ? customConfigVault[activeConfig] : null;
-        const productionBin = (configData && configData.binary) || fileVault[`production_${currentChipSize}mb.bin`];
+        const sizeEntry = activeConfig ? (customConfigVault[activeConfig][`${currentChipSize}mb`] || customConfigVault[activeConfig]["8mb"]) : null;
+        const productionBin = (sizeEntry && sizeEntry.binary) || fileVault[`production_${currentChipSize}mb.bin`];
 
         if (!productionBin) {
           throw new Error("No production binary found. Please load firmware files first.");
@@ -9057,8 +9117,9 @@ function getManageRecordsHtml() {
       }
 
       // Build flash payload array
+      const bootKey = fileVault[`bootloader_${currentChipSize}mb.bin`] ? `bootloader_${currentChipSize}mb.bin` : "bootloader.bin";
       const flashArray = [
-        { data: fileVault["bootloader.bin"], address: 0x1000 },
+        { data: fileVault[bootKey], address: 0x1000 },
         { data: fileVault[partKey], address: 0x8000 },
         { data: fileVault["boot_app0.bin"], address: 0xe000 },
         { data: fileVault[testKey], address: 0x10000 }

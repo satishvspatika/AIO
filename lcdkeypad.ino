@@ -187,7 +187,7 @@ hw_timer_t *lcd_timer = NULL;
 
 uint64_t get_lcd_timeout_val() {
   bool current_gprs_active = gprs_started || (sync_mode != eSyncModeInitial && sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled);
-  return current_gprs_active ? 300000000ULL : 180000000ULL;
+  return current_gprs_active ? 180000000ULL : 60000000ULL;
 }
 
 volatile bool timerFlag = false;
@@ -604,13 +604,13 @@ void lcdkeypad(void *pvParameters) {
     bool current_gprs_active_state = gprs_started || (sync_mode != eSyncModeInitial && sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled);
     if (lcdkeypad_start == 1 && lcd_timer != NULL) {
       if (current_gprs_active_state && !last_gprs_active_state) {
-        timerAlarm(lcd_timer, 300000000ULL, false, 0); // extend to 5 mins
+        timerAlarm(lcd_timer, 180000000ULL, false, 0); // extend to 3 mins
         timerWrite(lcd_timer, 0); // restart count
-        debugln("[UI] GPRS task active - extended LCD timeout to 5 mins.");
+        debugln("[UI] GPRS task active - extended LCD timeout to 3 mins.");
       } else if (!current_gprs_active_state && last_gprs_active_state) {
-        timerAlarm(lcd_timer, 180000000ULL, false, 0); // reset to 3 mins
+        timerAlarm(lcd_timer, 60000000ULL, false, 0); // reset to 1 min
         timerWrite(lcd_timer, 0); // restart count
-        debugln("[UI] GPRS task finished - reset LCD timeout to 3 mins.");
+        debugln("[UI] GPRS task finished - reset LCD timeout to 1 min.");
       }
     }
     last_gprs_active_state = current_gprs_active_state;
@@ -640,7 +640,7 @@ void lcdkeypad(void *pvParameters) {
       // If we failed to get Mutex, leave lcd_power_cut_pending = true. It will retry next loop!
     }
 
-    if (lcdkeypad_start == 1 && wifi_active) {
+    if (lcdkeypad_start == 1 && (wifi_active || calib_flag == 1)) {
       timerWrite(lcd_timer, 0);
     }
 

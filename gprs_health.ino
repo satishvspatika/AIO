@@ -12,7 +12,7 @@ void get_signal_strength() {
       debugln("[CRIT] modemMutex NOT held during get_signal_strength!");
   }
 
-  signal_lvl = -111; // v5.52 FIX: Default to -111 not 0
+  signal_lvl = SIGNAL_STRENGTH_MISSING_DATA; // v5.52 FIX: Default to SIGNAL_STRENGTH_MISSING_DATA not 0
   retries = 0;
 
   // [v5.86] Pre-settle delay: modem returns 85 (not ready) on first 1-3 polls
@@ -21,7 +21,7 @@ void get_signal_strength() {
 
   int invalid_signal_count = 0;
   // rssi 0 = -113dBm. Continuous -113 is essentially no signal.
-  while ((signal_lvl == -111) &&
+  while ((signal_lvl == SIGNAL_STRENGTH_MISSING_DATA) &&
          (retries < 30)) { // [C-03] v5.88: Capped at 30 (54s) to protect 180s scheduler budget
     esp_task_wdt_reset();
     last_activity_time =
@@ -41,12 +41,12 @@ void get_signal_strength() {
       }
     }
     
-    if (signal_lvl == -111) {
+    if (signal_lvl == SIGNAL_STRENGTH_MISSING_DATA) {
       invalid_signal_count++;
-      // [H-01] v5.88: Reduced to 15 (unreachable at 60) for legitimate fast-fail
-      if (invalid_signal_count >= 15) {
+      // [H-01] v5.88: Reduced to 10 for legitimate fast-fail
+      if (invalid_signal_count >= 10) {
         debugln("[GPRS] Dead signal zone detected. Skipping long-poll wait.");
-        signal_lvl = signal_strength; 
+        signal_lvl = SIGNAL_STRENGTH_MISSING_DATA; 
         break;
       }
     }
@@ -58,8 +58,8 @@ void get_signal_strength() {
 
   // CLAMP: Modem returns 85 for "No Signal". Convert to -111 sentinel.
   if (signal_strength == 85 || signal_strength > 31) {
-    signal_strength = -111;
-    signal_lvl = -111;
+    signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
+    signal_lvl = SIGNAL_STRENGTH_MISSING_DATA;
   }
 }
 
@@ -97,7 +97,17 @@ void get_network() {
     } else if (strstr(carrier, "Vi")) {
       strcpy(apn_str, "www");
     } else {
-      strcpy(apn_str, "airtelgprs.com"); 
+      // [BSNL-FIX] ICCID prefix fallback for poisoned "SIM OK" cache entries
+      if (strlen(current_iccid) >= 5 && 
+          (strncmp(current_iccid, "89917", 5) == 0 ||
+           strncmp(current_iccid, "89913", 5) == 0 ||
+           strncmp(current_iccid, "89915", 5) == 0)) {
+        strcpy(carrier, "BSNL");
+        strcpy(apn_str, "bsnlnet");
+        debugln("[CACHE] BSNL SIM detected via ICCID prefix on cache hit.");
+      } else {
+        strcpy(apn_str, "airtelgprs.com"); 
+      }
     }
     return;
   }
@@ -115,64 +125,7 @@ full_discovery:
   cached_server_ip[0] = '\0';
   cached_server_domain[0] = '\0';
 
-  // 1. Try CSPN (Provider Name)
-  SerialSIT.println("AT+CSPN?");
-  waitForResponse("OK", 2000);
-  char cspnResp[100];
-  strncpy(cspnResp, modem_response_buf, sizeof(cspnResp)-1);
-  cspnResp[sizeof(cspnResp)-1] = '\0';
-  debug("CSPN Logic response: ");
-  debugln(cspnResp);
-
-  // 2. Try COPS (Operator) as fallback
-  SerialSIT.println("AT+COPS?");
-  waitForResponse("OK", 2000);
-  char copsResp[100];
-  strncpy(copsResp, modem_response_buf, sizeof(copsResp)-1);
-  copsResp[sizeof(copsResp)-1] = '\0';
-  debug("COPS Logic response: ");
-  debugln(copsResp);
-
-  for (int i = 0; cspnResp[i]; i++) cspnResp[i] = tolower(cspnResp[i]);
-  for (int i = 0; copsResp[i]; i++) copsResp[i] = tolower(copsResp[i]);
-  const char *r1 = cspnResp;
-  const char *r2 = copsResp;
-
-  // Determine Carrier and APN
-  if (strstr(r1, "airtel") || strstr(r2, "airtel")) {
-    strcpy(carrier, "Airtel");
-    // v5.78 Hardening: Standard Airtel 10-digit SIMs use airtelgprs.com 
-    // IoT/M2M SIMs (13-digit) use airteliot.com. We refine this via ICCID.
-    strcpy(apn_str, "airtelgprs.com"); 
-
-    if (strlen(current_iccid) >= 6) {
-      if (strncmp(current_iccid, "899116", 6) == 0 || 
-          strncmp(current_iccid, "899110", 6) == 0 || 
-          strncmp(current_iccid, "899145", 6) == 0) {
-        strcpy(apn_str, "airteliot.com");
-        debugln("[APN] Airtel IoT/M2M SIM detected via ICCID prefix.");
-      } else {
-        strcpy(apn_str, "airtelgprs.com");
-        debugln("[APN] Airtel Commercial SIM detected via ICCID prefix.");
-      }
-    }
-  } else if (strstr(r1, "jio") || strstr(r2, "jio")) {
-    strcpy(carrier, "Jio");
-    strcpy(apn_str, "jionet");
-  } else if (strstr(r1, "bsnl") || strstr(r2, "bsnl")) {
-    strcpy(carrier, "BSNL");
-    strcpy(apn_str, "bsnlnet");
-  } else if (strstr(r1, "idea") || strstr(r1, "vi") || strstr(r2, "idea") ||
-             strstr(r2, "vi")) {
-    strcpy(carrier, "Vi");
-    strcpy(apn_str, "www");
-  } else {
-    // Final tier: ICCID prefix-based detection (on-device fallback)
-    strcpy(carrier, "SIM OK");
-    strcpy(apn_str, "airtelgprs.com");
-  }
-
-  // Get SIM identifier via IMSI (fast, always works on IoT/BSNL SIMs)
+  // [BSNL-FIX] Step 0: CIMI first — works before registration, SIM-resident
   SerialSIT.println("AT+CIMI");
   if (waitForResponse("OK", 2000)) {
     const char* resp = modem_response_buf;
@@ -188,7 +141,7 @@ full_discovery:
     }
     sim_number[outIdx] = '\0';
     if (outIdx >= 10) {
-      debug("IMSI: ");
+      debug("IMSI parsed: ");
       debugln(sim_number);
     } else {
       strcpy(sim_number, "NA");
@@ -196,6 +149,97 @@ full_discovery:
   } else {
     strcpy(sim_number, "NA");
   }
+
+  // [BSNL-FIX] Step 1: ICCID prefix detection (fast, no network needed)
+  bool detected = false;
+  if (!detected && strlen(current_iccid) >= 5 && 
+      (strncmp(current_iccid, "89917", 5) == 0 ||
+       strncmp(current_iccid, "89913", 5) == 0 ||
+       strncmp(current_iccid, "89915", 5) == 0)) {
+      strcpy(carrier, "BSNL"); 
+      strcpy(apn_str, "bsnlnet");
+      debugln("[APN] BSNL SIM detected via ICCID prefix.");
+      detected = true;
+  }
+  // [BSNL-FIX] Step 2: IMSI MCC/MNC fallback for newer BSNL SIMs
+  if (!detected && strlen(sim_number) >= 5) {
+      char plmn[6] = {0};
+      strncpy(plmn, sim_number, 5); // First 5 digits = MCC(3) + MNC(2)
+      // BSNL major circles: 40434, 40438, 40454, 40455, 40471, 40522, 40523, 40524
+      const char* bsnl_plmns[] = {"40434","40438","40454","40455","40471","40522","40523","40524", NULL};
+      for (int i = 0; bsnl_plmns[i]; i++) {
+          if (strcmp(plmn, bsnl_plmns[i]) == 0) {
+              strcpy(carrier, "BSNL"); 
+              strcpy(apn_str, "bsnlnet");
+              debugln("[APN] BSNL SIM detected via IMSI prefix.");
+              detected = true; 
+              break;
+          }
+      }
+  }
+  
+  if (detected) goto skip_cops_detection;
+
+  {
+    // 1. Try CSPN (Provider Name)
+    SerialSIT.println("AT+CSPN?");
+    waitForResponse("OK", 2000);
+    char cspnResp[100];
+    strncpy(cspnResp, modem_response_buf, sizeof(cspnResp)-1);
+    cspnResp[sizeof(cspnResp)-1] = '\0';
+    debug("CSPN Logic response: ");
+    debugln(cspnResp);
+
+    // 2. Try COPS (Operator) as fallback
+    SerialSIT.println("AT+COPS?");
+    waitForResponse("OK", 2000);
+    char copsResp[100];
+    strncpy(copsResp, modem_response_buf, sizeof(copsResp)-1);
+    copsResp[sizeof(copsResp)-1] = '\0';
+    debug("COPS Logic response: ");
+    debugln(copsResp);
+
+    for (int i = 0; cspnResp[i]; i++) cspnResp[i] = tolower(cspnResp[i]);
+    for (int i = 0; copsResp[i]; i++) copsResp[i] = tolower(copsResp[i]);
+    const char *r1 = cspnResp;
+    const char *r2 = copsResp;
+
+    // Determine Carrier and APN
+    if (strstr(r1, "airtel") || strstr(r2, "airtel")) {
+      strcpy(carrier, "Airtel");
+      // v5.78 Hardening: Standard Airtel 10-digit SIMs use airtelgprs.com 
+      // IoT/M2M SIMs (13-digit) use airteliot.com. We refine this via ICCID.
+      strcpy(apn_str, "airtelgprs.com"); 
+
+      if (strlen(current_iccid) >= 6) {
+        if (strncmp(current_iccid, "899116", 6) == 0 || 
+            strncmp(current_iccid, "899110", 6) == 0 || 
+            strncmp(current_iccid, "899145", 6) == 0) {
+          strcpy(apn_str, "airteliot.com");
+          debugln("[APN] Airtel IoT/M2M SIM detected via ICCID prefix.");
+        } else {
+          strcpy(apn_str, "airtelgprs.com");
+          debugln("[APN] Airtel Commercial SIM detected via ICCID prefix.");
+        }
+      }
+    } else if (strstr(r1, "jio") || strstr(r2, "jio")) {
+      strcpy(carrier, "Jio");
+      strcpy(apn_str, "jionet");
+    } else if (strstr(r1, "bsnl") || strstr(r2, "bsnl")) {
+      strcpy(carrier, "BSNL");
+      strcpy(apn_str, "bsnlnet");
+    } else if (strstr(r1, "idea") || strstr(r1, "vi") || strstr(r2, "idea") ||
+               strstr(r2, "vi")) {
+      strcpy(carrier, "Vi");
+      strcpy(apn_str, "www");
+    } else {
+      // Final tier: ICCID prefix-based detection (on-device fallback)
+      strcpy(carrier, "SIM OK");
+      strcpy(apn_str, "airtelgprs.com");
+    }
+  }
+
+skip_cops_detection:
   debug("Service Provider APN is ");
   debugln(apn_str);
   debug("Carrier: ");
@@ -555,9 +599,9 @@ void get_registration() {
           waitForResponse("OK", 3000);
         }
       } else if (retries ==
-                 23) { // [C-01] Tier 4 aligned for final 24th attempt
-        // Tier 4 @ iter 23 (Final Attempt): Restore Auto-Mode + COPS auto
-        debugln("[GPRS] Tier4 @ iter23: Restoring Auto-Mode (CNMP=2, COPS=0) "
+                 20) { // [C-01] Tier 4 aligned for final retries
+        // Tier 4 @ iter 20 (Final Attempt): Restore Auto-Mode + COPS auto
+        debugln("[GPRS] Tier4 @ iter20: Restoring Auto-Mode (CNMP=2, COPS=0) "
                 "for final retry...");
         SerialSIT.println("AT+CNMP=2"); // Auto (LTE+GSM)
         waitForResponse("OK", 1000);

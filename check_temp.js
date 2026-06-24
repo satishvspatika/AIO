@@ -1,2726 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Spatika AIO Board Factory Tool</title>
-  
-  <!-- Modern Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  
-  <style>
-    :root {
-      /* Surfaces */
-      --bg-color:    hsl(222, 28%, 7%);
-      --card-bg:     hsla(224, 22%, 12%, 0.92);
-      --card-border: hsla(220, 20%, 100%, 0.07);
-      --card-hover:  hsla(220, 20%, 100%, 0.11);
-      /* Text */
-      --text-color:  hsl(215, 26%, 92%);
-      --text-muted:  hsl(215, 20%, 72%);
-      /* Primary — Indigo */
-      --primary:     hsl(239, 80%, 66%);
-      --primary-dk:  hsl(239, 72%, 56%);
-      --primary-glow:hsla(239, 80%, 66%, 0.32);
-      /* Success — Emerald */
-      --success:     hsl(160, 60%, 50%);
-      --success-glow:hsla(160, 60%, 50%, 0.28);
-      /* Warning — Amber */
-      --warning:     hsl(40, 92%, 58%);
-      --warning-glow:hsla(40, 92%, 58%, 0.28);
-      /* Danger — Rose */
-      --danger:      hsl(3, 84%, 64%);
-      --danger-glow: hsla(3, 84%, 64%, 0.28);
-      /* Accent — Violet */
-      --accent:      hsl(268, 72%, 66%);
-    }
 
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    body {
-      background-color: var(--bg-color);
-      color: var(--text-color);
-      font-family: 'Inter', 'Outfit', sans-serif;
-      height: 100vh;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      background-image:
-        radial-gradient(ellipse 80% 55% at 15% 0%,  hsla(239, 80%, 60%, 0.09) 0%, transparent 58%),
-        radial-gradient(ellipse 60% 45% at 88% 100%, hsla(268, 70%, 58%, 0.07) 0%, transparent 55%);
-      padding: 0 1.25rem 1rem;
-    }
-
-    .container {
-      max-width: 100%;
-      flex: 1;
-      min-height: 0;
-      height: 100%;
-      overflow: hidden;
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 1rem;
-    }
-
-    @media (min-width: 1200px) {
-      .container {
-        grid-template-columns: 350px 1.35fr 1fr;
-      }
-    }
-
-    /* ── Full-width Navbar Band ─────────────────────────────────── */
-    .app-navbar {
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 0.55rem;
-      padding: 0.35rem 0.9rem;
-      margin-bottom: 0.75rem;
-
-      /* Rich indigo-to-violet band */
-      background: linear-gradient(100deg,
-        hsl(238, 60%, 14%) 0%,
-        hsl(252, 55%, 16%) 45%,
-        hsl(268, 52%, 15%) 100%);
-
-      /* Glassy separation line at the bottom */
-      border-bottom: 1px solid hsla(268, 72%, 60%, 0.30);
-      box-shadow:
-        0 1px 0  0 hsla(268, 70%, 70%, 0.08),
-        0 4px 18px 0 rgba(0, 0, 0, 0.45);
-
-      /* Sticky so it always stays on top when page scrolls */
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      flex-shrink: 0;
-    }
-
-    /* Navbar divider line between groups */
-    .nav-sep {
-      width: 1px;
-      height: 1.4rem;
-      background: hsla(268, 40%, 65%, 0.22);
-      flex-shrink: 0;
-    }
-
-    .column {
-      display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
-      height: 100%;
-      overflow-y: auto;
-      padding-right: 0.25rem;
-      min-height: 0;
-    }
-
-    /* Desktop Dashboard: Independent column scrolls */
-    @media (min-width: 1200px) {
-      .app-navbar {
-        flex-wrap: nowrap;
-      }
-      /* columns already full-height via body flex — only tune scrollbar */
-      .column::-webkit-scrollbar { width: 5px; }
-      .column::-webkit-scrollbar-track { background: transparent; }
-      .column::-webkit-scrollbar-thumb { background: hsla(220,20%,100%,0.09); border-radius: 3px; }
-      .column::-webkit-scrollbar-thumb:hover { background: hsla(220,20%,100%,0.16); }
-    }
-
-    @media (max-width: 1199px) {
-      .container {
-        height: auto;
-        overflow-y: visible;
-      }
-      .column {
-        height: auto;
-        overflow-y: visible;
-      }
-      .console {
-        height: 400px !important;
-      }
-    }
-
-    header {
-      grid-column: 1 / -1;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding-bottom: 0.5rem;
-      border-bottom: 1px solid var(--card-border);
-      margin-bottom: 0.4rem;
-    }
-
-    h1 {
-      font-size: 1.15rem;
-      font-weight: 700;
-      letter-spacing: -0.025em;
-      background: linear-gradient(110deg, #e0e7ff 20%, #a5b4fc 55%, #818cf8 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      padding: 0.12rem 0.55rem;
-      border-radius: 999px;
-      font-size: 0.65rem;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      border: 1px solid transparent;
-      transition: all 0.22s ease;
-    }
-
-    .badge-disconnected {
-      background: hsla(3, 84%, 64%, 0.10);
-      border-color: hsla(3, 84%, 64%, 0.26);
-      color: var(--danger);
-    }
-
-    .badge-connected {
-      background: hsla(160, 60%, 50%, 0.10);
-      border-color: hsla(160, 60%, 50%, 0.28);
-      color: var(--success);
-    }
-
-    .badge-vault-loaded {
-      background: hsla(239, 80%, 66%, 0.10);
-      border-color: hsla(239, 80%, 66%, 0.28);
-      color: hsl(239, 90%, 75%);
-    }
-
-    .badge-conn-connected {
-      background: hsla(190, 85%, 50%, 0.10);
-      border-color: hsla(190, 85%, 50%, 0.28);
-      color: hsl(190, 95%, 70%);
-    }
-
-    /* Cards */
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 0.6rem;
-      padding: 0.85rem 1rem;
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      box-shadow: 0 1px 3px rgba(0,0,0,0.28), 0 8px 24px rgba(0,0,0,0.18);
-      transition: border-color 0.22s ease, box-shadow 0.22s ease;
-    }
-
-    .card:hover {
-      border-color: var(--card-hover);
-    }
-
-    /* Subtle theme borders for sections */
-    #cardVault {
-      border-top: 3px solid hsla(239, 80%, 66%, 0.5); /* Indigo */
-    }
-    #cardConnection {
-      border-top: 3px solid hsla(190, 85%, 50%, 0.5); /* Sky Blue */
-    }
-    #cardTesterInfo {
-      border-top: 3px solid hsla(320, 80%, 60%, 0.5); /* Pink/Magenta */
-    }
-    #cardProgramming {
-      border-top: 3px solid hsla(270, 75%, 62%, 0.5); /* Purple/Violet */
-    }
-    .console {
-      border-top: 3px solid hsla(40, 95%, 55%, 0.5) !important; /* Amber/Orange */
-    }
-    #cardChecklist {
-      border-top: 3px solid hsla(160, 75%, 45%, 0.5); /* Emerald Green */
-    }
-
-    .card-title {
-      font-size: 0.9rem;
-      font-weight: 600;
-      margin-bottom: 0.6rem;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      color: #dde5f4;
-      letter-spacing: -0.01em;
-    }
-
-    /* Buttons */
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0.5rem 1rem;
-      border-radius: 0.35rem;
-      font-size: 0.82rem;
-      font-weight: 600;
-      font-family: inherit;
-      cursor: pointer;
-      border: none;
-      transition: all 0.18s ease;
-      gap: 0.4rem;
-      width: 100%;
-      letter-spacing: 0.025em;
-    }
-
-    .btn-primary {
-      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dk) 100%);
-      color: #fff;
-      box-shadow: 0 3px 12px var(--primary-glow);
-    }
-    .btn-primary:hover:not(:disabled) {
-      transform: translateY(-1px);
-      box-shadow: 0 5px 18px var(--primary-glow);
-      filter: brightness(1.08);
-    }
-
-    .btn-success {
-      background: linear-gradient(135deg, var(--success) 0%, hsl(160, 60%, 38%) 100%);
-      color: #fff;
-      box-shadow: 0 3px 12px var(--success-glow);
-    }
-    .btn-success:hover:not(:disabled) {
-      transform: translateY(-1px);
-      box-shadow: 0 5px 18px var(--success-glow);
-      filter: brightness(1.08);
-    }
-
-    .btn-danger {
-      background: linear-gradient(135deg, var(--danger) 0%, hsl(3, 72%, 52%) 100%);
-      color: #fff;
-      box-shadow: 0 3px 12px var(--danger-glow);
-    }
-    .btn-danger:hover:not(:disabled) {
-      transform: translateY(-1px);
-      box-shadow: 0 5px 18px var(--danger-glow);
-      filter: brightness(1.08);
-    }
-
-    .btn-secondary {
-      background: hsla(220, 20%, 100%, 0.06);
-      color: hsl(215, 20%, 75%);
-      border: 1px solid hsla(220, 20%, 100%, 0.08);
-    }
-    .btn-secondary:hover:not(:disabled) {
-      background: hsla(220, 20%, 100%, 0.10);
-      border-color: hsla(220, 20%, 100%, 0.13);
-      color: var(--text-color);
-    }
-
-    .btn:disabled {
-      opacity: 0.35;
-      cursor: not-allowed;
-      transform: none !important;
-      box-shadow: none !important;
-      filter: none !important;
-    }
-
-    /* Drag & Drop Zone */
-    .drop-zone {
-      border: 1px dashed rgba(255, 255, 255, 0.15);
-      border-radius: 0.5rem;
-      padding: 0.75rem;
-      text-align: center;
-      cursor: pointer;
-      transition: all 0.3s ease;
-      background: rgba(255, 255, 255, 0.02);
-      margin-bottom: 0.5rem;
-    }
-
-    .drop-zone:hover, .drop-zone.dragover {
-      border-color: var(--primary);
-      background: rgba(59, 130, 246, 0.04);
-    }
-
-    .drop-zone p {
-      font-size: 0.8rem;
-      color: var(--text-muted);
-      margin-bottom: 0.25rem;
-    }
-
-    .drop-zone-icon {
-      font-size: 1.8rem;
-      color: var(--text-muted);
-      margin-bottom: 0.5rem;
-    }
-
-    /* File List */
-    .file-list {
-      display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
-      margin-bottom: 1.5rem;
-      max-height: 180px;
-      overflow-y: auto;
-      padding-right: 0.25rem;
-    }
-
-    .file-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0.5rem 0.75rem;
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid rgba(255, 255, 255, 0.05);
-      border-radius: 0.35rem;
-      font-size: 0.85rem;
-    }
-
-    .file-name {
-      font-family: 'JetBrains Mono', monospace;
-      color: #a5b4fc;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      max-width: 280px;
-    }
-
-    .file-status {
-      font-weight: 600;
-    }
-
-    .status-loaded { color: var(--success); }
-    .status-missing { color: var(--danger); }
-
-    /* Flow Selection */
-    .flow-selector {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 0.4rem;
-      margin-bottom: 0.8rem;
-    }
-
-    .flow-option {
-      border: 1px solid var(--card-border);
-      background: rgba(255, 255, 255, 0.02);
-      border-radius: 0.4rem;
-      padding: 0.6rem 0.8rem;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      display: flex;
-      align-items: flex-start;
-      gap: 0.5rem;
-    }
-
-    .flow-option:hover {
-      background: rgba(255, 255, 255, 0.04);
-      border-color: rgba(255, 255, 255, 0.15);
-    }
-
-    .flow-option.active {
-      border-color: var(--primary);
-      background: rgba(59, 130, 246, 0.05);
-      box-shadow: 0 0 12px rgba(59, 130, 246, 0.1);
-    }
-
-    .flow-radio {
-      margin-top: 0.15rem;
-    }
-
-    .flow-details h4 {
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: #fff;
-      margin-bottom: 0.15rem;
-    }
-
-    .flow-details p {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      line-height: 1.25;
-    }
-
-    /* Diagnostics Table / Checklist */
-    .checklist {
-      display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
-      margin-bottom: 0.8rem;
-    }
-
-    .check-item {
-      background: hsla(220, 20%, 100%, 0.02);
-      border: 1px solid var(--card-border);
-      border-radius: 0.4rem;
-      padding: 0.45rem 0.65rem;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      transition: all 0.25s ease;
-    }
-
-    .check-item-pass {
-      border-color: hsla(160, 60%, 50%, 0.38) !important;
-      background: hsla(160, 60%, 50%, 0.05) !important;
-    }
-    .check-item-pass .check-label { color: var(--success) !important; }
-    .check-item-pass .check-val   { color: var(--success) !important; font-weight: 600; }
-
-    .check-item-fail {
-      border-color: hsla(3, 84%, 64%, 0.38) !important;
-      background: hsla(3, 84%, 64%, 0.05) !important;
-    }
-    .check-item-fail .check-label { color: var(--danger) !important; }
-    .check-item-fail .check-val   { color: var(--danger) !important; font-weight: 600; }
-
-    .check-item-wait {
-      border-color: hsla(40, 92%, 58%, 0.38) !important;
-      background: hsla(40, 92%, 58%, 0.04) !important;
-    }
-    .check-item-wait .check-label { color: var(--warning) !important; }
-
-    .check-info { display: flex; flex-direction: column; }
-
-    .check-label {
-      font-size: 0.76rem;
-      font-weight: 600;
-      color: hsl(215, 22%, 88%);
-      margin-bottom: 0.08rem;
-    }
-
-    .check-val {
-      font-size: 0.68rem;
-      color: var(--text-muted);
-      font-family: 'JetBrains Mono', monospace;
-    }
-
-    .check-status {
-      width: 1.4rem;
-      height: 1.4rem;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.76rem;
-      background: hsla(220, 20%, 100%, 0.04);
-      border: 1px solid var(--card-border);
-      flex-shrink: 0;
-    }
-
-    .status-pass {
-      background: rgba(16, 185, 129, 0.15) !important;
-      border-color: rgba(16, 185, 129, 0.4) !important;
-      color: var(--success);
-      box-shadow: 0 0 10px rgba(16, 185, 129, 0.1);
-    }
-
-    .status-fail {
-      background: rgba(239, 68, 68, 0.15) !important;
-      border-color: rgba(239, 68, 68, 0.4) !important;
-      color: var(--danger);
-      box-shadow: 0 0 10px rgba(239, 68, 68, 0.1);
-    }
-
-    .status-wait {
-      background: rgba(245, 158, 11, 0.15) !important;
-      border-color: rgba(245, 158, 11, 0.4) !important;
-      color: var(--warning);
-      box-shadow: 0 0 10px rgba(245, 158, 11, 0.1);
-      animation: pulse 1.5s infinite;
-    }
-
-    .status-ignored {
-      background: rgba(148, 163, 184, 0.1) !important;
-      border-color: rgba(148, 163, 184, 0.2) !important;
-      color: #94a3b8;
-    }
-
-    .check-item-ignored {
-      border-color: rgba(148, 163, 184, 0.15) !important;
-      background: rgba(148, 163, 184, 0.02) !important;
-      opacity: 0.6;
-    }
-    .check-item-ignored .check-label { color: #94a3b8 !important; }
-
-    @keyframes pulse {
-      0% { opacity: 0.6; }
-      50% { opacity: 1; }
-      100% { opacity: 0.6; }
-    }
-
-    /* Consolidated Board Metadata Info */
-    .metadata-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-      gap: 0.5rem 0.75rem;
-      margin-bottom: 0.8rem;
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid var(--card-border);
-      border-radius: 0.5rem;
-      padding: 0.6rem 0.8rem;
-    }
-
-    .meta-box h5 {
-      font-size: 0.68rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-muted);
-      margin-bottom: 0.1rem;
-    }
-
-    .meta-box p {
-      font-size: 1rem;
-      font-weight: 600;
-      color: #fff;
-      font-family: 'JetBrains Mono', monospace;
-    }
-
-    /* Terminal Console */
-    .console-wrapper {
-      margin-top: 1rem;
-    }
-
-    .console-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 0.5rem;
-    }
-
-    .console-header span {
-      font-size: 0.85rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: hsl(200, 95%, 85%);
-      font-weight: 700;
-    }
-
-    .console-clear {
-      font-size: 0.71rem;
-      color: hsl(215, 20%, 70%);
-      cursor: pointer;
-      background: hsla(220, 20%, 100%, 0.05);
-      border: 1px solid hsla(220, 20%, 100%, 0.08);
-      border-radius: 0.3rem;
-      padding: 0.18rem 0.5rem;
-      font-family: inherit;
-      font-weight: 500;
-      transition: all 0.15s;
-    }
-    .console-clear:hover {
-      background: hsla(220, 20%, 100%, 0.09);
-      color: var(--text-color);
-      border-color: hsla(220, 20%, 100%, 0.14);
-    }
-
-    .console {
-      background: hsl(224, 32%, 5%);
-      border: 1px solid hsla(220, 20%, 100%, 0.06);
-      border-radius: 0.5rem;
-      height: 500px;
-      overflow-y: auto;
-      padding: 0.9rem 1rem;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.77rem;
-      line-height: 1.55;
-      color: hsl(210, 28%, 74%);
-      box-shadow: inset 0 2px 12px rgba(0, 0, 0, 0.65);
-    }
-
-    @media (min-width: 1200px) {
-      .console {
-        flex: 1;
-        height: 100%;
-        min-height: 0;
-      }
-    }
-
-    .console-err  { color: hsl(3, 88%, 68%); }
-    .console-warn { color: hsl(40, 90%, 64%); }
-    .console-info { color: hsl(160, 58%, 54%); }
-
-    /* Progress bar */
-    .progress-bar-container {
-      background: rgba(255, 255, 255, 0.05);
-      border-radius: 1rem;
-      height: 8px;
-      overflow: hidden;
-      margin-bottom: 1.5rem;
-      display: none;
-    }
-
-    .progress-bar {
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%);
-      box-shadow: 0 0 10px var(--primary-glow);
-      transition: width 0.1s ease;
-    }
-
-    /* Modal / Alert styling for unsupported browsers */
-    .browser-warning {
-      background: rgba(239, 68, 68, 0.1);
-      border: 1px solid var(--danger);
-      border-radius: 0.75rem;
-      padding: 1rem;
-      margin-bottom: 1.5rem;
-      display: none;
-      align-items: center;
-      gap: 1rem;
-    }
-
-    .browser-warning p {
-      font-size: 0.9rem;
-      color: #fff;
-    }
-
-    /* Chronological Step Indicators & Animations */
-    .step-indicator {
-      font-size: 0.75rem !important;
-      padding: 0.2rem 0.5rem !important;
-    }
-
-    @keyframes blue-pulse-border {
-      0% {
-        border-color: rgba(59, 130, 246, 0.2);
-        box-shadow: 0 0 0 0px rgba(59, 130, 246, 0.1);
-      }
-      50% {
-        border-color: rgba(59, 130, 246, 0.7);
-        box-shadow: 0 0 10px 3px rgba(59, 130, 246, 0.2);
-      }
-      100% {
-        border-color: rgba(59, 130, 246, 0.2);
-        box-shadow: 0 0 0 0px rgba(59, 130, 246, 0.1);
-      }
-    }
-
-    @keyframes blue-pulse-button {
-      0% {
-        box-shadow: 0 4px 14px var(--primary-glow), 0 0 0 0px rgba(59, 130, 246, 0.2);
-      }
-      50% {
-        box-shadow: 0 4px 20px var(--primary-glow), 0 0 0 8px rgba(59, 130, 246, 0.4);
-      }
-      100% {
-        box-shadow: 0 4px 14px var(--primary-glow), 0 0 0 0px rgba(59, 130, 246, 0.2);
-      }
-    }
-
-    @keyframes green-pulse-button {
-      0% {
-        box-shadow: 0 4px 14px var(--success-glow), 0 0 0 0px rgba(16, 185, 129, 0.2);
-      }
-      50% {
-        box-shadow: 0 4px 20px var(--success-glow), 0 0 0 8px rgba(16, 185, 129, 0.4);
-      }
-      100% {
-        box-shadow: 0 4px 14px var(--success-glow), 0 0 0 0px rgba(16, 185, 129, 0.2);
-      }
-    }
-
-    .pulse-blue-card {
-      animation: blue-pulse-border 2s infinite ease-in-out;
-      border-color: rgba(59, 130, 246, 0.5) !important;
-    }
-
-    .pulse-blue-button {
-      animation: blue-pulse-button 1.8s infinite ease-in-out;
-    }
-
-    .pulse-green-button {
-      animation: green-pulse-button 1.8s infinite ease-in-out;
-    }
-
-    .vault-complete-card {
-      border-color: hsla(239, 80%, 66%, 0.45) !important;
-      box-shadow: 0 4px 20px hsla(239, 80%, 66%, 0.08) !important;
-    }
-
-    .conn-complete-card {
-      border-color: hsla(190, 85%, 50%, 0.45) !important;
-      box-shadow: 0 4px 20px hsla(190, 85%, 50%, 0.08) !important;
-    }
-
-    .step-ready-card {
-      border-color: hsla(270, 75%, 62%, 0.45) !important;
-      box-shadow: 0 4px 20px hsla(270, 75%, 62%, 0.08) !important;
-    }
-
-    .troubleshoot-note {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      margin-top: 0.5rem;
-      border-left: 2px solid var(--warning);
-      padding-left: 0.5rem;
-      line-height: 1.3;
-    }
-
-    /* Navbar styling */
-    .app-navbar {
-      display: flex;
-      align-items: center;
-      gap: 1.2rem;
-      padding: 0.6rem 1.5rem;
-      background: linear-gradient(135deg, hsl(208, 95%, 12%) 0%, hsl(208, 90%, 15%) 50%, hsl(208, 85%, 10%) 100%);
-      border-bottom: 2px solid hsla(208, 95%, 55%, 0.40);
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 1px 0 hsla(208, 95%, 55%, 0.15);
-      flex-wrap: wrap;
-    }
-    .nav-sep {
-      width: 1px;
-      height: 24px;
-      background: hsla(208, 95%, 55%, 0.25);
-    }
-
-    /* Segmented Widget Cards for Checklist */
-    .section-widget {
-      border-radius: 0.6rem;
-      padding: 0.75rem 0.85rem;
-      margin-bottom: 1rem;
-      border: 1.5px solid transparent;
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      box-shadow: 0 2px 10px rgba(0,0,0,0.15);
-      transition: border-color 0.22s ease, box-shadow 0.22s ease, background-color 0.22s ease;
-    }
-    .section-widget:hover {
-      box-shadow: 0 4px 15px rgba(0,0,0,0.22);
-    }
-    .widget-a {
-      background: hsla(217, 91%, 60%, 0.035);
-      border-color: hsla(217, 91%, 60%, 0.15);
-      border-left: 4px solid hsla(217, 91%, 60%, 0.5);
-    }
-    .widget-a:hover {
-      border-color: hsla(217, 91%, 60%, 0.35);
-    }
-    .widget-b {
-      background: hsla(142, 72%, 29%, 0.035);
-      border-color: hsla(142, 72%, 29%, 0.15);
-      border-left: 4px solid hsla(142, 72%, 29%, 0.5);
-    }
-    .widget-b:hover {
-      border-color: hsla(142, 72%, 29%, 0.35);
-    }
-    .widget-c {
-      background: hsla(38, 92%, 50%, 0.035);
-      border-color: hsla(38, 92%, 50%, 0.15);
-      border-left: 4px solid hsla(38, 92%, 50%, 0.5);
-    }
-    .widget-c:hover {
-      border-color: hsla(38, 92%, 50%, 0.35);
-    }
-    
-    /* Navigation Tab Buttons */
-    .tab-btn {
-      width: auto !important;
-      padding: 0.35rem 0.75rem;
-      font-size: 0.74rem;
-      border-radius: 0.35rem;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      color: var(--text-muted);
-      transition: all 0.2s ease;
-      cursor: pointer;
-    }
-    .tab-btn:hover {
-      background: rgba(255, 255, 255, 0.1);
-      color: #fff;
-    }
-    .tab-btn.active {
-      background: var(--primary) !important;
-      border-color: var(--primary-glow) !important;
-      color: #fff !important;
-      box-shadow: 0 0 12px var(--primary-glow);
-    }
-    /* Tab locked during an active flash/integration run */
-    .tab-btn.tab-locked {
-      opacity: 0.38;
-      cursor: not-allowed !important;
-      pointer-events: auto !important; /* keep events so we can show the toast */
-    }
-    /* Tab lock toast notification */
-    #tabLockToast {
-      position: fixed;
-      bottom: 1.4rem;
-      left: 50%;
-      transform: translateX(-50%) translateY(8px);
-      background: rgba(245,158,11,0.92);
-      color: #1c1100;
-      font-size: 0.78rem;
-      font-weight: 700;
-      padding: 0.5rem 1.1rem;
-      border-radius: 2rem;
-      box-shadow: 0 4px 18px rgba(0,0,0,0.4);
-      z-index: 9000;
-      opacity: 0;
-      transition: opacity 0.2s ease, transform 0.2s ease;
-      pointer-events: none;
-      white-space: nowrap;
-    }
-    #tabLockToast.show {
-      opacity: 1;
-      transform: translateX(-50%) translateY(0);
-    }
-    .btn-secondary.active-filter {
-      background: var(--primary) !important;
-      color: #fff !important;
-      border-color: var(--primary-glow) !important;
-      box-shadow: 0 0 10px var(--primary-glow);
-    }
-    .bin-card:hover {
-      border-color: var(--primary) !important;
-      background: rgba(59, 130, 246, 0.12) !important;
-      box-shadow: 0 0 10px rgba(59, 130, 246, 0.15);
-    }
-    .bin-card.active-bin {
-      border-color: var(--primary-glow) !important;
-      background: rgba(59, 130, 246, 0.18) !important;
-      box-shadow: 0 0 12px var(--primary-glow);
-    }
-
-    /* ── Unified Control Band (Tabs & Step Progress in a single row) ──── */
-    .control-navbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
-      padding: 0.35rem 1.25rem;
-      margin: 0.45rem 0 0.5rem;
-      background: linear-gradient(100deg,
-        hsl(224, 25%, 10%) 0%,
-        hsl(224, 20%, 12%) 100%);
-      border-bottom: 1px solid hsla(220, 20%, 100%, 0.05);
-      border-top: 1px solid hsla(220, 20%, 100%, 0.02);
-      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
-      flex-shrink: 0;
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      scrollbar-width: none; /* Firefox */
-    }
-    .control-navbar::-webkit-scrollbar {
-      display: none; /* Safari and Chrome */
-    }
-    .tab-zone {
-      display: flex;
-      align-items: center;
-      gap: 0.35rem;
-      flex-wrap: nowrap;
-      flex-shrink: 0;
-    }
-    .control-sep {
-      width: 1px;
-      height: 1.4rem;
-      background: hsla(220, 20%, 100%, 0.12);
-      flex-shrink: 0;
-    }
-
-    .step-tracker {
-      display: flex;
-      align-items: center;
-      gap: 0.35rem;
-      flex-shrink: 0;
-      overflow-x: auto;
-      flex-wrap: nowrap;
-    }
-    .step-tracker::-webkit-scrollbar { display: none; }
- 
-    .step-item {
-      display: flex;
-      flex-direction: row;
-      align-items: center;
-      flex-shrink: 0;
-      gap: 0.35rem;
-      padding: 0.15rem 0.4rem;
-      border-radius: 0.25rem;
-    }
-    .step-circle {
-      width: 1.25rem;
-      height: 1.25rem;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.65rem;
-      font-weight: 700;
-      border: 1px solid hsla(220,20%,100%,0.15);
-      background: hsla(220,20%,100%,0.04);
-      color: var(--text-muted);
-      transition: all 0.3s ease;
-      flex-shrink: 0;
-    }
-    .step-label {
-      font-size: 0.68rem;
-      color: var(--text-muted);
-      white-space: nowrap;
-      transition: color 0.3s ease;
-      font-weight: 600;
-      letter-spacing: 0.01em;
-    }
-    .step-line {
-      width: 1.2rem;
-      height: 1.5px;
-      background: hsla(220,20%,100%,0.08);
-      transition: background 0.3s ease;
-      flex-shrink: 0;
-    }
-    .step-item.done .step-circle {
-      background: hsla(160, 60%, 50%, 0.2);
-      border-color: var(--success);
-      color: var(--success);
-      box-shadow: 0 0 8px var(--success-glow);
-    }
-    .step-item.done .step-label { color: var(--success); }
-    .step-item.done + .step-line { background: var(--success); }
-    .step-item.active .step-circle {
-      background: hsla(239, 80%, 66%, 0.25);
-      border-color: var(--primary);
-      color: #fff;
-      box-shadow: 0 0 12px var(--primary-glow);
-      animation: blue-pulse-border 2s infinite ease-in-out;
-    }
-    .step-item.active .step-label { color: #c7d2fe; font-weight: 700; }
-    .step-item.fail .step-circle {
-      background: hsla(3, 84%, 64%, 0.2);
-      border-color: var(--danger);
-      color: var(--danger);
-      box-shadow: 0 0 10px var(--danger-glow);
-    }
-    .step-item.fail .step-label { color: var(--danger); }
-
-    /* ── Scan pulse animation on barcode inputs ──────────────── */
-    @keyframes scan-success {
-      0%   { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6), inset 0 0 0 1px rgba(16, 185, 129, 0.5); background: rgba(16, 185, 129, 0.08); }
-      50%  { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.1), inset 0 0 0 2px rgba(16, 185, 129, 0.7); background: rgba(16, 185, 129, 0.14); }
-      100% { box-shadow: none; background: rgba(0,0,0,0.4); }
-    }
-    .scan-just-done {
-      animation: scan-success 0.65s ease forwards;
-      border-color: var(--success) !important;
-    }
-
-    /* ── Guidance Banner (What to do now) ────────────────── */
-    .guidance-banner {
-      display: flex;
-      align-items: center;
-      gap: 0.6rem;
-      margin: 0 1.25rem 0.35rem;
-      padding: 0.4rem 0.75rem;
-      border-radius: 0.45rem;
-      border: 1.5px solid;
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      transition: all 0.35s ease;
-      flex-shrink: 0;
-    }
-    .guidance-icon {
-      font-size: 1.2rem;
-      flex-shrink: 0;
-    }
-    .guidance-text {
-      flex: 1;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-    }
-    .guidance-label {
-      font-size: 0.58rem;
-      font-weight: 800;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      opacity: 0.8;
-      background: rgba(255, 255, 255, 0.12);
-      padding: 0.08rem 0.35rem;
-      border-radius: 0.2rem;
-      margin-bottom: 0;
-      display: inline-block;
-    }
-    .guidance-main {
-      font-size: 0.78rem;
-      font-weight: 700;
-      line-height: 1.2;
-      display: inline-block;
-    }
-    .guidance-sub {
-      display: none;
-    }
-    /* Guidance colour themes */
-    .guidance-info   { background: hsla(239,80%,66%,0.08); border-color: hsla(239,80%,66%,0.35); color: #c7d2fe; }
-    .guidance-wait   { background: hsla(40,92%,58%,0.08);  border-color: hsla(40,92%,58%,0.35);  color: hsl(40,90%,82%); }
-    .guidance-ready  { background: hsla(160,60%,50%,0.08); border-color: hsla(160,60%,50%,0.35); color: hsl(160,60%,78%); }
-    .guidance-action { background: hsla(268,72%,66%,0.08); border-color: hsla(268,72%,66%,0.35); color: hsl(268,72%,85%); }
-    .guidance-done   { background: hsla(160,60%,50%,0.12); border-color: hsla(160,60%,50%,0.45); color: hsl(160,60%,78%); }
-    .guidance-fail   { background: hsla(0,84%,60%,0.08); border-color: hsla(0,84%,60%,0.35); color: hsl(0,84%,82%); }
-
-    /* ── Result Banner (big PASS/FAIL overlay) ───────────── */
-    #resultBanner {
-      display: none;
-      position: fixed;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      z-index: 1200;
-      padding: 1.2rem 2rem;
-      flex-direction: row;
-      align-items: center;
-      justify-content: center;
-      gap: 1.5rem;
-      font-weight: 900;
-      font-size: 1.5rem;
-      letter-spacing: 0.04em;
-      box-shadow: 0 -4px 30px rgba(0,0,0,0.5);
-      cursor: pointer;
-      transition: opacity 0.4s ease;
-    }
-    #resultBanner.result-pass {
-      background: linear-gradient(135deg, hsl(160,60%,18%) 0%, hsl(160,65%,22%) 100%);
-      border-top: 3px solid var(--success);
-      color: #d1fae5;
-    }
-    #resultBanner.result-fail {
-      background: linear-gradient(135deg, hsl(3,60%,18%) 0%, hsl(3,65%,22%) 100%);
-      border-top: 3px solid var(--danger);
-      color: #fecaca;
-    }
-    #resultBanner .result-icon { font-size: 2.2rem; }
-    #resultBanner .result-sub  { font-size: 0.8rem; font-weight: 500; opacity: 0.75; margin-top: 0.1rem; }
-    @keyframes banner-slide-up {
-      from { transform: translateY(100%); opacity: 0; }
-      to   { transform: translateY(0);    opacity: 1; }
-    }
-    #resultBanner.visible {
-      display: flex;
-      animation: banner-slide-up 0.4s ease;
-    }
-
-    /* ── Bigger / friendlier barcode inputs ───────────────── */
-    .scan-group {
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-    }
-    .scan-label {
-      font-size: 0.72rem;
-      color: var(--text-muted);
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 0.3rem;
-    }
-    .scan-input {
-      width: 100%;
-      padding: 0.6rem 0.75rem 0.6rem 2.2rem;
-      background: rgba(0,0,0,0.4);
-      border: 1.5px solid hsla(200,95%,55%,0.25);
-      border-radius: 0.4rem;
-      color: #fff;
-      font-size: 0.88rem;
-      font-family: 'JetBrains Mono', monospace;
-      outline: none;
-      transition: border-color 0.2s, box-shadow 0.2s;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 5v4'/%3E%3Cpath d='M7 3h4'/%3E%3Cpath d='M17 3h4'/%3E%3Cpath d='M21 7v4'/%3E%3Cpath d='M21 17v4'/%3E%3Cpath d='M17 21h4'/%3E%3Cpath d='M3 17v4'/%3E%3Cpath d='M7 21h-4'/%3E%3Crect x='7' y='7' width='10' height='10' rx='1'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: 0.6rem center;
-      background-size: 1rem;
-    }
-    .scan-input:focus {
-      border-color: var(--primary);
-      box-shadow: 0 0 0 3px var(--primary-glow);
-    }
-    .scan-input::placeholder { color: hsla(215,20%,72%,0.5); font-size: 0.82rem; }
-    .scan-input:not(:placeholder-shown) { border-color: hsla(160,60%,50%,0.5); }
-
-    /* ── Vault auto-load spinner ───────────────────────────── */
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .vault-spinner {
-      display: inline-block;
-      width: 0.8rem;
-      height: 0.8rem;
-      border: 2px solid hsla(239,80%,66%,0.3);
-      border-top-color: var(--primary);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      vertical-align: middle;
-      margin-right: 0.3rem;
-    }
-
-    /* ── Flows Guide Panel ─────────────────────────────────── */
-    .flows-panel {
-      flex: 1;
-      min-height: 0;
-      overflow-y: auto;
-      padding: 0 1.25rem 1.5rem;
-      display: none;
-      flex-direction: column;
-      gap: 1.25rem;
-    }
-    .flows-panel.visible { display: flex; }
-    .flows-panel::-webkit-scrollbar { width: 5px; }
-    .flows-panel::-webkit-scrollbar-track { background: transparent; }
-    .flows-panel::-webkit-scrollbar-thumb { background: hsla(220,20%,100%,0.09); border-radius: 3px; }
-
-    .flows-header {
-      text-align: center;
-      padding: 1rem 0 0.5rem;
-    }
-    .flows-header h2 {
-      font-size: 1.1rem;
-      font-weight: 700;
-      background: linear-gradient(110deg, #e0e7ff 20%, #a5b4fc 55%, #818cf8 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      margin-bottom: 0.25rem;
-    }
-    .flows-header p {
-      font-size: 0.8rem;
-      color: var(--text-muted);
-    }
-    .flows-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-      gap: 1rem;
-    }
-    .flow-card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 0.75rem;
-      padding: 1rem 1.1rem;
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-      transition: border-color 0.22s, box-shadow 0.22s;
-      display: flex;
-      flex-direction: column;
-      gap: 0.65rem;
-    }
-    .flow-card:hover {
-      border-color: var(--card-hover);
-      box-shadow: 0 4px 20px rgba(0,0,0,0.28);
-    }
-    .flow-card-header {
-      display: flex;
-      align-items: center;
-      gap: 0.6rem;
-    }
-    .flow-icon {
-      font-size: 1.5rem;
-      width: 2.4rem;
-      height: 2.4rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 0.5rem;
-      flex-shrink: 0;
-    }
-    .flow-title { font-size: 0.88rem; font-weight: 700; color: #e0e7ff; }
-    .flow-subtitle { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.05rem; }
-    .flow-badge {
-      font-size: 0.58rem;
-      font-weight: 700;
-      padding: 0.1rem 0.4rem;
-      border-radius: 999px;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      margin-left: auto;
-      flex-shrink: 0;
-    }
-    .flow-steps {
-      display: flex;
-      flex-direction: column;
-      gap: 0.4rem;
-    }
-    .flow-step {
-      display: flex;
-      align-items: flex-start;
-      gap: 0.55rem;
-      font-size: 0.78rem;
-      color: hsl(215, 22%, 84%);
-      line-height: 1.35;
-    }
-    .flow-step-num {
-      width: 1.35rem;
-      height: 1.35rem;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.65rem;
-      font-weight: 700;
-      flex-shrink: 0;
-      margin-top: 0.05rem;
-    }
-    .flow-tip {
-      font-size: 0.72rem;
-      color: var(--text-muted);
-      background: rgba(255,255,255,0.03);
-      border: 1px solid var(--card-border);
-      border-left: 3px solid;
-      border-radius: 0.35rem;
-      padding: 0.45rem 0.65rem;
-      line-height: 1.4;
-      margin-top: 0.2rem;
-    }
-    .flow-tab-hint {
-      font-size: 0.7rem;
-      font-weight: 600;
-      display: inline-flex;
-      align-items: center;
-      gap: 0.25rem;
-      padding: 0.15rem 0.5rem;
-      border-radius: 0.3rem;
-      border: 1px solid;
-    }
-    .integration-mode-option:has(input:checked) {
-      border-color: var(--primary) !important;
-      background: rgba(99, 102, 241, 0.15) !important;
-      color: #fff !important;
-      box-shadow: 0 0 10px rgba(99, 102, 241, 0.2);
-    }
-  </style>
-</head>
-<body style="padding: 0;">
-
-  <div class="browser-warning" id="browserWarning">
-    <p>⚠️ <strong>WebSerial is not supported in this browser.</strong> Please open this dashboard in Google Chrome, Microsoft Edge, or Opera to allow serial flashing and diagnostics monitoring.</p>
-  </div>
-
-  <!-- ╔══════════════════════════════════════════════════════════╗ -->
-  <!-- ║  NAVBAR — Full-width application header band            ║ -->
-  <!-- ╚══════════════════════════════════════════════════════════╝ -->
-  <nav class="app-navbar">
-
-    <!-- ▌BRAND — pinned far left, no flex growth -->
-    <div style="display:flex;flex-direction:column;align-items:flex-start;gap:0.1rem;flex-shrink:0;padding-right:0.65rem;border-right:2px solid hsla(240,50%,55%,0.25);">
-      <div style="font-size:0.92rem;font-weight:800;background:linear-gradient(110deg,#e0e7ff 20%,#a5b4fc 55%,#818cf8 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:-0.01em;white-space:nowrap;line-height:1.1;">Spatika Jig</div>
-      <span class="badge badge-disconnected" id="connBadge" style="font-size:0.54rem;padding:0.05rem 0.3rem;align-self:flex-start;">DISCONNECTED</span>
-    </div>
-
-    <!-- ▌ZONE 1 — Operator (amber/gold) — flex:1 centered -->
-    <div style="flex:1;display:flex;justify-content:center;align-items:center;min-width:max-content;">
-      <div style="display:flex;align-items:center;gap:0.35rem;background:hsla(38,90%,55%,0.09);border:1px solid hsla(38,90%,55%,0.28);border-radius:0.5rem;padding:0.22rem 0.55rem;">
-        <!-- Tester -->
-        <span style="font-size:0.62rem;color:hsl(38,85%,75%);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">Tester</span>
-        <select id="testerNameSelect" style="padding:0.15rem 0.3rem;background:hsla(250,50%,6%,0.7);border:1px solid hsla(38,80%,55%,0.3);border-radius:0.3rem;color:#e0e7ff;font-size:0.72rem;cursor:pointer;outline:none;">
-          <option value="Guest">Guest</option>
-          <option value="Prasad">Prasad</option>
-          <option value="Rajesh">Rajesh</option>
-          <option value="Prashant">Prashant</option>
-          <option value="Rishi">Rishi</option>
-          <option value="Naveen">Naveen</option>
-          <option value="Chethan">Chethan</option>
-          <option value="Madhu">Madhu</option>
-          <option value="custom">Other…</option>
-        </select>
-        <input type="text" id="testerName" placeholder="Enter ID" style="display:none;width:80px;padding:0.15rem 0.3rem;background:hsla(250,50%,6%,0.7);border:1px solid hsla(38,80%,55%,0.3);border-radius:0.3rem;color:#e0e7ff;font-size:0.72rem;outline:none;" required>
-
-        <!-- Divider -->
-        <div style="width:1px;height:1rem;background:hsla(38,80%,55%,0.22);flex-shrink:0;"></div>
-
-        <!-- Audit -->
-        <span style="font-size:0.62rem;color:hsl(38,85%,75%);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">Audit</span>
-        <select id="auditMode" style="padding:0.15rem 0.3rem;background:hsla(250,50%,6%,0.7);border:1px solid hsla(38,80%,55%,0.3);border-radius:0.3rem;color:#e0e7ff;font-size:0.72rem;cursor:pointer;outline:none;">
-          <option value="Standard QC Test">Standard QC</option>
-          <option value="Supervisory Audit">Supervisory</option>
-          <option value="Random Sampling">Sampling</option>
-          <option value="R&D Diagnostic">R&D Diag</option>
-        </select>
-
-        <!-- Divider -->
-        <div style="width:1px;height:1rem;background:hsla(38,80%,55%,0.22);flex-shrink:0;"></div>
-
-        <!-- Tally -->
-        <span style="color:#4ade80;font-weight:700;font-size:0.7rem;font-family:'JetBrains Mono',monospace;">P:<span id="tallyPass">0</span></span>
-        <span style="color:#f87171;font-weight:700;font-size:0.7rem;font-family:'JetBrains Mono',monospace;">F:<span id="tallyFail">0</span></span>
-        <span style="color:#a5b4fc;font-weight:700;font-size:0.7rem;font-family:'JetBrains Mono',monospace;">Y:<span id="tallyYield">0%</span></span>
-        <button id="btnResetTally" title="Reset Tally Counter" style="background:none;border:none;color:hsl(38,85%,65%);cursor:pointer;font-size:0.68rem;padding:0;font-family:inherit;white-space:nowrap;margin-left:0.1rem;">↺</button>
-      </div>
-    </div>
-
-    <!-- ▌ZONE 2 — Firmware (teal/cyan) — flex:1 centered -->
-    <div style="flex:1;display:flex;justify-content:center;align-items:center;min-width:max-content;">
-      <div style="display:flex;align-items:center;gap:0.35rem;background:hsla(185,80%,40%,0.09);border:1px solid hsla(185,80%,45%,0.28);border-radius:0.5rem;padding:0.22rem 0.55rem;">
-        <!-- Profile -->
-        <span style="font-size:0.62rem;color:hsl(185,95%,78%);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">Profile</span>
-        <select id="deviceProfile" style="padding:0.15rem 0.3rem;background:hsla(250,50%,6%,0.7);border:1px solid hsla(185,80%,45%,0.3);border-radius:0.3rem;color:#e0e7ff;font-size:0.72rem;cursor:pointer;outline:none;">
-          <option value="TRG" selected>TRG (Rain Only)</option>
-          <option value="TWS">TWS (Skip RF Rain)</option>
-          <option value="TWS-RF">TWS-RF (All Tests)</option>
-        </select>
-
-        <!-- Divider -->
-        <div style="width:1px;height:1rem;background:hsla(185,80%,45%,0.22);flex-shrink:0;"></div>
-
-        <!-- Config -->
-        <span style="font-size:0.62rem;color:hsl(185,95%,78%);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">Config</span>
-        <select id="releaseConfig" style="padding:0.15rem 0.3rem;background:hsla(250,50%,6%,0.7);border:1px solid hsla(185,80%,45%,0.3);border-radius:0.3rem;color:#e0e7ff;font-size:0.72rem;cursor:pointer;outline:none;">
-          <!-- populated dynamically by populateConfigDropdown() -->
-        </select>
-        <span id="configLoadedBadge" style="display:none;font-size:0.59rem;background:hsla(160,60%,40%,0.25);border:1px solid hsla(160,60%,40%,0.5);color:hsl(160,60%,68%);border-radius:3px;padding:0.06rem 0.28rem;font-weight:700;white-space:nowrap;">LOADED</span>
-      </div>
-    </div>
-
-    <!-- ▌ZONE 3 — Docs (purple/violet) — fixed, no growth -->
-    <div style="flex-shrink:0;display:flex;align-items:center;">
-      <div style="display:flex;align-items:center;gap:0.4rem;background:hsla(268,72%,60%,0.09);border:1px solid hsla(268,72%,60%,0.28);border-radius:0.5rem;padding:0.22rem 0.55rem;">
-        <button id="tabFlows" title="Flows Guide" class="tab-btn"
-          style="background:hsla(268,72%,66%,0.14);border:1px solid hsla(268,72%,66%,0.38);color:hsl(268,72%,84%);border-radius:0.35rem;padding:0.22rem 0.65rem;font-size:0.72rem;font-family:inherit;font-weight:700;cursor:pointer;transition:all 0.18s;white-space:nowrap;align-items:center;gap:0.25rem;width:auto !important;"
-          onmouseover="if(!this.classList.contains('active')) this.style.background='hsla(268,72%,66%,0.26)'"
-          onmouseout="if(!this.classList.contains('active')) this.style.background='hsla(268,72%,66%,0.14)'">📋 Flows Guide</button>
-
-        <button id="btnSpec" title="QC Testing Specification"
-          style="background:hsla(200,95%,55%,0.14);border:1px solid hsla(200,95%,55%,0.38);color:hsl(200,95%,82%);border-radius:0.35rem;padding:0.22rem 0.65rem;font-size:0.72rem;font-family:inherit;font-weight:700;cursor:pointer;transition:background 0.18s;white-space:nowrap;"
-          onmouseover="this.style.background='hsla(200,95%,55%,0.26)'" onmouseout="this.style.background='hsla(200,95%,55%,0.14)'">📑 QC Spec</button>
-
-        <button id="btnHelp" title="User Manual & Legend"
-          style="background:hsla(268,72%,66%,0.14);border:1px solid hsla(268,72%,66%,0.38);color:hsl(268,72%,84%);border-radius:0.35rem;padding:0.22rem 0.65rem;font-size:0.72rem;font-family:inherit;font-weight:700;cursor:pointer;transition:all 0.18s;white-space:nowrap;align-items:center;gap:0.25rem;"
-          onmouseover="this.style.background='hsla(268,72%,66%,0.26)'" onmouseout="this.style.background='hsla(268,72%,66%,0.14)'">📖 Help</button>
-
-        <button id="btnOfflineSync" title="Sync Offline Records"
-          style="display:none;background:hsla(3,84%,64%,0.15);border:1px solid hsla(3,84%,64%,0.4);color:hsl(3,84%,84%);border-radius:0.35rem;padding:0.22rem 0.65rem;font-size:0.72rem;font-family:inherit;font-weight:700;cursor:pointer;transition:all 0.18s;white-space:nowrap;align-items:center;gap:0.25rem;">
-          ⚠️ Offline Queue: <span id="offlineSyncCount">0</span>
-        </button>
-      </div>
-    </div>
-
-  </nav>
-
-  <!-- Unified Control Band (Tabs & Step Progress in a single row) -->
-  <div class="control-navbar">
-    <div class="tab-zone">
-      <button class="tab-btn active" id="tabBoardQC">🧠 Board-Level QC</button>
-      <button class="tab-btn" id="tabIntegration">📦 Enclosure Integration</button>
-      <button class="tab-btn" id="tabRepair">🔧 Servicing &amp; Repair</button>
-      <button class="tab-btn" id="tabRepairBin">🗑️ Failed Boards Bin</button>
-    </div>
-    <!-- Tab lock toast -->
-    <div id="tabLockToast">🔒 Tab switch blocked — a run is in progress</div>
-    <div class="control-sep"></div>
-    <div class="step-tracker" id="stepTracker"></div>
-  </div>
-
-  <!-- Guidance Banner: plain-language "What to do now" -->
-  <div class="guidance-banner guidance-info" id="guidanceBanner">
-    <div class="guidance-icon" id="guidanceIcon">⏳</div>
-    <div class="guidance-text">
-      <div class="guidance-label">What to do now</div>
-      <div class="guidance-main" id="guidanceMain">Getting ready…</div>
-      <div class="guidance-sub" id="guidanceSub">Please wait while the system initialises.</div>
-    </div>
-  </div>
-
-  <!-- Result Banner: big PASS / FAIL slide-up -->
-  <div id="resultBanner"></div>
-
-  <div class="container">
-
-    <!-- COLUMN 1: Inputs & Configs (Left panel) -->
-    <div class="column" id="colLeft">
-      
-      <!-- Step 1: Firmware Vault -->
-      <div class="card" id="cardVault" style="position: relative; transition: border 0.2s, background 0.2s;">
-        <h3 class="card-title">
-          <span>Step 1 — Load Test Software</span>
-          <span class="step-indicator badge badge-disconnected" id="vaultStepBadge">PENDING</span>
-        </h3>
-        
-        <!-- Folder selection prompt -->
-        <div id="vaultPromptSection" style="margin-bottom: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem;">
-          <p id="vaultStatusMessage" style="font-size: 0.75rem; color: var(--text-muted); line-height: 1.3;">Loading test software automatically…</p>
-          <div style="display: flex; flex-direction: column; gap: 0.35rem; width: 100%;">
-            <div style="display: flex; align-items: center; gap: 0.4rem; width: 100%;">
-              <!-- Direct API Button (for showDirectoryPicker in secure context) -->
-              <button class="btn btn-primary pulse-blue-button" id="btnSelectFolderAPI" style="font-size: 0.75rem; padding: 0.45rem 0.6rem; text-transform: none; font-weight: 500; flex: 1; display: none;">📁 Select Firmware Folder</button>
-              
-              <!-- Fallback Button (for file:// insecure context or unsupported browsers) -->
-              <label for="fallbackFolderInput" class="btn btn-primary pulse-blue-button" id="btnSelectFolderFallback" style="font-size: 0.75rem; padding: 0.45rem 0.6rem; text-transform: none; font-weight: 500; flex: 1; display: none; text-align: center; cursor: pointer; user-select: none;">📁 Select Firmware Folder</label>
-            </div>
-            
-            <div style="text-align: center; margin-top: 0.1rem;">
-              <a href="#" id="linkSelectFiles" style="font-size: 0.7rem; color: var(--primary); text-decoration: underline; font-weight: 600;">Or select files manually</a>
-            </div>
-            
-            <p style="font-size: 0.64rem; color: var(--text-muted); text-align: center; margin-top: 0.15rem; margin-bottom: 0;">or drag &amp; drop WEB_FLASH_FILES folder / files here</p>
-            
-            <input type="file" id="fallbackFolderInput" webkitdirectory directory multiple style="opacity: 0; position: absolute; z-index: -100; width: 1px; height: 1px;">
-            <input type="file" id="fallbackFilesInput" multiple accept=".bin,.txt,.json" style="opacity: 0; position: absolute; z-index: -1; width: 1px; height: 1px;">
-          </div>
-        </div>
-        
-        <!-- Detailed File List under a collapsible details tag -->
-        <details style="margin-bottom: 0.5rem; font-size: 0.78rem; color: var(--text-muted);">
-          <summary style="cursor: pointer; user-select: none; margin-bottom: 0.2rem; color: var(--primary);">View Detailed File Vault (11 Files)</summary>
-          <div class="file-list" id="fileList" style="max-height: 100px; margin-bottom: 0;">
-            <!-- File status badges loaded dynamically -->
-          </div>
-        </details>
-      </div>
-
-      <!-- Step 2: Connection Card -->
-      <div class="card" id="cardConnection">
-        <h3 class="card-title">
-          <span>Step 2 — Connect the Board</span>
-        </h3>
-        <p style="font-size: 0.73rem; color: var(--text-muted); margin-bottom: 0.5rem; line-height: 1.35;">Plug the board into the USB port of this computer, then click the button below.</p>
-        <button class="btn btn-primary" id="btnConnToggle">🔌 Connect Board</button>
-        <button class="btn btn-secondary" id="btnResetBoard" style="margin-top: 0.5rem; display: none;">🔄 Reset Board</button>
-        <button class="btn btn-secondary" id="btnClearNextBoard" style="margin-top: 0.5rem; display: none; background: rgba(99, 102, 241, 0.12); border-color: rgba(99, 102, 241, 0.35); color: #c7d2fe;">🧹 Reset for Next Board</button>
-        <div id="qcFirmwareStatus" style="font-size: 0.82rem; color: var(--text-muted); margin-top: 0.7rem; padding: 0.5rem 0.7rem; border-radius: 0.35rem; border: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.02); display: none;">QC Firmware Check: <strong style="color: var(--warning);">UNKNOWN</strong></div>
-        <div class="troubleshoot-note">Having trouble? Make sure Arduino IDE is <strong>closed</strong> before connecting.</div>
-      </div>
-
-      <!-- Subsystems Under Test Configuration -->
-      <div class="card" id="cardSubsystems">
-        <h3 class="card-title">Which Parts to Test?</h3>
-
-        <!-- Tab Guide Box -->
-        <div class="tab-guide-box" style="background: rgba(99, 102, 241, 0.07); border: 1px solid rgba(99, 102, 241, 0.25); border-radius: 0.4rem; padding: 0.5rem 0.65rem; margin-bottom: 0.6rem; font-size: 0.72rem; line-height: 1.35; color: var(--text-color);">
-          <strong style="color: hsl(239, 80%, 80%); display: block; margin-bottom: 0.15rem;">🧠 Board-Level QC Guide:</strong>
-          🔌 Connect the board → 📋 Scan barcode(s) → 🚀 Click <strong>Start</strong>.<br>
-          <span style="color:#a5b4fc;">Full test (new board):</span> Keep all 3 ticked — firmware is flashed then tested.<br>
-          <span style="color:#6ee7b7;">Standalone (no re-flash):</span> Untick ESP32 — ESP32 must already have QC firmware; only GPRS/Nuvoton are re-tested. Click <strong>▶ Start Diagnostics Only</strong>.
-        </div>
-
-        <p style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.5rem; line-height: 1.3;">Tick the boards that are physically present. Untick any that are missing or already tested.</p>
-        <div style="display: flex; flex-direction: column; gap: 0.45rem;">
-          <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; cursor: pointer; color: #fff;">
-            <input type="checkbox" id="testCfgEsp" checked style="accent-color: var(--primary); width: 0.95rem; height: 0.95rem;">
-            <span>📁 ESP32 Board (SPIFFS, SD, RTC, ADCs)</span>
-          </label>
-          <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; cursor: pointer; color: #fff;">
-            <input type="checkbox" id="testCfgGprs" checked style="accent-color: var(--primary); width: 0.95rem; height: 0.95rem;">
-            <span>📶 GPRS Cellular Modem</span>
-          </label>
-          <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; cursor: pointer; color: #fff;">
-            <input type="checkbox" id="testCfgNuvoton" checked style="accent-color: var(--primary); width: 0.95rem; height: 0.95rem;">
-            <span>📟 Nuvoton LCD / Keypad</span>
-          </label>
-        </div>
-
-        <!-- Standalone mode hint: shown when ESP32 is NOT selected -->
-        <div id="standaloneHint" style="display:none;margin-top:0.55rem;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);border-radius:0.35rem;padding:0.45rem 0.6rem;font-size:0.7rem;color:#6ee7b7;line-height:1.5;">
-          ✅ <strong>Standalone re-test mode</strong> — No firmware flashing needed.<br>
-          <span style="color:#fbbf24;">⚠ ESP32 must already have QC test firmware installed.</span><br>
-          Connect ESP32+GPRS/Nuvoton assembly, scan the barcode(s), enter tester name, then click the <strong>▶ Start Diagnostics Only</strong> button below.
-        </div>
-      </div>
-
-      <!-- Step 2b: Board Barcodes / Serials -->
-      <div class="card" id="cardBarcode">
-        <h3 class="card-title">
-          <span>Step 3 — Scan Board Stickers</span>
-        </h3>
-        <p style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.6rem; line-height: 1.3;">💡 Point your barcode scanner at the white sticker on each board. The cursor will jump automatically after each scan.
-        </p>
-        <div style="display: flex; flex-direction: column; gap: 0.65rem;">
-          <!-- ESP32 Barcode Box -->
-          <div id="barcodeGroupEsp" class="scan-group" style="display: block;">
-            <label class="scan-label">🧠 Main ESP32 Board Serial</label>
-            <input type="text" id="barcodeEsp" placeholder="Scan barcode here…" class="scan-input" autocomplete="off">
-          </div>
-          
-          <!-- GPRS Barcode Box -->
-          <div id="barcodeGroupGprs" class="scan-group" style="display: block;">
-            <label class="scan-label">📡 GPRS Board Serial</label>
-            <input type="text" id="barcodeGprs" placeholder="Scan…" class="scan-input" autocomplete="off">
-          </div>
-          
-          <!-- Nuvoton Barcode Box -->
-          <div id="barcodeGroupNuvoton" class="scan-group" style="display: block;">
-            <label class="scan-label">📟 Nuvoton Board Serial</label>
-            <input type="text" id="barcodeNuvoton" placeholder="Scan…" class="scan-input" autocomplete="off">
-          </div>
-        </div>
-      </div>
-
-      <!-- Step 4: Start Test -->
-      <div class="card" id="cardProgramming">
-        <h3 class="card-title">Step 4 — Start Procedure</h3>
-        
-        <div class="flow-selector">
-          <div class="flow-option active" data-flow="factory" id="optFactory">
-            <input type="radio" name="flow" class="flow-radio" checked>
-            <div class="flow-details">
-              <h4 id="flowATitle">🧪 Board(s) Testing</h4>
-              <p id="flowADesc">For brand-new boards. Installs test software, runs all checks, then installs production software (chip is wiped only if the checkbox below is selected).</p>
-            </div>
-          </div>
-          <div class="flow-option" data-flow="production" id="optProduction">
-            <input type="radio" name="flow" class="flow-radio">
-            <div class="flow-details">
-              <h4>🔄 Update Software Only</h4>
-              <p>For already-tested boards. Installs new production software without wiping existing data.</p>
-            </div>
-          </div>
-        </div>
-        <!-- Selected Mode Status -->
-        <div id="selectedModeStatus" style="margin-top: 0.4rem; font-size: 0.7rem; color: var(--text-muted); padding: 0.3rem 0.5rem; background: rgba(99,102,241,0.07); border-radius: 0.25rem; border: 1px solid rgba(99,102,241,0.15);">Selected Mode: <strong id="selectedModeLabel" style="color: #a5b4fc;">Option 1 (Factory Flash)</strong></div>
-
-        <div class="progress-bar-container" id="progressContainer">
-          <div class="progress-bar" id="progressBar"></div>
-        </div>
-
-        <!-- Erase Checkbox -->
-        <div id="forceFlashContainer" style="margin: 0.6rem 0; display: flex; flex-direction: column; gap: 0.4rem; background: rgba(245,158,11,0.07); border: 1px solid rgba(245,158,11,0.25); border-radius: 0.4rem; padding: 0.5rem 0.65rem;">
-          <div style="display: flex; align-items: center; gap: 0.45rem;">
-            <input type="checkbox" id="chkEraseFlash" checked style="accent-color: var(--warning); width: 1.1rem; height: 1.1rem; cursor: pointer; flex-shrink: 0;">
-            <label for="chkEraseFlash" style="font-size: 0.76rem; color: #fff; cursor: pointer; user-select: none; line-height: 1.3;">
-              🧹 <strong>Wipe chip before testing</strong><br>
-              <span style="font-size: 0.66rem; color: var(--text-muted); font-weight: 400;">Recommended for new boards. Removes all existing data.</span>
-            </label>
-          </div>
-          <div id="qcEraseNotice" style="display: none; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 0.25rem; padding: 0.35rem 0.5rem; font-size: 0.7rem; color: #6ee7b7; font-weight: 600; align-items: center; gap: 0.3rem;">
-            <span>💡 QC Test Firmware detected: Chip wipe automatically disabled.</span>
-          </div>
-        </div>
-
-        <button class="btn btn-success" id="btnStart" disabled>🚀 Start Test</button>
-
-        <!-- Hidden diagnostics widget kept for JS compatibility; all control is via btnStart -->
-        <div id="diagControlsGroup" style="display: none;">
-          <button class="btn btn-primary" id="btnStartDiag" disabled style="display:none;">▶ Start Diagnostics</button>
-        </div>
-        <button class="btn btn-secondary" id="btnExportLog" disabled style="font-size: 0.78rem; padding: 0.45rem 0.6rem; width: 100%; margin-top: 0.6rem;">💾 Download QC Log</button>
-      </div>
-
-      <!-- Step 3 (Integration Mode): Box Details & Actions -->
-      <div class="card" id="cardIntegrationControls" style="display: none;">
-        <h3 class="card-title">Integration & Repair Details</h3>
-        
-        <!-- Tab Guide Box -->
-        <div class="tab-guide-box" style="background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 0.4rem; padding: 0.5rem 0.65rem; margin-bottom: 0.6rem; font-size: 0.72rem; line-height: 1.35; color: var(--text-color);">
-          <strong style="color: hsl(142, 70%, 75%); display: block; margin-bottom: 0.15rem;">📦 Enclosure Integration Guide:</strong>
-          1. Connect a QC-passed board to this computer via USB.<br>
-          2. Scan the required Box barcodes.<br>
-          3. Previous board serials will auto-populate from the database if applicable.<br>
-          4. Verify all serials are correct, then click <strong>⚡ Flash &amp; Verify</strong> or <strong>⚡ Run Verification</strong> below.
-        </div>
-
-        <!-- Integration Type selection -->
-        <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 0.5rem; padding: 0.75rem; margin-bottom: 0.8rem;">
-          <label style="font-size: 0.76rem; font-weight: 700; color: var(--primary); display: block; margin-bottom: 0.45rem; text-transform: uppercase; letter-spacing: 0.03em;">⚙️ Integration Type</label>
-          <div class="integration-mode-selector" style="display: flex; gap: 0.45rem; margin-bottom: 0.6rem;">
-            <label class="integration-mode-option" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.35rem; padding: 0.45rem 0.25rem; background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 0.35rem; cursor: pointer; user-select: none; font-size: 0.72rem; transition: all 0.2s ease; text-align: center; color: var(--text-muted);">
-              <input type="radio" name="integrationMode" value="both" checked style="accent-color: var(--primary); cursor: pointer; margin: 0;">
-              <span>System (Both)</span>
-            </label>
-            <label class="integration-mode-option" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.35rem; padding: 0.45rem 0.25rem; background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 0.35rem; cursor: pointer; user-select: none; font-size: 0.72rem; transition: all 0.2s ease; text-align: center; color: var(--text-muted);">
-              <input type="radio" name="integrationMode" value="box1" style="accent-color: var(--primary); cursor: pointer; margin: 0;">
-              <span>Box 1 Only (DL)</span>
-            </label>
-            <label class="integration-mode-option" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.35rem; padding: 0.45rem 0.25rem; background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 0.35rem; cursor: pointer; user-select: none; font-size: 0.72rem; transition: all 0.2s ease; text-align: center; color: var(--text-muted);">
-              <input type="radio" name="integrationMode" value="box2" style="accent-color: var(--primary); cursor: pointer; margin: 0;">
-              <span>Box 2 Only (PS)</span>
-            </label>
-          </div>
-          
-          <!-- Flash Toggle -->
-          <div style="display: flex; align-items: center; gap: 0.45rem; background: rgba(99,102,241,0.05); border: 1px solid rgba(99,102,241,0.15); border-radius: 0.35rem; padding: 0.45rem 0.6rem;">
-            <input type="checkbox" id="chkIntegrationFlashEsp32" checked style="accent-color: var(--primary); width: 1rem; height: 1rem; cursor: pointer; flex-shrink: 0;">
-            <label for="chkIntegrationFlashEsp32" style="font-size: 0.72rem; color: #fff; cursor: pointer; user-select: none; line-height: 1.2;">
-              ⚡ <strong>Flash ESP32 Production Firmware before verification</strong>
-            </label>
-          </div>
-        </div>
-        
-        <!-- Box 1 (DL Box) Group -->
-        <div id="integrationBox1Group" style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 0.5rem; padding: 0.75rem; margin-bottom: 0.8rem;">
-          <label style="font-size: 0.76rem; font-weight: 700; color: var(--primary); display: block; margin-bottom: 0.45rem; text-transform: uppercase; letter-spacing: 0.03em;">📦 Box 1 (DL Box Enclosure) *</label>
-          <input type="text" id="box1Barcode" placeholder="Scan DL Box Barcode" style="width: 100%; padding: 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.35rem; color: #fff; font-size: 0.78rem; font-family: monospace; margin-bottom: 0.6rem;">
-          
-          <div style="display: flex; flex-direction: column; gap: 0.45rem; padding-left: 0.5rem; border-left: 2px solid rgba(99,102,241,0.25);">
-            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em; margin-bottom: 0;">🧠 ESP32 Board Barcode</label>
-                <span id="badgeAssocEsp" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-              </div>
-              <input type="text" id="assocEspBarcode" placeholder="Scan ESP32 Board Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em; margin-bottom: 0;">📶 GPRS Modem Board Barcode</label>
-                <span id="badgeAssocGprs" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-              </div>
-              <input type="text" id="assocGprsBarcode" placeholder="Scan GPRS Board Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em; margin-bottom: 0;">📟 Nuvoton Board Barcode</label>
-                <span id="badgeAssocNuv" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-              </div>
-              <input type="text" id="assocNuvBarcode" placeholder="Scan Nuvoton Board Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
-            </div>
-          </div>
-        </div>
-
-        <!-- Box 2 (PS Box) Group -->
-        <div id="integrationBox2Group" style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 0.5rem; padding: 0.75rem; margin-bottom: 0.6rem;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.45rem;">
-            <label style="font-size: 0.76rem; font-weight: 700; color: hsl(142, 70%, 45%); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0;">⚡ Box 2 (PS Box Enclosure) *</label>
-            <span id="badgeAssocBox2" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-          </div>
-          <input type="text" id="box2Barcode" placeholder="Scan PS Box Barcode" style="width: 100%; padding: 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.35rem; color: #fff; font-size: 0.78rem; font-family: monospace; margin-bottom: 0.6rem;">
-          
-          <div style="display: flex; flex-direction: column; gap: 0.45rem; padding-left: 0.5rem; border-left: 2px solid rgba(34,197,94,0.25);">
-            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em; margin-bottom: 0;">🔋 Battery 1 (3.2V ESP32 Battery) [Optional]</label>
-                <span id="badgeAssocBatt1" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-              </div>
-              <input type="text" id="assocBatt1Barcode" placeholder="Scan Battery 1 Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em; margin-bottom: 0;">🔋 Battery 2 (3.7V GPRS Battery) [Optional]</label>
-                <span id="badgeAssocBatt2" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-              </div>
-              <input type="text" id="assocBatt2Barcode" placeholder="Scan Battery 2 Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em; margin-bottom: 0;">🔌 MPPT Board Barcode *</label>
-                <span id="badgeAssocMppt" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-              </div>
-              <input type="text" id="assocMpptBarcode" placeholder="Scan MPPT Board Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
-            </div>
-          </div>
-        </div>
-
-        <div id="assocStatusText" style="font-size: 0.68rem; color: var(--warning); margin-top: 0.35rem; line-height: 1.25; margin-bottom: 0.6rem;">
-          Scan Box 1 to auto-load previous configuration or enter barcodes manually.
-        </div>
-
-        <div class="progress-bar-container" id="integrationProgressContainer" style="display: none; margin-top: 0.6rem; margin-bottom: 0.4rem;">
-          <div class="progress-bar" id="integrationProgressBar"></div>
-        </div>
-
-        <!-- Integration Blocker Alert Box -->
-        <div id="integrationAlertBox" style="display: none; background: rgba(239, 68, 68, 0.08); border: 1.5px solid rgba(239, 68, 68, 0.3); border-radius: 0.5rem; padding: 0.65rem 0.85rem; margin-top: 0.6rem; margin-bottom: 0.4rem; font-size: 0.82rem; line-height: 1.4;">
-          <strong style="color: #f87171; display: block; margin-bottom: 0.2rem; text-transform: uppercase; letter-spacing: 0.04em;">⚠️ Blocked by Inventory Control</strong>
-          <span id="integrationAlertText" style="color: #e2e8f0;"></span>
-        </div>
-
-        <button class="btn btn-success" id="btnStartIntegration" style="margin-top: 0.6rem;" disabled>⚡ Flash Production & Run Verify</button>
-      </div>
-
-      <!-- Step 3 (Repair Mode): Servicing & Repair Details -->
-      <div class="card" id="cardRepairControls" style="display: none;">
-        <h3 class="card-title">Servicing & Repair Details</h3>
-        
-        <!-- Tab Guide Box -->
-        <div class="tab-guide-box" style="background: rgba(245, 158, 11, 0.07); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 0.4rem; padding: 0.5rem 0.65rem; margin-bottom: 0.6rem; font-size: 0.72rem; line-height: 1.35; color: var(--text-color);">
-          <strong style="color: hsl(40, 92%, 75%); display: block; margin-bottom: 0.15rem;">🔧 Servicing & Repair Guide:</strong>
-          1. Connect the board to this computer via USB.<br>
-          2. Scan the <strong>Box 1</strong> barcode sticker to load previous records.<br>
-          3. Re-scan components; scan any new/replacement parts (changes highlight in orange).<br>
-          4. Type the <strong>Reason for Servicing</strong> (required).<br>
-          5. Click <strong>⚡ Flash Production & Run Verify</strong> below.
-        </div>
-        
-        <!-- Box 1 (DL Box) Group -->
-        <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 0.5rem; padding: 0.75rem; margin-bottom: 0.8rem;">
-          <label style="font-size: 0.76rem; font-weight: 700; color: var(--primary); display: block; margin-bottom: 0.45rem; text-transform: uppercase; letter-spacing: 0.03em;">📦 Box 1 (DL Box Enclosure) *</label>
-          <input type="text" id="repairBox1Barcode" placeholder="Scan DL Box Barcode" style="width: 100%; padding: 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.35rem; color: #fff; font-size: 0.78rem; font-family: monospace; margin-bottom: 0.6rem;">
-          
-          <div style="display: flex; flex-direction: column; gap: 0.45rem; padding-left: 0.5rem; border-left: 2px solid rgba(99,102,241,0.25);">
-            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em;">🧠 ESP32 Board Barcode</label>
-                <span id="badgeRepairEsp" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-              </div>
-              <input type="text" id="repairEspBarcode" placeholder="Scan ESP32 Board Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em;">📶 GPRS Modem Board Barcode</label>
-                <span id="badgeRepairGprs" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-              </div>
-              <input type="text" id="repairGprsBarcode" placeholder="Scan GPRS Board Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em;">📟 Nuvoton Board Barcode</label>
-                <span id="badgeRepairNuv" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-              </div>
-              <input type="text" id="repairNuvBarcode" placeholder="Scan Nuvoton Board Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
-            </div>
-          </div>
-        </div>
-
-        <!-- Box 2 (PS Box) Group -->
-        <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 0.5rem; padding: 0.75rem; margin-bottom: 0.6rem;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.45rem;">
-            <label style="font-size: 0.76rem; font-weight: 700; color: hsl(142, 70%, 45%); display: block; text-transform: uppercase; letter-spacing: 0.03em;">⚡ Box 2 (PS Box Enclosure) *</label>
-            <span id="badgeRepairBox2" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-          </div>
-          <input type="text" id="repairBox2Barcode" placeholder="Scan PS Box Barcode" style="width: 100%; padding: 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.35rem; color: #fff; font-size: 0.78rem; font-family: monospace; margin-bottom: 0.6rem;">
-          
-          <div style="display: flex; flex-direction: column; gap: 0.45rem; padding-left: 0.5rem; border-left: 2px solid rgba(34,197,94,0.25);">
-            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em;">🔋 Battery 1 (3.2V ESP32 Battery) [Optional]</label>
-                <span id="badgeRepairBatt1" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-              </div>
-              <input type="text" id="repairBatt1Barcode" placeholder="Scan Battery 1 Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em;">🔋 Battery 2 (3.7V GPRS Battery) [Optional]</label>
-                <span id="badgeRepairBatt2" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-              </div>
-              <input type="text" id="repairBatt2Barcode" placeholder="Scan Battery 2 Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 0.15rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em;">🔌 MPPT Board Barcode *</label>
-                <span id="badgeRepairMppt" style="font-size: 0.58rem; padding: 0.05rem 0.25rem; border-radius: 3px; font-weight: 700;"></span>
-              </div>
-              <input type="text" id="repairMpptBarcode" placeholder="Scan MPPT Board Barcode" style="width: 100%; padding: 0.35rem; background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.74rem; font-family: monospace;">
-            </div>
-          </div>
-        </div>
-
-        <!-- Reason for Servicing -->
-        <div style="margin-bottom: 0.6rem;">
-          <label style="font-size: 0.76rem; color: var(--text-muted); display: block;">✍️ Reason for Servicing / Component Swaps *</label>
-          <textarea id="repairReason" placeholder="Describe servicing reason, swap causes, or issues found (required)..." style="width: 100%; padding: 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.35rem; color: #fff; font-size: 0.78rem; font-family: inherit; margin-top: 0.25rem; min-height: 50px; resize: vertical;"></textarea>
-        </div>
-
-        <div id="repairStatusText" style="font-size: 0.68rem; color: var(--warning); margin-top: 0.35rem; line-height: 1.25; margin-bottom: 0.6rem;">
-          Scan Box 1 to load current component genealogy.
-        </div>
-
-        <div class="progress-bar-container" id="repairProgressContainer" style="display: none; margin-top: 0.6rem; margin-bottom: 0.4rem;">
-          <div class="progress-bar" id="repairProgressBar"></div>
-        </div>
-
-        <!-- Repair Blocker Alert Box -->
-        <div id="repairAlertBox" style="display: none; background: rgba(239, 68, 68, 0.08); border: 1.5px solid rgba(239, 68, 68, 0.3); border-radius: 0.5rem; padding: 0.65rem 0.85rem; margin-top: 0.6rem; margin-bottom: 0.4rem; font-size: 0.82rem; line-height: 1.4;">
-          <strong style="color: #f87171; display: block; margin-bottom: 0.2rem; text-transform: uppercase; letter-spacing: 0.04em;">⚠️ Blocked by Inventory Control</strong>
-          <span id="repairAlertText" style="color: #e2e8f0;"></span>
-        </div>
-
-        <button class="btn btn-success" id="btnStartRepair" style="margin-top: 0.6rem;" disabled>⚡ Flash Production & Run Verify</button>
-      </div>
-
-      <!-- Google Sheet Sync Integration (collapsible) -->
-      <div class="card" id="cardGoogleSheet">
-        <h3 class="card-title" id="sheetCardTitle" style="cursor: pointer; user-select: none; display: flex; align-items: center; justify-content: space-between;" onclick="
-          const body = document.getElementById('sheetCardBody');
-          const arrow = document.getElementById('sheetCardArrow');
-          const collapsed = body.style.display === 'none';
-          body.style.display = collapsed ? '' : 'none';
-          arrow.textContent = collapsed ? '▼' : '▶';
-          localStorage.setItem('sheetCardCollapsed', collapsed ? '0' : '1');
-        ">
-          <span>📊 Google Sheet Integration</span>
-          <span id="sheetCardArrow" style="font-size: 0.6rem; opacity: 0.5; margin-left: 0.5rem;">▶</span>
-        </h3>
-        <div id="sheetCardBody" style="display: none;">
-        <div style="margin-bottom: 0.75rem;">
-          <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Google Apps Script Web App URL</label>
-          <input type="text" id="sheetUrl" placeholder="https://script.google.com/macros/s/.../exec" value="https://script.google.com/macros/s/AKfycbzWghxRhxCJYxrFIux2RoHXWJqD1kvRJ_dfCij_WtwAiLUE-TXbCHKK6mctjcaQ56af/exec" style="width: 100%; padding: 0.55rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.35rem; color: #fff; font-size: 0.8rem; font-family: monospace;">
-        </div>
-        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-          <button class="btn btn-secondary" id="btnSyncSetup" style="font-size: 0.75rem; padding: 0.45rem 0.6rem; flex: 1;">📋 Setup Code</button>
-          <a class="btn btn-secondary" id="btnOpenSheet" href="https://docs.google.com/spreadsheets/d/1Dw3UJEFdewThGpf8DRei69Vfrt_uU_yo438Z5m9xUUs/edit?gid=0#gid=0" target="_blank" style="font-size: 0.75rem; padding: 0.45rem 0.6rem; flex: 1; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; color: var(--text-color);">📊 View Sheet</a>
-        </div>
-        <button class="btn btn-primary" id="btnInitializeSheet" style="font-size: 0.75rem; padding: 0.45rem 0.6rem; width: 100%; background: linear-gradient(135deg, var(--accent) 0%, var(--primary) 100%);">⚡ Initialize Sheet Headers</button>
-        </div><!-- /sheetCardBody -->
-      </div>
-
-      <!-- Search History Card -->
-      <div class="card" id="cardHistorySearch">
-        <h3 class="card-title">🔍 Search Unit History</h3>
-        <div style="margin-bottom: 0.5rem; display: flex; gap: 0.35rem;">
-          <input type="text" id="txtSearchQuery" placeholder="Scan Barcode, MAC, or IMEI" style="flex: 1; padding: 0.45rem 0.55rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.35rem; color: #fff; font-size: 0.78rem; outline: none; font-family: monospace;">
-          <button class="btn btn-primary" id="btnSearchHistory" style="width: auto; padding: 0.45rem 0.75rem; font-size: 0.78rem;">Search</button>
-        </div>
-        <div id="searchStatusLine" style="font-size: 0.72rem; color: var(--text-muted); min-height: 1.2rem; margin-top: 0.25rem; display:flex; align-items:center; gap:0.4rem;">
-          <!-- status / record count shown here -->
-        </div>
-      </div>
-
-    </div>
-
-    <!-- COLUMN 2: Terminal Console Logs (Middle section) -->
-    <div class="column" id="colMiddle">
-      <!-- Serial Console Card -->
-      <div class="card" style="flex: 1; display: flex; flex-direction: column; height: 100%; min-height: 0;">
-        <div class="console-header" style="margin-bottom: 0.75rem;">
-          <span style="font-weight: 600;">Serial Terminal Output</span>
-          <div style="display:flex;gap:0.35rem;">
-            <button class="console-clear" id="btnConsoleCopy" title="Copy all console text to clipboard">📋 Copy</button>
-            <button class="console-clear" id="btnConsoleClear">🗑 Clear</button>
-          </div>
-        </div>
-        <div class="console" id="console" style="flex: 1; height: 100%; min-height: 0; overflow-y: auto;"></div>
-      </div>
-    </div>
-
-    <!-- COLUMN 3: Live Checklist & Details (Right side) -->
-    <div class="column" id="colRight">
-      
-      <!-- Live Status & Checklist Card -->
-      <div class="card" id="cardChecklist" style="flex: 1; display: flex; flex-direction: column;">
-        <h3 class="card-title">Live Diagnostics checklist</h3>
-        
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem 0.75rem; padding: 0.55rem 0.75rem; background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 0.4rem; margin-bottom: 0.8rem; font-size: 0.8rem;">
-          <div>
-            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.02rem;">Firmware Version</span>
-            <strong id="metaFwVersion" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.75rem;">--</strong>
-          </div>
-          <div>
-            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.02rem;">Flash Capacity</span>
-            <strong id="metaFlashSize" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.75rem;">-- MB</strong>
-          </div>
-          <div style="border-top: 1px solid rgba(255,255,255,0.04); padding-top: 0.3rem;">
-            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.02rem;">ESP32 MAC ID</span>
-            <strong id="metaMac" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.75rem; word-break: break-all;">--:--:--:--:--:--</strong>
-          </div>
-          <div style="border-top: 1px solid rgba(255,255,255,0.04); padding-top: 0.3rem;">
-            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.02rem;">GPRS IMEI</span>
-            <strong id="metaImei" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.75rem; word-break: break-all;">---------------</strong>
-          </div>
-          <div style="border-top: 1px solid rgba(255,255,255,0.04); padding-top: 0.3rem;">
-            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.02rem;">SIM CCID</span>
-            <strong id="metaCcid" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.75rem; word-break: break-all;">--------------------</strong>
-          </div>
-          <div style="border-top: 1px solid rgba(255,255,255,0.04); padding-top: 0.3rem;">
-            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.02rem;">SIM Carrier</span>
-            <strong id="metaCarrier" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.75rem; word-break: break-all;">UNKNOWN</strong>
-          </div>
-          <div style="border-top: 1px solid rgba(255,255,255,0.04); padding-top: 0.3rem; grid-column: span 2;">
-            <span style="color: var(--text-muted); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.02rem;">Nuvoton LCD</span>
-            <strong id="metaNuvoton" style="font-family: 'JetBrains Mono', monospace; color: #fff; font-size: 0.75rem;">---------</strong>
-          </div>
-        </div>
-
-        <!-- Operator Instructions Box -->
-        <div style="margin-top: 0.5rem; margin-bottom: 0.8rem; padding: 0.65rem 0.85rem; background: rgba(59, 130, 246, 0.08); border: 1.5px solid rgba(59, 130, 246, 0.25); border-radius: 0.5rem; display: none;" id="operatorGuideBox">
-          <strong style="color: #60a5fa; font-size: 0.82rem; display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.25rem; text-transform: uppercase; letter-spacing: 0.05em;">
-            💡 Operator Instructions
-          </strong>
-          <span id="operatorGuideText" style="font-size: 0.82rem; color: #e2e8f0; line-height: 1.45;">Waiting for diagnostics to start...</span>
-        </div>
-
-        <div class="section-widget widget-a">
-          <h4 style="margin: 0 0 0.5rem 0; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.05em; color: #60a5fa; font-weight: 600; display: flex; align-items: center; gap: 0.3rem;">
-            <span>⚡</span> Section A: Automatic Hardware Sweep
-          </h4>
-          <div class="checklist">
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">📁 Internal SPIFFS</span>
-                <span class="check-val" id="valSpiffs">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkSpiffs">⚪</div>
-            </div>
-            
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">💾 SD Card</span>
-                <span class="check-val" id="valSd">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkSd">⚪</div>
-            </div>
-            
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">🕒 Real-Time Clock</span>
-                <span class="check-val" id="valRtc">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkRtc">⚪</div>
-            </div>
-            
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">📶 GPRS Cellular</span>
-                <span class="check-val" id="valGprs">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkGprs">⚪</div>
-            </div>
-
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">📶 WiFi Scanner</span>
-                <span class="check-val" id="valWifi">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkWifi">⚪</div>
-            </div>
-            
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">🌡️ Env Sensor (I2C)</span>
-                <span class="check-val" id="valSensor">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkSensor">⚪</div>
-            </div>
-
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">🌀 Wind Speed</span>
-                <span class="check-val" id="valWindSpd">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkWindSpd">⚪</div>
-            </div>
-
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">🧭 Wind Direction</span>
-                <span class="check-val" id="valWindDir">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkWindDir">⚪</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="section-widget widget-b">
-          <h4 style="margin: 0 0 0.5rem 0; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.05em; color: #10b981; font-weight: 600; display: flex; align-items: center; gap: 0.3rem;">
-            <span>🔋</span> Section B: Power Status Indicators
-          </h4>
-          <div class="checklist">
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">🔋 ESP32 Battery</span>
-                <span class="check-val" id="valSys3v3">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkSys3v3">⚪</div>
-            </div>
-
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">⚡ GPRS Battery</span>
-                <span class="check-val" id="valBatt">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkBatt">⚪</div>
-            </div>
-
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">☀️ Solar Input</span>
-                <span class="check-val" id="valSolar">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkSolar">⚪</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="section-widget widget-c">
-          <h4 style="margin: 0 0 0.5rem 0; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.05em; color: #fbbf24; font-weight: 600; display: flex; align-items: center; gap: 0.3rem;">
-            <span>🎮</span> Section C: User Interactive Tests
-          </h4>
-          <div class="checklist">
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">📟 Nuvoton LCD / UI</span>
-                <span class="check-val" id="valLcd">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkLcd">⚪</div>
-            </div>
-
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">⌨️ Keypad Sweep</span>
-                <span class="check-val" id="valKeypad">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkKeypad">⚪</div>
-            </div>
-
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">🌧️ Rainfall RF Test</span>
-                <span class="check-val" id="valRf">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkRf">⚪</div>
-            </div>
-
-            <div class="check-item">
-              <div class="check-info">
-                <span class="check-label">💤 EXT0 Sleep Wake</span>
-                <span class="check-val" id="valSleep">Waiting...</span>
-              </div>
-              <div class="check-status" id="chkSleep">⚪</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- COLUMN 4: Failed Boards Bin (full-width, shown only on tabRepairBin) -->
-  <div id="colRepairBin" style="display: none; flex-direction: column; gap: 1rem; padding: 0 1.25rem 1.5rem; overflow-y: auto; flex: 1; min-height: 0;">
-    <div class="card" style="flex: 1;">
-      <h3 class="card-title" style="margin-bottom: 0.75rem;">🗑️ Failed Boards Inventory</h3>
-      
-      <!-- Tab Guide Box -->
-      <div class="tab-guide-box" style="background: rgba(239, 68, 68, 0.07); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 0.4rem; padding: 0.5rem 0.65rem; margin-bottom: 0.65rem; font-size: 0.72rem; line-height: 1.35; color: var(--text-color);">
-        <strong style="color: hsl(3, 84%, 80%); display: block; margin-bottom: 0.15rem;">🗑️ Failed Boards Bin Guide:</strong>
-        • This panel logs all boards that did not pass the QC checks.<br>
-        • Use the filter buttons (All, ESP32, BSNL/Cellular, BATT, etc.) to sort by the failing component.<br>
-        • While a serial is listed here as <code>NEEDS_REPAIR</code>, it is blocked from enclosure integration.<br>
-        • Once you repair/re-work a board, go to the <strong>Servicing & Repair</strong> tab to re-test and clear it.
-      </div>
-      <!-- Filter Bar -->
-      <div style="display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
-        <button class="bin-card active-bin" data-filter="ALL" style="font-size: 0.72rem; padding: 0.3rem 0.65rem; border-radius: 2rem; background: hsla(3,84%,64%,0.15); border: 1px solid hsla(3,84%,64%,0.35); color: hsl(3,84%,80%); cursor: pointer; font-weight: 600;">All (<span id="countBinAll">0</span>)</button>
-        <button class="bin-card" data-filter="ESP32" style="font-size: 0.72rem; padding: 0.3rem 0.65rem; border-radius: 2rem; background: rgba(255,255,255,0.04); border: 1px solid var(--card-border); color: var(--text-muted); cursor: pointer;">ESP32 (<span id="countBinEsp">0</span>)</button>
-        <button class="bin-card" data-filter="GPRS" style="font-size: 0.72rem; padding: 0.3rem 0.65rem; border-radius: 2rem; background: rgba(255,255,255,0.04); border: 1px solid var(--card-border); color: var(--text-muted); cursor: pointer;">GPRS (<span id="countBinGprs">0</span>)</button>
-        <button class="bin-card" data-filter="NUVOTON" style="font-size: 0.72rem; padding: 0.3rem 0.65rem; border-radius: 2rem; background: rgba(255,255,255,0.04); border: 1px solid var(--card-border); color: var(--text-muted); cursor: pointer;">Nuvoton (<span id="countBinNuv">0</span>)</button>
-        <button class="bin-card" data-filter="MPPT" style="font-size: 0.72rem; padding: 0.3rem 0.65rem; border-radius: 2rem; background: rgba(255,255,255,0.04); border: 1px solid var(--card-border); color: var(--text-muted); cursor: pointer;">MPPT (<span id="countBinMppt">0</span>)</button>
-        <button class="bin-card" data-filter="BATTERY" style="font-size: 0.72rem; padding: 0.3rem 0.65rem; border-radius: 2rem; background: rgba(255,255,255,0.04); border: 1px solid var(--card-border); color: var(--text-muted); cursor: pointer;">Battery (<span id="countBinBatt">0</span>)</button>
-        <button class="btn btn-primary" id="btnRefreshBin" style="margin-left: auto; font-size: 0.72rem; padding: 0.3rem 0.8rem;">🔄 Refresh</button>
-      </div>
-      <!-- Table -->
-      <div style="overflow-x: auto;">
-        <table style="width: 100%; border-collapse: collapse; font-size: 0.78rem;">
-          <thead>
-            <tr style="background: rgba(255,255,255,0.04); border-bottom: 1px solid var(--card-border);">
-              <th style="padding: 0.5rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">Date/Time</th>
-              <th style="padding: 0.5rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">ESP32 Barcode</th>
-              <th style="padding: 0.5rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">GPRS Barcode</th>
-              <th style="padding: 0.5rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">Failure Reason</th>
-              <th style="padding: 0.5rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">Tester</th>
-              <th style="padding: 0.5rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">Status</th>
-              <th style="padding: 0.5rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="repairBinBody">
-            <tr><td colspan="7" style="text-align: center; padding: 2rem; color: var(--text-muted);">📋 Click the 🗑️ Failed Boards Bin tab to load the inventory.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <!-- Flows Guide Panel -->
-  <div class="flows-panel" id="panelFlows">
-    <div class="flows-header">
-      <h2>📋 Operational Flows Guide</h2>
-      <p>Complete step-by-step procedures for every workflow in the Spatika Factory Jig system.</p>
-    </div>
-    <div class="flows-grid">
-      <!-- Flow A: Full Factory Flash -->
-      <div class="flow-card" style="border-top: 3px solid hsl(239,80%,66%);">
-        <div class="flow-card-header">
-          <div class="flow-icon" style="background: hsla(239,80%,66%,0.12);">🆕</div>
-          <div>
-            <div class="flow-title">Flow A: Full Factory Flash &amp; Test</div>
-            <div class="flow-subtitle">New boards — first-time programming</div>
-          </div>
-          <span class="flow-badge" style="background:hsla(239,80%,66%,0.15);color:hsl(239,80%,80%);border:1px solid hsla(239,80%,66%,0.3);">TAB: Board QC</span>
-        </div>
-        <div class="flow-steps">
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(239,80%,66%,0.2);color:hsl(239,80%,80%);">1</div>Start local server (launch_mac.command) and open factory_tool.html in Chrome.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(239,80%,66%,0.2);color:hsl(239,80%,80%);">2</div>Firmware auto-loads from <code style="font-size:0.7rem;background:rgba(255,255,255,0.07);padding:0.1rem 0.25rem;border-radius:3px;">WEB_FLASH_FILES/</code>. Step 1 shows LOADED.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(239,80%,66%,0.2);color:hsl(239,80%,80%);">3</div>Select <strong>Tester Name</strong> and <strong>Profile</strong> (TRG / TWS / TWS-RF) from the top bar.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(239,80%,66%,0.2);color:hsl(239,80%,80%);">4</div>Connect board via USB → click <strong>🔌 Connect Board</strong>. Cursor auto-jumps to ESP32 barcode field.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(239,80%,66%,0.2);color:hsl(239,80%,80%);">5</div>Scan ESP32, GPRS, and Nuvoton barcodes with scanner.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(239,80%,66%,0.2);color:hsl(239,80%,80%);">6</div>Confirm <strong>Option 1</strong> is selected. Click <strong>🚀 Start Test</strong>.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(239,80%,66%,0.2);color:hsl(239,80%,80%);">7</div>Board is prepared, QC firmware flashed, diagnostics run automatically. Monitor live checklist on the right.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(239,80%,66%,0.2);color:hsl(239,80%,80%);">8</div>On QC PASS, Google Sheets sync occurs. Click <strong>🧹 Start Next Board</strong> or go to <strong>📦 Enclosure Integration</strong>.</div>
-        </div>
-        <div class="flow-tip" style="border-left-color: hsl(239,80%,66%);">💡 Use this flow for every newly assembled board before enclosure integration.</div>
-      </div>
-
-      <!-- Flow B: Production Firmware Only -->
-      <div class="flow-card" style="border-top: 3px solid hsl(268,72%,66%);">
-        <div class="flow-card-header">
-          <div class="flow-icon" style="background: hsla(268,72%,66%,0.12);">🔧</div>
-          <div>
-            <div class="flow-title">Flow B: Flash Production Firmware Only</div>
-            <div class="flow-subtitle">Re-flash app — preserve settings &amp; calibration</div>
-          </div>
-          <span class="flow-badge" style="background:hsla(268,72%,66%,0.15);color:hsl(268,72%,84%);border:1px solid hsla(268,72%,66%,0.3);">TAB: Board QC</span>
-        </div>
-        <div class="flow-steps">
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(268,72%,66%,0.2);color:hsl(268,72%,84%);">1</div>Connect board and wait for software LOADED + CONNECTED status.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(268,72%,66%,0.2);color:hsl(268,72%,84%);">2</div>Scan board barcodes.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(268,72%,66%,0.2);color:hsl(268,72%,84%);">3</div>Select <strong>"Update Software Only"</strong>. Make sure <em>"Wipe chip before testing"</em> is <strong>unchecked</strong> to keep existing settings.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(268,72%,66%,0.2);color:hsl(268,72%,84%);">4</div>Select the correct <strong>Config</strong> (e.g. KSNDMC_TRG, BIHAR_TRG) from the top bar.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(268,72%,66%,0.2);color:hsl(268,72%,84%);">5</div>Click <strong>🚀 Flash Production Firmware</strong>. Only the app software is written — no tests run.</div>
-        </div>
-        <div class="flow-tip" style="border-left-color: hsl(268,72%,66%);">⚠️ Do NOT check "Wipe chip" for this flow — it would erase the board's existing settings.</div>
-      </div>
-
-      <!-- Flow C: Enclosure Integration -->
-      <div class="flow-card" style="border-top: 3px solid hsl(142,70%,45%);">
-        <div class="flow-card-header">
-          <div class="flow-icon" style="background: hsla(142,70%,45%,0.12);">📦</div>
-          <div>
-            <div class="flow-title">Flow C: Enclosure Integration</div>
-            <div class="flow-subtitle">Assembly line — place tested boards into enclosures</div>
-          </div>
-          <span class="flow-badge" style="background:hsla(142,70%,45%,0.15);color:hsl(142,70%,65%);border:1px solid hsla(142,70%,45%,0.3);">TAB: Integration</span>
-        </div>
-        <div class="flow-steps">
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(142,70%,45%,0.2);color:hsl(142,70%,65%);">1</div>Click the <strong>📦 Enclosure Integration</strong> tab.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(142,70%,45%,0.2);color:hsl(142,70%,65%);">2</div>Connect a QC-passed board. Cursor auto-jumps to Box 1 input.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(142,70%,45%,0.2);color:hsl(142,70%,65%);">3</div>Scan <strong>Box 1 (DL Box)</strong> barcode — the system auto-fills the other barcodes from the database.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(142,70%,45%,0.2);color:hsl(142,70%,65%);">4</div>Scan <strong>Box 2 (PS Box)</strong> and confirm all component barcodes are correct.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(142,70%,45%,0.2);color:hsl(142,70%,65%);">5</div>Select the correct <strong>Config</strong> from the top bar. Click <strong>⚡ Flash &amp; Verify</strong>.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(142,70%,45%,0.2);color:hsl(142,70%,65%);">6</div>The board record is saved automatically to Google Sheets — no further action needed.</div>
-        </div>
-        <div class="flow-tip" style="border-left-color: hsl(142,70%,45%);">💡 Always scan Box 1 first — it automatically fills in all the other barcode fields.</div>
-      </div>
-
-      <!-- Flow D: Servicing & Repair -->
-      <div class="flow-card" style="border-top: 3px solid hsl(40,92%,58%);">
-        <div class="flow-card-header">
-          <div class="flow-icon" style="background: hsla(40,92%,58%,0.12);">🛠️</div>
-          <div>
-            <div class="flow-title">Flow D: Servicing &amp; Repair</div>
-            <div class="flow-subtitle">Replace parts, re-flash repaired units</div>
-          </div>
-          <span class="flow-badge" style="background:hsla(40,92%,58%,0.15);color:hsl(40,92%,75%);border:1px solid hsla(40,92%,58%,0.3);">TAB: Repair</span>
-        </div>
-        <div class="flow-steps">
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(40,92%,58%,0.2);color:hsl(40,92%,75%);">1</div>Click the <strong>🔧 Servicing &amp; Repair</strong> tab.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(40,92%,58%,0.2);color:hsl(40,92%,75%);">2</div>Scan <strong>Box 1</strong> barcode — the system loads the previous record automatically.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(40,92%,58%,0.2);color:hsl(40,92%,75%);">3</div>Re-scan all component barcodes (scan new/replacement barcodes if parts were swapped).</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(40,92%,58%,0.2);color:hsl(40,92%,75%);">4</div>Type the <strong>Reason for Servicing</strong> (required — used for records).</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(40,92%,58%,0.2);color:hsl(40,92%,75%);">5</div>Click <strong>⚡ Flash &amp; Verify</strong>. The system detects changed barcodes and logs the swapped parts.</div>
-        </div>
-        <div class="flow-tip" style="border-left-color: hsl(40,92%,58%);">⚠️ If a board is in the <strong>Failed Boards Bin</strong>, it must be resolved there first before repair can proceed.</div>
-      </div>
-
-      <!-- Flow E: Live Diagnostics Only -->
-      <div class="flow-card" style="border-top: 3px solid hsl(190,85%,50%);">
-        <div class="flow-card-header">
-          <div class="flow-icon" style="background: hsla(190,85%,50%,0.12);">🔬</div>
-          <div>
-            <div class="flow-title">Flow E: Live Diagnostics Only</div>
-            <div class="flow-subtitle">Check sensors without loading any software</div>
-          </div>
-          <span class="flow-badge" style="background:hsla(190,85%,50%,0.15);color:hsl(190,85%,72%);border:1px solid hsla(190,85%,50%,0.3);">TAB: Board QC</span>
-        </div>
-        <div class="flow-steps">
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(190,85%,50%,0.2);color:hsl(190,85%,72%);">1</div>Connect a board that already has test software on it (no software loading needed).</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(190,85%,50%,0.2);color:hsl(190,85%,72%);">2</div>Scan the board barcode sticker(s).</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(190,85%,50%,0.2);color:hsl(190,85%,72%);">3</div>Click <strong>▶ Start Diagnostics</strong> in the left panel. The board output streams to screen.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(190,85%,50%,0.2);color:hsl(190,85%,72%);">4</div>Follow on-screen instructions (LCD check, keypad test, rain jumper test). The right panel shows live results.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(190,85%,50%,0.2);color:hsl(190,85%,72%);">5</div>Click <strong>💾 Download QC Log</strong> to save the test report at any time.</div>
-        </div>
-        <div class="flow-tip" style="border-left-color: hsl(190,85%,50%);">💡 Use this for re-checking sensors or troubleshooting without changing any software.</div>
-      </div>
-
-      <!-- Flow F: Failed Boards Bin -->
-      <div class="flow-card" style="border-top: 3px solid hsl(3,84%,64%);">
-        <div class="flow-card-header">
-          <div class="flow-icon" style="background: hsla(3,84%,64%,0.12);">🗑️</div>
-          <div>
-            <div class="flow-title">Flow F: Failed Boards Bin</div>
-            <div class="flow-subtitle">Review and manage boards that did not pass</div>
-          </div>
-          <span class="flow-badge" style="background:hsla(3,84%,64%,0.15);color:hsl(3,84%,80%);border:1px solid hsla(3,84%,64%,0.3);">TAB: Failed Bin</span>
-        </div>
-        <div class="flow-steps">
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(3,84%,64%,0.2);color:hsl(3,84%,80%);">1</div>Click the <strong>🗑️ Failed Boards Bin</strong> tab. All failed boards appear in a list.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(3,84%,64%,0.2);color:hsl(3,84%,80%);">2</div>Use the filter buttons (All / ESP32 / GPRS / Nuvoton / MPPT / Battery) to find the type of problem.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(3,84%,64%,0.2);color:hsl(3,84%,80%);">3</div>Read the failure reason and test time shown for each board.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(3,84%,64%,0.2);color:hsl(3,84%,80%);">4</div>If the board has been repaired, switch to <strong>🔧 Repair</strong> tab and use Flow D to re-test it.</div>
-          <div class="flow-step"><div class="flow-step-num" style="background:hsla(3,84%,64%,0.2);color:hsl(3,84%,80%);">5</div>For boards to be scrapped, use the Google Sheets report to mark them archived.</div>
-        </div>
-        <div class="flow-tip" style="border-left-color: hsl(3,84%,64%);">⚠️ Failed boards <strong>cannot</strong> be used in Integration or Repair until they are cleared. This stops bad boards from entering enclosures.</div>
-      </div>
-
-      <!-- Quick Reference Card -->
-      <div class="flow-card" style="border-top: 3px solid hsl(268,72%,66%); grid-column: 1 / -1;">
-        <div class="flow-card-header">
-          <div class="flow-icon" style="background: hsla(268,72%,66%,0.12);">⚡</div>
-          <div>
-            <div class="flow-title">Quick Reference: Which Flow Do I Use?</div>
-            <div class="flow-subtitle">Not sure what to do? Use this guide.</div>
-          </div>
-        </div>
-        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0.5rem; font-size: 0.78rem;">
-          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--card-border);border-radius:0.4rem;padding:0.6rem 0.8rem;"><strong style="color:#a5b4fc;">Brand new board from manufacturing?</strong><br><span style="color:var(--text-muted);">→ Use <strong>Flow A</strong> (Full Test &amp; Program)</span></div>
-          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--card-border);border-radius:0.4rem;padding:0.6rem 0.8rem;"><strong style="color:#a5b4fc;">Need to update software only?</strong><br><span style="color:var(--text-muted);">→ Use <strong>Flow B</strong> (Update Software Only)</span></div>
-          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--card-border);border-radius:0.4rem;padding:0.6rem 0.8rem;"><strong style="color:#a5b4fc;">Placing a tested board into a box?</strong><br><span style="color:var(--text-muted);">→ Use <strong>Flow C</strong> (Integration)</span></div>
-          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--card-border);border-radius:0.4rem;padding:0.6rem 0.8rem;"><strong style="color:#a5b4fc;">Replacing a faulty part?</strong><br><span style="color:var(--text-muted);">→ Use <strong>Flow D</strong> (Repair)</span></div>
-          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--card-border);border-radius:0.4rem;padding:0.6rem 0.8rem;"><strong style="color:#a5b4fc;">Just checking sensors, no changes?</strong><br><span style="color:var(--text-muted);">→ Use <strong>Flow E</strong> (Diagnostics Only)</span></div>
-          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--card-border);border-radius:0.4rem;padding:0.6rem 0.8rem;"><strong style="color:#a5b4fc;">Looking at failed boards?</strong><br><span style="color:var(--text-muted);">→ Use <strong>Flow F</strong> (Failed Boards Bin)</span></div>
-        </div>
-      </div>
-
-    </div>
-  </div>
-  <!-- ============================================================ -->
-  <!-- Help / User Manual Modal                                      -->
-  <!-- ============================================================ -->
-  <div id="helpModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); z-index: 1500; align-items: flex-start; justify-content: center; backdrop-filter: blur(6px); overflow-y: auto; padding: 2rem 1rem;">
-    <div style="max-width: 760px; width: 100%; background: hsl(224, 22%, 10%); border: 1px solid hsla(268, 72%, 66%, 0.4); box-shadow: 0 0 40px hsla(268, 72%, 66%, 0.15); border-radius: 1rem; padding: 2rem; color: hsl(215, 26%, 90%); font-size: 0.86rem; line-height: 1.65; position: relative;">
-      <button id="btnCloseHelp" style="position: absolute; top: 1rem; right: 1rem; background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.6rem; line-height: 1;">&times;</button>
-      <h2 style="font-size: 1.3rem; font-weight: 700; margin-bottom: 0.25rem; background: linear-gradient(110deg, #e0e7ff, #a5b4fc 60%, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">📖 Spatika Factory Jig &mdash; User Manual</h2>
-      <p style="color: var(--text-muted); font-size: 0.78rem; margin-bottom: 1.5rem;">For detailed operational procedures, see the <strong>📋 Flows Guide</strong> tab.</p>
-
-      <h3 style="font-size: 0.95rem; font-weight: 700; color: #a5b4fc; border-left: 3px solid #818cf8; padding-left: 0.6rem; margin: 1.2rem 0 0.5rem;">🔷 Quick Start</h3>
-      <ol style="margin: 0 0 0 1.2rem; display: flex; flex-direction: column; gap: 0.35rem;">
-        <li>Open the tool via <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.3rem;border-radius:3px;">launch_mac.command</code> or <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.3rem;border-radius:3px;">launch_windows.bat</code> to auto-load firmware.</li>
-        <li>Select your <strong>Name</strong> and <strong>Profile</strong> (TRG / TWS / TWS-RF) from the top bar.</li>
-        <li>Connect the board via USB and click <strong>🔌 Connect Board</strong>.</li>
-        <li>Scan the barcode stickers on each board — the cursor moves automatically.</li>
-        <li>Choose the correct option (New Board = Full Test, Already Tested = Update Software Only).</li>
-        <li>Click <strong>🚀 Start Test</strong> (or the relevant action button) and follow on-screen instructions.</li>
-      </ol>
-
-      <h3 style="font-size: 0.95rem; font-weight: 700; color: #a5b4fc; border-left: 3px solid #818cf8; padding-left: 0.6rem; margin: 1.5rem 0 0.5rem;">🔷 Profile Guide</h3>
-      <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem;">
-        <tr style="background: rgba(255,255,255,0.04);">
-          <td style="padding: 0.4rem 0.6rem; font-weight: 600; color: #c7d2fe;">TRG</td>
-          <td style="padding: 0.4rem 0.6rem;">Rain-only board. RF rain test active. Wind tests skipped.</td>
-        </tr>
-        <tr>
-          <td style="padding: 0.4rem 0.6rem; font-weight: 600; color: #c7d2fe;">TWS</td>
-          <td style="padding: 0.4rem 0.6rem;">Wind + Rain board. RF rain test skipped (uses tip mechanism).</td>
-        </tr>
-        <tr style="background: rgba(255,255,255,0.04);">
-          <td style="padding: 0.4rem 0.6rem; font-weight: 600; color: #c7d2fe;">TWS-RF</td>
-          <td style="padding: 0.4rem 0.6rem;">All-sensors board. RF rain + Wind + all tests active.</td>
-        </tr>
-      </table>
-
-      <h3 style="font-size: 0.95rem; font-weight: 700; color: #a5b4fc; border-left: 3px solid #818cf8; padding-left: 0.6rem; margin: 1.5rem 0 0.5rem;">🔷 Interactive Test Steps (Section C)</h3>
-      <ul style="margin: 0.4rem 0 0 1.2rem; display: flex; flex-direction: column; gap: 0.3rem;">
-        <li><strong>📟 Nuvoton LCD</strong> — Confirm the LCD screen is showing text when prompted.</li>
-        <li><strong>⌨️ Keypad</strong> — Press each key in order: CLEAR &rarr; LEFT &rarr; UP &rarr; DOWN &rarr; RIGHT &rarr; SET.</li>
-        <li><strong>🌧️ Rain RF Test</strong> — Connect loopback jumper <strong>GPIO 2 &rarr; GPIO 34</strong>, then trigger 10 rain pulses. Must count exactly 10.</li>
-        <li><strong>💤 Sleep/Wake Test</strong> — Board sleeps; press <strong>SET</strong> key to wake it. Screen shows WAKEUP: PASS!</li>
-      </ul>
-
-      <p style="margin-top: 1.5rem; font-size: 0.78rem; color: var(--text-muted);">For full workflow details, switch to the <strong>📋 Flows Guide</strong> tab. Dashboard v6.08 &mdash; Jun 2026.</p>
-    </div>
-  </div>
-
-  <!-- Operator Action Modal (friendly, large-button design) -->
-  <div id="operatorPromptModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); z-index: 2000; align-items: center; justify-content: center; backdrop-filter: blur(10px); padding: 1.5rem;">
-    <div style="max-width: 600px; width: 100%; background: hsl(224, 22%, 10%); border: 2px solid var(--primary); box-shadow: 0 0 50px rgba(59, 130, 246, 0.4); border-radius: 1.5rem; overflow: hidden;">
-      <!-- Header -->
-      <div style="background: linear-gradient(135deg, hsl(239,55%,16%) 0%, hsl(268,50%,18%) 100%); padding: 1.25rem 1.5rem; border-bottom: 1px solid hsla(268,72%,66%,0.2);">
-        <div style="font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: hsl(239,80%,75%); margin-bottom: 0.3rem;">👋 ACTION NEEDED</div>
-        <div style="font-size: 1.1rem; font-weight: 800; color: #fff;">Please follow the instruction below</div>
-      </div>
-      <!-- Content -->
-      <div id="operatorPromptContent" style="padding: 1.5rem 1.5rem 1.25rem; font-size: 1rem; color: #f1f5f9; line-height: 1.7; min-height: 80px;">
-        <!-- Injected dynamically -->
-      </div>
-    </div>
-  </div>
-
-  <div id="specModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); z-index: 1500; align-items: flex-start; justify-content: center; backdrop-filter: blur(6px); overflow-y: auto; padding: 2rem 1rem;">
-    <div style="max-width: 760px; width: 100%; background: hsl(224, 22%, 10%); border: 1px solid hsla(200, 95%, 55%, 0.4); box-shadow: 0 0 40px hsla(200, 95%, 55%, 0.15); border-radius: 1rem; padding: 2rem; color: hsl(215, 26%, 90%); font-size: 0.86rem; line-height: 1.65; position: relative;">
-
-      <!-- Close button -->
-      <button id="btnCloseSpec" style="position: absolute; top: 1rem; right: 1rem; background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.6rem; line-height: 1;">&times;</button>
-
-      <h2 style="font-size: 1.3rem; font-weight: 700; margin-bottom: 0.25rem; background: linear-gradient(110deg, #e0f2fe, #7dd3fc 60%, #0284c7); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">📑 Spatika AIO Board — Quality Control Spec</h2>
-      <p style="color: var(--text-muted); font-size: 0.78rem; margin-bottom: 1.5rem;">Specification version v6.07 · Last updated Jun 2026 · Auto-generated</p>
-
-      <!-- Section 1 -->
-      <h3 style="font-size: 0.95rem; font-weight: 700; color: #7dd3fc; border-left: 3px solid #0284c7; padding-left: 0.6rem; margin: 1.2rem 0 0.5rem;">🔷 1. Pinout & Signal Mapping</h3>
-      <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-bottom: 1rem;">
-        <thead>
-          <tr style="background: rgba(255,255,255,0.06); text-align: left;">
-            <th style="padding: 0.4rem 0.6rem; color: #7dd3fc;">Peripherals</th>
-            <th style="padding: 0.4rem 0.6rem; color: #7dd3fc;">ESP32 GPIO Pin / Address</th>
-            <th style="padding: 0.4rem 0.6rem; color: #7dd3fc;">Description</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">Programming Console (UART0)</td>
-            <td style="padding: 0.4rem 0.6rem; font-family: monospace;">RXD0 (GPIO3), TXD0 (GPIO1)</td>
-            <td style="padding: 0.4rem 0.6rem;">Flasher and serial logging.</td>
-          </tr>
-          <tr style="background: rgba(255,255,255,0.02);">
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">Nuvoton UI (UART1)</td>
-            <td style="padding: 0.4rem 0.6rem; font-family: monospace;">RX1 (GPIO14), TX1 (GPIO4)</td>
-            <td style="padding: 0.4rem 0.6rem;">Nuvoton LCD communication at 9600 Bd.</td>
-          </tr>
-          <tr>
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">GPRS Modem (UART2)</td>
-            <td style="padding: 0.4rem 0.6rem; font-family: monospace;">RX2 (GPIO16), TX2 (GPIO17)</td>
-            <td style="padding: 0.4rem 0.6rem;">SIMCOM AT communication at 115200 Bd.</td>
-          </tr>
-          <tr style="background: rgba(255,255,255,0.02);">
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">LCD PMOS Switch</td>
-            <td style="padding: 0.4rem 0.6rem; font-family: monospace;">LCD_CTRL (GPIO32)</td>
-            <td style="padding: 0.4rem 0.6rem;">Active-HIGH. Powers LCD/Keypad board.</td>
-          </tr>
-          <tr>
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">Modem PMOS Switch</td>
-            <td style="padding: 0.4rem 0.6rem; font-family: monospace;">GPRS_CTRL (GPIO26)</td>
-            <td style="padding: 0.4rem 0.6rem;">Active-HIGH. Powers cellular modem.</td>
-          </tr>
-          <tr style="background: rgba(255,255,255,0.02);">
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">Keypad Wakeup (EXT0)</td>
-            <td style="padding: 0.4rem 0.6rem; font-family: monospace;">EXT_WAKEUP (GPIO27)</td>
-            <td style="padding: 0.4rem 0.6rem;">Pulls LOW when SET key is pressed. Wakeup trigger.</td>
-          </tr>
-          <tr>
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">SPI Bus (SD Card)</td>
-            <td style="padding: 0.4rem 0.6rem; font-family: monospace;">MISO(19), MOSI(23), SCK(18), CS(5 / 13)</td>
-            <td style="padding: 0.4rem 0.6rem;">Shared SPI for SD. Scans CS pins 5 and 13.</td>
-          </tr>
-          <tr style="background: rgba(255,255,255,0.02);">
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">I2C Bus (RTC & Sensors)</td>
-            <td style="padding: 0.4rem 0.6rem; font-family: monospace;">SDA(21), SCL(22), DS1307(0x68)</td>
-            <td style="padding: 0.4rem 0.6rem;">RTC (0x68), HDC (0x40), BME (0x76/0x77).</td>
-          </tr>
-          <tr>
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">Analog ADCs</td>
-            <td style="padding: 0.4rem 0.6rem; font-family: monospace;">Rain(34), WS(35), WD(39), Solar(25), Batt(33), Sys(36)</td>
-            <td style="padding: 0.4rem 0.6rem;">Voltage dividers and telemetry input pins.</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <!-- Section 2 -->
-      <h3 style="font-size: 0.95rem; font-weight: 700; color: #7dd3fc; border-left: 3px solid #0284c7; padding-left: 0.6rem; margin: 1.5rem 0 0.5rem;">🔷 2. Peripheral Test Criteria</h3>
-      <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-bottom: 1rem;">
-        <thead>
-          <tr style="background: rgba(255,255,255,0.06); text-align: left;">
-            <th style="padding: 0.4rem 0.6rem; color: #7dd3fc;">Test Component</th>
-            <th style="padding: 0.4rem 0.6rem; color: #7dd3fc;">Testing Verification Method</th>
-            <th style="padding: 0.4rem 0.6rem; color: #7dd3fc;">Target PASS Bounds / Values</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">Internal SPIFFS</td>
-            <td style="padding: 0.4rem 0.6rem;">Mounts partition and writes test string.</td>
-            <td style="padding: 0.4rem 0.6rem;">File reads back matching test pattern.</td>
-          </tr>
-          <tr style="background: rgba(255,255,255,0.02);">
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">SD Card SPI</td>
-            <td style="padding: 0.4rem 0.6rem;">Mounts FAT card and writes test file.</td>
-            <td style="padding: 0.4rem 0.6rem;">Mount successful, read-back ok.</td>
-          </tr>
-          <tr>
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">DS1307 RTC</td>
-            <td style="padding: 0.4rem 0.6rem;">Queries 0x68. Checks tick speed changes.</td>
-            <td style="padding: 0.4rem 0.6rem;">Seconds counter increments over 1.1s.</td>
-          </tr>
-          <tr style="background: rgba(255,255,255,0.02);">
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">Env Sensor (I2C)</td>
-            <td style="padding: 0.4rem 0.6rem;">Checks 0x40/0x76/0x77 and reads values.</td>
-            <td style="padding: 0.4rem 0.6rem;">Reads ambient Temperature & Humidity.</td>
-          </tr>
-          <tr>
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">GPRS Modem</td>
-            <td style="padding: 0.4rem 0.6rem;">Sends AT, reads CSQ signal and identities.</td>
-            <td style="padding: 0.4rem 0.6rem;">CSQ level >= 10, IMEI (15d), CCID (20d).</td>
-          </tr>
-          <tr style="background: rgba(255,255,255,0.02);">
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">ESP32 Battery ADC</td>
-            <td style="padding: 0.4rem 0.6rem;">Reads voltage on GPIO 36.</td>
-            <td style="padding: 0.4rem 0.6rem;">Voltage range bounds: <b>3.0V to 3.6V</b>.</td>
-          </tr>
-          <tr>
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">GPRS Battery ADC</td>
-            <td style="padding: 0.4rem 0.6rem;">Reads voltage on GPIO 33.</td>
-            <td style="padding: 0.4rem 0.6rem;">Voltage range bounds: <b>3.5V to 4.4V</b>.</td>
-          </tr>
-          <tr style="background: rgba(255,255,255,0.02);">
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">Wind speed</td>
-            <td style="padding: 0.4rem 0.6rem;">Interrupt counts pulses on GPIO 35.</td>
-            <td style="padding: 0.4rem 0.6rem;">Active pulses increment in real-time.</td>
-          </tr>
-          <tr>
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">Wind Direction</td>
-            <td style="padding: 0.4rem 0.6rem;">Reads ADC value on GPIO 39.</td>
-            <td style="padding: 0.4rem 0.6rem;">Real-time voltage fluctuates on vane turn.</td>
-          </tr>
-          <tr style="background: rgba(255,255,255,0.02);">
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">Rainfall RF — Loopback</td>
-            <td style="padding: 0.4rem 0.6rem;">Connect loopback jumper <b>GPIO 2 → GPIO 34</b>. Firmware sends 10 pulses via GPIO 2; GPIO 34 counts interrupts.</td>
-            <td style="padding: 0.4rem 0.6rem;">Interrupt tally must equal exactly <b>10</b>. Profile <b>TWS</b> skips this test (RF not fitted).</td>
-          </tr>
-          <tr>
-            <td style="padding: 0.4rem 0.6rem; font-weight: 600;">EXT0 Sleep Wakeup</td>
-            <td style="padding: 0.4rem 0.6rem;">Board enters deep sleep (LCD + modem powered down). Operator presses <b>SET</b> key.</td>
-            <td style="padding: 0.4rem 0.6rem;">EXT0 fires on GPIO 27 LOW. Board reboots. Display shows <code>WAKEUP: PASS!</code>.</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <!-- Section 4 -->
-      <h3 style="font-size: 0.95rem; font-weight: 700; color: #7dd3fc; border-left: 3px solid #0284c7; padding-left: 0.6rem; margin: 1.5rem 0 0.5rem;">🔷 4. Firmware Configuration Reference</h3>
-      <p style="margin-bottom:0.4rem;">Each named release config maps to a <code>SYSTEM</code> + <code>UNIT_CFG</code> combination. The table below lists the production profile and what the config subdir is named in <code>WEB_FLASH_FILES/</code>.</p>
-      <table style="width:100%; border-collapse:collapse; font-size:0.79rem; margin-bottom:0.8rem;">
-        <thead>
-          <tr style="background:rgba(255,255,255,0.06); text-align:left;">
-            <th style="padding:0.4rem 0.6rem; color:#7dd3fc;">Profile</th>
-            <th style="padding:0.4rem 0.6rem; color:#7dd3fc;">Config Name (subfolder)</th>
-            <th style="padding:0.4rem 0.6rem; color:#7dd3fc;">SYSTEM</th>
-            <th style="padding:0.4rem 0.6rem; color:#7dd3fc;">UNIT_CFG</th>
-            <th style="padding:0.4rem 0.6rem; color:#7dd3fc;">Notes</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td style="padding:0.35rem 0.6rem; font-weight:600;">TRG</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">KSNDMC_TRG_8mb</td>
-            <td style="padding:0.35rem 0.6rem;">0</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">KSNDMC_TRG</td>
-            <td style="padding:0.35rem 0.6rem;">Karnataka State NDMC rain gauge</td>
-          </tr>
-          <tr style="background:rgba(255,255,255,0.02);">
-            <td style="padding:0.35rem 0.6rem; font-weight:600;">TRG</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">BIHAR_TRG_8mb</td>
-            <td style="padding:0.35rem 0.6rem;">0</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">BIHAR_TRG</td>
-            <td style="padding:0.35rem 0.6rem;">Bihar state rain gauge variant</td>
-          </tr>
-          <tr>
-            <td style="padding:0.35rem 0.6rem; font-weight:600;">TRG</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">SPATIKA_GEN_8mb</td>
-            <td style="padding:0.35rem 0.6rem;">0</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">SPATIKA_GEN</td>
-            <td style="padding:0.35rem 0.6rem;">Spatika generic / demo TRG unit</td>
-          </tr>
-          <tr style="background:rgba(255,255,255,0.02);">
-            <td style="padding:0.35rem 0.6rem; font-weight:600;">TWS</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">KSNDMC_TWS_8mb</td>
-            <td style="padding:0.35rem 0.6rem;">1</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">KSNDMC_TWS</td>
-            <td style="padding:0.35rem 0.6rem;">KSNDMC wind+rain station (RF skipped)</td>
-          </tr>
-          <tr>
-            <td style="padding:0.35rem 0.6rem; font-weight:600;">TWS</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">KSNDMC_TWS-AP_8mb</td>
-            <td style="padding:0.35rem 0.6rem;">1</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">KSNDMC_TWS-AP</td>
-            <td style="padding:0.35rem 0.6rem;">AP state TWS variant</td>
-          </tr>
-          <tr style="background:rgba(255,255,255,0.02);">
-            <td style="padding:0.35rem 0.6rem; font-weight:600;">TWS-RF</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">KSNDMC_ADDON_8mb</td>
-            <td style="padding:0.35rem 0.6rem;">2</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">KSNDMC_ADDON</td>
-            <td style="padding:0.35rem 0.6rem;">All-sensors: wind + RF rain, full test</td>
-          </tr>
-          <tr>
-            <td style="padding:0.35rem 0.6rem; font-weight:600;">TWS-RF</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">SPATIKA_GEN_8mb</td>
-            <td style="padding:0.35rem 0.6rem;">2</td>
-            <td style="padding:0.35rem 0.6rem; font-family:monospace;">SPATIKA_GEN</td>
-            <td style="padding:0.35rem 0.6rem;">Spatika generic TWS-RF unit</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <p style="margin-bottom:0.35rem; font-weight:600; color:#7dd3fc;">📊 Compile-time switches (stored in metadata.json):</p>
-      <table style="width:100%; border-collapse:collapse; font-size:0.79rem; margin-bottom:0.8rem;">
-        <thead>
-          <tr style="background:rgba(255,255,255,0.06); text-align:left;">
-            <th style="padding:0.35rem 0.6rem; color:#7dd3fc;">Flag in user_config.h</th>
-            <th style="padding:0.35rem 0.6rem; color:#7dd3fc;">Dashboard Label</th>
-            <th style="padding:0.35rem 0.6rem; color:#7dd3fc;">Production Default</th>
-            <th style="padding:0.35rem 0.6rem; color:#7dd3fc;">Notes</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr><td style="padding:0.32rem 0.6rem; font-family:monospace;">DEBUG</td><td style="padding:0.32rem 0.6rem;">🐛 Debug Logs</td><td style="padding:0.32rem 0.6rem; color:#f87171;">OFF (forced 0)</td><td style="padding:0.32rem 0.6rem;">Always disabled by build script</td></tr>
-          <tr style="background:rgba(255,255,255,0.02);"><td style="padding:0.32rem 0.6rem; font-family:monospace;">ENABLE_WEBSERVER</td><td style="padding:0.32rem 0.6rem;">🌐 Web Server</td><td style="padding:0.32rem 0.6rem; color:#6ee7b7;">ON (8/16MB)</td><td style="padding:0.32rem 0.6rem;">Disabled on 4MB builds only</td></tr>
-          <tr><td style="padding:0.32rem 0.6rem; font-family:monospace;">USE_NUVOTON_UI</td><td style="padding:0.32rem 0.6rem;">📟 Nuvoton UI</td><td style="padding:0.32rem 0.6rem;">Per config</td><td style="padding:0.32rem 0.6rem;">Enabled for most field units</td></tr>
-          <tr style="background:rgba(255,255,255,0.02);"><td style="padding:0.32rem 0.6rem; font-family:monospace;">ENABLE_HEALTH_REPORT</td><td style="padding:0.32rem 0.6rem;">💊 Health Report</td><td style="padding:0.32rem 0.6rem; color:#f87171;">OFF (forced 0)</td><td style="padding:0.32rem 0.6rem;">Always disabled by build script</td></tr>
-          <tr><td style="padding:0.32rem 0.6rem; font-family:monospace;">TEST_HEALTH_DEFAULT</td><td style="padding:0.32rem 0.6rem;">⏱ Health Freq</td><td style="padding:0.32rem 0.6rem;">Daily (11am)</td><td style="padding:0.32rem 0.6rem;">0=Daily, 1=Every 15 min, 2=Disabled</td></tr>
-          <tr style="background:rgba(255,255,255,0.02);"><td style="padding:0.32rem 0.6rem; font-family:monospace;">DEFAULT_RF_RESOLUTION</td><td style="padding:0.32rem 0.6rem;">🌧 RF Resolution</td><td style="padding:0.32rem 0.6rem;">0.25 mm</td><td style="padding:0.32rem 0.6rem;">Rain tip bucket calibration factor</td></tr>
-          <tr><td style="padding:0.32rem 0.6rem; font-family:monospace;">WIND_TEETH_COUNT</td><td style="padding:0.32rem 0.6rem;">💨 Wind Teeth</td><td style="padding:0.32rem 0.6rem;">2.0</td><td style="padding:0.32rem 0.6rem;">Anemometer pulse-per-revolution count</td></tr>
-        </tbody>
-      </table>
-
-      <!-- Section 5 -->
-      <h3 style="font-size: 0.95rem; font-weight: 700; color: #7dd3fc; border-left: 3px solid #0284c7; padding-left: 0.6rem; margin: 1.5rem 0 0.5rem;">🔷 5. Interactive Keypad Mapping</h3>
-      <p style="margin-bottom: 0.4rem;">The Nuvoton UI board sends ASCII key characters to the ESP32 on UART1 when keys are pressed:</p>
-      <ul style="margin-left: 1.25rem; display: flex; flex-direction: column; gap: 0.2rem;">
-        <li><b>CLEAR</b> (Raw character `'1'`): Clears LCD and passes LCD visual test.</li>
-        <li><b>LEFT</b> (Raw character `'2'`): Keypad sweep step 1.</li>
-        <li><b>UP</b> (Raw character `'3'`): Keypad sweep step 2.</li>
-        <li><b>DOWN</b> (Raw character `'4'`): Keypad sweep step 3.</li>
-        <li><b>RIGHT</b> (Raw character `'5'`): Keypad sweep step 4.</li>
-        <li><b>SET</b> (Raw character `'6'`): Keypad sweep step 5 + triggers EXT0 deep sleep wakeup.</li>
-      </ul>
-
-      <!-- Section 6: EXT0 detail -->
-      <h3 style="font-size: 0.95rem; font-weight: 700; color: #7dd3fc; border-left: 3px solid #0284c7; padding-left: 0.6rem; margin: 1.5rem 0 0.5rem;">🔷 6. EXT0 Deep Sleep Wakeup Test</h3>
-      <p>After the keypad sweep the firmware initiates a deep-sleep sequence to verify the hardware wakeup path:</p>
-      <ol style="margin: 0.4rem 0 0 1.2rem; display:flex; flex-direction:column; gap:0.25rem;">
-        <li>Firmware powers down the Nuvoton LCD (GPIO 32 LOW) and GPRS modem (GPIO 26 LOW).</li>
-        <li>ESP32 enters deep sleep with EXT0 wakeup configured on <b>GPIO 27</b> (active LOW).</li>
-        <li>Operator presses the <b>EXT0</b> button. This drives GPIO 27 LOW.</li>
-        <li>ESP32 reboots from deep sleep. The dashboard detects the <code>SLEEP:PASS</code> serial token.</li>
-        <li>LCD displays <code>WAKEUP: PASS!</code> and the QC checklist marks the step green.</li>
-      </ol>
-      <p style="margin-top:0.4rem; color:#fbbf24; font-size:0.8rem;">⚠️ If the EXT0 button is not available, use <b>Force Pass (CMD:SLEEP_PASS)</b> in the Operator Instructions box to skip this step.</p>
-
-    </div>
-
-    <!-- Integration Checklist Card -->
-    <div class="card" id="cardIntegrationChecklist" style="display: none; flex: 1; flex-direction: column;">
-      <h3 class="card-title">Integration & Boot Diagnostics</h3>
-      
-      <!-- Board Identity Panel -->
-      <div id="intBoardInfoPanel" style="display:flex;flex-direction:column;gap:0;background:rgba(255,255,255,0.02);border:1px solid var(--card-border);border-radius:0.4rem;margin-bottom:0.8rem;overflow:hidden;font-size:0.8rem;">
-        <!-- Header row -->
-        <div style="background:rgba(99,102,241,0.12);border-bottom:1px solid rgba(99,102,241,0.2);padding:0.35rem 0.65rem;display:flex;align-items:center;gap:0.4rem;">
-          <span style="font-size:0.78rem;font-weight:700;color:#a5b4fc;">📋 Board Identity</span>
-          <span id="intBoardInfoStatus" style="margin-left:auto;font-size:0.65rem;color:#6b7280;">from QC phase</span>
-          <!-- hidden carrier for the sync function -->
-          <span id="integrationMac" style="display:none;">--</span>
-        </div>
-        <!-- Data rows -->
-        <div style="display:grid;grid-template-columns:auto 1fr;">
-          <div style="padding:0.25rem 0.55rem;color:var(--text-muted);font-size:0.69rem;border-bottom:1px solid rgba(255,255,255,0.03);white-space:nowrap;">ESP32 MAC</div>
-          <div style="padding:0.25rem 0.55rem;border-bottom:1px solid rgba(255,255,255,0.03);"><strong id="intInfoMac" style="font-family:'JetBrains Mono',monospace;color:#a5b4fc;font-size:0.72rem;">--:--:--:--:--:--</strong></div>
-
-          <div style="padding:0.25rem 0.55rem;color:var(--text-muted);font-size:0.69rem;border-bottom:1px solid rgba(255,255,255,0.03);white-space:nowrap;">GPRS IMEI</div>
-          <div style="padding:0.25rem 0.55rem;border-bottom:1px solid rgba(255,255,255,0.03);"><strong id="intInfoImei" style="font-family:'JetBrains Mono',monospace;color:#fff;font-size:0.72rem;">---------------</strong></div>
-
-          <div style="padding:0.25rem 0.55rem;color:var(--text-muted);font-size:0.69rem;border-bottom:1px solid rgba(255,255,255,0.03);white-space:nowrap;">SIM CCID</div>
-          <div style="padding:0.25rem 0.55rem;border-bottom:1px solid rgba(255,255,255,0.03);overflow:hidden;"><strong id="intInfoCcid" style="font-family:'JetBrains Mono',monospace;color:#fff;font-size:0.67rem;word-break:break-all;">--------------------</strong></div>
-
-          <div style="padding:0.25rem 0.55rem;color:var(--text-muted);font-size:0.69rem;border-bottom:1px solid rgba(255,255,255,0.03);white-space:nowrap;">Flash / Chip</div>
-          <div style="padding:0.25rem 0.55rem;border-bottom:1px solid rgba(255,255,255,0.03);"><strong id="intInfoFlash" style="font-family:'JetBrains Mono',monospace;color:#6ee7b7;font-size:0.72rem;">-- MB</strong></div>
-
-          <div style="padding:0.25rem 0.55rem;color:var(--text-muted);font-size:0.69rem;border-bottom:1px solid rgba(255,255,255,0.03);white-space:nowrap;">QC FW Version</div>
-          <div style="padding:0.25rem 0.55rem;border-bottom:1px solid rgba(255,255,255,0.03);"><strong id="integrationFwVersion" style="font-family:'JetBrains Mono',monospace;color:#fbbf24;font-size:0.72rem;">--</strong></div>
-
-          <div style="padding:0.25rem 0.55rem;color:var(--text-muted);font-size:0.69rem;border-bottom:1px solid rgba(255,255,255,0.03);white-space:nowrap;">ESP32 Barcode</div>
-          <div style="padding:0.25rem 0.55rem;border-bottom:1px solid rgba(255,255,255,0.03);"><strong id="intInfoEsp" style="font-family:'JetBrains Mono',monospace;color:#fff;font-size:0.72rem;">--</strong></div>
-
-          <div style="padding:0.25rem 0.55rem;color:var(--text-muted);font-size:0.69rem;border-bottom:1px solid rgba(255,255,255,0.03);white-space:nowrap;">Box 1 (DL Box)</div>
-          <div style="padding:0.25rem 0.55rem;border-bottom:1px solid rgba(255,255,255,0.03);"><strong id="intInfoBox1" style="font-family:'JetBrains Mono',monospace;color:#c4b5fd;font-size:0.72rem;">--</strong></div>
-
-          <div style="padding:0.25rem 0.55rem;color:var(--text-muted);font-size:0.69rem;white-space:nowrap;">Box 2 (PS Box)</div>
-          <div style="padding:0.25rem 0.55rem;"><strong id="intInfoBox2" style="font-family:'JetBrains Mono',monospace;color:#86efac;font-size:0.72rem;">--</strong></div>
-        </div>
-      </div>
-
-      <div style="display: flex; flex-direction: column; gap: 0.45rem;">
-        <!-- 1. Boot Telemetry -->
-        <div class="section-widget widget-a" id="intChkBoot" style="margin-bottom: 0;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <span style="font-size: 0.78rem; font-weight: 600;">🔄 Boot Signal Detection</span>
-            <span class="badge badge-disconnected" id="intValBoot">Waiting...</span>
-          </div>
-          <p style="font-size: 0.68rem; color: var(--text-muted); margin: 0.15rem 0 0;">Verifies production firmware boots and streams initialization signature.</p>
-        </div>
-
-        <!-- 2. Battery Voltage -->
-        <div class="section-widget widget-a" id="intChkBatt" style="margin-bottom: 0;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <span style="font-size: 0.78rem; font-weight: 600;">🔋 Battery Voltage</span>
-            <span class="badge badge-disconnected" id="intValBatt">Waiting...</span>
-          </div>
-          <p style="font-size: 0.68rem; color: var(--text-muted); margin: 0.15rem 0 0;">Verifies battery voltage is in the acceptable operating range.</p>
-        </div>
-
-        <!-- 3. Solar / MPPT Status -->
-        <div class="section-widget widget-a" id="intChkSolar" style="margin-bottom: 0;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <span style="font-size: 0.78rem; font-weight: 600;">☀️ Solar Panel & MPPT</span>
-            <span class="badge badge-disconnected" id="intValSolar">Waiting...</span>
-          </div>
-          <p style="font-size: 0.68rem; color: var(--text-muted); margin: 0.15rem 0 0;">Verifies charging voltage and solar panel connection status.</p>
-        </div>
-
-        <!-- 5. Sheet Commissioning -->
-        <div class="section-widget widget-a" id="intChkSync" style="margin-bottom: 0;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <span style="font-size: 0.78rem; font-weight: 600;">📊 Google Sheet Commissioning</span>
-            <span class="badge badge-disconnected" id="intValSync">Waiting...</span>
-          </div>
-          <p style="font-size: 0.68rem; color: var(--text-muted); margin: 0.15rem 0 0;">Registers the full box assembly & components in the Integration Log.</p>
-        </div>
-      </div>
-
-      <!-- Action Button -->
-      <button class="btn btn-secondary" id="btnAbortIntegration" style="margin-top: 1rem; display: none;">🛑 Stop Test</button>
-    </div>
-  </div>
-
-  <!-- Big Verdict Overlay Banner -->
-  <div id="verdictOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.96); z-index: 2000; align-items: center; justify-content: center; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); flex-direction: column; gap: 1.5rem; transition: all 0.3s ease;">
-    <div id="verdictBox" style="text-align: center; padding: 3rem 4rem; border-radius: 1.5rem; border: 2px solid transparent; max-width: 600px; width: 90%; background: hsl(224, 22%, 12%); box-shadow: 0 0 40px rgba(0,0,0,0.65); display: flex; flex-direction: column; align-items: center; gap: 1rem;">
-      <h2 id="verdictTitle" style="font-size: 3rem; font-weight: 800; tracking: -0.03em;">BOARD PASS</h2>
-      <p id="verdictSub" style="font-size: 1.05rem; color: var(--text-muted); line-height: 1.5; max-width: 450px;">All active hardware subsystems verified successfully.</p>
-      <!-- Quick Actions Container -->
-      <div id="verdictActions" style="display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; margin-top: 1.5rem; width: 100%;">
-        <button class="btn btn-success" id="btnVerdictNext" style="font-size: 0.82rem; padding: 0.55rem 1.25rem; font-weight: 600; width: auto; text-transform: none;">🧹 Start Next Board</button>
-        <button class="btn btn-primary" id="btnVerdictIntegration" style="font-size: 0.82rem; padding: 0.55rem 1.25rem; font-weight: 600; width: auto; text-transform: none;">⏩ Go to Integration Test</button>
-        <button class="btn btn-secondary" id="btnVerdictDisconnect" style="font-size: 0.82rem; padding: 0.55rem 1.25rem; font-weight: 600; width: auto; text-transform: none;">🔌 Disconnect / Stop Run</button>
-        <button class="btn btn-secondary" id="btnCloseVerdict" style="font-size: 0.82rem; padding: 0.55rem 1.25rem; font-weight: 600; width: auto; text-transform: none; background: rgba(255,255,255,0.05);">❌ Close Overlay</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Apps Script Code Modal -->
-  <div id="codeModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(4px); transition: all 0.3s ease;">
-    <div class="card" style="max-width: 650px; width: 90%; background: #0f172a; border: 1px solid var(--primary); box-shadow: 0 0 25px rgba(59, 130, 246, 0.3); max-height: 85vh; display: flex; flex-direction: column; gap: 1rem; padding: 1.5rem; border-radius: 1rem;">
-      <h3 style="color: #fff; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem; display: flex; justify-content: space-between; align-items: center; font-size: 1.25rem; font-weight: 600;">
-        <span>Google Apps Script Setup</span>
-        <button id="btnCloseModal" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.8rem; line-height: 1;">&times;</button>
-      </h3>
-      <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.4;">
-        To log test results directly to your Google Sheet, follow these steps:
-      </p>
-      <ol style="font-size: 0.8rem; color: var(--text-color); margin-left: 1.25rem; line-height: 1.5; display: flex; flex-direction: column; gap: 0.35rem;">
-        <li>Open your Google Sheet (e.g. <a href="https://docs.google.com/spreadsheets/d/1Dw3UJEFdewThGpf8DRei69Vfrt_uU_yo438Z5m9xUUs/edit" target="_blank" style="color: var(--primary); text-decoration: underline;">Spatika Sheet</a>) and click <strong>Extensions &gt; Apps Script</strong>.</li>
-        <li>Paste the JavaScript code below, replacing any template code.</li>
-        <li>Click <strong>Deploy &gt; New deployment</strong>. Select type <strong>Web app</strong>.</li>
-        <li>Under "Execute as", select <strong>Me</strong>. Under "Who has access", select <strong>Anyone</strong> (critical for anonymous posts).</li>
-        <li>Click <strong>Deploy</strong>, copy the generated Web App URL, and paste it in the field on the left.</li>
-      </ol>
-      <pre id="preCode" style="background: #05070c; padding: 0.75rem; border-radius: 0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; overflow: auto; height: 180px; border: 1px solid rgba(255,255,255,0.05); color: #38bdf8; user-select: all; line-height: 1.4;"></pre>
-      <button class="btn btn-primary" id="btnCopyCode" style="margin-top: 0.5rem; font-size: 0.85rem;">📋 Copy Code to Clipboard</button>
-    </div>
-  </div>
-
-  <!-- ============================================================ -->
-  <!-- Unit History Modal                                           -->
-  <!-- ============================================================ -->
-  <div id="historyModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.88); z-index:1600; align-items:flex-start; justify-content:center; backdrop-filter:blur(6px); overflow-y:auto; padding:2rem 1rem;">
-    <div style="max-width:860px; width:100%; background:hsl(224,22%,10%); border:1px solid hsla(220,80%,60%,0.35); box-shadow:0 0 40px hsla(220,80%,60%,0.12); border-radius:1rem; padding:1.75rem 1.75rem 2rem; color:hsl(215,26%,90%); position:relative;">
-
-      <!-- Header -->
-      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1.25rem;">
-        <div>
-          <h2 style="font-size:1.2rem; font-weight:700; margin:0 0 0.2rem; background:linear-gradient(110deg,#e0f2fe,#7dd3fc 60%,#38bdf8); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">🔍 Unit Test History</h2>
-          <p id="historyModalSubtitle" style="font-size:0.78rem; color:var(--text-muted); margin:0;">Showing all records found</p>
-        </div>
-        <button id="btnCloseHistory" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:1.6rem; line-height:1; padding:0.2rem 0.4rem;">&times;</button>
-      </div>
-
-      <!-- Result cards -->
-      <div id="historyModalBody" style="display:flex; flex-direction:column; gap:1rem;">
-        <!-- Cards injected by JS -->
-      </div>
-    </div>
-  </div>
-
-
-  <!-- Esptool-JS Bundle Import -->
-  <script>
-    window.addEventListener("error", (e) => {
-      const msg = `JavaScript Error: ${e.message}\nFile: ${e.filename}\nLine: ${e.lineno}:${e.colno}`;
-      console.error(msg);
-      const div = document.createElement("div");
-      div.style.position = "fixed";
-      div.style.top = "0";
-      div.style.left = "0";
-      div.style.width = "100%";
-      div.style.background = "#ef4444";
-      div.style.color = "#fff";
-      div.style.padding = "0.75rem";
-      div.style.zIndex = "99999";
-      div.style.fontFamily = "monospace";
-      div.style.fontSize = "0.82rem";
-      div.style.whiteSpace = "pre-wrap";
-      div.innerText = msg;
-      document.body.appendChild(div);
-    });
-  </script>
-
-  <script type="module">
     import { ESPLoader, Transport } from "https://unpkg.com/esptool-js/bundle.js";
 
     // --- State variables ---
@@ -2736,18 +14,14 @@
     let isFlashing = false;
     let rawSerialLog = "";
     let lastVerdict = "PENDING";
-    let appFlashedSuccessfully = false;
     let testStartTime = null;
     let testDuration = 0; // in seconds
     let isSyncingQueue = false;
     let vaultAutoLoadAttempted = false; // tracks if auto-load was tried
-    let qcFirmwareAlreadyOnBoard = false; // set true when QC firmware detected; skips re-flash in factory flow
 
     // Binary file database (stores ArrayBuffers loaded by drag/drop)
     const fileVault = {
       "bootloader.bin": null,
-      "bootloader_8mb.bin": null,
-      "bootloader_16mb.bin": null,
       "boot_app0.bin": null,
       // Partitions
       "partitions_4mb.bin": null,
@@ -2780,15 +54,9 @@
     // Custom config binary vault: keyed by config folder name
     // Each entry: { binary: Uint8Array|null, version: string|null, metadata: object|null }
     const customConfigVault = {};
-    for (const configs of Object.values(PROFILE_CONFIGS)) {
-      for (const c of configs) {
-        customConfigVault[c] = {
-          "4mb": { binary: null, version: null, metadata: null },
-          "8mb": { binary: null, version: null, metadata: null },
-          "16mb": { binary: null, version: null, metadata: null }
-        };
-      }
-    }
+    for (const configs of Object.values(PROFILE_CONFIGS))
+      for (const c of configs)
+        customConfigVault[c] = { binary: null, version: null, metadata: null };
 
     // DOM References
     const browserWarning = document.getElementById("browserWarning");
@@ -2796,6 +64,7 @@
     const btnConnToggle = document.getElementById("btnConnToggle");
     const btnStart = document.getElementById("btnStart");
     const btnStartDiag = document.getElementById("btnStartDiag");
+    const btnProceedApp = document.getElementById("btnProceedApp");
     const btnExportLog = document.getElementById("btnExportLog");
     const btnConsoleClear = document.getElementById("btnConsoleClear");
     const consoleDiv = document.getElementById("console");
@@ -2812,8 +81,6 @@
     const btnSelectFolderAPI = document.getElementById("btnSelectFolderAPI");
     const btnSelectFolderFallback = document.getElementById("btnSelectFolderFallback");
     const btnResetBoard = document.getElementById("btnResetBoard");
-    const btnClearNextBoard = document.getElementById("btnClearNextBoard");
-    const qcFirmwareStatus = document.getElementById("qcFirmwareStatus");
 
     // Tabs References
     const tabBoardQC = document.getElementById("tabBoardQC");
@@ -2838,20 +105,9 @@
     const assocMpptBarcode = document.getElementById("assocMpptBarcode");
     const assocStatusText = document.getElementById("assocStatusText");
     const btnStartIntegration = document.getElementById("btnStartIntegration");
-    const chkIntegrationFlashEsp32 = document.getElementById("chkIntegrationFlashEsp32");
-    const integrationBox1Group = document.getElementById("integrationBox1Group");
-    const integrationBox2Group = document.getElementById("integrationBox2Group");
     const btnAbortIntegration = document.getElementById("btnAbortIntegration");
     const integrationFwVersion = document.getElementById("integrationFwVersion");
-    const integrationMac       = document.getElementById("integrationMac");
-    const intInfoMac           = document.getElementById("intInfoMac");
-    const intInfoImei          = document.getElementById("intInfoImei");
-    const intInfoCcid          = document.getElementById("intInfoCcid");
-    const intInfoFlash         = document.getElementById("intInfoFlash");
-    const intInfoEsp           = document.getElementById("intInfoEsp");
-    const intInfoBox1          = document.getElementById("intInfoBox1");
-    const intInfoBox2          = document.getElementById("intInfoBox2");
-    const intBoardInfoStatus   = document.getElementById("intBoardInfoStatus");
+    const integrationMac = document.getElementById("integrationMac");
     const integrationProgressContainer = document.getElementById("integrationProgressContainer");
     const integrationProgressBar = document.getElementById("integrationProgressBar");
 
@@ -2918,10 +174,6 @@
     const verdictSub = document.getElementById("verdictSub");
     const verdictBox = document.getElementById("verdictBox");
     const btnCloseVerdict = document.getElementById("btnCloseVerdict");
-    const verdictActions = document.getElementById("verdictActions");
-    const btnVerdictNext = document.getElementById("btnVerdictNext");
-    const btnVerdictIntegration = document.getElementById("btnVerdictIntegration");
-    const btnVerdictDisconnect = document.getElementById("btnVerdictDisconnect");
     
     // Checkboxes / Status Displays
     const chkSpiffs = document.getElementById("chkSpiffs");
@@ -3830,15 +1082,13 @@ function getManageRecordsHtml() {
     function renderConfigMetadata() {
       const cfg = releaseConfigSel?.value;
       const entry = cfg ? customConfigVault[cfg] : null;
-      const currentSizeKey = currentChipSize ? `${currentChipSize}mb` : "8mb";
-      const sizeEntry = entry ? (entry[currentSizeKey] || entry["8mb"]) : null;
 
       // Update the LOADED badge in the navbar
       if (configLoadedBadge) {
-        configLoadedBadge.style.display = (sizeEntry?.binary) ? "inline" : "none";
+        configLoadedBadge.style.display = (entry?.binary) ? "inline" : "none";
       }
 
-      if (!sizeEntry || (!sizeEntry.binary && !sizeEntry.metadata)) {
+      if (!entry || (!entry.binary && !entry.metadata)) {
         // No data yet — prompt user in console
         logBox([
           { text: `Config selected: ${cfg}`, type: "info" },
@@ -3847,13 +1097,13 @@ function getManageRecordsHtml() {
         return;
       }
 
-      const meta   = sizeEntry.metadata || {};
-      const ver    = sizeEntry.version  || meta.full_version || "--";
+      const meta   = entry.metadata || {};
+      const ver    = entry.version  || meta.full_version || "--";
       const yn     = v => (v === null || v === undefined) ? "--" : (v ? "YES" : "NO");
-      const binKB  = sizeEntry.binary ? (sizeEntry.binary.byteLength / 1024).toFixed(1) + " KB" : "--";
+      const binKB  = entry.binary ? (entry.binary.byteLength / 1024).toFixed(1) + " KB" : "--";
 
       // Size check
-      const binSize = sizeEntry.binary ? sizeEntry.binary.byteLength : (meta.binary_size_bytes || 0);
+      const binSize = entry.binary ? entry.binary.byteLength : (meta.binary_size_bytes || 0);
       const limit   = APP_SIZE_LIMIT_BYTES[currentChipSize] || APP_SIZE_LIMIT_BYTES[8];
       const sizeOK  = !currentChipSize || binSize === 0 || binSize <= limit;
 
@@ -3949,14 +1199,10 @@ function getManageRecordsHtml() {
             const parentFolder = parts[parts.length - 2];
             const configBase = parentFolder.replace(/_?(4|8|16)mb$/i, '');
             if (customConfigVault.hasOwnProperty(configBase)) {
-              const flashMatch = parentFolder.match(/_?(4|8|16)mb$/i);
-              const flashSize = flashMatch ? flashMatch[1].toLowerCase() + "mb" : "8mb";
-
               if (!configFileMap[configBase]) configFileMap[configBase] = {};
-              if (!configFileMap[configBase][flashSize]) configFileMap[configBase][flashSize] = {};
-              if (name === 'firmware.bin')   configFileMap[configBase][flashSize].firmware = file;
-              if (name === 'fw_version.txt') configFileMap[configBase][flashSize].version  = file;
-              if (name === 'metadata.json')  configFileMap[configBase][flashSize].metadata = file;
+              if (name === 'firmware.bin')   configFileMap[configBase].firmware = file;
+              if (name === 'fw_version.txt') configFileMap[configBase].version  = file;
+              if (name === 'metadata.json')  configFileMap[configBase].metadata = file;
             }
           }
         }
@@ -3964,28 +1210,26 @@ function getManageRecordsHtml() {
 
       // Load config-specific binaries
       let loadedConfigsCount = 0;
-      for (const [cfg, sizeMap] of Object.entries(configFileMap)) {
-        for (const [size, cfgFiles] of Object.entries(sizeMap)) {
-          if (cfgFiles.firmware) {
-            try {
-              const buf = await cfgFiles.firmware.arrayBuffer();
-              customConfigVault[cfg][size].binary = new Uint8Array(buf);
-              logToConsole(`✓ Config loaded: ${cfg}_${size}/firmware.bin (${(cfgFiles.firmware.size/1024).toFixed(1)} KB)`, "info");
-              loadedConfigsCount++;
-            } catch (err) {
-              logToConsole(`Failed to read config ${cfg} (${size}): ${err.message}`, "error");
-            }
+      for (const [cfg, cfgFiles] of Object.entries(configFileMap)) {
+        if (cfgFiles.firmware) {
+          try {
+            const buf = await cfgFiles.firmware.arrayBuffer();
+            customConfigVault[cfg].binary = new Uint8Array(buf);
+            logToConsole(`✓ Config loaded: ${cfg}/firmware.bin (${(cfgFiles.firmware.size/1024).toFixed(1)} KB)`, "info");
+            loadedConfigsCount++;
+          } catch (err) {
+            logToConsole(`Failed to read config ${cfg}: ${err.message}`, "error");
           }
-          if (cfgFiles.version) {
-            try {
-              customConfigVault[cfg][size].version = (await cfgFiles.version.text()).trim();
-            } catch(_) {}
-          }
-          if (cfgFiles.metadata) {
-            try {
-              customConfigVault[cfg][size].metadata = JSON.parse(await cfgFiles.metadata.text());
-            } catch(_) {}
-          }
+        }
+        if (cfgFiles.version) {
+          try {
+            customConfigVault[cfg].version = (await cfgFiles.version.text()).trim();
+          } catch(_) {}
+        }
+        if (cfgFiles.metadata) {
+          try {
+            customConfigVault[cfg].metadata = JSON.parse(await cfgFiles.metadata.text());
+          } catch(_) {}
         }
       }
 
@@ -4120,14 +1364,10 @@ function getManageRecordsHtml() {
             const configFolder = parts[parts.length - 2];
             const configBase = configFolder.replace(/_?(4|8|16)mb$/i, '');
             if (customConfigVault.hasOwnProperty(configBase)) {
-              const flashMatch = configFolder.match(/_?(4|8|16)mb$/i);
-              const flashSize = flashMatch ? flashMatch[1].toLowerCase() + "mb" : "8mb";
-
               if (!configFileMap[configBase]) configFileMap[configBase] = {};
-              if (!configFileMap[configBase][flashSize]) configFileMap[configBase][flashSize] = {};
-              if (name === 'firmware.bin')   configFileMap[configBase][flashSize].firmware = file;
-              if (name === 'fw_version.txt') configFileMap[configBase][flashSize].version  = file;
-              if (name === 'metadata.json')  configFileMap[configBase][flashSize].metadata = file;
+              if (name === 'firmware.bin')   configFileMap[configBase].firmware = file;
+              if (name === 'fw_version.txt') configFileMap[configBase].version  = file;
+              if (name === 'metadata.json')  configFileMap[configBase].metadata = file;
             }
           }
         } else if (entry.isDirectory) {
@@ -4152,19 +1392,17 @@ function getManageRecordsHtml() {
       }
 
       // Load config-specific binaries
-      for (const [cfg, sizeMap] of Object.entries(configFileMap)) {
-        for (const [size, cfgFiles] of Object.entries(sizeMap)) {
-          if (cfgFiles.firmware) {
-            const buf = await cfgFiles.firmware.arrayBuffer();
-            customConfigVault[cfg][size].binary = new Uint8Array(buf);
-            logToConsole(`✓ Config loaded (Drop): ${cfg}_${size}/firmware.bin (${(cfgFiles.firmware.size/1024).toFixed(1)} KB)`, "info");
-          }
-          if (cfgFiles.version) {
-            customConfigVault[cfg][size].version = (await cfgFiles.version.text()).trim();
-          }
-          if (cfgFiles.metadata) {
-            try { customConfigVault[cfg][size].metadata = JSON.parse(await cfgFiles.metadata.text()); } catch(_) {}
-          }
+      for (const [cfg, cfgFiles] of Object.entries(configFileMap)) {
+        if (cfgFiles.firmware) {
+          const buf = await cfgFiles.firmware.arrayBuffer();
+          customConfigVault[cfg].binary = new Uint8Array(buf);
+          logToConsole(`✓ Config loaded (Drop): ${cfg}/firmware.bin (${(cfgFiles.firmware.size/1024).toFixed(1)} KB)`, "info");
+        }
+        if (cfgFiles.version) {
+          customConfigVault[cfg].version = (await cfgFiles.version.text()).trim();
+        }
+        if (cfgFiles.metadata) {
+          try { customConfigVault[cfg].metadata = JSON.parse(await cfgFiles.metadata.text()); } catch(_) {}
         }
       }
 
@@ -4172,40 +1410,16 @@ function getManageRecordsHtml() {
       checkPreconditions();
       renderConfigMetadata();
       logToConsole(`Drop import completed. Loaded ${loadedCount} core binary files.`, "info");
-      focusFirstBarcodeInput();
     });
 
     chkEraseFlash.addEventListener("change", (e) => {
       logToConsole("[UI_EVENT] Erase Entire Flash option changed to: " + (e.target.checked ? "ENABLED" : "DISABLED"), "info");
-      const notice = document.getElementById("qcEraseNotice");
-      if (notice && e.target.checked) {
-        notice.style.display = "none";
-      }
-      updateFlowADesc();
       checkPreconditions();
     });
 
-    // Helper: update Flow A description based on QC detection + wipe checkbox state
-    function updateFlowADesc() {
-      const flowADesc = document.getElementById("flowADesc");
-      if (!flowADesc) return;
-      if (chkEraseFlash && chkEraseFlash.checked) {
-        flowADesc.textContent = `Wipes the chip completely, installs QC test firmware, runs all checks, then installs production software.`;
-      } else if (qcFirmwareAlreadyOnBoard) {
-        // QC firmware already on board — wipe is irrelevant, always skipped
-        flowADesc.innerHTML = `QC firmware already on board. Runs all checks and installs production software. <strong style="color:#34d399;">Chip wipe skipped</strong> (auto-disabled since QC firmware exists).`;
-      } else {
-        flowADesc.textContent = `Installs test software, runs all checks, then installs production software without wiping the chip.`;
-      }
-    }
-    // Run once on load so description matches the checkbox's default state
-    updateFlowADesc();
-
     // ── Helper: focus first barcode input for current tab after connect ──
     function focusFirstBarcodeInput() {
-      const vault = getVaultStatus();
-      if (!isConnected || !vault.ready) return;
-      
+      if (!isConnected) return;
       setTimeout(() => {
         if (currentTab === "boardqc") {
           if (testCfgEsp.checked && document.getElementById("barcodeGroupEsp").style.display !== 'none') {
@@ -4278,39 +1492,21 @@ function getManageRecordsHtml() {
         icon.textContent = "🔌";
         main.textContent = "Connect the board to this computer";
         sub.textContent = "Plug the board into the USB port, then click the \"Connect Board\" button on the left.";
-      } else if (isFlashing || isIntegrating) {
-        banner.classList.add("guidance-wait");
-        icon.textContent = "⌛";
-        main.textContent = "Testing in progress — please wait";
-        sub.textContent = "Do not disconnect the board or close this window. Follow any instructions that appear on screen.";
-      } else if (lastVerdict === "FAIL") {
-        banner.classList.add("guidance-fail");
-        icon.textContent = "❌";
-        main.textContent = "BOARD FAILED — Do not proceed!";
-        sub.textContent = "Click \"Disconnect\" or unplug the USB, download the QC log, label the board, and connect the next unit.";
-      } else if (lastVerdict === "PASS") {
-        if (currentTab === "boardqc") {
-          banner.classList.add("guidance-done");
-          icon.textContent = "🎉";
-          main.textContent = "QC Passed! Board Ready for Next Step";
-          sub.textContent = "Click \"🧹 Start Next Board\" to test another unit, or go to the \"📦 Enclosure Integration\" tab to flash production firmware.";
-        } else {
-          banner.classList.add("guidance-done");
-          icon.textContent = "🎉";
-          main.textContent = "Commissioned / Repaired Successfully! Ready for Next Unit";
-          sub.textContent = "Sync complete. Click \"Disconnect\" or unplug the board to connect the next unit.";
-        }
       } else if (currentTab === "boardqc" && !hasAllBarcodes) {
         banner.classList.add("guidance-info");
         icon.textContent = "🏷️";
         main.textContent = "Scan the barcode stickers on each board";
         sub.textContent = "Use your barcode scanner on the white sticker. The cursor moves automatically to the next field.";
-      } else if (currentTab === "boardqc" && hasAllBarcodes) {
+      } else if (currentTab === "boardqc" && hasAllBarcodes && !isFlashing) {
         banner.classList.add("guidance-action");
         icon.textContent = "🚀";
-        const btnLabel = (activeFlow === 'factory') ? "Start Test" : (testCfgEsp?.checked ? "Flash Production Firmware" : "Start Diagnostics Only");
-        main.textContent = `All set! Press "${btnLabel}" to begin`;
-        sub.textContent = "Make sure the correct option is selected (Board Testing = Full Test + Program, Update Software = App Update Only).";
+        main.textContent = "All set! Press \"Start Programming\" to begin";
+        sub.textContent = "Make sure the correct option is selected (New Board = Full Test, Updated = Software Only).";
+      } else if (isFlashing) {
+        banner.classList.add("guidance-wait");
+        icon.textContent = "⌛";
+        main.textContent = "Testing in progress — please wait";
+        sub.textContent = "Do not disconnect the board or close this window. Follow any instructions that appear on screen.";
       } else if (currentTab === "integration" && !box1Barcode?.value.trim()) {
         banner.classList.add("guidance-info");
         icon.textContent = "📦";
@@ -4329,7 +1525,42 @@ function getManageRecordsHtml() {
       }
     }
 
-    // (Obsolete result banner removed, replaced by verdictOverlay)
+    // ── Result Banner: big PASS/FAIL slide-up ──────────────────
+    function showResultBanner(verdict) {
+      // Build or retrieve the banner element
+      let banner = document.getElementById("resultBanner");
+      if (!banner) {
+        banner = document.createElement("div");
+        banner.id = "resultBanner";
+        document.body.appendChild(banner);
+      }
+
+      window._lastQcResult = verdict;
+
+      if (verdict === "PASS") {
+        banner.className = "result-pass visible";
+        banner.innerHTML = `
+          <div class="result-icon">✅</div>
+          <div>
+            <div>BOARD PASSED — TEST COMPLETE</div>
+            <div class="result-sub">Click \"Proceed to Flash App\" to install production software &bull; Click anywhere to dismiss</div>
+          </div>`;
+      } else {
+        banner.className = "result-fail visible";
+        banner.innerHTML = `
+          <div class="result-icon">❌</div>
+          <div>
+            <div>BOARD FAILED — DO NOT PROCEED</div>
+            <div class="result-sub">Download the QC Log and inform a supervisor &bull; Click anywhere to dismiss</div>
+          </div>`;
+      }
+
+      // Dismiss on click
+      banner.onclick = () => { banner.className = banner.className.replace(" visible", ""); };
+
+      updateStepTracker();
+      updateGuidanceBanner();
+    }
 
     // ── Scan pulse animation on barcode inputs ─────────────────
     function addScanPulse(input) {
@@ -4441,38 +1672,9 @@ function getManageRecordsHtml() {
       tracker.innerHTML = html;
     }
 
-    // Tab lock toast helper
-    let tabLockToastTimer = null;
-    function showTabLockToast() {
-      const toast = document.getElementById("tabLockToast");
-      if (!toast) return;
-      toast.classList.add("show");
-      clearTimeout(tabLockToastTimer);
-      tabLockToastTimer = setTimeout(() => toast.classList.remove("show"), 2200);
-    }
-
-    function setTabsLocked(locked) {
-      const allTabs = [tabBoardQC, tabIntegration, tabRepair, tabRepairBin];
-      allTabs.forEach(t => {
-        if (!t) return;
-        if (locked && !t.classList.contains("active")) {
-          t.classList.add("tab-locked");
-        } else {
-          t.classList.remove("tab-locked");
-        }
-      });
-    }
-
     // Tab switching event handlers
-    tabBoardQC.addEventListener("click", async () => {
-      if (isFlashing || isIntegrating) { showTabLockToast(); return; }
-      
-      // Clear console and disconnect port on tab switch
-      consoleDiv.innerHTML = "";
-      rawSerialLog = "";
-      _shownPhases.clear();
-      await disconnectPort();
-
+    tabBoardQC.addEventListener("click", () => {
+      if (isFlashing || isIntegrating) return;
       currentTab = "boardqc";
       tabBoardQC.classList.add("active");
       tabIntegration.classList.remove("active");
@@ -4506,19 +1708,12 @@ function getManageRecordsHtml() {
       updateInventoryStatusBadges();
       checkPreconditions();
       updateStepTracker();
-      focusFirstBarcodeInput();
+      if (isConnected) focusFirstBarcodeInput();
       logToConsole("Switched to Tab: Board-Level QC Mode", "info");
     });
 
-    tabIntegration.addEventListener("click", async () => {
-      if (isFlashing || isIntegrating) { showTabLockToast(); return; }
-      
-      // Clear console and disconnect port on tab switch
-      consoleDiv.innerHTML = "";
-      rawSerialLog = "";
-      _shownPhases.clear();
-      await disconnectPort();
-
+    tabIntegration.addEventListener("click", () => {
+      if (isFlashing || isIntegrating) return;
       currentTab = "integration";
       tabIntegration.classList.add("active");
       tabBoardQC.classList.remove("active");
@@ -4552,19 +1747,12 @@ function getManageRecordsHtml() {
       fetchRepairBinInventory();
       checkPreconditions();
       updateStepTracker();
-      focusFirstBarcodeInput();
+      if (isConnected) focusFirstBarcodeInput();
       logToConsole("Switched to Tab: Enclosure Integration Mode", "info");
     });
 
-    tabRepair.addEventListener("click", async () => {
-      if (isFlashing || isIntegrating) { showTabLockToast(); return; }
-      
-      // Clear console and disconnect port on tab switch
-      consoleDiv.innerHTML = "";
-      rawSerialLog = "";
-      _shownPhases.clear();
-      await disconnectPort();
-
+    tabRepair.addEventListener("click", () => {
+      if (isFlashing || isIntegrating) return;
       currentTab = "repair";
       tabRepair.classList.add("active");
       tabBoardQC.classList.remove("active");
@@ -4598,12 +1786,12 @@ function getManageRecordsHtml() {
       fetchRepairBinInventory();
       checkPreconditions();
       updateStepTracker();
-      focusFirstBarcodeInput();
+      if (isConnected) focusFirstBarcodeInput();
       logToConsole("Switched to Tab: Servicing & Repair Mode", "info");
     });
 
     tabRepairBin.addEventListener("click", () => {
-      if (isFlashing || isIntegrating) { showTabLockToast(); return; }
+      if (isFlashing || isIntegrating) return;
       currentTab = "repairbin";
       tabRepairBin.classList.add("active");
       tabBoardQC.classList.remove("active");
@@ -4689,57 +1877,25 @@ function getManageRecordsHtml() {
 
     box1Barcode.addEventListener("change", (e) => {
       const val = e.target.value.trim();
-      if (val) {
-        lookupBoxConfiguration(val, true);
-        setTimeout(() => {
-          if (assocEspBarcode && assocEspBarcode.offsetHeight > 0) {
-            assocEspBarcode.focus();
-            assocEspBarcode.select();
-          }
-        }, 350);
-      }
+      if (val) lookupBoxConfiguration(val, true);
     });
 
     box1Barcode.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         const val = e.target.value.trim();
-        if (val) {
-          lookupBoxConfiguration(val, true);
-          setTimeout(() => {
-            if (assocEspBarcode && assocEspBarcode.offsetHeight > 0) {
-              assocEspBarcode.focus();
-              assocEspBarcode.select();
-            }
-          }, 350);
-        }
+        if (val) lookupBoxConfiguration(val, true);
       }
     });
 
     box2Barcode.addEventListener("change", (e) => {
       const val = e.target.value.trim();
-      if (val) {
-        lookupBoxConfiguration(val, false);
-        setTimeout(() => {
-          if (assocBatt1Barcode && assocBatt1Barcode.offsetHeight > 0) {
-            assocBatt1Barcode.focus();
-            assocBatt1Barcode.select();
-          }
-        }, 350);
-      }
+      if (val) lookupBoxConfiguration(val, false);
     });
 
     box2Barcode.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         const val = e.target.value.trim();
-        if (val) {
-          lookupBoxConfiguration(val, false);
-          setTimeout(() => {
-            if (assocBatt1Barcode && assocBatt1Barcode.offsetHeight > 0) {
-              assocBatt1Barcode.focus();
-              assocBatt1Barcode.select();
-            }
-          }, 350);
-        }
+        if (val) lookupBoxConfiguration(val, false);
       }
     });
 
@@ -4749,71 +1905,6 @@ function getManageRecordsHtml() {
     assocBatt1Barcode.addEventListener("input", checkPreconditions);
     assocBatt2Barcode.addEventListener("input", checkPreconditions);
     assocMpptBarcode.addEventListener("input", checkPreconditions);
-
-    // --- Integration Tab: Sub-component barcode Enter-key autofocus chain ---
-    function addIntegrationEnterFocus(fromEl, toEl) {
-      const advance = () => {
-        if (fromEl.value.trim() && document.activeElement === fromEl) {
-          if (toEl && toEl.offsetHeight > 0) {
-            toEl.focus();
-            toEl.select();
-          } else {
-            if (btnStartIntegration && !btnStartIntegration.disabled) {
-              btnStartIntegration.focus();
-            }
-          }
-        }
-      };
-      fromEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          if (fromEl.value.trim()) {
-            e.preventDefault();
-            advance();
-          }
-        }
-      });
-      fromEl.addEventListener("change", () => {
-        advance();
-      });
-    }
-    addIntegrationEnterFocus(assocEspBarcode,   assocGprsBarcode);
-    addIntegrationEnterFocus(assocGprsBarcode,  assocNuvBarcode);
-    addIntegrationEnterFocus(assocNuvBarcode,   box2Barcode);
-    addIntegrationEnterFocus(assocBatt1Barcode, assocBatt2Barcode);
-    addIntegrationEnterFocus(assocBatt2Barcode, assocMpptBarcode);
-
-    // --- Integration Mode selector logic ---
-    const integrationModeRadios = document.querySelectorAll('input[name="integrationMode"]');
-    integrationModeRadios.forEach(radio => {
-      radio.addEventListener("change", (e) => {
-        const mode = e.target.value;
-        if (mode === "both") {
-          integrationBox1Group.style.display = "block";
-          integrationBox2Group.style.display = "block";
-          chkIntegrationFlashEsp32.checked = true;
-          chkIntegrationFlashEsp32.disabled = false;
-          setTimeout(() => { box1Barcode.focus(); box1Barcode.select(); }, 50);
-        } else if (mode === "box1") {
-          integrationBox1Group.style.display = "block";
-          integrationBox2Group.style.display = "none";
-          chkIntegrationFlashEsp32.checked = true;
-          chkIntegrationFlashEsp32.disabled = false;
-          setTimeout(() => { box1Barcode.focus(); box1Barcode.select(); }, 50);
-        } else if (mode === "box2") {
-          integrationBox1Group.style.display = "none";
-          integrationBox2Group.style.display = "block";
-          chkIntegrationFlashEsp32.checked = false;
-          chkIntegrationFlashEsp32.disabled = false;
-          setTimeout(() => { box2Barcode.focus(); box2Barcode.select(); }, 50);
-        }
-        updateInventoryStatusBadges();
-        checkPreconditions();
-      });
-    });
-
-    chkIntegrationFlashEsp32.addEventListener("change", () => {
-      checkPreconditions();
-    });
 
 
     async function lookupRepairBoxConfiguration(boxBarcode, isBox1 = true) {
@@ -5170,14 +2261,14 @@ function getManageRecordsHtml() {
           status: newStatus
         };
 
-        await fetchWithTimeout(url, {
+        await fetch(url, {
           method: "POST",
           mode: "no-cors",
           headers: {
             "Content-Type": "application/json"
           },
           body: JSON.stringify(payload)
-        }, 8000);
+        });
 
         logToConsole(`✓ Successfully updated status to ${newStatus}. Refreshing inventory...`, "info");
         
@@ -5730,10 +2821,7 @@ function getManageRecordsHtml() {
     function getKeypadSweepHTML(keyName) {
       return `
         ⌨️ <b>Keypad Sweep</b>: Press the <b>${keyName}</b> key on the keypad.<br><br>
-        <div style="font-size:0.76rem; color:var(--text-muted); border-top:1px solid rgba(255,255,255,0.06); padding-top:0.6rem;">
-          🎹 Keyboard override: Press key <strong style="color:var(--success);">[Y]</strong> to Skip/Pass, <strong style="color:var(--danger);">[N]</strong> to Force Fail.
-        </div>
-        <div style="display:none;">
+        <div style="display:flex; gap:0.4rem; align-items:center; margin-top:0.4rem;">
           <button class="btn btn-secondary" id="btnOverrideKeypadPass" style="font-size:0.72rem; padding:0.25rem 0.5rem; width:auto; text-transform:none; border-color:var(--success-glow); color:#a7f3d0;">✓ Skip/Pass Sweep [Y]</button>
           <button class="btn btn-secondary" id="btnOverrideKeypadFail" style="font-size:0.72rem; padding:0.25rem 0.5rem; width:auto; text-transform:none; border-color:var(--danger-glow); color:#fca5a5;">✗ Force Fail [N]</button>
         </div>
@@ -5764,50 +2852,25 @@ function getManageRecordsHtml() {
         testDuration = Math.round((Date.now() - testStartTime) / 1000);
       }
       
-      const timeStr = `Test completed in <b>${testDuration}s</b>.`;
+      verdictTitle.textContent = verdict === "PASS" ? "BOARD PASS" : "BOARD FAIL";
       
-      if (verdict === "PENDING") {
-        verdictTitle.textContent = "SYNCING...";
-        verdictTitle.style.color = "var(--warning)";
-        verdictBox.style.borderColor = "var(--warning)";
-        verdictBox.style.boxShadow = "0 0 40px rgba(245,158,11,0.3)";
-        verdictSub.innerHTML = `${details ? details + '<br><br>' : ''}${timeStr}`;
-        if (verdictActions) verdictActions.style.display = "none";
+      const timeStr = `Test completed in <b>${testDuration}s</b>.`;
+      verdictSub.innerHTML = `${details ? details + '<br><br>' : ''}${timeStr}`;
+      
+      lastVerdict = verdict;
+      
+      if (verdict === "PASS") {
+        verdictTitle.style.color = "var(--success)";
+        verdictBox.style.borderColor = "var(--success)";
+        verdictBox.style.boxShadow = "0 0 40px var(--success-glow)";
+        playSuccessChime();
+        incrementPassTally();
       } else {
-        verdictTitle.textContent = verdict === "PASS" ? "BOARD PASS" : "BOARD FAIL";
-        lastVerdict = verdict;
-        
-        let nextBoardInstructions = `
-          <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 0.5rem; padding: 0.75rem 1rem; font-size: 0.8rem; text-align: left; margin-top: 1.25rem; line-height: 1.45; color: var(--text-color); width: 100%; box-sizing: border-box;">
-            <strong style="color: var(--primary); display: block; margin-bottom: 0.35rem; font-size: 0.85rem;">👉 Procedure for Next Board:</strong>
-            1. Swap the board in the testing jig socket.<br>
-            2. Click the <strong>🧹 Start Next Board</strong> button below (or on the main page) to prepare the UI.<br>
-            3. Scan the new barcode(s) and press <strong>🚀 Start Test</strong> (or <strong>▶ Start Diagnostics</strong>).
-          </div>
-        `;
-        
-        verdictSub.innerHTML = `${details ? details + '<br><br>' : ''}${timeStr}${nextBoardInstructions}`;
-        
-        if (verdict === "PASS") {
-          verdictTitle.style.color = "var(--success)";
-          verdictBox.style.borderColor = "var(--success)";
-          verdictBox.style.boxShadow = "0 0 40px var(--success-glow)";
-          playSuccessChime();
-          incrementPassTally();
-        } else {
-          verdictTitle.style.color = "var(--danger)";
-          verdictBox.style.borderColor = "var(--danger)";
-          verdictBox.style.boxShadow = "0 0 40px var(--danger-glow)";
-          playFailureChime();
-          incrementFailTally();
-        }
-
-        if (verdictActions) {
-          verdictActions.style.display = "flex";
-          if (btnVerdictIntegration) {
-            btnVerdictIntegration.style.display = (verdict === "PASS" && currentTab === "boardqc") ? "" : "none";
-          }
-        }
+        verdictTitle.style.color = "var(--danger)";
+        verdictBox.style.borderColor = "var(--danger)";
+        verdictBox.style.boxShadow = "0 0 40px var(--danger-glow)";
+        playFailureChime();
+        incrementFailTally();
       }
       verdictOverlay.style.display = "flex";
     }
@@ -5825,23 +2888,6 @@ function getManageRecordsHtml() {
         logToConsole(`Failed to copy: ${err.message}`, "error");
       }
     });
-
-    // fetch helper with AbortController timeout
-    async function fetchWithTimeout(url, options, timeoutMs = 8000) {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        const response = await fetch(url, {
-          ...options,
-          signal: controller.signal
-        });
-        clearTimeout(id);
-        return response;
-      } catch (err) {
-        clearTimeout(id);
-        throw err;
-      }
-    }
 
     // Offline Sync Queue Helpers
     function getOfflineQueue() {
@@ -5895,14 +2941,14 @@ function getManageRecordsHtml() {
       let successfulIds = [];
       for (const item of queue) {
         try {
-          await fetchWithTimeout(item.url, {
+          await fetch(item.url, {
             method: "POST",
             mode: "no-cors",
             headers: {
               "Content-Type": "application/json"
             },
             body: JSON.stringify(item.payload)
-          }, 8000);
+          });
           successfulIds.push(item.id);
           logToConsole(`✓ Offline record synced to Google Sheets.`, "info");
         } catch (err) {
@@ -5969,14 +3015,14 @@ function getManageRecordsHtml() {
       };
       
       try {
-        await fetchWithTimeout(url, {
+        await fetch(url, {
           method: "POST",
           mode: "no-cors",
           headers: {
             "Content-Type": "application/json"
           },
           body: JSON.stringify(payload)
-        }, 8000);
+        });
         logToConsole("✓ Successfully synced data to Google Sheet!", "info");
         return true;
       } catch (err) {
@@ -6006,9 +3052,6 @@ function getManageRecordsHtml() {
     const _shownPhases = new Set();
 
     function logToConsole(message, type = "normal") {
-      if (message && (message.includes("Failed to execute 'open'") || message.includes("Failed to open serial port"))) {
-        message += " — ⚠️ PORT LOCKED: This serial port is likely occupied by another process (e.g. Arduino IDE Serial Monitor, or another terminal/app). Please close all conflicting programs and try again.";
-      }
       // Inject phase separator heading if this line triggers a new phase
       for (const [trigger, label, color] of PHASE_TRIGGERS) {
         if (!_shownPhases.has(trigger) && message.includes(trigger)) {
@@ -6022,9 +3065,7 @@ function getManageRecordsHtml() {
       }
 
       const p = document.createElement("div");
-      if (message.includes("QC TEST FIRMWARE") && message.includes("START")) {
-        p.style.cssText = "color: hsl(200, 95%, 65%); font-weight: bold; font-size: 0.95rem; text-shadow: 0 0 8px rgba(0, 180, 255, 0.4); border-bottom: 1px solid rgba(0, 180, 255, 0.3); padding-bottom: 3px; margin: 8px 0;";
-      } else if (type === "error") p.className = "console-err";
+      if (type === "error") p.className = "console-err";
       else if (type === "warning") p.className = "console-warn";
       else if (type === "info") p.className = "console-info";
 
@@ -6181,19 +3222,14 @@ function getManageRecordsHtml() {
         activeFlow = opt.getAttribute("data-flow");
         const flowNames = { factory: 'Option 1 (Factory Flash)', upgrade: 'Option 2 (App Update)', gprs_debug: 'Option 3 (GPRS Debug)' };
         logToConsole(`Selected Mode: ${flowNames[activeFlow] || activeFlow}`, "info");
-        // Update the selected mode badge
-        const selLabel = document.getElementById("selectedModeLabel");
-        if (selLabel) selLabel.textContent = flowNames[activeFlow] || activeFlow;
         // Hide force-flash checkbox for non-factory flows
         forceFlashContainer.style.display = (activeFlow === 'factory') ? 'flex' : 'none';
-        updateFlowADesc();
         checkPreconditions();
       });
     });
 
     function getVaultStatus() {
-      const hasBoot = fileVault["bootloader.bin"] || fileVault["bootloader_8mb.bin"] || fileVault["bootloader_16mb.bin"];
-      const hasCore = hasBoot && fileVault["boot_app0.bin"];
+      const hasCore = fileVault["bootloader.bin"] && fileVault["boot_app0.bin"];
       const has4 = fileVault["partitions_4mb.bin"] && fileVault["qc_test_4mb.bin"] && fileVault["production_4mb.bin"];
       const has8 = fileVault["partitions_8mb.bin"] && fileVault["qc_test_8mb.bin"] && fileVault["production_8mb.bin"];
       const has16 = fileVault["partitions_16mb.bin"] && fileVault["qc_test_16mb.bin"] && fileVault["production_16mb.bin"];
@@ -6209,8 +3245,6 @@ function getManageRecordsHtml() {
     function checkPreconditions() {
       updateStepTracker();
       updateGuidanceBanner();
-      // Lock/unlock tab bar based on active run state
-      setTabsLocked(isFlashing || isIntegrating);
       // 1. If we are currently in an active flash or integration run
       if (isFlashing || isIntegrating) {
         btnStart.disabled = true;
@@ -6352,8 +3386,7 @@ function getManageRecordsHtml() {
             if (activeFlow === 'factory') {
               const partKey = `partitions_${currentChipSize}mb.bin`;
               const testKey = `qc_test_${currentChipSize}mb.bin`;
-              const bootKey = fileVault[`bootloader_${currentChipSize}mb.bin`] ? `bootloader_${currentChipSize}mb.bin` : "bootloader.bin";
-              if (fileVault[bootKey] && fileVault["boot_app0.bin"] && fileVault[partKey] && fileVault[testKey]) {
+              if (fileVault["bootloader.bin"] && fileVault["boot_app0.bin"] && fileVault[partKey] && fileVault[testKey]) {
                 canStart = true;
               }
             } else {
@@ -6368,14 +3401,7 @@ function getManageRecordsHtml() {
           }
         }
         
-        // ── Diagnostics actively running → btnStart becomes Stop button ──
-        if (!cancelReadLoop) {
-          btnStart.disabled = false;
-          btnStart.className = "btn btn-danger";
-          btnStart.textContent = "⏹ Stop Diagnostics";
-          btnStart.classList.remove("pulse-green-button");
-          cardProgramming.classList.remove("step-ready-card");
-        } else if (canStart) {
+        if (canStart) {
           btnStart.disabled = false;
           btnStart.classList.add("pulse-green-button");
           cardProgramming.classList.add("step-ready-card");
@@ -6385,50 +3411,63 @@ function getManageRecordsHtml() {
           cardProgramming.classList.remove("step-ready-card");
         }
 
-        // Action Text (only applies when diagnostics NOT running)
-        if (cancelReadLoop) {
-          if (!testerNameVal) {
-            btnStart.disabled = true;
-            btnStart.textContent = "🚀 Enter Tester Name";
-            btnStart.classList.remove("pulse-green-button");
-          } else if (!barcodesValid) {
-            btnStart.disabled = true;
-            btnStart.textContent = missingBarcodeMsg;
-            btnStart.classList.remove("pulse-green-button");
-          } else if (!isConnected) {
-            btnStart.disabled = true;
-            btnStart.textContent = "🔌 Connect Board First";
-            btnStart.classList.remove("pulse-green-button");
-          } else if (espEnabled && !vault.ready) {
-            btnStart.disabled = true;
-            btnStart.textContent = "⚠️ Load Firmware in Step 1";
-            btnStart.classList.remove("pulse-green-button");
-          } else {
-            // All conditions met
-            if (espEnabled) {
-              btnStart.textContent = (activeFlow === 'factory') ? "🚀 Start Test" : "🚀 Flash Production Firmware";
+        // Diagnostics Button (Right Panel widget)
+        if (!isConnected) {
+          btnStartDiag.disabled = true;
+          btnStartDiag.className = "btn btn-primary";
+          btnStartDiag.textContent = "▶ Start Diagnostics";
+        } else if (!cancelReadLoop) {
+          btnStartDiag.disabled = false;
+          btnStartDiag.className = "btn btn-danger";
+          btnStartDiag.textContent = "⏹ Stop Diagnostics";
+        } else {
+          btnStartDiag.disabled = !barcodesValid;
+          btnStartDiag.className = "btn btn-primary";
+          btnStartDiag.textContent = missingBarcodeMsg ? missingBarcodeMsg : "▶ Start Diagnostics";
+        }
+
+        // Action Text and States Resolution based on Tester Name, Barcodes, and Connection
+        if (!testerNameVal) {
+          btnStart.disabled = true;
+          btnStart.textContent = "🚀 Enter Tester Name";
+          btnStart.classList.remove("pulse-green-button");
+          if (cancelReadLoop) {
+            btnStartDiag.disabled = true;
+            btnStartDiag.textContent = "▶ Enter Tester Name";
+          }
+        } else if (!barcodesValid) {
+          btnStart.disabled = true;
+          btnStart.textContent = missingBarcodeMsg;
+          btnStart.classList.remove("pulse-green-button");
+          if (cancelReadLoop) {
+            btnStartDiag.disabled = true;
+            btnStartDiag.textContent = missingBarcodeMsg;
+          }
+        } else if (!isConnected) {
+          btnStart.disabled = true;
+          btnStart.textContent = "🔌 Connect Board First";
+          btnStart.classList.remove("pulse-green-button");
+        } else if (espEnabled && !vault.ready) {
+          btnStart.disabled = true;
+          btnStart.textContent = "⚠️ Load Firmware in Step 1";
+          btnStart.classList.remove("pulse-green-button");
+        } else {
+          // All conditions passed
+          if (espEnabled) {
+            if (activeFlow === 'factory') {
+              btnStart.textContent = "🚀 Start Factory Program & Test";
             } else {
-              btnStart.textContent = "▶ Start Diagnostics";
+              btnStart.textContent = "🚀 Flash Production Firmware";
             }
+          } else {
+            btnStart.textContent = "▶ Start Diagnostics Only";
+          }
+          
+          if (cancelReadLoop) {
+            btnStartDiag.textContent = "▶ Start Diagnostics";
           }
         }
-
-        // ── Standalone mode: hide/show flow selector, erase checkbox
-        const flowSel       = document.querySelector(".flow-selector");
-        const eraseBox      = document.getElementById("forceFlashContainer");
-        const stHint        = document.getElementById("standaloneHint");
-        if (espEnabled) {
-          if (flowSel)  flowSel.style.display  = "";
-          if (eraseBox) eraseBox.style.display = "";
-          if (stHint)   stHint.style.display   = "none";
-          if (cancelReadLoop) btnStart.className = "btn btn-success";
-        } else {
-          if (flowSel)  flowSel.style.display  = "none";
-          if (eraseBox) eraseBox.style.display = "none";
-          if (stHint)   stHint.style.display   = "block";
-          if (cancelReadLoop) btnStart.className = canStart ? "btn btn-primary pulse-green-button" : "btn btn-primary";
-        }
-
+        
         btnStartIntegration.disabled = true;
         btnStartRepair.disabled = true;
       } else if (currentTab === "integration") {
@@ -6444,30 +3483,13 @@ function getManageRecordsHtml() {
         const nBar = assocNuvBarcode.value.trim();
         const mpptBar = assocMpptBarcode.value.trim();
 
-        // Check active mode
-        const mode = document.querySelector('input[name="integrationMode"]:checked')?.value || "both";
-        const shouldFlashEsp32 = chkIntegrationFlashEsp32.checked;
+        // Must be connected, have tester name, have box barcodes, and required components filled
+        const hasInputs = b1 && b2 && eBar && gBar && nBar && mpptBar;
 
-        // Must be connected, have tester name, have box barcodes, and required components filled depending on mode
-        let hasInputs = false;
-        let isDuplicateBox = false;
-        let boardBarcodes = [];
-
-        if (mode === "both") {
-          hasInputs = b1 && b2 && eBar && gBar && nBar && mpptBar;
-          isDuplicateBox = (b1 && b2 && b1 === b2);
-          boardBarcodes = [eBar, gBar, nBar, mpptBar].filter(Boolean);
-        } else if (mode === "box1") {
-          hasInputs = b1 && eBar && gBar && nBar;
-          isDuplicateBox = false;
-          boardBarcodes = [eBar, gBar, nBar].filter(Boolean);
-        } else if (mode === "box2") {
-          hasInputs = b2 && mpptBar;
-          isDuplicateBox = false;
-          boardBarcodes = [mpptBar].filter(Boolean);
-        }
-
+        // Check for duplicate scanned boxes or boards in Integration
+        const isDuplicateBox = (b1 && b2 && b1 === b2);
         let isDuplicateBoard = false;
+        const boardBarcodes = [eBar, gBar, nBar, mpptBar].filter(Boolean);
         const uniqueBoards = new Set(boardBarcodes);
         if (boardBarcodes.length !== uniqueBoards.size) {
           isDuplicateBoard = true;
@@ -6475,13 +3497,10 @@ function getManageRecordsHtml() {
         
         // Check if selected config firmware is available in vault (either customConfigVault or production app)
         const activeConfig = releaseConfigSel?.value;
-        const sizeEntry = activeConfig ? (customConfigVault[activeConfig][`${currentChipSize}mb`] || customConfigVault[activeConfig]["8mb"]) : null;
-        const hasProductionBin = (sizeEntry && sizeEntry.binary) || fileVault[`production_${currentChipSize}mb.bin`];
+        const configData = activeConfig ? customConfigVault[activeConfig] : null;
+        const hasProductionBin = (configData && configData.binary) || fileVault[`production_${currentChipSize}mb.bin`];
 
-        const needBin = shouldFlashEsp32;
-        const binOk = !needBin || hasProductionBin;
-
-        const canIntegrate = isConnected && testerNameVal && hasInputs && binOk && !hasInventoryBlocker && !isDuplicateBox && !isDuplicateBoard;
+        const canIntegrate = isConnected && testerNameVal && hasInputs && hasProductionBin && !hasInventoryBlocker && !isDuplicateBox && !isDuplicateBoard;
 
         if (canIntegrate) {
           btnStartIntegration.disabled = false;
@@ -6503,12 +3522,12 @@ function getManageRecordsHtml() {
           btnStartIntegration.textContent = "⚠️ Duplicate board serials";
         } else if (hasInventoryBlocker) {
           btnStartIntegration.textContent = "⚠️ Failed Board Detected";
-        } else if (needBin && !hasProductionBin) {
+        } else if (!hasProductionBin) {
           btnStartIntegration.textContent = "⚠️ Load Production Firmware";
         } else if (!hasInputs) {
           btnStartIntegration.textContent = "⚠️ Fill Box & Board Barcodes";
         } else {
-          btnStartIntegration.textContent = shouldFlashEsp32 ? "⚡ Flash Production & Run Verify" : "⚡ Run Verification Only";
+          btnStartIntegration.textContent = "⚡ Flash Production & Run Verify";
         }
       } else {
         // --- Tab 3: Repair Preconditions ---
@@ -6538,8 +3557,8 @@ function getManageRecordsHtml() {
 
         // Check if selected config firmware is available in vault
         const activeConfig = releaseConfigSel?.value;
-        const sizeEntry = activeConfig ? (customConfigVault[activeConfig][`${currentChipSize}mb`] || customConfigVault[activeConfig]["8mb"]) : null;
-        const hasProductionBin = (sizeEntry && sizeEntry.binary) || fileVault[`production_${currentChipSize}mb.bin`];
+        const configData = activeConfig ? customConfigVault[activeConfig] : null;
+        const hasProductionBin = (configData && configData.binary) || fileVault[`production_${currentChipSize}mb.bin`];
 
         const canRepair = isConnected && testerNameVal && hasInputs && hasProductionBin && !hasInventoryBlocker && !isDuplicateBox && !isDuplicateBoard;
 
@@ -6652,17 +3671,14 @@ function getManageRecordsHtml() {
     testCfgEsp.addEventListener("change", (e) => {
       logToConsole("[UI_EVENT] ESP32 subsystem selection changed to: " + (e.target.checked ? "ENABLED" : "DISABLED"), "info");
       updateSubsystemUI();
-      focusFirstBarcodeInput();
     });
     testCfgGprs.addEventListener("change", (e) => {
       logToConsole("[UI_EVENT] GPRS subsystem selection changed to: " + (e.target.checked ? "ENABLED" : "DISABLED"), "info");
       updateSubsystemUI();
-      focusFirstBarcodeInput();
     });
     testCfgNuvoton.addEventListener("change", (e) => {
       logToConsole("[UI_EVENT] Nuvoton subsystem selection changed to: " + (e.target.checked ? "ENABLED" : "DISABLED"), "info");
       updateSubsystemUI();
-      focusFirstBarcodeInput();
     });
     
     // Add input event listeners to Board QC barcode fields for instant validation response
@@ -6776,46 +3792,41 @@ function getManageRecordsHtml() {
       // Attempt to auto-load all config releases from server
       const configKeys = Object.keys(customConfigVault);
       let loadedConfigsCount = 0;
-      const configPromises = [];
-      for (const cfg of configKeys) {
-        for (const size of ["4mb", "8mb", "16mb"]) {
-          configPromises.push((async () => {
-            const folderName = `${cfg}_${size}`;
-            try {
-              // Resolve correct prefix path
-              let prefix = `./${folderName}`;
-              let binRes = await fetch(`${prefix}/firmware.bin`);
-              if (!binRes.ok) {
-                prefix = `./WEB_FLASH_FILES/${folderName}`;
-                binRes = await fetch(`${prefix}/firmware.bin`);
-              }
+      const configPromises = configKeys.map(async (cfg) => {
+        const folderName = `${cfg}_8mb`;
+        try {
+          // Resolve correct prefix path
+          let prefix = `./${folderName}`;
+          let binRes = await fetch(`${prefix}/firmware.bin`);
+          if (!binRes.ok) {
+            prefix = `./WEB_FLASH_FILES/${folderName}`;
+            binRes = await fetch(`${prefix}/firmware.bin`);
+          }
 
-              if (binRes.ok) {
-                const [verRes, metaRes] = await Promise.all([
-                  fetch(`${prefix}/fw_version.txt`),
-                  fetch(`${prefix}/metadata.json`)
-                ]);
+          if (binRes.ok) {
+            const [verRes, metaRes] = await Promise.all([
+              fetch(`${prefix}/fw_version.txt`),
+              fetch(`${prefix}/metadata.json`)
+            ]);
 
-                if (verRes.ok && metaRes.ok) {
-                  const [binBuf, verTxt, metaJson] = await Promise.all([
-                    binRes.arrayBuffer(),
-                    verRes.text(),
-                    metaRes.json()
-                  ]);
+            if (verRes.ok && metaRes.ok) {
+              const [binBuf, verTxt, metaJson] = await Promise.all([
+                binRes.arrayBuffer(),
+                verRes.text(),
+                metaRes.json()
+              ]);
 
-                  customConfigVault[cfg][size].binary = new Uint8Array(binBuf);
-                  customConfigVault[cfg][size].version = verTxt.trim();
-                  customConfigVault[cfg][size].metadata = metaJson;
-                  loadedConfigsCount++;
-                  logToConsole(`✓ Auto-loaded config "${cfg}" (${size}) from "${prefix}/"`, "info");
-                }
-              }
-            } catch (err) {
-              // Quietly ignore if this config isn't on the server
+              customConfigVault[cfg].binary = new Uint8Array(binBuf);
+              customConfigVault[cfg].version = verTxt.trim();
+              customConfigVault[cfg].metadata = metaJson;
+              loadedConfigsCount++;
+              logToConsole(`✓ Auto-loaded config "${cfg}" from "${prefix}/"`, "info");
             }
-          })());
+          }
+        } catch (err) {
+          // Quietly ignore if this config isn't on the server
         }
-      }
+      });
 
       await Promise.all([...loadPromises, loadVerPromise, ...configPromises]);
       
@@ -6833,7 +3844,6 @@ function getManageRecordsHtml() {
       updateFileVaultDisplay();
       renderConfigMetadata();
       checkPreconditions();
-      focusFirstBarcodeInput();
     }
 
     // --- Directory Scanner (File System Access API) ---
@@ -6857,7 +3867,7 @@ function getManageRecordsHtml() {
       for (let depth = 0; depth < 3; depth++) {
         let hasCoreFiles = false;
         for await (const entry of targetDirHandle.values()) {
-          if (entry.kind === 'file' && (entry.name === 'bootloader.bin' || entry.name.startsWith('bootloader_') || entry.name === 'boot_app0.bin')) {
+          if (entry.kind === 'file' && (entry.name === 'bootloader.bin' || entry.name === 'boot_app0.bin')) {
             hasCoreFiles = true;
             break;
           }
@@ -6917,9 +3927,6 @@ function getManageRecordsHtml() {
         const configBase = entry.name.replace(/_?(4|8|16)mb$/i, '');
         if (!customConfigVault.hasOwnProperty(configBase)) continue;
 
-        const flashMatch = entry.name.match(/_?(4|8|16)mb$/i);
-        const flashSize = flashMatch ? flashMatch[1].toLowerCase() + "mb" : "8mb";
-
         // Scan files inside this config subdirectory
         try {
           const subDir = await targetDirHandle.getDirectoryHandle(entry.name);
@@ -6928,15 +3935,15 @@ function getManageRecordsHtml() {
             const subFile = await subEntry.getFile();
             if (subEntry.name === 'firmware.bin') {
               const buf = await subFile.arrayBuffer();
-              customConfigVault[configBase][flashSize].binary = new Uint8Array(buf);
-              logToConsole(`✓ Config loaded: ${configBase}_${flashSize}/firmware.bin (${(subFile.size/1024).toFixed(1)} KB)`, "info");
+              customConfigVault[configBase].binary = new Uint8Array(buf);
+              logToConsole(`✓ Config loaded: ${configBase}/firmware.bin (${(subFile.size/1024).toFixed(1)} KB)`, "info");
               configCount++;
             }
             if (subEntry.name === 'fw_version.txt') {
-              customConfigVault[configBase][flashSize].version = (await subFile.text()).trim();
+              customConfigVault[configBase].version = (await subFile.text()).trim();
             }
             if (subEntry.name === 'metadata.json') {
-              try { customConfigVault[configBase][flashSize].metadata = JSON.parse(await subFile.text()); } catch(_) {}
+              try { customConfigVault[configBase].metadata = JSON.parse(await subFile.text()); } catch(_) {}
             }
           }
         } catch (err) {
@@ -6955,7 +3962,6 @@ function getManageRecordsHtml() {
       updateFileVaultDisplay();
       checkPreconditions();
       renderConfigMetadata();
-      focusFirstBarcodeInput();
     }
 
     // --- WebSerial Connection Toggle ---
@@ -6978,11 +3984,6 @@ function getManageRecordsHtml() {
     }
 
     async function connectPort() {
-      // Clear console when connecting to a new board
-      consoleDiv.innerHTML = "";
-      rawSerialLog = "";
-      _shownPhases.clear();
-
       try {
         logToConsole("Requesting port access...", "normal");
         port = await navigator.serial.requestPort();
@@ -7003,9 +4004,6 @@ function getManageRecordsHtml() {
         
         const chip = await esploader.main();
         logToConsole(`Chip type detected: ${chip}`, "info");
-        
-        lastVerdict = "PENDING";
-        appFlashedSuccessfully = false;
         
         // Read MAC Address
         const macStr = (await esploader.chip.readMac(esploader)).toUpperCase();
@@ -7028,7 +4026,6 @@ function getManageRecordsHtml() {
         
         isConnected = true;
         btnResetBoard.style.display = "block";
-        btnClearNextBoard.style.display = "block";
         const statusDiv = document.getElementById("headerShortStatus");
         if (statusDiv) {
           statusDiv.innerHTML = `<span>MAC: <strong style="color: var(--success);">${macStr}</strong></span> | <span>Size: <strong style="color: var(--primary);">${currentChipSize}MB</strong></span>`;
@@ -7037,7 +4034,6 @@ function getManageRecordsHtml() {
         checkPreconditions();
         updateStepTracker();
         focusFirstBarcodeInput();
-        await checkQcFirmwarePresence();
       } catch (err) {
         logToConsole(`Connection error: ${err.message}`, "error");
       }
@@ -7082,7 +4078,6 @@ function getManageRecordsHtml() {
     });
 
     async function stopDiagnostics() {
-      logToConsole("--- ABORTING DIAGNOSTICS RUN ---", "warning");
       cancelReadLoop = true;
       if (activeReader) {
         try {
@@ -7097,35 +4092,8 @@ function getManageRecordsHtml() {
         try { await port.close(); } catch (e) {}
       }
       
-      isFlashing = false;
-      isIntegrating = false;
-
-      // Reset Board QC checklist badge displays to fail or aborted
-      const activeChecklist = ["chkSpiffs","chkSd","chkRtc","chkWifi","chkSensor","chkWindSpd","chkWindDir","chkBatt","chkSys3v3","chkSolar","chkGprs","chkLcd","chkKeypad","chkRf","chkSleep"];
-      activeChecklist.forEach(id => {
-        const badge = document.getElementById(id);
-        const val = document.getElementById(id.replace("chk", "val"));
-        if (badge && val && badge.textContent === "Waiting...") {
-          setCheckState(badge, val, "fail", "ABORTED");
-        }
-      });
-
-      // Reset Integration/Repair checklist badges to ABORTED
-      const integrationChecklist = [
-        { widget: intChkBoot, badge: intValBoot },
-        { widget: intChkBatt, badge: intValBatt },
-        { widget: intChkSolar, badge: intValSolar },
-        { widget: intChkSync, badge: intValSync }
-      ];
-      integrationChecklist.forEach(item => {
-        if (item.badge && item.badge.textContent === "Waiting...") {
-          setIntegrationCheckState(item.widget, item.badge, "fail", "ABORTED");
-        }
-      });
-
-      logToConsole("Diagnostics run stopped by operator.", "info");
+      logToConsole("Diagnostics stopped. Serial connection remains open.", "normal");
       checkPreconditions();
-      updateStepTracker();
     }
 
     async function disconnectPort() {
@@ -7151,27 +4119,14 @@ function getManageRecordsHtml() {
       transport = null;
       esploader = null;
       isConnected = false;
-      lastVerdict = "PENDING";
-      appFlashedSuccessfully = false;
       metaMac.textContent = "--:--:--:--:--:--";
       metaFlashSize.textContent = "-- MB";
-      clearAllBarcodes();
+      if (barcodeEsp) barcodeEsp.value = "";
+      if (barcodeGprs) barcodeGprs.value = "";
+      if (barcodeNuvoton) barcodeNuvoton.value = "";
       btnResetBoard.style.display = "none";
-      btnClearNextBoard.style.display = "none";
-      qcFirmwareAlreadyOnBoard = false;
-      if (qcFirmwareStatus) {
-        qcFirmwareStatus.style.display = "none";
-        qcFirmwareStatus.style.background = "";
-        qcFirmwareStatus.style.borderColor = "";
-        qcFirmwareStatus.style.color = "";
-        qcFirmwareStatus.style.fontWeight = "";
-        qcFirmwareStatus.innerHTML = `QC Firmware Check: <strong style="color: var(--warning);">UNKNOWN</strong>`;
-      }
-      const notice = document.getElementById("qcEraseNotice");
-      if (notice) notice.style.display = "none";
-      if (chkEraseFlash) chkEraseFlash.checked = true;
-      updateFlowADesc();
       btnStart.disabled = true;
+      btnProceedApp.style.display = "none";
       progressContainer.style.display = "none";
       logToConsole("Disconnected serial port.", "info");
       const statusDiv = document.getElementById("headerShortStatus");
@@ -7179,152 +4134,6 @@ function getManageRecordsHtml() {
         statusDiv.innerHTML = "";
       }
       checkPreconditions();
-    }
-
-    function clearAllBarcodes() {
-      if (barcodeEsp) barcodeEsp.value = "";
-      if (barcodeGprs) barcodeGprs.value = "";
-      if (barcodeNuvoton) barcodeNuvoton.value = "";
-      if (box1Barcode) box1Barcode.value = "";
-      if (box2Barcode) box2Barcode.value = "";
-      if (assocEspBarcode) assocEspBarcode.value = "";
-      if (assocGprsBarcode) assocGprsBarcode.value = "";
-      if (assocNuvBarcode) assocNuvBarcode.value = "";
-      if (assocBatt1Barcode) assocBatt1Barcode.value = "";
-      if (assocBatt2Barcode) assocBatt2Barcode.value = "";
-      if (assocMpptBarcode) assocMpptBarcode.value = "";
-      if (repairBox1Barcode) repairBox1Barcode.value = "";
-      if (repairBox2Barcode) repairBox2Barcode.value = "";
-      if (repairEspBarcode) repairEspBarcode.value = "";
-      if (repairGprsBarcode) repairGprsBarcode.value = "";
-      if (repairNuvBarcode) repairNuvBarcode.value = "";
-      if (repairBatt1Barcode) repairBatt1Barcode.value = "";
-      if (repairBatt2Barcode) repairBatt2Barcode.value = "";
-      if (repairMpptBarcode) repairMpptBarcode.value = "";
-      if (repairReason) repairReason.value = "";
-      
-      // Clear checklist items back to defaults
-      if (typeof chkSpiffs !== 'undefined' && chkSpiffs) {
-        setCheckState(chkSpiffs,  valSpiffs,  "default", "Waiting...");
-        setCheckState(chkSd,      valSd,      "default", "Waiting...");
-        setCheckState(chkRtc,     valRtc,     "default", "Waiting...");
-        setCheckState(chkWifi,    valWifi,    "default", "Waiting...");
-        setCheckState(chkSensor,  valSensor,  "default", "Waiting...");
-        setCheckState(chkWindSpd, valWindSpd, "default", "Waiting...");
-        setCheckState(chkWindDir, valWindDir, "default", "Waiting...");
-        setCheckState(chkBatt,    valBatt,    "default", "Waiting...");
-        setCheckState(chkSys3v3,  valSys3v3,  "default", "Waiting...");
-        setCheckState(chkSolar,   valSolar,   "default", "Waiting...");
-        setCheckState(chkGprs,    valGprs,    "default", "Waiting...");
-        setCheckState(chkLcd,     valLcd,     "default", "Waiting...");
-        setCheckState(chkKeypad,  valKeypad,  "default", "Waiting...");
-        setCheckState(chkRf,      valRf,      "default", "Waiting...");
-        setCheckState(chkSleep,   valSleep,   "default", "Waiting...");
-      }
-      
-      // Reset integration/repair checklist displays
-      if (typeof intChkBoot !== 'undefined' && intChkBoot) {
-        setIntegrationCheckState(intChkBoot,  intValBoot,  "default", "Waiting...");
-        setIntegrationCheckState(intChkGprs,  intValGprs,  "default", "Waiting...");
-        setIntegrationCheckState(intChkBatt,  intValBatt,  "default", "Waiting...");
-        setIntegrationCheckState(intChkSolar, intValSolar, "default", "Waiting...");
-        setIntegrationCheckState(intChkSync,  intValSync,  "default", "Waiting...");
-      }
-      
-      // Clear Board Identity metadata
-      if (intInfoEsp)    intInfoEsp.textContent     = "---------------";
-      if (intInfoMac)    intInfoMac.textContent     = "---------------";
-      if (intInfoImei)   intInfoImei.textContent    = "---------------";
-      if (intInfoCcid)   intInfoCcid.textContent    = "--------------------";
-      if (intInfoFlash)  intInfoFlash.textContent   = "-- MB";
-      if (intInfoBox1)   intInfoBox1.textContent    = "---------------";
-      if (intInfoBox2)   intInfoBox2.textContent    = "---------------";
-      if (intBoardInfoStatus) {
-        intBoardInfoStatus.textContent = "pending verification";
-        intBoardInfoStatus.style.color = "var(--text-muted)";
-      }
-    }
-
-    function performSessionReset() {
-      clearAllBarcodes();
-      lastVerdict = "PENDING";
-      appFlashedSuccessfully = false;
-      progressContainer.style.display = "none";
-      if (integrationProgressContainer) integrationProgressContainer.style.display = "none";
-      if (repairProgressContainer) repairProgressContainer.style.display = "none";
-
-      // ── Clear serial log for the new board (use module-level consoleDiv) ──
-      consoleDiv.innerHTML = "";
-      rawSerialLog = "";
-      _shownPhases.clear();
-
-      const notice = document.getElementById("qcEraseNotice");
-      if (notice) notice.style.display = "none";
-      if (chkEraseFlash) chkEraseFlash.checked = true;
-
-      // Reset QC firmware flag and restore UI defaults
-      qcFirmwareAlreadyOnBoard = false;
-      if (qcFirmwareStatus) {
-        qcFirmwareStatus.style.display = "none";
-        qcFirmwareStatus.style.background = "";
-        qcFirmwareStatus.style.borderColor = "";
-        qcFirmwareStatus.style.color = "";
-        qcFirmwareStatus.style.fontWeight = "";
-        qcFirmwareStatus.innerHTML = `QC Firmware Check: <strong style="color: var(--warning);">UNKNOWN</strong>`;
-      }
-      updateFlowADesc();
-
-      logToConsole("🧹 Session reset for next board. Preparing QC check...", "info");
-      checkPreconditions();
-      updateStepTracker();
-      focusFirstBarcodeInput();
-
-      // ── Stop any running diagnostics, close port, then re-run QC firmware check ──
-      if (isConnected && port) {
-        (async () => {
-          // Stop read loop if active
-          if (!cancelReadLoop) {
-            cancelReadLoop = true;
-            if (activeReader) {
-              try { await activeReader.cancel(); } catch (_) {}
-              activeReader = null;
-            }
-            await new Promise(r => setTimeout(r, 150));
-          }
-          // Close port so checkQcFirmwarePresence can re-open it cleanly
-          try { await port.close(); } catch (_) {}
-          await new Promise(r => setTimeout(r, 100));
-
-          logToConsole("🔍 Checking QC firmware on new board...", "info");
-          await checkQcFirmwarePresence();
-        })();
-      }
-    }
-
-    if (btnClearNextBoard) {
-      btnClearNextBoard.addEventListener("click", performSessionReset);
-    }
-
-    // Verdict Overlay Action Listeners
-    if (btnVerdictNext) {
-      btnVerdictNext.addEventListener("click", () => {
-        performSessionReset();
-        verdictOverlay.style.display = "none";
-      });
-    }
-
-    if (btnVerdictIntegration) {
-      btnVerdictIntegration.addEventListener("click", () => {
-        tabIntegration.click();
-        verdictOverlay.style.display = "none";
-      });
-    }
-
-    if (btnVerdictDisconnect) {
-      btnVerdictDisconnect.addEventListener("click", async () => {
-        await disconnectPort();
-        verdictOverlay.style.display = "none";
-      });
     }
 
     function setCheckState(badgeEl, valueEl, state, valueText) {
@@ -7377,21 +4186,12 @@ function getManageRecordsHtml() {
       }
     }
 
-    // Guard to prevent concurrent WritableStream access
-    let _serialWritePending = false;
-
     // Helper to send serial commands to the board
     async function sendSerialCommand(text) {
       if (!port || !port.writable) {
         logToConsole("Cannot send serial command: Port not writable.", "error");
         return;
       }
-      if (_serialWritePending) {
-        // Writer already in use — queue a small delay and retry once
-        await new Promise(r => setTimeout(r, 80));
-        if (_serialWritePending) return; // still busy, skip
-      }
-      _serialWritePending = true;
       try {
         const writer = port.writable.getWriter();
         const encoder = new TextEncoder();
@@ -7399,8 +4199,6 @@ function getManageRecordsHtml() {
         writer.releaseLock();
       } catch (err) {
         logToConsole(`Error sending command to serial: ${err.message}`, "error");
-      } finally {
-        _serialWritePending = false;
       }
     }
 
@@ -7423,282 +4221,8 @@ function getManageRecordsHtml() {
         badge.className = "badge badge-disconnected";
       }
     }
-    // ── Production Firmware Tester Verification Modal ──────────────────────
-    //
-    // Called after production firmware is flashed. The firmware has DEBUG=0 so
-    // no serial output is emitted. We listen briefly for the ROM bootloader
-    // banner to confirm the board booted, then show a mandatory checklist
-    // modal the operator must physically verify before Pass/Fail is recorded.
 
-    async function startProductionVerificationFlow() {
-      cancelReadLoop = false;
-      logToConsole("✅ Production firmware flashed. Waiting for board boot confirmation...", "info");
-
-      // Gather all known data (captured during QC and flashing phases)
-      const knownMac    = metaMac.textContent.trim();
-      const knownImei   = metaImei.textContent.trim();
-      const knownCcid   = metaCcid.textContent.trim();
-      const knownFwVer  = metaFwVersion.textContent.trim() || "--";
-      const knownFlash  = currentChipSize ? `${currentChipSize} MB` : "--";
-      const isRepair    = (currentTab === "repair");
-      const knownBox1   = (isRepair ? repairBox1Barcode?.value : box1Barcode?.value)?.trim() || "--";
-      const knownBox2   = (isRepair ? repairBox2Barcode?.value : box2Barcode?.value)?.trim() || "--";
-      const knownEsp    = (isRepair ? repairEspBarcode?.value : assocEspBarcode?.value)?.trim() || "--";
-
-      // Populate the right-side Board Identity panel with all known QC data
-      if (intInfoMac)    intInfoMac.textContent    = knownMac;
-      if (intInfoImei)   intInfoImei.textContent   = knownImei;
-      if (intInfoCcid)   intInfoCcid.textContent   = knownCcid;
-      if (intInfoFlash)  intInfoFlash.textContent  = knownFlash;
-      if (intInfoEsp)    intInfoEsp.textContent     = knownEsp;
-      if (intInfoBox1)   intInfoBox1.textContent   = knownBox1;
-      if (intInfoBox2)   intInfoBox2.textContent   = knownBox2;
-      if (intBoardInfoStatus) intBoardInfoStatus.textContent = "✓ populated";
-      if (intBoardInfoStatus) intBoardInfoStatus.style.color = "#6ee7b7";
-
-      // Update integration metadata panel
-      integrationFwVersion.textContent = knownFwVer;
-      integrationMac.textContent = knownMac;
-
-      // Listen briefly (up to 6 s) for ROM banner to confirm boot
-      let bootConfirmed = false;
-      const serialPort = port;
-      const bootDeadline = Date.now() + 6000;
-
-      if (serialPort && serialPort.readable) {
-        activeReader = serialPort.readable.getReader();
-        try {
-          let buf = "";
-          outer: while (Date.now() < bootDeadline) {
-            const { value, done } = await Promise.race([
-              activeReader.read(),
-              new Promise(res => setTimeout(() => res({ value: null, done: true }), bootDeadline - Date.now()))
-            ]);
-            if (done || cancelReadLoop) break;
-            if (!value) break;
-            buf += new TextDecoder().decode(value);
-            for (const line of buf.split("\n")) {
-              if (line.includes("rst:") || line.includes("entry") || line.includes("POWERON_RESET") || line.includes("DEEPSLEEP_RESET")) {
-                bootConfirmed = true;
-                logToConsole("✅ Board boot confirmed via ROM banner.", "info");
-                break outer;
-              }
-            }
-          }
-        } catch (e) { /* ignore read errors */ }
-        finally { try { activeReader.releaseLock(); } catch(e) {} }
-      }
-
-      // Close diagnostics port — board is now running production firmware
-      cancelReadLoop = true;
-      if (port) { try { await port.close(); } catch (e) {} }
-
-      if (!bootConfirmed) {
-        logToConsole("⚠ Boot banner not detected (production firmware has serial disabled). Proceeding to manual verification.", "warning");
-      }
-
-      // Show the manual verification modal
-      showProductionVerificationModal({ knownMac, knownImei, knownCcid, knownFwVer, knownFlash, knownBox1, knownBox2, knownEsp, isRepair });
-    }
-
-    function showProductionVerificationModal({ knownMac, knownImei, knownCcid, knownFwVer, knownFlash, knownBox1, knownBox2, knownEsp, isRepair }) {
-      // Determine active integration mode
-      const mode = isRepair ? "both" : (document.querySelector('input[name="integrationMode"]:checked')?.value || "both");
-
-      let checklistHtml = "";
-      let checklistTitle = "Check Each on the Device LCD";
-      let checklistDesc = 'Tick all 4 boxes after verifying, then click <strong style="color:#10b981;">PASS</strong> — or click <strong style="color:#ef4444;">FAIL</strong> with a note if anything is wrong.';
-      
-      if (mode === "box2") {
-        checklistTitle = "PS Enclosure (Box 2) Assembly Checklist";
-        checklistDesc = 'Tick all 4 boxes after verifying Box 2 components, then click <strong style="color:#10b981;">PASS</strong> — or click <strong style="color:#ef4444;">FAIL</strong>.';
-        checklistHtml = `
-          <label style="display:flex;align-items:flex-start;gap:0.55rem;cursor:pointer;font-size:0.75rem">
-            <input type="checkbox" id="pvChk1" style="margin-top:0.1rem;accent-color:#6366f1;width:1rem;height:1rem;flex-shrink:0">
-            <span>☑ <strong>PS Box Enclosure</strong> — Physically assembled correctly and sealed</span>
-          </label>
-          <label style="display:flex;align-items:flex-start;gap:0.55rem;cursor:pointer;font-size:0.75rem">
-            <input type="checkbox" id="pvChk2" style="margin-top:0.1rem;accent-color:#6366f1;width:1rem;height:1rem;flex-shrink:0">
-            <span>☑ <strong>MPPT Board secure</strong> — Check MPPT connections and mounting</span>
-          </label>
-          <label style="display:flex;align-items:flex-start;gap:0.55rem;cursor:pointer;font-size:0.75rem">
-            <input type="checkbox" id="pvChk3" style="margin-top:0.1rem;accent-color:#6366f1;width:1rem;height:1rem;flex-shrink:0">
-            <span>☑ <strong>Batteries properly seated</strong> — Confirm battery alignment and secure terminals</span>
-          </label>
-          <label style="display:flex;align-items:flex-start;gap:0.55rem;cursor:pointer;font-size:0.75rem">
-            <input type="checkbox" id="pvChk4" style="margin-top:0.1rem;accent-color:#6366f1;width:1rem;height:1rem;flex-shrink:0">
-            <span>☑ <strong>Power Supply check</strong> — Confirm output voltage matches target rating</span>
-          </label>
-        `;
-      } else {
-        checklistHtml = `
-          <label style="display:flex;align-items:flex-start;gap:0.55rem;cursor:pointer;font-size:0.75rem">
-            <input type="checkbox" id="pvChk1" style="margin-top:0.1rem;accent-color:#6366f1;width:1rem;height:1rem;flex-shrink:0">
-            <span>☑ <strong>Check Production firmware boots correctly and LCD shows up</strong></span>
-          </label>
-          <label style="display:flex;align-items:flex-start;gap:0.55rem;cursor:pointer;font-size:0.75rem">
-            <input type="checkbox" id="pvChk2" style="margin-top:0.1rem;accent-color:#6366f1;width:1rem;height:1rem;flex-shrink:0">
-            <span>☑ <strong>Station ID set</strong> — Navigate LCD to confirm correct Station ID is configured</span>
-          </label>
-          <label style="display:flex;align-items:flex-start;gap:0.55rem;cursor:pointer;font-size:0.75rem">
-            <input type="checkbox" id="pvChk3" style="margin-top:0.1rem;accent-color:#6366f1;width:1rem;height:1rem;flex-shrink:0">
-            <span>☑ <strong>Date &amp; Time set</strong> — Confirm current date and time is correctly displayed on LCD</span>
-          </label>
-          <label style="display:flex;align-items:flex-start;gap:0.55rem;cursor:pointer;font-size:0.75rem">
-            <input type="checkbox" id="pvChk4" style="margin-top:0.1rem;accent-color:#6366f1;width:1rem;height:1rem;flex-shrink:0">
-            <span>☑ <strong>GPRS signal visible</strong> — LCD shows signal bars or "ONLINE" / registration status</span>
-          </label>
-        `;
-      }
-
-      // Build modal HTML
-      const overlay = document.createElement("div");
-      overlay.id = "prodVerifyOverlay";
-      overlay.style.cssText = [
-        "position:fixed","inset:0","z-index:9999",
-        "background:rgba(0,0,0,0.78)","backdrop-filter:blur(6px)",
-        "display:flex","align-items:center","justify-content:center",
-        "padding:1rem"
-      ].join(";");
-
-      overlay.innerHTML = `
-        <div style="
-          background: linear-gradient(145deg,#1a1f35,#0f1420);
-          border: 1px solid rgba(99,102,241,0.35);
-          border-radius: 1rem;
-          padding: 1.6rem 1.8rem;
-          width: 100%; max-width: 540px;
-          box-shadow: 0 25px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(99,102,241,0.12);
-          font-family: var(--font-ui, 'Inter', sans-serif);
-          color: #e2e8f0;
-        ">
-          <!-- Header -->
-          <div style="display:flex;align-items:center;gap:0.7rem;margin-bottom:1.2rem">
-            <span style="font-size:1.5rem">🔍</span>
-            <div>
-              <div style="font-size:1rem;font-weight:700;color:#a5b4fc">Tester Attention Required</div>
-              <div style="font-size:0.72rem;color:#94a3b8;margin-top:0.1rem">${isRepair ? "Servicing &amp; Repair" : "Enclosure Integration"} — Production Firmware Verification</div>
-            </div>
-          </div>
-
-          <!-- Known board info -->
-          <div style="background:rgba(16,185,129,0.07);border:1px solid rgba(16,185,129,0.2);border-radius:0.5rem;padding:0.8rem 1rem;margin-bottom:1rem;font-size:0.73rem">
-            <div style="font-weight:700;color:hsl(142,70%,65%);margin-bottom:0.5rem;font-size:0.74rem">✅ Automatically Captured Board Info</div>
-            <table style="width:100%;border-collapse:collapse">
-              <tr><td style="color:#94a3b8;padding:0.15rem 0;width:38%">ESP32 MAC</td><td style="font-family:monospace;color:#fff">${knownMac}</td></tr>
-              <tr><td style="color:#94a3b8;padding:0.15rem 0">GPRS IMEI</td><td style="font-family:monospace;color:#fff">${knownImei}</td></tr>
-              <tr><td style="color:#94a3b8;padding:0.15rem 0">SIM CCID</td><td style="font-family:monospace;color:#fff;font-size:0.68rem">${knownCcid}</td></tr>
-              <tr><td style="color:#94a3b8;padding:0.15rem 0">Flash Size</td><td style="font-family:monospace;color:#fff">${knownFlash}</td></tr>
-              <tr><td style="color:#94a3b8;padding:0.15rem 0">Box 1 (DL)</td><td style="font-family:monospace;color:#c4b5fd">${knownBox1}</td></tr>
-              <tr><td style="color:#94a3b8;padding:0.15rem 0">Box 2 (PS)</td><td style="font-family:monospace;color:#86efac">${knownBox2}</td></tr>
-            </table>
-          </div>
-
-          <!-- Manual checklist -->
-          <div style="background:rgba(250,204,21,0.06);border:1px solid rgba(250,204,21,0.22);border-radius:0.5rem;padding:0.8rem 1rem;margin-bottom:1rem">
-            <div style="font-weight:700;color:#fbbf24;margin-bottom:0.2rem;font-size:0.74rem">⚠ Physical Verification — ${checklistTitle}</div>
-            <div style="font-size:0.68rem;color:#94a3b8;margin-bottom:0.55rem;">${checklistDesc}</div>
-            <div style="display:flex;flex-direction:column;gap:0.5rem">
-              ${checklistHtml}
-            </div>
-          </div>
-
-          <!-- Notes -->
-          <div style="margin-bottom:0.75rem">
-            <label style="font-size:0.72rem;color:#94a3b8;display:block;margin-bottom:0.3rem">📝 Tester Notes <span style="color:#ef4444;font-weight:600;">(required if clicking FAIL)</span></label>
-            <textarea id="pvNotes" rows="2" placeholder="If FAIL: describe what went wrong. If PASS: any observations..." style="width:100%;padding:0.4rem 0.5rem;background:rgba(0,0,0,0.3);border:1px solid rgba(99,102,241,0.3);border-radius:0.35rem;color:#fff;font-size:0.73rem;font-family:monospace;resize:vertical;box-sizing:border-box"></textarea>
-          </div>
-
-          <!-- Error banner: shown above buttons when validation fails -->
-          <div id="pvError" style="display:none;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.4);border-radius:0.4rem;padding:0.5rem 0.7rem;margin-bottom:0.65rem;font-size:0.75rem;color:#fca5a5;font-weight:600;"></div>
-
-          <!-- Pass / Fail buttons -->
-          <div style="display:flex;gap:0.75rem">
-            <button id="pvPass" style="
-              flex:1;padding:0.65rem;border:none;border-radius:0.5rem;
-              background:linear-gradient(135deg,#059669,#10b981);
-              color:#fff;font-weight:700;font-size:0.85rem;cursor:pointer;
-              box-shadow:0 4px 15px rgba(16,185,129,0.3);
-              transition:opacity 0.15s;
-            ">✅ PASS — Submit to Sheet</button>
-            <button id="pvFail" style="
-              flex:1;padding:0.65rem;border:none;border-radius:0.5rem;
-              background:linear-gradient(135deg,#b91c1c,#ef4444);
-              color:#fff;font-weight:700;font-size:0.85rem;cursor:pointer;
-              box-shadow:0 4px 15px rgba(239,68,68,0.3);
-              transition:opacity 0.15s;
-            ">❌ FAIL — Report Issue</button>
-          </div>
-        </div>
-      `;
-
-      document.body.appendChild(overlay);
-
-      async function submitVerification(verdict) {
-        const errEl = document.getElementById("pvError");
-        errEl.style.display = "none";
-
-        if (verdict === "PASS") {
-          const unchecked = ["pvChk1","pvChk2","pvChk3","pvChk4"].filter(id => !document.getElementById(id)?.checked);
-          if (unchecked.length > 0) {
-            errEl.textContent = `⚠ Please tick all ${unchecked.length} remaining checklist item${unchecked.length > 1 ? "s" : ""} above before marking PASS.`;
-            errEl.style.display = "block";
-            // Pulse the checklist section to draw attention
-            const checklist = errEl.closest('div[style*="linear-gradient"]') || document.getElementById("pvChk1")?.closest('div[style*="rgba(250"]');
-            return;
-          }
-        }
-
-        if (verdict === "FAIL") {
-          const notes = document.getElementById("pvNotes").value.trim();
-          if (!notes) {
-            errEl.textContent = "⚠ Please enter a note describing the issue before marking FAIL.";
-            errEl.style.display = "block";
-            document.getElementById("pvNotes").focus();
-            return;
-          }
-        }
-        document.getElementById("pvError").style.display = "none";
-        document.getElementById("pvPass").disabled = true;
-        document.getElementById("pvFail").disabled = true;
-        document.getElementById("pvPass").textContent = "Submitting...";
-
-        const notes = document.getElementById("pvNotes").value.trim();
-        testDuration = Math.round((Date.now() - testStartTime) / 1000);
-
-        setIntegrationCheckState(intChkBoot,  intValBoot,  verdict === "PASS" ? "pass" : "fail",  verdict === "PASS" ? "CONFIRMED" : "NOT CONFIRMED");
-        setIntegrationCheckState(intChkGprs,  intValGprs,  verdict === "PASS" ? "pass" : "fail",  verdict === "PASS" ? "VERIFIED" : "NOT VERIFIED");
-        setIntegrationCheckState(intChkBatt,  intValBatt,  "pass",  "PHYSICAL OK");
-        setIntegrationCheckState(intChkSolar, intValSolar, "pass",  "PHYSICAL OK");
-        setIntegrationCheckState(intChkSync,  intValSync,  "running", "Syncing...");
-
-        // Add notes to the sync payload
-        const extraData = notes ? `Notes: ${notes}` : "";
-        const synced = await autoSyncIntegrationToSheets(verdict, extraData);
-        
-        if (synced) {
-          setIntegrationCheckState(intChkSync, intValSync, "pass", "SUCCESS");
-          if (verdict === "PASS") {
-            showVerdict("PASS", `Integration Verification Successful!<br>All checklist items confirmed by tester.<br>Record synced to Google Sheet.`);
-          } else {
-            showVerdict("FAIL", `Integration marked FAIL by tester.<br>${notes || "No notes provided."}`);
-          }
-        } else {
-          setIntegrationCheckState(intChkSync, intValSync, "fail", "FAILED");
-          showVerdict(verdict, `Sheet sync failed — check network connection.<br>Verdict: <strong>${verdict}</strong>`);
-        }
-
-        document.body.removeChild(overlay);
-        isIntegrating = false;
-        checkPreconditions();
-      }
-
-      document.getElementById("pvPass").addEventListener("click", () => submitVerification("PASS"));
-      document.getElementById("pvFail").addEventListener("click", () => submitVerification("FAIL"));
-    }
-
-    async function autoSyncIntegrationToSheets(verdict, extraNotes = "") {
-
+    async function autoSyncIntegrationToSheets(verdict) {
       const url = sheetUrlInput.value.trim();
       if (!url) {
         logToConsole("Google Sheet integration sync skipped (No Script URL configured).", "warning");
@@ -7726,42 +4250,36 @@ function getManageRecordsHtml() {
         checkSwap(loadedRepairConfig.mppt, repairMpptBarcode.value, "MPPT");
       }
 
-      const mode = isRepair ? "both" : (document.querySelector('input[name="integrationMode"]:checked')?.value || "both");
-
       const payload = {
         integrationSync: true,
         testTime: new Date().toLocaleString(),
-        integrationMode: mode,
-        box1: (mode === "both" || mode === "box1") ? (isRepair ? repairBox1Barcode.value : box1Barcode.value).trim() : "",
-        box2: (mode === "both" || mode === "box2") ? (isRepair ? repairBox2Barcode.value : box2Barcode.value).trim() : "",
-        espBarcode: (mode === "both" || mode === "box1") ? (isRepair ? repairEspBarcode.value : assocEspBarcode.value).trim() : "",
-        gprsBarcode: (mode === "both" || mode === "box1") ? (isRepair ? repairGprsBarcode.value : assocGprsBarcode.value).trim() : "",
-        nuvotonBarcode: (mode === "both" || mode === "box1") ? (isRepair ? repairNuvBarcode.value : assocNuvBarcode.value).trim() : "",
-        batt1Barcode: (mode === "both" || mode === "box2") ? (isRepair ? repairBatt1Barcode.value : assocBatt1Barcode.value).trim() : "",
-        batt2Barcode: (mode === "both" || mode === "box2") ? (isRepair ? repairBatt2Barcode.value : assocBatt2Barcode.value).trim() : "",
-        mpptBarcode: (mode === "both" || mode === "box2") ? (isRepair ? repairMpptBarcode.value : assocMpptBarcode.value).trim() : "",
-        mac: (mode === "both" || mode === "box1") ? integrationMac.textContent : "",
-        imei: (mode === "both" || mode === "box1") ? metaImei.textContent : "",
-        ccid: (mode === "both" || mode === "box1") ? metaCcid.textContent : "",
-        version: (mode === "both" || mode === "box1") ? integrationFwVersion.textContent : "",
+        box1: (isRepair ? repairBox1Barcode.value : box1Barcode.value).trim(),
+        box2: (isRepair ? repairBox2Barcode.value : box2Barcode.value).trim(),
+        espBarcode: (isRepair ? repairEspBarcode.value : assocEspBarcode.value).trim(),
+        gprsBarcode: (isRepair ? repairGprsBarcode.value : assocGprsBarcode.value).trim(),
+        nuvotonBarcode: (isRepair ? repairNuvBarcode.value : assocNuvBarcode.value).trim(),
+        batt1Barcode: (isRepair ? repairBatt1Barcode.value : assocBatt1Barcode.value).trim(),
+        batt2Barcode: (isRepair ? repairBatt2Barcode.value : assocBatt2Barcode.value).trim(),
+        mpptBarcode: (isRepair ? repairMpptBarcode.value : assocMpptBarcode.value).trim(),
+        mac: integrationMac.textContent,
+        version: integrationFwVersion.textContent,
         verdict: verdict,
         tester: document.getElementById("testerName")?.value.trim() || "--",
         duration: testDuration || 0,
-        notes: extraNotes,
         actionType: isRepair ? "REPAIR_SWAP" : "ORIGINAL_BUILD",
         swapReason: isRepair ? repairReason.value.trim() : "",
         swappedBoards: swappedBoards
       };
 
       try {
-        await fetchWithTimeout(url, {
+        await fetch(url, {
           method: "POST",
           mode: "no-cors",
           headers: {
             "Content-Type": "application/json"
           },
           body: JSON.stringify(payload)
-        }, 8000);
+        });
         logToConsole("✓ Successfully synced integration record to Google Sheet!", "info");
         return true;
       } catch (err) {
@@ -8005,7 +4523,7 @@ function getManageRecordsHtml() {
                 logToConsole(cleaned);
                 
                 // Parse checklist status updates
-                await parseLogLine(cleaned);
+                parseLogLine(cleaned);
               }
             }
           }
@@ -8024,13 +4542,7 @@ function getManageRecordsHtml() {
       }
     }
 
-    async function parseLogLine(line) {
-      if (line.includes("PARTITION:")) {
-        const match = line.match(/PARTITION:\s*(.*)/);
-        if (match) {
-          metaFlashSize.textContent = match[1];
-        }
-      }
+    function parseLogLine(line) {
       // Handshake parser
       if (line.includes("WAITING_FOR_CONFIG")) {
         const espVal = testCfgEsp.checked ? "ESP" : "";
@@ -8201,10 +4713,7 @@ function getManageRecordsHtml() {
           👀 <b>LCD Verification</b>: Check the Nuvoton LCD screen.<br>
           It should show <i>'LCD TEST: READ? PRESS CLEAR KEY'</i>.<br>
           If you can read it, press the <b>CLEAR</b> key on the keypad.<br><br>
-          <div style="font-size:0.76rem; color:var(--text-muted); border-top:1px solid rgba(255,255,255,0.06); padding-top:0.6rem;">
-            🎹 Keyboard override: Press key <strong style="color:var(--success);">[Y]</strong> to Force Pass, <strong style="color:var(--danger);">[N]</strong> to Force Fail.
-          </div>
-          <div style="display:none;">
+          <div style="display:flex; gap:0.5rem; align-items:center;">
             <button class="btn btn-success" id="btnOverrideLcdPass" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none;">✓ Force Pass [Y]</button>
             <button class="btn btn-danger" id="btnOverrideLcdFail" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none;">✗ Force Fail [N]</button>
           </div>
@@ -8280,11 +4789,6 @@ function getManageRecordsHtml() {
             2. Click the button below to start the test and count tips:<br><br>
             <div style="display:flex; gap:0.5rem; align-items:center;">
               <button class="btn btn-primary" id="btnStartRfSerial" style="font-size: 0.78rem; padding: 0.4rem 0.8rem; width: auto; text-transform: none; font-weight: 600;">⚡ Start RF Counting [Y]</button>
-            </div>
-            <div style="font-size:0.76rem; color:var(--text-muted); border-top:1px solid rgba(255,255,255,0.06); padding-top:0.6rem; margin-top:0.6rem;">
-              🎹 Keyboard override: Press key <strong style="color:var(--success);">[N]</strong> to Force Pass.
-            </div>
-            <div style="display:none;">
               <button class="btn btn-success" id="btnOverrideRfPass" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none;">✓ Force Pass [N]</button>
             </div>
           `;
@@ -8311,10 +4815,7 @@ function getManageRecordsHtml() {
             🌧️ <b>Rainfall (RF) Test</b>:<br>
             1. Ensure the rainfall sensor is connected to <b>GPIO 34</b>.<br>
             2. Press the <b>SET</b> key on the keypad to start the tipping count.<br><br>
-            <div style="font-size:0.76rem; color:var(--text-muted); border-top:1px solid rgba(255,255,255,0.06); padding-top:0.6rem;">
-              🎹 Keyboard override: Press key <strong style="color:var(--success);">[Y]</strong> to Skip/Pass, <strong style="color:var(--danger);">[N]</strong> to Force Fail.
-            </div>
-            <div style="display:none;">
+            <div style="display:flex; gap:0.5rem; align-items:center;">
               <button class="btn btn-success" id="btnOverrideRfPass" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none;">✓ Skip/Pass RF Test [Y]</button>
               <button class="btn btn-danger" id="btnOverrideRfFail" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none;">✗ Force Fail [N]</button>
             </div>
@@ -8349,15 +4850,9 @@ function getManageRecordsHtml() {
             Give rainfall tips manually (e.g. tip the rain gauge bucket).<br>
             ⏱️ Wait ~100ms between each contact — the 50ms debounce must clear first.<br>
             Each tip = <b>0.25 mm</b>. Live count updates in the checklist.<br>
-            Live count: <strong id="popupRfCount" style="color:var(--success);">0 tips (0.00 mm)</strong><br><br>
             When done, click the button below to tally, or wait 1 minute for automatic tally:<br><br>
             <div style="display:flex; gap:0.5rem; align-items:center;">
               <button class="btn btn-primary" id="btnTallyRf" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none; font-weight:600;">Finish & Tally RF [Y]</button>
-            </div>
-            <div style="font-size:0.76rem; color:var(--text-muted); border-top:1px solid rgba(255,255,255,0.06); padding-top:0.6rem; margin-top:0.6rem;">
-              🎹 Keyboard override: Press key <strong style="color:var(--success);">[N]</strong> to Force Pass.
-            </div>
-            <div style="display:none;">
               <button class="btn btn-success" id="btnOverrideRfPass" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none;">✓ Force Pass [N]</button>
             </div>
           `;
@@ -8380,12 +4875,8 @@ function getManageRecordsHtml() {
             Give rainfall tips manually (e.g. tip the rain gauge bucket).<br>
             ⏱️ Wait ~100ms between each contact — the 50ms debounce must clear first.<br>
             Each tip = <b>0.25 mm</b>. Live count updates in the checklist.<br>
-            Live count: <strong id="popupRfCount" style="color:var(--success);">0 tips (0.00 mm)</strong><br><br>
             <b>Press the SET key on the keypad when done</b>, or wait 1 minute for automatic tally.<br><br>
-            <div style="font-size:0.76rem; color:var(--text-muted); border-top:1px solid rgba(255,255,255,0.06); padding-top:0.6rem;">
-              🎹 Keyboard override: Press key <strong style="color:var(--success);">[Y]</strong> to Force Pass, <strong style="color:var(--danger);">[N]</strong> to Force Fail.
-            </div>
-            <div style="display:none;">
+            <div style="display:flex; gap:0.5rem; align-items:center;">
               <button class="btn btn-success" id="btnOverrideRfPass" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none;">✓ Force Pass [Y]</button>
               <button class="btn btn-danger" id="btnOverrideRfFail" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none;">✗ Force Fail [N]</button>
             </div>
@@ -8449,13 +4940,13 @@ function getManageRecordsHtml() {
           const RF_MM_PER_TIP = 0.25;
           const mmVal = (tipCount * RF_MM_PER_TIP).toFixed(2);
           setCheckState(chkRf, valRf, "wait", `Counting... ${tipCount} tips (${mmVal} mm)`);
-          
           // Update modal prompt if open to reflect live count
           const promptContent = document.getElementById("operatorPromptContent");
           if (promptContent && document.getElementById("operatorPromptModal").style.display === "flex") {
-            const popupCountEl = document.getElementById("popupRfCount");
-            if (popupCountEl) {
-              popupCountEl.textContent = `${tipCount} tips (${mmVal} mm)`;
+            const countBtn = document.getElementById("btnTallyRf");
+            if (countBtn) {
+              // Tally flow (serial command based)
+              promptContent.querySelector("b").textContent = `Counting... ${tipCount} tips (${mmVal} mm)`;
             }
           }
         }
@@ -8477,10 +4968,7 @@ function getManageRecordsHtml() {
         const html = `
           💤 <b>Deep Sleep Test</b>: ESP32 has entered deep sleep and the LCD is off.<br>
           Press the <b>SET key</b> on the keypad (or the wake button) to wake the board up and finish the test.<br><br>
-          <div style="font-size:0.76rem; color:var(--text-muted); border-top:1px solid rgba(255,255,255,0.06); padding-top:0.6rem;">
-            🎹 Keyboard override: Press key <strong style="color:var(--success);">[Y]</strong> to Force Wakeup Pass.
-          </div>
-          <div style="display:none;">
+          <div style="display:flex; gap:0.5rem; align-items:center;">
             <button class="btn btn-success" id="btnOverrideSleepPass" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none;">✓ Force Wakeup Pass [Y]</button>
           </div>
         `;
@@ -8511,11 +4999,6 @@ function getManageRecordsHtml() {
             Make sure the sensor is connected, then click below to retry:<br><br>
             <div style="display:flex; gap:0.5rem; align-items:center;">
               <button class="btn btn-primary" id="btnStartRfSerial" style="font-size: 0.78rem; padding: 0.4rem 0.8rem; width: auto; text-transform: none; font-weight: 600;">⚡ Retry RF Test [Y]</button>
-            </div>
-            <div style="font-size:0.76rem; color:var(--text-muted); border-top:1px solid rgba(255,255,255,0.06); padding-top:0.6rem; margin-top:0.6rem;">
-              🎹 Keyboard override: Press key <strong style="color:var(--success);">[N]</strong> to Force Pass.
-            </div>
-            <div style="display:none;">
               <button class="btn btn-success" id="btnOverrideRfPass" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none;">✓ Force Pass [N]</button>
             </div>
           `;
@@ -8540,10 +5023,7 @@ function getManageRecordsHtml() {
           html = `
             ❌ <b>RF Check Mismatch</b> (Counted ${gotVal} tips).<br>
             Make sure the sensor is connected, then press <b>SET</b> to retry.<br><br>
-            <div style="font-size:0.76rem; color:var(--text-muted); border-top:1px solid rgba(255,255,255,0.06); padding-top:0.6rem;">
-              🎹 Keyboard override: Press key <strong style="color:var(--success);">[Y]</strong> to Force Pass.
-            </div>
-            <div style="display:none;">
+            <div style="display:flex; gap:0.5rem; align-items:center;">
               <button class="btn btn-success" id="btnOverrideRfPass" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none;">✓ Force Pass [Y]</button>
             </div>
           `;
@@ -8581,29 +5061,15 @@ function getManageRecordsHtml() {
           // Compute duration NOW before syncing so Google Sheet gets the real value
           if (testStartTime) testDuration = Math.round((Date.now() - testStartTime) / 1000);
           logToConsole("⚠ Critical peripheral FAIL detected — syncing FAIL result to Google Sheet...", "warn");
+          setTimeout(() => autoSyncToGoogleSheets(`FAIL: ${failedItem}`), 500);
           
-          showVerdict("PENDING", `Critical hardware peripheral test failed: <b>${failedItem}</b>.<br><br>📊 Syncing FAIL result to Google Sheet...`);
-          const synced = await autoSyncToGoogleSheets(`FAIL: ${failedItem}`);
-          
-          let syncMsg = "";
-          const sheetUrl = sheetUrlInput.value.trim();
-          if (!sheetUrl) {
-            syncMsg = `<span style="color:var(--warning); font-size:0.75rem;">⚠️ Google Sheet sync skipped (No Script URL configured).</span>`;
-          } else if (synced) {
-            syncMsg = `<span style="color:var(--success); font-size:0.75rem;">✓ Results posted to Google Sheet successfully.</span>`;
-          } else {
-            syncMsg = `<span style="color:var(--warning); font-size:0.75rem;">⚠️ Google Sheet sync failed (saved to offline queue).</span>`;
-          }
-          
-          showVerdict("FAIL", `Critical hardware peripheral test failed: <b>${failedItem}</b>.<br>Please inspect the board's routing, power supply, and chip soldering.<br><br>${syncMsg}`);
-          await stopDiagnostics();
+          showVerdict("FAIL", `Critical hardware peripheral test failed: <b>${failedItem}</b>.<br>Please inspect the board's routing, power supply, and chip soldering.`);
         }
       }
 
       if (line.includes("QC_RESULT: FAIL")) {
         window._qcHasFailedInSession = true;
-        updateStepTracker();
-        updateGuidanceBanner();
+        showResultBanner("FAIL");
       }
 
       // FULL PASS — keypad SET confirmed
@@ -8614,57 +5080,25 @@ function getManageRecordsHtml() {
         }
         window._qcFailSynced = false; // reset for next run
         logToConsole("🎉 ALL SELF-TESTS PASSED!", "info");
+        btnProceedApp.style.display = "block";
         btnExportLog.disabled = false;
         // Compute duration NOW before syncing so Google Sheet gets the real value
         if (testStartTime) testDuration = Math.round((Date.now() - testStartTime) / 1000);
+        logToConsole("📊 Auto-syncing PASS result to Google Sheet...", "info");
+        autoSyncToGoogleSheets("PASS");
         
         const espVal = testCfgEsp.checked ? "ESP" : "";
         const gprsVal = testCfgGprs.checked ? "GPRS" : "";
         const nuvVal = testCfgNuvoton.checked ? "NUV" : "";
         const subsystemsTested = [espVal, gprsVal, nuvVal].filter(Boolean).join(" + ");
-        
-        logToConsole("📊 Auto-syncing PASS result to Google Sheet...", "info");
-        showVerdict("PENDING", `All active hardware diagnostics passed successfully for:<br><b>${subsystemsTested}</b><br><br>📊 Syncing PASS result to Google Sheet...`);
-        
-        const synced = await autoSyncToGoogleSheets("PASS");
-        
-        let syncMsg = "";
-        const sheetUrl = sheetUrlInput.value.trim();
-        if (!sheetUrl) {
-          syncMsg = `<span style="color:var(--warning); font-size:0.75rem;">⚠️ Google Sheet sync skipped (No Script URL configured).</span>`;
-        } else if (synced) {
-          syncMsg = `<span style="color:var(--success); font-size:0.75rem;">✓ Results posted to Google Sheet successfully.</span>`;
-        } else {
-          syncMsg = `<span style="color:var(--warning); font-size:0.75rem;">⚠️ Google Sheet sync failed (saved to offline queue).</span>`;
-        }
-        
-        showVerdict("PASS", `All active hardware diagnostics passed successfully for:<br><b>${subsystemsTested}</b><br><br>${syncMsg}`);
-        updateStepTracker();
-        updateGuidanceBanner();
-        
-        // Put board to sleep for safe swapping
-        logToConsole("🔌 Putting board to sleep for safe swapping...", "info");
-        try {
-          await sendSerialCommand("CMD:GOTO_SLEEP\n");
-          await new Promise(r => setTimeout(r, 150));
-        } catch (e) {
-          logToConsole("Failed to send sleep command: " + e.message, "warning");
-        }
-        
-        await stopDiagnostics();
+        showVerdict("PASS", `All active hardware diagnostics passed successfully for:<br><b>${subsystemsTested}</b>`);
+        showResultBanner("PASS");
       }
     }
 
     // --- Flashing Engine Orchestrator ---
     btnStart.addEventListener("click", async () => {
       hideOperatorPrompt();
-
-      // \u2500\u2500 If diagnostics are running, this button acts as Stop \u2500\u2500
-      if (!cancelReadLoop) {
-        await stopDiagnostics();
-        return;
-      }
-
       if (!isConnected) {
         logToConsole("Error: Board is not connected. Please connect the board first.", "error");
         return;
@@ -8677,7 +5111,7 @@ function getManageRecordsHtml() {
       checkPreconditions();
       progressContainer.style.display = "block";
       progressBar.style.width = "0%";
-
+      
       try {
         if (activeFlow === 'factory') {
           await runFactoryFlashingFlow();
@@ -8704,81 +5138,62 @@ function getManageRecordsHtml() {
       isIntegrating = true;
       window._integrationSuccessTriggered = false;
       checkPreconditions();
-      testStartTime = Date.now();
-
-      const shouldFlashEsp32 = chkIntegrationFlashEsp32.checked;
-
-      if (shouldFlashEsp32) {
-        integrationProgressContainer.style.display = "block";
-        integrationProgressBar.style.width = "0%";
-      } else {
-        integrationProgressContainer.style.display = "none";
-      }
+      integrationProgressContainer.style.display = "block";
+      integrationProgressBar.style.width = "0%";
       
       try {
-        if (shouldFlashEsp32) {
-          const activeConfig = releaseConfigSel?.value;
-          const sizeEntry = activeConfig ? (customConfigVault[activeConfig][`${currentChipSize}mb`] || customConfigVault[activeConfig]["8mb"]) : null;
-          const productionBin = (sizeEntry && sizeEntry.binary) || fileVault[`production_${currentChipSize}mb.bin`];
+        const activeConfig = releaseConfigSel?.value;
+        const configData = activeConfig ? customConfigVault[activeConfig] : null;
+        const productionBin = (configData && configData.binary) || fileVault[`production_${currentChipSize}mb.bin`];
 
-          if (!productionBin) {
-            throw new Error("No production binary found. Please load firmware files first.");
-          }
+        if (!productionBin) {
+          throw new Error("No production binary found. Please load firmware files first.");
+        }
 
-          logToConsole("--- STARTING ENCLOSURE INTEGRATION FLASH & TEST ---", "info");
-          await ensureEsploaderConnected();
-          
-          logToConsole(`Flashing Production binary (${(productionBin.byteLength/1024).toFixed(1)} KB) to offset 0x10000...`, "normal");
-          await esploader.writeFlash({
-            fileArray: [{ data: productionBin, address: 0x10000 }],
-            flashSize: "keep",
-            compress: true,
-            reportProgress: (fileIndex, writtenBytes, totalBytes) => {
-              if (totalBytes > 0) {
-                const percentage = Math.round((writtenBytes / totalBytes) * 100);
-                integrationProgressBar.style.width = `${percentage}%`;
-              }
+        logToConsole("--- STARTING ENCLOSURE INTEGRATION FLASH & TEST ---", "info");
+        await ensureEsploaderConnected();
+        
+        logToConsole(`Flashing Production binary (${(productionBin.byteLength/1024).toFixed(1)} KB) to offset 0x10000...`, "normal");
+        await esploader.writeFlash({
+          fileArray: [{ data: productionBin, address: 0x10000 }],
+          flashSize: "keep",
+          compress: true,
+          reportProgress: (fileIndex, writtenBytes, totalBytes) => {
+            if (totalBytes > 0) {
+              const percentage = Math.round((writtenBytes / totalBytes) * 100);
+              integrationProgressBar.style.width = `${percentage}%`;
             }
-          });
-          integrationProgressBar.style.width = "100%";
-          
-          logToConsole("Flashing complete! Resetting board...", "info");
-          await esploader.after("hard_reset");
-          
-          logToConsole("Releasing flasher connection...", "normal");
-          if (transport) {
-            try { await transport.disconnect(); } catch (e) {}
           }
-          transport = null;
-          esploader = null;
-        } else {
-          logToConsole("--- STARTING ENCLOSURE INTEGRATION TEST (FLASHING SKIPPED) ---", "info");
-          if (transport) {
-            try { await transport.disconnect(); } catch (e) {}
-            transport = null;
-            esploader = null;
-          }
+        });
+        integrationProgressBar.style.width = "100%";
+        
+        logToConsole("Flashing complete! Resetting board...", "info");
+        await esploader.after("hard_reset");
+        
+        logToConsole("Releasing flasher connection...", "normal");
+        if (transport) {
+          try { await transport.disconnect(); } catch (e) {}
+        }
+        transport = null;
+        esploader = null;
+
+        logToConsole("Opening serial diagnostics channel at 115200 baud...", "normal");
+        try {
+          await port.open({ baudRate: 115200 });
+          await port.setSignals({ dataTerminalReady: false, requestToSend: true });
+          await new Promise(r => setTimeout(r, 200));
+          await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+        } catch (err) {
+          logToConsole(`Failed to open diagnostics channel: ${err.message}`, "error");
+          isIntegrating = false;
+          checkPreconditions();
+          return;
         }
 
-        if (port && !port.readable) {
-          logToConsole("Opening serial diagnostics channel at 115200 baud...", "normal");
-          try {
-            await port.open({ baudRate: 115200 });
-            await port.setSignals({ dataTerminalReady: false, requestToSend: true });
-            await new Promise(r => setTimeout(r, 200));
-            await port.setSignals({ dataTerminalReady: false, requestToSend: false });
-          } catch (err) {
-            logToConsole(`Failed to open diagnostics channel: ${err.message}`, "error");
-            isIntegrating = false;
-            checkPreconditions();
-            return;
-          }
-        }
-
-        setTimeout(startProductionVerificationFlow, 500);
+        setTimeout(startIntegrationDiagnostics, 500);
 
       } catch (err) {
-        logToConsole(`Integration procedure failed: ${err.message}`, "error");
+        logToConsole(`Integration flashing failed: ${err.message}`, "error");
         integrationProgressContainer.style.display = "none";
         isIntegrating = false;
         checkPreconditions();
@@ -8794,21 +5209,19 @@ function getManageRecordsHtml() {
       isIntegrating = true;
       window._integrationSuccessTriggered = false;
       checkPreconditions();
-      testStartTime = Date.now();
       repairProgressContainer.style.display = "block";
       repairProgressBar.style.width = "0%";
       
       try {
         const activeConfig = releaseConfigSel?.value;
-        const sizeEntry = activeConfig ? (customConfigVault[activeConfig][`${currentChipSize}mb`] || customConfigVault[activeConfig]["8mb"]) : null;
-        const productionBin = (sizeEntry && sizeEntry.binary) || fileVault[`production_${currentChipSize}mb.bin`];
+        const configData = activeConfig ? customConfigVault[activeConfig] : null;
+        const productionBin = (configData && configData.binary) || fileVault[`production_${currentChipSize}mb.bin`];
 
         if (!productionBin) {
           throw new Error("No production binary found. Please load firmware files first.");
         }
 
         logToConsole("--- STARTING SERVICING & REPAIR FLASH & TEST ---", "info");
-        await ensureEsploaderConnected();
         
         logToConsole(`Flashing Production binary (${(productionBin.byteLength/1024).toFixed(1)} KB) to offset 0x10000...`, "normal");
         await esploader.writeFlash({
@@ -8847,7 +5260,7 @@ function getManageRecordsHtml() {
           return;
         }
 
-        setTimeout(startProductionVerificationFlow, 500);
+        setTimeout(startIntegrationDiagnostics, 500);
 
       } catch (err) {
         logToConsole(`Repair flashing failed: ${err.message}`, "error");
@@ -8881,103 +5294,18 @@ function getManageRecordsHtml() {
       checkPreconditions();
     });
 
-    async function checkQcFirmwarePresence() {
-      if (!port) return;
-      const statusEl = document.getElementById("qcFirmwareStatus");
-      if (statusEl) {
-        statusEl.style.display = "block";
-        statusEl.innerHTML = `QC Firmware Check: <strong style="color: var(--warning);">CHECKING...</strong>`;
-      }
-      logToConsole("Checking if QC test firmware is already installed on the board...", "normal");
-      
-      // 1. Release esptool transport
-      if (transport) {
-        try { await transport.disconnect(); } catch (e) {}
-        transport = null;
-        esploader = null;
-      }
-      
-      // 2. Open port at 115200 to listen
-      let qcDetected = false;
-      try {
-        await port.open({ baudRate: 115200 });
-        
-        // Send reset pulse
-        await port.setSignals({ dataTerminalReady: false, requestToSend: true });
-        await new Promise(r => setTimeout(r, 150));
-        await port.setSignals({ dataTerminalReady: false, requestToSend: false });
-        
-        // Read serial output for 1.2 seconds
-        const reader = port.readable.getReader();
-        const checkDeadline = Date.now() + 1200;
-        let checkBuf = "";
-        
-        try {
-          while (Date.now() < checkDeadline) {
-            const { value, done } = await Promise.race([
-              reader.read(),
-              new Promise(res => setTimeout(() => res({ value: null, done: true }), checkDeadline - Date.now()))
-            ]);
-            if (done) break;
-            if (value) {
-              checkBuf += new TextDecoder().decode(value);
-              if (checkBuf.includes("[QC_JIG]")) {
-                qcDetected = true;
-                break;
-              }
-            }
-          }
-        } catch (readErr) {
-          // ignore
-        } finally {
-          try { reader.releaseLock(); } catch (e) {}
-        }
-      } catch (openErr) {
-        logToConsole(`Failed to open port for firmware check: ${openErr.message}`, "warn");
-      } finally {
-        try { await port.close(); } catch (e) {}
-      }
-      
-      // Store detection result as module-level flag so runFactoryFlashingFlow can read it
-      qcFirmwareAlreadyOnBoard = qcDetected;
-      updateFlowADesc();
-
-      // Update UI status
-      if (statusEl) {
-        if (qcDetected) {
-          statusEl.style.background = "rgba(16, 185, 129, 0.12)";
-          statusEl.style.borderColor = "rgba(16, 185, 129, 0.45)";
-          statusEl.style.color = "#6ee7b7";
-          statusEl.style.fontWeight = "600";
-          statusEl.innerHTML = `<span style="display:inline-flex;align-items:center;gap:0.35rem;">✅ <span>QC Test Firmware: <strong style="color:#34d399;">LOADED ON BOARD</strong> — Test can run without re-flashing</span></span>`;
-          logToConsole("✅ QC Test Firmware detected on this board.", "info");
-
-          if (chkEraseFlash) {
-            chkEraseFlash.checked = false;
-            const notice = document.getElementById("qcEraseNotice");
-            if (notice) notice.style.display = "flex";
-            logToConsole("💡 QC Test Firmware already exists: automatically disabled chip wipe.", "info");
-          }
-        } else {
-          statusEl.style.background = "rgba(245, 158, 11, 0.08)";
-          statusEl.style.borderColor = "rgba(245, 158, 11, 0.3)";
-          statusEl.style.color = "var(--text-muted)";
-          statusEl.style.fontWeight = "normal";
-          statusEl.innerHTML = `<span style="display:inline-flex;align-items:center;gap:0.35rem;">⚠️ <span>QC Firmware Check: <strong style="color:var(--warning);">NOT DETECTED</strong> — Board will be flashed with QC firmware first</span></span>`;
-          logToConsole("⚠️ QC Test Firmware not detected on this board. You may need to flash it.", "warning");
-        }
-      }
-      // Update Flow A description to reflect detected state
-      updateFlowADesc();
-      checkPreconditions();
-    }
-
-
     // --- Start Diagnostics Without Reflashing ---
-    // btnStartDiag is now hidden; its logic is folded into btnStart below.
-    // Keeping the listener for backward compat (it is invisible).
     btnStartDiag.addEventListener("click", async () => {
-      if (!cancelReadLoop) { await stopDiagnostics(); } else { await runDiagnosticsOnly(); }
+      hideOperatorPrompt();
+      if (!cancelReadLoop) {
+        await stopDiagnostics();
+      } else {
+        if (!isConnected) {
+          logToConsole("Error: Board is not connected. Please connect the board first.", "error");
+          return;
+        }
+        await runDiagnosticsOnly();
+      }
     });
 
     async function runDiagnosticsOnly() {
@@ -9034,7 +5362,7 @@ function getManageRecordsHtml() {
     }
 
     async function ensureEsploaderConnected() {
-      if (esploader && cancelReadLoop) return;
+      if (esploader) return;
       
       logToConsole("Serial port in diagnostics mode. Re-connecting to board in bootloader mode...", "normal");
       
@@ -9068,36 +5396,6 @@ function getManageRecordsHtml() {
 
     async function runFactoryFlashingFlow() {
       logToConsole("--- OPTION 1: FACTORY FLASHING SEQUENCE START ---", "info");
-
-      // ── FAST PATH: QC firmware already on board — skip all flashing ──
-      if (qcFirmwareAlreadyOnBoard && !chkEraseFlash.checked) {
-        logToConsole("✅ QC firmware already loaded on board — skipping flash step. Booting into diagnostics directly...", "info");
-        
-        // Ensure esptool transport is disconnected
-        if (transport) {
-          try { await transport.disconnect(); } catch (e) {}
-          transport = null;
-          esploader = null;
-        }
-
-        logToConsole("Opening serial monitor at 115200 baud...", "normal");
-        try {
-          await port.open({ baudRate: 115200 });
-          // Reset the board to start diagnostics fresh
-          await port.setSignals({ dataTerminalReady: false, requestToSend: true });
-          await new Promise(r => setTimeout(r, 200));
-          await port.setSignals({ dataTerminalReady: false, requestToSend: false });
-        } catch (err) {
-          logToConsole(`Failed to open serial monitor: ${err.message}`, "error");
-          return;
-        }
-
-        cancelReadLoop = false;
-        setTimeout(startLiveDiagnostics, 500);
-        return;
-      }
-
-      // ── NORMAL PATH: flash QC firmware first ──
       await ensureEsploaderConnected();
       
       // Check files for auto-detected size
@@ -9117,9 +5415,8 @@ function getManageRecordsHtml() {
       }
 
       // Build flash payload array
-      const bootKey = fileVault[`bootloader_${currentChipSize}mb.bin`] ? `bootloader_${currentChipSize}mb.bin` : "bootloader.bin";
       const flashArray = [
-        { data: fileVault[bootKey], address: 0x1000 },
+        { data: fileVault["bootloader.bin"], address: 0x1000 },
         { data: fileVault[partKey], address: 0x8000 },
         { data: fileVault["boot_app0.bin"], address: 0xe000 },
         { data: fileVault[testKey], address: 0x10000 }
@@ -9281,6 +5578,33 @@ function getManageRecordsHtml() {
       setTimeout(startLiveDiagnostics, 500);
     }
 
+    // Triggered after QC passes to flash the final app
+    btnProceedApp.addEventListener("click", async () => {
+      btnProceedApp.style.display = "none";
+      progressContainer.style.display = "block";
+      progressBar.style.width = "0%";
+      
+      try {
+        await runUpgradeFlashingFlow();
+        
+        logToConsole("✨ FACTORY JIG SEQUENCE COMPLETED SUCCESSFULLY!", "info");
+        progressContainer.style.display = "none";
+        
+        // Sync final "FLASHED" status back to Google Sheet
+        logToConsole("📊 Syncing FLASHED status to Google Sheet...", "info");
+        const synced = await autoSyncToGoogleSheets("PASS + APP FLASHED");
+        if (synced) {
+          logToConsole("✓ Google Sheet updated — unit fully commissioned.", "info");
+        } else {
+          logToConsole("⚠ Google Sheet not updated (Sync skipped or failed).", "warning");
+        }
+        
+      } catch (err) {
+        logToConsole(`Final app flash failed: ${err.message}`, "error");
+        btnProceedApp.style.display = "block";
+        progressContainer.style.display = "none";
+      }
+    });
 
     // --- Log Downloader Exporter ---
     btnExportLog.addEventListener("click", () => {
@@ -9339,8 +5663,4 @@ function getManageRecordsHtml() {
       
       logToConsole(`Exported QC report file: ${filename}`, "info");
     });
-
-    focusFirstBarcodeInput();
-  </script>
-</body>
-</html>
+  

@@ -346,6 +346,10 @@ def main():
         "--enable-debug", action="store_true",
         help="Keep Serial Debug logs active in the official build (Not recommended for field units)."
     )
+    parser.add_argument(
+        "--configs", nargs="+", default=None,
+        help="Specific configuration name(s) to build (e.g., KSNDMC_TRG)."
+    )
     args = parser.parse_args()
 
     # Build active flash variant list
@@ -354,10 +358,14 @@ def main():
         fqbn, csv = ALL_FLASH_VARIANTS[size]
         FLASH_VARIANTS.append((size, fqbn, csv))
 
+    active_configs = CONFIGS
+    if args.configs:
+        active_configs = [c for c in CONFIGS if c[2] in args.configs]
+
     print_header(f"AIO9_5.0 Multi-Configuration Builder")
     print(f"  Flash targets: {', '.join(args.flash).upper()}")
-    print(f"  Configurations: {len(CONFIGS)}")
-    print(f"  Total builds: {len(FLASH_VARIANTS) * len(CONFIGS)}")
+    print(f"  Configurations: {len(active_configs)}")
+    print(f"  Total builds: {len(FLASH_VARIANTS) * len(active_configs)}")
     
     # Check arduino-cli
     if not check_arduino_cli():
@@ -378,7 +386,7 @@ def main():
 
     for flash_size, flash_fqbn, partition_csv in FLASH_VARIANTS:
         print_header(f"=== Flash Variant: {flash_size.upper()} ===")
-        for system, unit, output_name in CONFIGS:
+        for system, unit, output_name in active_configs:
             if build_config(system, unit, output_name, flash_size, flash_fqbn, partition_csv):
                 success_count += 1
             else:

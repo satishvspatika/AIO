@@ -230,6 +230,7 @@ void gprs(void *pvParameters) {
         
         portENTER_CRITICAL(&syncMux);
         sync_mode = eSMSStop; // Reset state to unlock UI
+        health_in_progress = false; // [H-03] Reset health_in_progress on mutex timeout to allow deep sleep
         portEXIT_CRITICAL(&syncMux);
       } // Close xSemaphoreTake(modemMutex)
 

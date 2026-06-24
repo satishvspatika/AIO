@@ -31,7 +31,10 @@ class HTMLValidator(html.parser.HTMLParser):
             self.tags_stack.append((expected_tag, pos))
 
 def main():
-    with open('TEST_JIG/factory_tool.html', 'r', encoding='utf-8') as f:
+    import os
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    html_path = os.path.join(base_dir, 'factory_tool.html')
+    with open(html_path, 'r', encoding='utf-8') as f:
         html_content = f.read()
 
     parser = HTMLValidator()

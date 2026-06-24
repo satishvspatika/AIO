@@ -6,6 +6,13 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <esp_mac.h>
+#include "esp_ota_ops.h"
+#include <Adafruit_BME280.h>
+#include <esp_task_wdt.h>
+
+Adafruit_BME280 bme;
+
+#define QC_TEST_VERSION "6.08"
 
 // --- PIN DEFINITIONS (ESP32-WROOM-32U) ---
 #define GPRS_CTRL_PIN   26  // Active-HIGH PMOS gate for GPRS board power
@@ -49,6 +56,7 @@ enum QCState {
 #define INACTIVITY_TIMEOUT_MS 300000
 RTC_DATA_ATTR bool expecting_test_wakeup = false;
 unsigned long last_activity_time = 0;
+bool in_countdown_warning = false;
 
 QCState currentState = STATE_AUTO_TESTS;
 volatile int rf_pulse_count = 0;
@@ -114,6 +122,68 @@ void lcdPrint(const char* str) {
     str++;
   }
 }
+void redrawCurrentStateScreen() {
+  if (!enableNuvoton) return;
+  lcdClear();
+  switch (currentState) {
+    case STATE_LCD_WAIT:
+      lcdSetCursor(0, 0); lcdPrint("LCD TEST: READ?");
+      lcdSetCursor(0, 1); lcdPrint("PRESS CLEAR KEY");
+      break;
+    case STATE_KEYPAD_LEFT:
+      lcdSetCursor(0, 0); lcdPrint("KEYPAD: PRESS");
+      lcdSetCursor(0, 1); lcdPrint("LEFT KEY");
+      break;
+    case STATE_KEYPAD_UP:
+      lcdSetCursor(0, 0); lcdPrint("KEYPAD: PRESS");
+      lcdSetCursor(0, 1); lcdPrint("UP KEY");
+      break;
+    case STATE_KEYPAD_DOWN:
+      lcdSetCursor(0, 0); lcdPrint("KEYPAD: PRESS");
+      lcdSetCursor(0, 1); lcdPrint("DOWN KEY");
+      break;
+    case STATE_KEYPAD_RIGHT:
+      lcdSetCursor(0, 0); lcdPrint("KEYPAD: PRESS");
+      lcdSetCursor(0, 1); lcdPrint("RIGHT KEY");
+      break;
+    case STATE_KEYPAD_SET:
+      lcdSetCursor(0, 0); lcdPrint("KEYPAD: PRESS");
+      lcdSetCursor(0, 1); lcdPrint("SET KEY");
+      break;
+    case STATE_RF_WAIT_JUMPER: {
+      char buf[17];
+      snprintf(buf, sizeof(buf), "RF TEST: %d TIPS", rf_pulse_count);
+      lcdSetCursor(0, 0); lcdPrint(buf);
+      lcdSetCursor(0, 1); lcdPrint("PRESS SET RETRY");
+      break;
+    }
+    case STATE_RF_RUNNING: {
+      char line0[17], line1[17];
+      snprintf(line0, sizeof(line0), "RF: %d TIPS", rf_pulse_count);
+      snprintf(line1, sizeof(line1), "= %.2f mm", rf_pulse_count * 0.25f);
+      lcdSetCursor(0, 0); lcdPrint(line0);
+      lcdSetCursor(0, 1); lcdPrint(line1);
+      break;
+    }
+    case STATE_RF_CONFIRM: {
+      char buf[17];
+      snprintf(buf, sizeof(buf), "TALLIED %d TIPS", rf_pulse_count);
+      lcdSetCursor(0, 0); lcdPrint(buf);
+      lcdSetCursor(0, 1); lcdPrint("SET:OK CLEAR:ERR");
+      break;
+    }
+    case STATE_COMPLETE:
+      lcdSetCursor(0, 0); lcdPrint("WAKEUP: PASS!");
+      lcdSetCursor(0, 1); lcdPrint("QC PASS: APPROVED");
+      break;
+    case STATE_FAILED:
+      lcdSetCursor(0, 0); lcdPrint("QC FAILED!");
+      lcdSetCursor(0, 1); lcdPrint("INSPECT BOARD");
+      break;
+    default:
+      break;
+  }
+}
 
 void showProgress(const char* line1, const char* line2) {
   if (enableNuvoton) {
@@ -141,21 +211,48 @@ const char* getKeyName(char rawKey) {
 // --- PERIPHERAL TEST LOGIC ---
 
 bool testSPIFFS() {
-  if (!SPIFFS.begin(false)) {
+  // Temporary unsubscribe current task from watchdog during long mount/format operations to prevent resets
+  esp_task_wdt_delete(NULL);
+
+  bool success = false;
+  if (SPIFFS.begin(false)) {
+    success = true;
+  } else {
     Serial.println("\n[QC_JIG] SPIFFS not formatted. Formatting partition (takes 10-30s)...");
-    if (!SPIFFS.begin(true)) return false;
+    if (SPIFFS.begin(true)) {
+      success = true;
+    }
   }
-  File f = SPIFFS.open("/qc.txt", FILE_WRITE);
-  if (!f) return false;
-  f.println("SPIFFS_OK");
-  f.close();
-  
-  f = SPIFFS.open("/qc.txt", FILE_READ);
-  if (!f) return false;
-  String s = f.readStringUntil('\n');
-  f.close();
-  SPIFFS.remove("/qc.txt");
-  return (s.indexOf("SPIFFS_OK") >= 0);
+
+  if (success) {
+    File f = SPIFFS.open("/qc.txt", FILE_WRITE);
+    if (!f) success = false;
+    else {
+      f.println("SPIFFS_OK");
+      f.close();
+      
+      f = SPIFFS.open("/qc.txt", FILE_READ);
+      if (!f) success = false;
+      else {
+        String s = f.readStringUntil('\n');
+        f.close();
+        SPIFFS.remove("/qc.txt");
+        success = (s.indexOf("SPIFFS_OK") >= 0);
+      }
+    }
+  }
+
+  // Re-enable watchdog
+  esp_task_wdt_config_t wdt_config = {
+      .timeout_ms = 60000,
+      .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
+      .trigger_panic = false
+  };
+  esp_task_wdt_reconfigure(&wdt_config);
+  esp_task_wdt_add(NULL);
+  esp_task_wdt_reset();
+
+  return success;
 }
 
 bool testSD(int csPin) {
@@ -187,7 +284,7 @@ bool testRTC() {
   Wire.beginTransmission(0x68); // DS1307 Address
   if (Wire.endTransmission() != 0) return false;
   
-  // Read seconds register twice to verify it increments
+  // Read seconds register
   Wire.beginTransmission(0x68);
   Wire.write(0x00);
   Wire.endTransmission();
@@ -195,16 +292,20 @@ bool testRTC() {
   if (!Wire.available()) return false;
   uint8_t sec1 = Wire.read() & 0x7F;
   
-  delay(1100); // Wait for clock tick
-  
-  Wire.beginTransmission(0x68);
-  Wire.write(0x00);
-  Wire.endTransmission();
-  Wire.requestFrom(0x68, 1);
-  if (!Wire.available()) return false;
-  uint8_t sec2 = Wire.read() & 0x7F;
-  
-  return (sec1 != sec2);
+  // Poll for clock tick with a 1500ms timeout
+  uint32_t start = millis();
+  while (millis() - start < 1500) {
+    Wire.beginTransmission(0x68);
+    Wire.write(0x00);
+    Wire.endTransmission();
+    Wire.requestFrom(0x68, 1);
+    if (Wire.available()) {
+      uint8_t sec2 = Wire.read() & 0x7F;
+      if (sec1 != sec2) return true;
+    }
+    delay(50);
+  }
+  return false;
 }
 
 bool testWiFi() {
@@ -296,16 +397,22 @@ bool testTempHum(String &sensorName, float &temp, float &hum) {
       chipId = Wire.read();
     }
     
-    if (chipId == 0x60) {
-      sensorName = "BME280";
-      temp = 25.0; // dummy values
-      hum = 50.0;
-      return true;
-    } else if (chipId == 0x58) {
-      sensorName = "BMP280";
-      temp = 25.0;
-      hum = 0.0;
-      return true;
+    if (chipId == 0x60 || chipId == 0x58) {
+      if (bme.begin(bmeAddr)) {
+        sensorName = (chipId == 0x60) ? "BME280" : "BMP280";
+        // Force single measurement mode
+        bme.setSampling(Adafruit_BME280::MODE_FORCED,
+                        Adafruit_BME280::SAMPLING_X1,
+                        Adafruit_BME280::SAMPLING_X1,
+                        Adafruit_BME280::SAMPLING_X1,
+                        Adafruit_BME280::FILTER_OFF);
+        bme.takeForcedMeasurement();
+        temp = bme.readTemperature();
+        hum = (chipId == 0x60) ? bme.readHumidity() : 0.0;
+        if (!isnan(temp) && (chipId != 0x60 || !isnan(hum))) {
+          return true;
+        }
+      }
     }
   }
   
@@ -476,7 +583,8 @@ void goToIdleSleep() {
 void printPartitionInfo() {
   uint32_t flashSize = ESP.getFlashChipSize();
   uint32_t appUsed = ESP.getSketchSize();
-  uint32_t appTotal = appUsed + ESP.getFreeSketchSpace();
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  uint32_t appTotal = running ? running->size : (appUsed + ESP.getFreeSketchSpace());
   
   float flashSizeMB = (float)flashSize / (1024.0 * 1024.0);
   float appUsedMB = (float)appUsed / (1024.0 * 1024.0);
@@ -535,12 +643,13 @@ void setup() {
   }
 
   Serial.println("\n[QC_JIG] ======================================");
-  Serial.println("[QC_JIG] SPATIKA AIO BOARD QC TEST FIRMWARE START");
+  Serial.printf("[QC_JIG] SPATIKA AIO BOARD QC TEST FIRMWARE v%s START\n", QC_TEST_VERSION);
   
-  // Get MAC ID reliably using WiFi helper class
+  // Initialize WiFi driver to read MAC ID reliably
+  WiFi.mode(WIFI_STA);
+  delay(10);
   String macStr = WiFi.macAddress();
   Serial.printf("[QC_JIG] ESP32 Unique MAC: %s\n", macStr.c_str());
-  printPartitionInfo();
   Serial.println("[QC_JIG] ======================================");
   
   // Handshake to receive test configuration from serial dashboard (loops indefinitely to prevent standalone autostart)
@@ -599,6 +708,19 @@ void setup() {
                 isTRG ? "TRG" : (isTWS ? "TWS" : "TWS-RF"), 
                 isTRG, isTWS, isTWSRF);
   
+  // v6.09: Delete the loop task from the watchdog first to allow reconfiguration
+  esp_task_wdt_delete(NULL);
+  
+  // Initialize Task Watchdog only during active testing to prevent timeout reboot while waiting for handshake
+  esp_task_wdt_config_t wdt_config = {
+      .timeout_ms = 60000,      // 60 seconds to accommodate slow peripheral checks / formats
+      .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
+      .trigger_panic = false    // Log watchdog timeouts instead of hard-rebooting the CPU
+  };
+  esp_task_wdt_reconfigure(&wdt_config);
+  esp_task_wdt_add(NULL);       // Register loop task
+  esp_task_wdt_reset();
+  
   // Power Controls
   pinMode(GPRS_CTRL_PIN, OUTPUT);
   pinMode(LCD_CTRL_PIN, OUTPUT);
@@ -610,11 +732,7 @@ void setup() {
     digitalWrite(LCD_CTRL_PIN, HIGH);  // Power ON Nuvoton board
   }
   
-  if (enableGPRS) {
-    delay(4000);                       // Keep GPRS off for 4 seconds to fully discharge
-    digitalWrite(GPRS_CTRL_PIN, HIGH); // Power ON GPRS board
-    delay(3000);                       // Wait 3 seconds for power rails to stabilize
-  } else {
+  if (!enableGPRS) {
     digitalWrite(GPRS_CTRL_PIN, LOW);  // Keep GPRS off
     delay(500);
   }
@@ -639,9 +757,11 @@ void setup() {
     if (testSPIFFS()) {
       Serial.println("[PASS] SPIFFS_CHECK: OK");
       showProgress("DIAG: SPIFFS", "PASS");
+      printPartitionInfo();
     } else {
       Serial.println("[FAIL] SPIFFS_CHECK: FAIL");
       showProgress("DIAG: SPIFFS", "FAIL");
+      printPartitionInfo();
       hardware_check_failed = true;
     }
     delay(500);
@@ -665,7 +785,7 @@ void setup() {
     } else {
       Serial.println("[FAIL] SD_CHECK: FAIL");
       showProgress("DIAG: SD CARD", "FAIL");
-      hardware_check_failed = true;
+      // SD Card failure is not mandatory (not setting hardware_check_failed = true)
     }
     delay(500);
   } else {
@@ -730,7 +850,7 @@ void setup() {
 
   // 3c. Wind Sensors Setup
   if (enableESP && !isTRG) {
-    pinMode(WIND_SPD_PIN, INPUT_PULLUP);
+    pinMode(WIND_SPD_PIN, INPUT);
     wind_pulse_count = 0;
     attachInterrupt(digitalPinToInterrupt(WIND_SPD_PIN), wind_pulse_isr, FALLING);
     Serial.println("[QC_JIG] Wind speed pulse interrupt attached.");
@@ -741,6 +861,10 @@ void setup() {
   
   // 4. Analog Readings
   if (enableESP) {
+    // [H-01] Ensure WiFi is fully disabled and released from ADC2 before reading Solar ADC
+    WiFi.mode(WIFI_OFF);
+    delay(50);
+
     int rawBatt = analogRead(BATT_3V7_PIN);
     int rawV33 = analogRead(SYS_3V3_PIN);
     int rawSolar = analogRead(SOLAR_ADC_PIN);
@@ -748,6 +872,11 @@ void setup() {
     float battVolt = (rawBatt / 4095.0) * 3.3 * (840.0 / 620.0);
     float v33Volt = (rawV33 / 4095.0) * 3.3 * (840.0 / 620.0); // Resistor divider matches Batt
     float solarVolt = (rawSolar / 4095.0) * 3.3 * 7.2;
+
+    // [M-03] LDO out-of-range warning check
+    if (v33Volt < 3.0 || v33Volt > 3.6) {
+      Serial.printf("[WARN] SYS_3V3 out of range: %.2f V\n", v33Volt);
+    }
    
     Serial.printf("[QC_JIG] ADCs: Rain=%d, WindSpeed=%d, WindDir=%d\n", analogRead(RAIN_ADC_PIN), analogRead(WIND_SPD_PIN), analogRead(WIND_DIR_PIN));
     Serial.printf("[QC_JIG] BATT_3V7_ADC: %d (Derived: %.2f V), SYS_3V3_ADC: %d (Derived: %.2f V), SOLAR_ADC: %d (Derived: %.2f V)\n", rawBatt, battVolt, rawV33, v33Volt, rawSolar, solarVolt);
@@ -756,7 +885,7 @@ void setup() {
   }
   
   // 5. GPRS Modem Setup and Test
-  if (enableGPRS) {
+  if (enableGPRS && !hardware_check_failed) {
     showProgress("DIAG: GPRS MDM", "DISCHARGING 4s");
     delay(4000);                       // Keep GPRS off for 4 seconds to fully discharge
     digitalWrite(GPRS_CTRL_PIN, HIGH); // Power ON GPRS board
@@ -797,6 +926,7 @@ void setup() {
       showProgress("DIAG: SIM CPIN", "CHECKING...");
       bool sim_ready = false;
       for (int i = 0; i < 15; i++) {
+        esp_task_wdt_reset();
         char cpinBuf[32];
         snprintf(cpinBuf, sizeof(cpinBuf), "CPIN POLL %d/15", i + 1);
         showProgress("DIAG: SIM CPIN", cpinBuf);
@@ -1042,6 +1172,7 @@ void setup() {
       int no_of_retries = 24;
       
       while (!is_registered && (retries < no_of_retries)) {
+        esp_task_wdt_reset();
         char regBuf[32];
         snprintf(regBuf, sizeof(regBuf), "WAIT REG %d/%d", retries + 1, no_of_retries);
         showProgress("DIAG: NETWORK", regBuf);
@@ -1151,9 +1282,7 @@ void setup() {
     Serial.println("[QC_STEP] NUVOTON_COMM: IGNORED");
   }
   
-  // Configure simulation pulse generator pin
-  pinMode(RAIN_SIM_PIN, OUTPUT);
-  digitalWrite(RAIN_SIM_PIN, HIGH);
+  // RAIN_SIM_PIN output configuration removed (GPIO 2 bootstrapping conflict prevention)
   
   if (hardware_check_failed) {
     Serial.println("\n[QC_JIG] ======================================");
@@ -1284,11 +1413,10 @@ void loop() {
     if (Serial1.available()) {
       last_activity_time = millis();
       rawKey = Serial1.read();
-      delay(5);
-      // Debounce double-char sends if present
-      if (Serial1.available()) {
-        char rawKey2 = Serial1.read();
-        if (rawKey2 != rawKey) rawKey = '\0';
+      delay(10); // Wait for trailing chars
+      // Flush trailing delimiters or duplicate keypresses
+      while (Serial1.available()) {
+        Serial1.read();
       }
     }
 
@@ -1435,9 +1563,29 @@ void loop() {
     }
   }
 
-  // Check for inactivity/idle timeout
-  if (millis() - last_activity_time >= INACTIVITY_TIMEOUT_MS) {
+  // Check for inactivity/idle timeout with visual countdown warning
+  uint32_t elapsed_inactivity = millis() - last_activity_time;
+  if (elapsed_inactivity >= INACTIVITY_TIMEOUT_MS) {
     goToIdleSleep();
+  } else if (INACTIVITY_TIMEOUT_MS - elapsed_inactivity <= 60000UL) {
+    in_countdown_warning = true;
+    static uint32_t last_countdown_update = 0;
+    uint32_t seconds_left = (INACTIVITY_TIMEOUT_MS - elapsed_inactivity) / 1000UL;
+    if (millis() - last_countdown_update >= 1000UL) {
+      last_countdown_update = millis();
+      if (enableNuvoton && currentState != STATE_FAILED && currentState != STATE_COMPLETE) {
+        char line0[17], line1[17];
+        snprintf(line0, sizeof(line0), "INACTIVITY WARN ");
+        snprintf(line1, sizeof(line1), "SLEEP IN %2ds    ", seconds_left);
+        lcdClear();
+        lcdSetCursor(0, 0); lcdPrint(line0);
+        lcdSetCursor(0, 1); lcdPrint(line1);
+      }
+      Serial.printf("[QC_JIG] [WARN] Idle timeout approaching. Sleeping in %d seconds...\n", seconds_left);
+    }
+  } else if (in_countdown_warning) {
+    in_countdown_warning = false;
+    redrawCurrentStateScreen();
   }
 
   delay(10);
