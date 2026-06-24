@@ -4650,7 +4650,7 @@ function getManageRecordsHtml() {
       
       try {
         const fetchUrl = `${url}?q=${encodeURIComponent(boxBarcode)}`;
-        const response = await fetch(fetchUrl);
+        const response = await fetchWithTimeout(fetchUrl, {}, 8000);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const results = await response.json();
         if (results.error) throw new Error(results.error);
@@ -4824,7 +4824,7 @@ function getManageRecordsHtml() {
       
       try {
         const fetchUrl = `${url}?q=${encodeURIComponent(boxBarcode)}`;
-        const response = await fetch(fetchUrl);
+        const response = await fetchWithTimeout(fetchUrl, {}, 8000);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const results = await response.json();
         if (results.error) throw new Error(results.error);
@@ -4895,7 +4895,7 @@ function getManageRecordsHtml() {
       if (!url) return;
       try {
         const fetchUrl = `${url}?action=getRepairBin`;
-        const response = await fetch(fetchUrl);
+        const response = await fetchWithTimeout(fetchUrl, {}, 8000);
         if (response.ok) {
           repairBinInventory = await response.json();
           updateInventoryStatusBadges();
@@ -5049,7 +5049,7 @@ function getManageRecordsHtml() {
       
       try {
         const fetchUrl = `${url}?action=getRepairBin`;
-        const response = await fetch(fetchUrl);
+        const response = await fetchWithTimeout(fetchUrl, {}, 8000);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const items = await response.json();
         
@@ -5283,14 +5283,14 @@ function getManageRecordsHtml() {
       logToConsole("Sending initialization signal to Google Sheets Web App...", "normal");
 
       try {
-        await fetch(url, {
+        await fetchWithTimeout(url, {
           method: "POST",
           mode: "no-cors",
           headers: {
             "Content-Type": "application/json"
           },
           body: JSON.stringify({ initOnly: true })
-        });
+        }, 12000);
         
         logToConsole("✓ Initialization signal sent! The 'Test_Logs' and 'Master_Status' tabs will now be populated/refreshed with styled headers.", "info");
         alert("Initialization command sent successfully! Please check your Google Sheet tabs.");
@@ -5478,7 +5478,7 @@ function getManageRecordsHtml() {
 
       try {
         const fetchUrl = `${url}?q=${encodeURIComponent(q)}`;
-        const response = await fetch(fetchUrl);
+        const response = await fetchWithTimeout(fetchUrl, {}, 8000);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const results = await response.json();
         if (results.error) throw new Error(results.error);
@@ -7674,23 +7674,32 @@ function getManageRecordsHtml() {
 
         // Add notes to the sync payload
         const extraData = notes ? `Notes: ${notes}` : "";
-        const synced = await autoSyncIntegrationToSheets(verdict, extraData);
-        
-        if (synced) {
-          setIntegrationCheckState(intChkSync, intValSync, "pass", "SUCCESS");
-          if (verdict === "PASS") {
-            showVerdict("PASS", `Integration Verification Successful!<br>All checklist items confirmed by tester.<br>Record synced to Google Sheet.`);
+        try {
+          const synced = await autoSyncIntegrationToSheets(verdict, extraData);
+          
+          if (synced) {
+            setIntegrationCheckState(intChkSync, intValSync, "pass", "SUCCESS");
+            if (verdict === "PASS") {
+              showVerdict("PASS", `Integration Verification Successful!<br>All checklist items confirmed by tester.<br>Record synced to Google Sheet.`);
+            } else {
+              showVerdict("FAIL", `Integration marked FAIL by tester.<br>${notes || "No notes provided."}`);
+            }
           } else {
-            showVerdict("FAIL", `Integration marked FAIL by tester.<br>${notes || "No notes provided."}`);
+            setIntegrationCheckState(intChkSync, intValSync, "fail", "FAILED");
+            showVerdict(verdict, `Sheet sync failed — check network connection.<br>Verdict: <strong>${verdict}</strong>`);
           }
-        } else {
+        } catch (error) {
+          console.error("Error in submitVerification:", error);
           setIntegrationCheckState(intChkSync, intValSync, "fail", "FAILED");
-          showVerdict(verdict, `Sheet sync failed — check network connection.<br>Verdict: <strong>${verdict}</strong>`);
+          showVerdict(verdict, `Error during submit: ${error.message}`);
+        } finally {
+          const overlayEl = document.getElementById("prodVerifyOverlay");
+          if (overlayEl) {
+            document.body.removeChild(overlayEl);
+          }
+          isIntegrating = false;
+          checkPreconditions();
         }
-
-        document.body.removeChild(overlay);
-        isIntegrating = false;
-        checkPreconditions();
       }
 
       document.getElementById("pvPass").addEventListener("click", () => submitVerification("PASS"));
