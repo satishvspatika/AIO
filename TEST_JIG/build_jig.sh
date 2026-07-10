@@ -28,18 +28,40 @@ fi
 QC_ONLY=false
 BUILD_8MB=true
 BUILD_16MB=true
+CONFIGS_VAL="KSNDMC_TRG"
+UI_VAL="both"
 
-for arg in "$@"; do
-    if [ "$arg" == "--qc-only" ] || [ "$arg" == "qc-only" ]; then
-        QC_ONLY=true
-    elif [ "$arg" == "--8mb-only" ] || [ "$arg" == "--8mb" ] || [ "$arg" == "8mb-only" ]; then
-        BUILD_8MB=true
-        BUILD_16MB=false
-    elif [ "$arg" == "--16mb-only" ] || [ "$arg" == "--16mb" ] || [ "$arg" == "16mb-only" ]; then
-        BUILD_8MB=false
-        BUILD_16MB=true
-    fi
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --qc-only|qc-only)
+      QC_ONLY=true
+      shift
+      ;;
+    --8mb-only|--8mb|8mb-only)
+      BUILD_8MB=true
+      BUILD_16MB=false
+      shift
+      ;;
+    --16mb-only|--16mb|16mb-only)
+      BUILD_8MB=false
+      BUILD_16MB=true
+      shift
+      ;;
+    --configs)
+      CONFIGS_VAL="$2"
+      shift 2
+      ;;
+    --ui)
+      UI_VAL="$2"
+      shift 2
+      ;;
+    *)
+      # Ignore or skip unknown args
+      shift
+      ;;
+  esac
 done
+
 
 if [ "$QC_ONLY" = true ]; then
     echo "⚡ QC-Only flag detected. Skipping production application and config builds."
@@ -85,7 +107,7 @@ if [ "$BUILD_8MB" = true ]; then
   echo "→ Building 8MB QC Test..."
   cp "$WORKSPACE_ROOT/partitions.csv" "$TEST_JIG_DIR/qc_test/partitions.csv"
   $ARDUINO_CLI compile \
-      --fqbn "esp32:esp32:esp32:FlashSize=8M,PartitionScheme=custom" \
+      --fqbn "esp32:esp32:esp32:FlashSize=8M,FlashMode=dio,PartitionScheme=custom" \
       --build-property "build.partitions=custom" \
       --build-property "upload.maximum_size=1769472" \
       --build-path "$QC_BUILD_BASE/8mb" \
@@ -103,7 +125,7 @@ if [ "$BUILD_16MB" = true ]; then
   echo "→ Building 16MB QC Test..."
   cp "$WORKSPACE_ROOT/partitions_16mb.csv" "$TEST_JIG_DIR/qc_test/partitions.csv"
   $ARDUINO_CLI compile \
-      --fqbn "esp32:esp32:esp32:FlashSize=16M,PartitionScheme=custom" \
+      --fqbn "esp32:esp32:esp32:FlashSize=16M,FlashMode=dio,FlashFreq=40,PartitionScheme=custom" \
       --build-property "build.partitions=custom" \
       --build-property "upload.maximum_size=2097152" \
       --build-path "$QC_BUILD_BASE/16mb" \
@@ -128,7 +150,7 @@ if [ "$QC_ONLY" = false ]; then
     # Build 8MB Production App
     echo "→ Building 8MB Production Application..."
     $ARDUINO_CLI compile \
-        --fqbn "esp32:esp32:esp32:FlashSize=8M,PartitionScheme=custom" \
+        --fqbn "esp32:esp32:esp32:FlashSize=8M,FlashMode=dio,PartitionScheme=custom" \
         --build-property "build.partitions=custom" \
         --build-property "upload.maximum_size=1769472" \
         --build-path "$APP_BUILD_BASE/8mb" \
@@ -146,7 +168,7 @@ if [ "$QC_ONLY" = false ]; then
     cp "$WORKSPACE_ROOT/partitions.csv" /tmp/partitions_backup.csv 2>/dev/null || true
     cp "$WORKSPACE_ROOT/partitions_16mb.csv" "$WORKSPACE_ROOT/partitions.csv"
     $ARDUINO_CLI compile \
-        --fqbn "esp32:esp32:esp32:FlashSize=16M,PartitionScheme=custom" \
+        --fqbn "esp32:esp32:esp32:FlashSize=16M,FlashMode=dio,FlashFreq=40,PartitionScheme=custom" \
         --build-property "build.partitions=custom" \
         --build-property "upload.maximum_size=2097152" \
         --build-path "$APP_BUILD_BASE/16mb" \
@@ -255,7 +277,7 @@ if [ "$QC_ONLY" = false ]; then
 
       echo "→ Running build_all_configs.py (${FLASH_ARG} targets)..."
       cd "$WORKSPACE_ROOT"
-      python3 build_all_configs.py --flash $FLASH_ARG --configs KSNDMC_TRG
+      python3 build_all_configs.py --flash $FLASH_ARG --configs "$CONFIGS_VAL" --ui "$UI_VAL"
       BUILD_STATUS=$?
   
       if [ $BUILD_STATUS -ne 0 ]; then

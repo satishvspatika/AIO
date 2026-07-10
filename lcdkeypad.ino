@@ -357,7 +357,18 @@ void refresh_sensor_data() {
       lcd_id = station_name + 2;
   }
   snprintf(ui_data[FLD_STATION].bottomRow, 17, "%-16s", lcd_id);
-  snprintf(ui_data[FLD_VERSION].bottomRow, 17, "%-16s", UNIT_VER);
+  char display_ver[17];
+  if (strlen(UNIT_VER) <= 16) {
+    strcpy(display_ver, UNIT_VER);
+  } else {
+    String temp = String(UNIT_VER);
+    temp.replace("-DMC-", "-D-");
+    temp.replace("-BIH-", "-B-");
+    temp.replace("-GEN-", "-G-");
+    strncpy(display_ver, temp.c_str(), 16);
+    display_ver[16] = '\0';
+  }
+  snprintf(ui_data[FLD_VERSION].bottomRow, 17, "%-16s", display_ver);
   snprintf(ui_data[FLD_DATE].bottomRow, 17, "%02d-%02d-%04d", d, m, y);
   snprintf(ui_data[FLD_TIME].bottomRow, 17, "%02d:%02d", hr, mi);
   if (strlen(last_logged) == 0) {
@@ -531,7 +542,7 @@ void lcdkeypad(void *pvParameters) {
 
   lcdkeypad_start = 0;
   calib_flag = 0;
-  delay(1000);
+  vTaskDelay(200 / portTICK_PERIOD_MS); // Reduced from 1000ms
   disp_fld_no = -1;
   cur_fld_no = 0;
   input_buf[0] = 0;
@@ -729,7 +740,7 @@ void lcdkeypad(void *pvParameters) {
       if (lcdkeypad_start == 0 || lcd_timer == NULL) {
         lcdkeypad_start = 1; // v5.77: Claim UI priority immediately before power-up delays
         digitalWrite(32, HIGH);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        vTaskDelay(200 / portTICK_PERIOD_MS); // Reduced from 1000ms since LCD was powered early at boot
         cur_fld_no = 0; // v5.60: Ensure we always start at Station ID on wakeup
 
         if (lcd_timer == NULL) {
@@ -750,15 +761,15 @@ void lcdkeypad(void *pvParameters) {
           timerWrite(lcd_timer, 0);
         }
         // cur_fld_no = 0 already handled in wakeup block
-        vTaskDelay(200 / portTICK_PERIOD_MS);
+        vTaskDelay(100 / portTICK_PERIOD_MS); // Reduced from 200ms
 
         // v5.85: Increased timeout to 3s and added retry logic to prevent LCD activation failures 
         // when RTC or Temp/Hum tasks are busy on the I2C bus.
 #if USE_NUVOTON_UI == 1
         Serial1.begin(9600, SERIAL_8N1, 14, 4);
-        delay(100);
+        delay(50); // Reduced from 100
         while (Serial1.available()) Serial1.read();
-        delay(1500);
+        delay(300); // Reduced from 1500ms since LCD has already been powered for several seconds at boot
         lcd.backlight(); // Turn display pixels back ON after wakeup
         lcd.clear();     // Reset cursor to home (0x01)
         present_topRow[0] = 0; present_bottomRow[0] = 0; // Invalidate display cache to force full redraw

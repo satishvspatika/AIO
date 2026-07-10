@@ -9,10 +9,11 @@
 #include "esp_ota_ops.h"
 #include <Adafruit_BME280.h>
 #include <esp_task_wdt.h>
+#include <Preferences.h>
 
 Adafruit_BME280 bme;
 
-#define QC_TEST_VERSION "6.08"
+#define QC_TEST_VERSION "6.09-QC"
 
 // --- PIN DEFINITIONS (ESP32-WROOM-32U) ---
 #define GPRS_CTRL_PIN   26  // Active-HIGH PMOS gate for GPRS board power
@@ -49,16 +50,33 @@ enum QCState {
   STATE_RF_WAIT_JUMPER,
   STATE_RF_RUNNING,
   STATE_RF_CONFIRM,
+  STATE_WAKEUP_CONFIRM,
+  STATE_SYNC_CONFIRM,
   STATE_COMPLETE,
   STATE_FAILED
 };
 
 #define INACTIVITY_TIMEOUT_MS 300000
-RTC_DATA_ATTR bool expecting_test_wakeup = false;
+bool getExpectingTestWakeup() {
+  Preferences prefs;
+  prefs.begin("qctest", true);
+  bool val = prefs.getBool("exp_wakeup", false);
+  prefs.end();
+  return val;
+}
+
+void setExpectingTestWakeup(bool val) {
+  Preferences prefs;
+  prefs.begin("qctest", false);
+  prefs.putBool("exp_wakeup", val);
+  prefs.end();
+}
+bool syncVerdictPass = false;
 unsigned long last_activity_time = 0;
 bool in_countdown_warning = false;
 
 QCState currentState = STATE_AUTO_TESTS;
+uint32_t lastStateChangeTime = 0;
 volatile int rf_pulse_count = 0;
 volatile int wind_pulse_count = 0;
 
@@ -172,6 +190,14 @@ void redrawCurrentStateScreen() {
       lcdSetCursor(0, 1); lcdPrint("SET:OK CLEAR:ERR");
       break;
     }
+    case STATE_WAKEUP_CONFIRM:
+      lcdSetCursor(0, 0); lcdPrint("WOKE UP OK!");
+      lcdSetCursor(0, 1); lcdPrint("PRESS SET OR CLR");
+      break;
+    case STATE_SYNC_CONFIRM:
+      lcdSetCursor(0, 0); lcdPrint("SYNC TO SHEET?");
+      lcdSetCursor(0, 1); lcdPrint("SET:YES CLR:NO");
+      break;
     case STATE_COMPLETE:
       lcdSetCursor(0, 0); lcdPrint("WAKEUP: PASS!");
       lcdSetCursor(0, 1); lcdPrint("QC PASS: APPROVED");
@@ -466,6 +492,7 @@ void startRfManualTest() {
   rf_last_logged_count = -1;
   rf_test_start_time = millis();
   currentState = STATE_RF_RUNNING;
+  lastStateChangeTime = millis();
 
   // Attach interrupt immediately — ISR ready before we announce
   attachInterrupt(digitalPinToInterrupt(RAIN_ADC_PIN), rf_pulse_isr, FALLING);
@@ -500,6 +527,7 @@ void tallyRfTest() {
   int finalCount = rf_pulse_count;
   
   currentState = STATE_RF_CONFIRM;
+  lastStateChangeTime = millis();
   Serial.printf("[QC_STEP] RF_CHECK: CONFIRMING (%d tips)\n", finalCount);
   
   if (enableNuvoton) {
@@ -536,7 +564,27 @@ void failRfTest() {
     lcdSetCursor(0, 1); lcdPrint("PRESS SET RETRY");
   }
   currentState = STATE_RF_WAIT_JUMPER;
+  lastStateChangeTime = millis();
   Serial.println("[QC_STEP] RF_CHECK: WAITING_JUMPER");
+}
+
+void enterSyncConfirmState(bool pass) {
+  // Safety: Turn off GPRS board power to ensure socket is safe for hot swapping in all outcomes (PASS or FAIL)
+  digitalWrite(GPRS_CTRL_PIN, LOW);
+
+  currentState = STATE_SYNC_CONFIRM;
+  lastStateChangeTime = millis();
+  syncVerdictPass = pass;
+  Serial.printf("[QC_STEP] SYNC_SHEET: CONFIRMING_%s\n", pass ? "PASS" : "FAIL");
+  
+  if (enableNuvoton) {
+    delay(300); // Brief pause so previous LCD text clears cleanly before sync prompt
+    lcdClear();
+    lcdSetCursor(0, 0);
+    lcdPrint("SYNC TO SHEET?");
+    lcdSetCursor(0, 1);
+    lcdPrint("SET:YES CLR:NO");
+  }
 }
 
 void startDeepSleepTest() {
@@ -551,7 +599,7 @@ void startDeepSleepTest() {
   delay(100);
   
   // Set the flag so we know this sleep was for the test verification wakeup
-  expecting_test_wakeup = true;
+  setExpectingTestWakeup(true);
   
   // Enable EXT0 wakeup on GPIO 27 (SET key, pulls LOW when pressed)
   esp_sleep_enable_ext0_wakeup((gpio_num_t)KEYPAD_INT_PIN, 0);
@@ -571,7 +619,7 @@ void goToIdleSleep() {
   delay(100);
   
   // This is a power-saving sleep, not the test verification wakeup
-  expecting_test_wakeup = false;
+  setExpectingTestWakeup(false);
   
   // Enable EXT0 wakeup on GPIO 27 (SET key, pulls LOW when pressed)
   esp_sleep_enable_ext0_wakeup((gpio_num_t)KEYPAD_INT_PIN, 0);
@@ -615,29 +663,39 @@ void setup() {
   delay(100);
   
   // Check if we woke up from Deep Sleep via EXT0 trigger
-  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0 && expecting_test_wakeup) {
-    expecting_test_wakeup = false; // Reset the flag
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0 && getExpectingTestWakeup()) {
+    setExpectingTestWakeup(false); // Reset the flag
     
     // Power ON LCD
     pinMode(LCD_CTRL_PIN, OUTPUT);
     digitalWrite(LCD_CTRL_PIN, HIGH);
+    delay(1500); // Allow Nuvoton LCD controller to boot up fully before serial communication
     
     // Initialize LCD UART and print verdict
+    pinMode(NUV_TX_PIN, OUTPUT);
+    pinMode(NUV_RX_PIN, INPUT);
     Serial1.begin(9600, SERIAL_8N1, NUV_RX_PIN, NUV_TX_PIN);
     delay(100);
+    while (Serial1.available()) {
+      Serial1.read();
+    }
+    Serial1.write(0x0C); // Force Display ON (pixels enabled)
+    Serial1.flush();
+    delay(50);
+    
     lcdClear();
     lcdSetCursor(0, 0);
-    lcdPrint("WAKEUP: PASS!");
+    lcdPrint("WOKE UP OK!");
     lcdSetCursor(0, 1);
-    lcdPrint("QC PASS: APPROVED");
+    lcdPrint("PRESS SET OR CLR");
     
     Serial.println("\n[QC_JIG] ======================================");
-    Serial.println("[QC_JIG] Board woke up from Deep Sleep via EXT0 (SET key)!");
-    Serial.println("[QC_STEP] EXT0_WAKEUP: PASS");
-    Serial.println("[QC_JIG] [QC_RESULT: PASS] QC Test sequence completed successfully!");
+    Serial.println("[QC_JIG] Board woke up from Deep Sleep. Waiting for operator confirmation...");
+    Serial.println("[QC_STEP] EXT0_WAKEUP: CONFIRMING");
     Serial.println("[QC_JIG] ======================================");
     
-    currentState = STATE_COMPLETE;
+    currentState = STATE_WAKEUP_CONFIRM;
+    lastStateChangeTime = millis();
     last_activity_time = millis();
     return; // Go straight to loop() and bypass setup checks
   }
@@ -785,7 +843,7 @@ void setup() {
     } else {
       Serial.println("[FAIL] SD_CHECK: FAIL");
       showProgress("DIAG: SD CARD", "FAIL");
-      // SD Card failure is not mandatory (not setting hardware_check_failed = true)
+      hardware_check_failed = true;
     }
     delay(500);
   } else {
@@ -1286,7 +1344,7 @@ void setup() {
   
   if (hardware_check_failed) {
     Serial.println("\n[QC_JIG] ======================================");
-    Serial.println("[QC_JIG] [QC_RESULT: FAIL] Hardware peripheral check(s) failed!");
+    Serial.println("[QC_JIG] Hardware peripheral check(s) failed!");
     Serial.println("[QC_JIG] ======================================");
     if (enableNuvoton) {
       lcdClear();
@@ -1294,15 +1352,16 @@ void setup() {
       lcdPrint("QC FAILED!");
       lcdSetCursor(0, 1);
       lcdPrint("INSPECT BOARD");
+      delay(2000);
     }
-    currentState = STATE_FAILED;
-    last_activity_time = millis();
+    enterSyncConfirmState(false);
     return; // Exit setup() to loop() which handles idle timeout
   }
   
   // Initialize interactive test state machine based on configuration
   if (enableNuvoton) {
     currentState = STATE_LCD_WAIT;
+    lastStateChangeTime = millis();
     lcdClear();
     lcdSetCursor(0, 0);
     lcdPrint("LCD TEST: READ?");
@@ -1321,15 +1380,169 @@ void setup() {
       startRfManualTest();
     }
   } else {
-    currentState = STATE_COMPLETE;
     Serial.println("[QC_STEP] LCD_TEST: IGNORED");
     Serial.println("[QC_STEP] KEYPAD_TEST: IGNORED");
     Serial.println("[QC_STEP] RF_CHECK: IGNORED");
     Serial.println("[QC_STEP] EXT0_WAKEUP: IGNORED");
-    Serial.println("[QC_JIG] [QC_RESULT: PASS] QC Test sequence completed successfully!");
+    enterSyncConfirmState(true);
+  }
+}
+
+void processKeypress(char rawKey) {
+  if (rawKey < '1' || rawKey > '6') return;
+  const char* keyName = getKeyName(rawKey);
+
+  // Cooldown validation for sensitive state changes to prevent key bounce/repeat
+  if ((currentState == STATE_SYNC_CONFIRM || currentState == STATE_RF_RUNNING || currentState == STATE_RF_CONFIRM) && 
+      (millis() - lastStateChangeTime < 1000)) {
+    Serial.printf("[QC_JIG] Cooldown active: Ignoring keypress '%s' in state %d\n", keyName, currentState);
+    return;
   }
   
-  last_activity_time = millis();
+  Serial.printf("[QC_JIG] [KEYPAD_PRESSED: %s] (Raw: '%c')\n", keyName, rawKey);
+  
+  if (currentState == STATE_LCD_WAIT) {
+    if (rawKey == '1') { // CLEAR key confirmed
+      Serial.println("[QC_STEP] LCD_TEST: PASS");
+      Serial.println("[QC_JIG] LCD check passed! Initiating Keypad Sweep.");
+      
+      currentState = STATE_KEYPAD_LEFT;
+      lastStateChangeTime = millis();
+      lcdClear();
+      lcdSetCursor(0, 0);
+      lcdPrint("KEYPAD: PRESS");
+      lcdSetCursor(0, 1);
+      lcdPrint("LEFT KEY");
+      Serial.println("[QC_STEP] KEYPAD_TEST: WAITING_LEFT");
+    } else {
+      lcdClear();
+      lcdSetCursor(0, 0);
+      lcdPrint("WRONG KEY PRESS");
+      lcdSetCursor(0, 1);
+      lcdPrint("PRESS CLEAR KEY");
+      delay(1000);
+      lcdClear();
+      lcdSetCursor(0, 0);
+      lcdPrint("LCD TEST: READ?");
+      lcdSetCursor(0, 1);
+      lcdPrint("PRESS CLEAR KEY");
+    }
+  }
+  else if (currentState == STATE_KEYPAD_LEFT) {
+    if (rawKey == '2') { // LEFT key
+      currentState = STATE_KEYPAD_UP;
+      lastStateChangeTime = millis();
+      lcdClear();
+      lcdSetCursor(0, 0);
+      lcdPrint("KEYPAD: PRESS");
+      lcdSetCursor(0, 1);
+      lcdPrint("UP KEY");
+      Serial.println("[QC_STEP] KEYPAD_TEST: WAITING_UP");
+    }
+  }
+  else if (currentState == STATE_KEYPAD_UP) {
+    if (rawKey == '3') { // UP key
+      currentState = STATE_KEYPAD_DOWN;
+      lastStateChangeTime = millis();
+      lcdClear();
+      lcdSetCursor(0, 0);
+      lcdPrint("KEYPAD: PRESS");
+      lcdSetCursor(0, 1);
+      lcdPrint("DOWN KEY");
+      Serial.println("[QC_STEP] KEYPAD_TEST: WAITING_DOWN");
+    }
+  }
+  else if (currentState == STATE_KEYPAD_DOWN) {
+    if (rawKey == '4') { // DOWN key
+      currentState = STATE_KEYPAD_RIGHT;
+      lastStateChangeTime = millis();
+      lcdClear();
+      lcdSetCursor(0, 0);
+      lcdPrint("KEYPAD: PRESS");
+      lcdSetCursor(0, 1);
+      lcdPrint("RIGHT KEY");
+      Serial.println("[QC_STEP] KEYPAD_TEST: WAITING_RIGHT");
+    }
+  }
+  else if (currentState == STATE_KEYPAD_RIGHT) {
+    if (rawKey == '5') { // RIGHT key
+      currentState = STATE_KEYPAD_SET;
+      lastStateChangeTime = millis();
+      lcdClear();
+      lcdSetCursor(0, 0);
+      lcdPrint("KEYPAD: PRESS");
+      lcdSetCursor(0, 1);
+      lcdPrint("SET KEY");
+      Serial.println("[QC_STEP] KEYPAD_TEST: WAITING_SET");
+    }
+  }
+  else if (currentState == STATE_KEYPAD_SET) {
+    if (rawKey == '6') { // SET key
+      Serial.println("[QC_STEP] KEYPAD_TEST: PASS");
+      Serial.println("[QC_JIG] Keypad sweep completed successfully!");
+      
+      if (!enableESP) {
+        Serial.println("[QC_STEP] RF_CHECK: IGNORED");
+        Serial.println("[QC_STEP] EXT0_WAKEUP: IGNORED");
+        enterSyncConfirmState(true);
+      } else if (isTWS) {
+        Serial.println("[QC_STEP] RF_CHECK: IGNORED");
+        startDeepSleepTest();
+      } else {
+        startRfManualTest();
+      }
+    }
+  }
+  else if (currentState == STATE_RF_WAIT_JUMPER) {
+    if (rawKey == '6') { // SET key restarts count (retry after timeout/fail)
+      startRfManualTest();
+    }
+  }
+  else if (currentState == STATE_RF_RUNNING) {
+    if (rawKey == '6') { // SET key tallies and ends the test
+      tallyRfTest();
+    }
+  }
+  else if (currentState == STATE_RF_CONFIRM) {
+    if (rawKey == '6') { // SET key confirms PASS
+      passRfTest();
+    } else if (rawKey == '1') { // CLEAR key confirms FAIL
+      failRfTest();
+    }
+  }
+  else if (currentState == STATE_WAKEUP_CONFIRM) {
+    if (rawKey == '6') { // SET key confirms PASS
+      Serial.println("[QC_STEP] EXT0_WAKEUP: PASS");
+      enterSyncConfirmState(true);
+    } else if (rawKey == '1') { // CLEAR key confirms FAIL
+      Serial.println("[QC_STEP] EXT0_WAKEUP: FAIL");
+      enterSyncConfirmState(false);
+    }
+  }
+  else if (currentState == STATE_SYNC_CONFIRM) {
+    if (rawKey == '6') { // SET key confirms YES (Sync)
+      Serial.println("[QC_STEP] SYNC_SHEET: YES");
+      if (enableNuvoton) {
+        lcdClear();
+        lcdSetCursor(0, 0);
+        lcdPrint("SYNCING...");
+      }
+    } else if (rawKey == '1') { // CLEAR key confirms NO (Cancel Sync)
+      Serial.println("[QC_STEP] SYNC_SHEET: NO");
+      if (enableNuvoton) {
+        lcdClear();
+        lcdSetCursor(0, 0);
+        lcdPrint("SYNC CANCELLED");
+        delay(2000);
+        lcdClear();
+        lcdSetCursor(0, 0);
+        lcdPrint("TEST DISCARDED");
+      }
+      Serial.println("[QC_JIG] [QC_RESULT: DISCARDED] QC Test was cancelled/discarded by the operator.");
+      currentState = STATE_FAILED; // transition to a safe state
+      lastStateChangeTime = millis();
+    }
+  }
 }
 
 void loop() {
@@ -1349,9 +1562,23 @@ void loop() {
         tallyRfTest();
       }
     } else if (cmd == "CMD:RF_FAIL") {
-      if (currentState == STATE_RF_CONFIRM) {
+      if (currentState == STATE_RF_WAIT_JUMPER || currentState == STATE_RF_RUNNING || currentState == STATE_RF_CONFIRM) {
         Serial.println("[QC_JIG] Received CMD:RF_FAIL serial command.");
         failRfTest();
+      }
+    } else if (cmd == "CMD:RF_FAIL_PROCEED") {
+      if (currentState == STATE_RF_WAIT_JUMPER || currentState == STATE_RF_RUNNING || currentState == STATE_RF_CONFIRM) {
+        Serial.println("[QC_JIG] Received CMD:RF_FAIL_PROCEED serial command.");
+        int finalCount = rf_pulse_count;
+        Serial.printf("[QC_STEP] RF_CHECK: FAIL_PROCEED (got %d)\n", finalCount);
+        if (enableNuvoton) {
+          char buf[17];
+          snprintf(buf, sizeof(buf), "RF FAIL: %d TIPS", finalCount);
+          lcdClear(); lcdSetCursor(0, 0); lcdPrint(buf);
+          lcdSetCursor(0, 1); lcdPrint("PROCEEDING...");
+          delay(1500);
+        }
+        startDeepSleepTest();
       }
     } else if (cmd == "CMD:LCD_PASS") {
       if (currentState == STATE_LCD_WAIT) {
@@ -1367,16 +1594,32 @@ void loop() {
         }
         Serial.println("[QC_STEP] KEYPAD_TEST: WAITING_LEFT");
       }
+    } else if (cmd == "CMD:LCD_FAIL") {
+      if (currentState == STATE_LCD_WAIT) {
+        Serial.println("[QC_JIG] Received CMD:LCD_FAIL serial command.");
+        Serial.println("[QC_STEP] LCD_TEST: FAIL");
+        enterSyncConfirmState(false);
+      }
     } else if (cmd == "CMD:KEYPAD_PASS") {
       if (currentState >= STATE_KEYPAD_LEFT && currentState <= STATE_KEYPAD_SET) {
         Serial.println("[QC_JIG] Received CMD:KEYPAD_PASS serial override.");
         Serial.println("[QC_STEP] KEYPAD_TEST: PASS");
-        if (isTWS) {
+        if (!enableESP) {
+          Serial.println("[QC_STEP] RF_CHECK: IGNORED");
+          Serial.println("[QC_STEP] EXT0_WAKEUP: IGNORED");
+          enterSyncConfirmState(true);
+        } else if (isTWS) {
           Serial.println("[QC_STEP] RF_CHECK: IGNORED");
           startDeepSleepTest();
         } else {
           startRfManualTest();
         }
+      }
+    } else if (cmd == "CMD:KEYPAD_FAIL") {
+      if (currentState >= STATE_KEYPAD_LEFT && currentState <= STATE_KEYPAD_SET) {
+        Serial.println("[QC_JIG] Received CMD:KEYPAD_FAIL serial command.");
+        Serial.println("[QC_STEP] KEYPAD_TEST: FAIL");
+        enterSyncConfirmState(false);
       }
     } else if (cmd == "CMD:RF_PASS") {
       if (currentState == STATE_RF_WAIT_JUMPER || currentState == STATE_RF_RUNNING || currentState == STATE_RF_CONFIRM) {
@@ -1387,9 +1630,95 @@ void loop() {
     } else if (cmd == "CMD:SLEEP_PASS") {
       Serial.println("[QC_JIG] Received CMD:SLEEP_PASS serial override.");
       Serial.println("[QC_STEP] EXT0_WAKEUP: PASS");
-      Serial.println("[QC_JIG] [QC_RESULT: PASS] QC Test sequence completed successfully!");
-      currentState = STATE_COMPLETE;
-      last_activity_time = millis();
+      enterSyncConfirmState(true);
+    } else if (cmd == "CMD:WAKEUP_PASS") {
+      if (currentState == STATE_WAKEUP_CONFIRM) {
+        Serial.println("[QC_JIG] Received CMD:WAKEUP_PASS serial command.");
+        Serial.println("[QC_STEP] EXT0_WAKEUP: PASS");
+        enterSyncConfirmState(true);
+      }
+    } else if (cmd == "CMD:WAKEUP_FAIL") {
+      if (currentState == STATE_WAKEUP_CONFIRM) {
+        Serial.println("[QC_JIG] Received CMD:WAKEUP_FAIL serial command.");
+        Serial.println("[QC_STEP] EXT0_WAKEUP: FAIL");
+        enterSyncConfirmState(false);
+      }
+    } else if (cmd == "CMD:SYNC_CONFIRM") {
+      if (currentState == STATE_SYNC_CONFIRM) {
+        Serial.println("[QC_JIG] Received CMD:SYNC_CONFIRM.");
+        Serial.println("[QC_STEP] SYNC_SHEET: YES");
+        if (enableNuvoton) {
+          lcdClear();
+          lcdSetCursor(0, 0);
+          lcdPrint("SYNCING...");
+        }
+      }
+    } else if (cmd == "CMD:SYNC_CANCEL") {
+      if (currentState == STATE_SYNC_CONFIRM) {
+        Serial.println("[QC_JIG] Received CMD:SYNC_CANCEL.");
+        Serial.println("[QC_STEP] SYNC_SHEET: NO");
+        if (enableNuvoton) {
+          lcdClear();
+          lcdSetCursor(0, 0);
+          lcdPrint("SYNC CANCELLED");
+          delay(2000);
+          lcdClear();
+          lcdSetCursor(0, 0);
+          lcdPrint("TEST DISCARDED");
+        }
+        Serial.println("[QC_JIG] [QC_RESULT: DISCARDED] QC Test was cancelled/discarded by the operator.");
+        currentState = STATE_FAILED; // transition to a safe state
+      }
+    } else if (cmd == "CMD:SYNC_SUCCESS") {
+      if (currentState == STATE_SYNC_CONFIRM) {
+        if (enableNuvoton) {
+          lcdClear();
+          lcdSetCursor(0, 0);
+          lcdPrint("SYNC SUCCESS");
+          delay(2000);
+          lcdClear();
+          lcdSetCursor(0, 0);
+          lcdPrint(syncVerdictPass ? "QC PASSED" : "QC FAILED");
+        }
+        if (syncVerdictPass) {
+          Serial.println("[QC_JIG] [QC_RESULT: PASS] QC Test sequence completed successfully!");
+          currentState = STATE_COMPLETE;
+        } else {
+          Serial.println("[QC_JIG] [QC_RESULT: FAIL] Hardware peripheral check(s) failed!");
+          currentState = STATE_FAILED;
+        }
+      }
+    } else if (cmd == "CMD:SYNC_FAIL") {
+      if (currentState == STATE_SYNC_CONFIRM) {
+        if (enableNuvoton) {
+          lcdClear();
+          lcdSetCursor(0, 0);
+          lcdPrint("SYNC FAILED");
+          delay(2000);
+          lcdClear();
+          lcdSetCursor(0, 0);
+          lcdPrint(syncVerdictPass ? "QC PASSED" : "QC FAILED");
+        }
+        if (syncVerdictPass) {
+          Serial.println("[QC_JIG] [QC_RESULT: PASS] QC Test sequence completed successfully!");
+          currentState = STATE_COMPLETE;
+        } else {
+          Serial.println("[QC_JIG] [QC_RESULT: FAIL] Hardware peripheral check(s) failed!");
+          currentState = STATE_FAILED;
+        }
+      }
+    } else if (cmd == "CMD:KEY_CLR") {
+      processKeypress('1');
+    } else if (cmd == "CMD:KEY_LEFT") {
+      processKeypress('2');
+    } else if (cmd == "CMD:KEY_UP") {
+      processKeypress('3');
+    } else if (cmd == "CMD:KEY_DOWN") {
+      processKeypress('4');
+    } else if (cmd == "CMD:KEY_RIGHT") {
+      processKeypress('5');
+    } else if (cmd == "CMD:KEY_SET") {
+      processKeypress('6');
     } else if (cmd == "CMD:GOTO_SLEEP") {
       Serial.println("[QC_JIG] Received CMD:GOTO_SLEEP serial command. Entering deep sleep...");
       Serial.flush();
@@ -1422,109 +1751,7 @@ void loop() {
 
     // If a valid key from 1-6 was received, handle states
     if (rawKey >= '1' && rawKey <= '6') {
-      const char* keyName = getKeyName(rawKey);
-      Serial.printf("[QC_JIG] [KEYPAD_PRESSED: %s] (Raw: '%c')\n", keyName, rawKey);
-      
-      if (currentState == STATE_LCD_WAIT) {
-        if (rawKey == '1') { // CLEAR key confirmed
-          Serial.println("[QC_STEP] LCD_TEST: PASS");
-          Serial.println("[QC_JIG] LCD check passed! Initiating Keypad Sweep.");
-          
-          currentState = STATE_KEYPAD_LEFT;
-          lcdClear();
-          lcdSetCursor(0, 0);
-          lcdPrint("KEYPAD: PRESS");
-          lcdSetCursor(0, 1);
-          lcdPrint("LEFT KEY");
-          Serial.println("[QC_STEP] KEYPAD_TEST: WAITING_LEFT");
-        } else {
-          lcdClear();
-          lcdSetCursor(0, 0);
-          lcdPrint("WRONG KEY PRESSED");
-          lcdSetCursor(0, 1);
-          lcdPrint("PRESS CLEAR KEY");
-          delay(1000);
-          lcdClear();
-          lcdSetCursor(0, 0);
-          lcdPrint("LCD TEST: READ?");
-          lcdSetCursor(0, 1);
-          lcdPrint("PRESS CLEAR KEY");
-        }
-      }
-      else if (currentState == STATE_KEYPAD_LEFT) {
-        if (rawKey == '2') { // LEFT key
-          currentState = STATE_KEYPAD_UP;
-          lcdClear();
-          lcdSetCursor(0, 0);
-          lcdPrint("KEYPAD: PRESS");
-          lcdSetCursor(0, 1);
-          lcdPrint("UP KEY");
-          Serial.println("[QC_STEP] KEYPAD_TEST: WAITING_UP");
-        }
-      }
-      else if (currentState == STATE_KEYPAD_UP) {
-        if (rawKey == '3') { // UP key
-          currentState = STATE_KEYPAD_DOWN;
-          lcdClear();
-          lcdSetCursor(0, 0);
-          lcdPrint("KEYPAD: PRESS");
-          lcdSetCursor(0, 1);
-          lcdPrint("DOWN KEY");
-          Serial.println("[QC_STEP] KEYPAD_TEST: WAITING_DOWN");
-        }
-      }
-      else if (currentState == STATE_KEYPAD_DOWN) {
-        if (rawKey == '4') { // DOWN key
-          currentState = STATE_KEYPAD_RIGHT;
-          lcdClear();
-          lcdSetCursor(0, 0);
-          lcdPrint("KEYPAD: PRESS");
-          lcdSetCursor(0, 1);
-          lcdPrint("RIGHT KEY");
-          Serial.println("[QC_STEP] KEYPAD_TEST: WAITING_RIGHT");
-        }
-      }
-      else if (currentState == STATE_KEYPAD_RIGHT) {
-        if (rawKey == '5') { // RIGHT key
-          currentState = STATE_KEYPAD_SET;
-          lcdClear();
-          lcdSetCursor(0, 0);
-          lcdPrint("KEYPAD: PRESS");
-          lcdSetCursor(0, 1);
-          lcdPrint("SET KEY");
-          Serial.println("[QC_STEP] KEYPAD_TEST: WAITING_SET");
-        }
-      }
-      else if (currentState == STATE_KEYPAD_SET) {
-        if (rawKey == '6') { // SET key
-          Serial.println("[QC_STEP] KEYPAD_TEST: PASS");
-          Serial.println("[QC_JIG] Keypad sweep completed successfully!");
-          
-          if (isTWS) {
-            Serial.println("[QC_STEP] RF_CHECK: IGNORED");
-            startDeepSleepTest();
-          } else {
-            startRfManualTest();
-          }
-        }
-      }
-      else if (currentState == STATE_RF_WAIT_JUMPER) {
-        if (rawKey == '6') { // SET key restarts count (retry after timeout/fail)
-          startRfManualTest();
-        }
-      }
-      else if (currentState == STATE_RF_RUNNING) {
-        if (rawKey == '6') { // SET key tallies and ends the test
-          tallyRfTest();
-        }
-      }
-      else if (currentState == STATE_RF_CONFIRM) {
-        if (rawKey == '6') { // SET key confirms PASS
-          passRfTest();
-        } else if (rawKey == '1') { // CLEAR key confirms FAIL
-          failRfTest();
-        }
-      }
+      processKeypress(rawKey);
     }
   }
 

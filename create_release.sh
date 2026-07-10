@@ -55,6 +55,10 @@ print_success "Detected version: v$VERSION"
 
 # 2. Get release summary (from argument or prompt)
 SUMMARY="$1"
+if [ -n "$1" ]; then
+    shift
+fi
+
 if [ -z "$SUMMARY" ]; then
     echo -e "${YELLOW}Enter release summary (e.g., 'Health Report Reliability & GPS Auto-Fix'):${NC}"
     read -r SUMMARY
@@ -66,6 +70,43 @@ if [ -z "$SUMMARY" ]; then
 fi
 
 print_success "Release summary: $SUMMARY"
+
+# Filter out --non-interactive, collect remaining args to forward to build script
+FORWARD_ARGS=()
+for arg in "$@"; do
+    if [ "$arg" != "--non-interactive" ]; then
+        FORWARD_ARGS+=("$arg")
+    fi
+done
+
+if [ "$NON_INTERACTIVE" = false ]; then
+    echo -e "\n${YELLOW}🔧 CUSTOMIZE COMPILATION OPTIONS${NC}"
+    
+    echo -e "${YELLOW}Enter configuration names to compile (space-separated, e.g. 'KSNDMC_TRG BIHAR_TRG', or press Enter for ALL):${NC}"
+    read -r CUSTOM_CONFIGS
+    if [ -n "$CUSTOM_CONFIGS" ]; then
+        FORWARD_ARGS+=("--configs" $CUSTOM_CONFIGS)
+    fi
+
+    echo -e "${YELLOW}Enter UI display variant (nuvoton, matrix, or both, or press Enter for both):${NC}"
+    read -r CUSTOM_UI
+    if [ -n "$CUSTOM_UI" ]; then
+        FORWARD_ARGS+=("--ui" "$CUSTOM_UI")
+    fi
+
+    echo -e "${YELLOW}Enter flash size(s) (8mb, 16mb, or both, or press Enter for 8mb):${NC}"
+    read -r CUSTOM_FLASH
+    if [ -n "$CUSTOM_FLASH" ]; then
+        FORWARD_ARGS+=("--flash" $CUSTOM_FLASH)
+    fi
+
+    echo -e "${YELLOW}Enable serial debug logs? (y/n, or press Enter for no):${NC}"
+    read -r CUSTOM_DEBUG
+    if [ "$CUSTOM_DEBUG" = "y" ] || [ "$CUSTOM_DEBUG" = "Y" ]; then
+        FORWARD_ARGS+=("--enable-debug")
+    fi
+    echo -e "${GREEN}✓ Build parameters customized: ${FORWARD_ARGS[*]}${NC}\n"
+fi
 
 # 3. Check if release notes exist, create template if not
 print_header "Step 2: Checking Release Notes"
@@ -191,7 +232,7 @@ fi
 # 5. Build all configurations
 print_header "Step 4: Building All Configurations"
 
-python3 build_all_configs.py
+python3 build_all_configs.py "${FORWARD_ARGS[@]}"
 
 if [ $? -ne 0 ]; then
     print_error "Build failed"
@@ -267,7 +308,7 @@ fi
 
 if [ "$SEND_EMAIL" = "y" ] || [ "$SEND_EMAIL" = "Y" ]; then
     if [ -f "$ZIP_FILE" ]; then
-        python3 send_release_email.py "$VERSION" "$ZIP_FILE" "$RELEASE_NOTES" "$SUMMARY"
+        python3 send_release_email.py "$VERSION" "$ZIP_FILE" "$RELEASE_NOTES" "$SUMMARY" "${RELEASE_DIR}/v${VERSION}"
         
         if [ $? -eq 0 ]; then
             print_success "Email sent successfully"
@@ -278,7 +319,7 @@ if [ "$SEND_EMAIL" = "y" ] || [ "$SEND_EMAIL" = "Y" ]; then
         print_error "Cannot send email: ZIP file not found"
     fi
 else
-    print_warning "Skipped email. Run manually: python3 send_release_email.py $VERSION $ZIP_FILE $RELEASE_NOTES \"$SUMMARY\""
+    print_warning "Skipped email. Run manually: python3 send_release_email.py $VERSION $ZIP_FILE $RELEASE_NOTES \"$SUMMARY\" \"${RELEASE_DIR}/v${VERSION}\""
 fi
 
 echo -e "\n${GREEN}🎉 Release v${VERSION} is ready for deployment!${NC}\n"

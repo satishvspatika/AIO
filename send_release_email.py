@@ -71,7 +71,29 @@ def send_release_email(version, zip_file, release_notes_file, summary, release_d
     SENDER_EMAIL = "satishv.spatika@gmail.com"
     TO_EMAILS = ["production.spatika@gmail.com", "rajesh.spatika@gmail.com"]
     CC_EMAILS = ["ssraghavan.spatika@gmail.com", SENDER_EMAIL]
-    SUBJECT = f"AIO9_5.0 Firmware Release v{version} - {summary}"
+    
+    # Discover built configurations dynamically for the subject line
+    built_configs = []
+    if release_dir:
+        release_path = Path(release_dir)
+        for meta_file in sorted(release_path.rglob("metadata.json")):
+            try:
+                with open(meta_file) as f:
+                    m = json.load(f)
+                cfg = m.get('config', meta_file.parent.name)
+                nuv = m.get('use_nuvoton_ui')
+                ui_lbl = "NUV" if nuv else "MAT"
+                built_configs.append(f"{cfg}_{ui_lbl}")
+            except Exception:
+                continue
+
+    if built_configs:
+        config_summary = ", ".join(built_configs)
+        if len(config_summary) > 50:
+            config_summary = f"{len(built_configs)} configs"
+        SUBJECT = f"AIO9_5.0 Firmware Release v{version} ({config_summary}) - {summary}"
+    else:
+        SUBJECT = f"AIO9_5.0 Firmware Release v{version} - {summary}"
 
     print(f"\n📧 Preparing Release Email...")
     print(f"   From: {SENDER_EMAIL}")
@@ -122,14 +144,11 @@ COMPILE-TIME SETTINGS (What was compiled in/out)
 PACKAGE CONTENTS
 ============================================================
 
-The attached ZIP file contains pre-compiled configurations:
-- KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN  (SYSTEM 0 — TRG Rain Only)
-- KSNDMC_TWS, KSNDMC_TWS-AP           (SYSTEM 1 — TWS, Skip RF Rain)
-- KSNDMC_ADDON, SPATIKA_GEN           (SYSTEM 2 — TWS-RF All Tests)
+The attached ZIP file contains the pre-compiled configurations listed in the compile-time settings table above.
 
 Each config folder contains:
   firmware.bin     — pre-compiled binary (flash at offset 0x10000)
-  fw_version.txt   — full version string (e.g. TRG9-DMC-6.07)
+  fw_version.txt   — full version string (e.g. TRG9-DMC-6.10-N)
   metadata.json    — machine-readable compile settings
 
 ============================================================

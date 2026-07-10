@@ -470,13 +470,14 @@ char pres_str[20] = "NA";
 void setup() {
   set_sys_status("BOOTING");
   // v5.77 Hardened [UI-WAKE]: Instant LCD Activation
-  // If we woke up by EXT0 (User Button), flip the 5V rail ON immediately
-  // before the 5s safety delay to prevent the 'Double-Press' requirement.
-  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
+  // Unconditionally power on LCD at cold boot/key wakeup, but keep OFF on timer wakeup
+  if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER) {
       pinMode(32, OUTPUT);
       digitalWrite(32, HIGH);
       gpio_hold_dis(GPIO_NUM_32);
-      wakeup_reason_is = ext0; // v5.77: Pre-anchor reason for task inheritance
+      if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
+          wakeup_reason_is = ext0; // v5.77: Pre-anchor reason for task inheritance
+      }
   }
   
   // v5.85 P10 CRITICAL: Clear power-saving holds from Deep Sleep
@@ -495,13 +496,17 @@ void setup() {
   ota_silent_mode = false;
   bearer_recovery_active = false;
 
+#if DEBUG == 1
   delay(1000);
   debugln("\n\n[BOOT] HELLO! System starting... (Debug Enabled)");
+#endif
 
   // Seed the random number generator using internal RNG for better jitter
   srand(esp_random());
 
+#if DEBUG == 1
   delay(1000);
+#endif
 
   // Initialize Mutexes first
   i2cMutex = xSemaphoreCreateMutex();
@@ -974,10 +979,17 @@ void setup() {
 
   // UNIT VERSION
 
+  // UI Suffix: -N for Nuvoton UART LCD, -M for Matrix GPIO/I2C LCD
+#if USE_NUVOTON_UI == 1
+  #define UI_SUFFIX "-N"
+#else
+  #define UI_SUFFIX "-M"
+#endif
+
   if ((strstr(UNIT, "KSNDMC_OLD") && (SYSTEM == 0))) {
     strcpy(universalNumber, "9980945474");
-    snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG8-DMC-%s",
-             FIRMWARE_VERSION); // #16: Single source of truth
+    snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG8-DMC-%s%s",
+             FIRMWARE_VERSION, UI_SUFFIX); // #16: Single source of truth
     strcpy(NETWORK, "KSNDMC");
     strcpy(STATION_TYPE, "TRG");
     debug("[BOOT] Unit: ");
@@ -989,7 +1001,7 @@ void setup() {
     http_no = 0;
   } else if ((strstr(UNIT, "KSNDMC_TRG") && (SYSTEM == 0))) {
     strcpy(universalNumber, "9980945474");
-    snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG9-DMC-%s", FIRMWARE_VERSION);
+    snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG9-DMC-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "KSNDMC");
     strcpy(STATION_TYPE, "TRG");
     debug("[BOOT] Unit: ");
@@ -1001,7 +1013,7 @@ void setup() {
     http_no = 1;
   } else if ((strstr(UNIT, "BIHAR_TRG") && (SYSTEM == 0))) {
     strcpy(universalNumber, "9741391102");
-    snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG9-BIH-%s", FIRMWARE_VERSION);
+    snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG9-BIH-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "DES-BIH");
     strcpy(STATION_TYPE, "TRG");
     debug("[BOOT] Unit: ");
@@ -1013,7 +1025,7 @@ void setup() {
     http_no = 2;
   } else if ((strstr(UNIT, "BIHAR_TEST") && (SYSTEM == 0))) {
     strcpy(universalNumber, "9741391102");
-    snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG9-BIH-%s", FIRMWARE_VERSION);
+    snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG9-BIH-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "DES-BIH");
     strcpy(STATION_TYPE, "TRG");
     debug("[BOOT] Unit: ");
@@ -1026,9 +1038,9 @@ void setup() {
   } else if ((strstr(UNIT, "KSNDMC_TWS") && (SYSTEM == 1))) {
     strcpy(universalNumber, "9980945474");
     if (strstr(UNIT, "-AP")) {
-      snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-AP-DMC-%s", FIRMWARE_VERSION);
+      snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-AP-DMC-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     } else {
-      snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-DMC-%s", FIRMWARE_VERSION);
+      snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-DMC-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     }
     strcpy(NETWORK, "KSNDMC");
     strcpy(STATION_TYPE, "TWS");
@@ -1041,7 +1053,7 @@ void setup() {
     http_no = 6; // 6 (KSNDMC TWS)
   } else if ((strstr(UNIT, "KSNDMC_ADDON") && (SYSTEM == 2))) {
     strcpy(universalNumber, "9980945474");
-    snprintf(UNIT_VER, sizeof(UNIT_VER), "TWSRF9-DMC-%s", FIRMWARE_VERSION);
+    snprintf(UNIT_VER, sizeof(UNIT_VER), "TWSRF9-DMC-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "KSNDMC");
     strcpy(STATION_TYPE, "TWS-RF");
     debug("[BOOT] Unit: ");
@@ -1053,7 +1065,7 @@ void setup() {
     http_no = 7; // 7 (KSNDMC ADDON)
   } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 0))) {
     strcpy(universalNumber, "9980945474"); //"9980945474"); // Universal number
-    snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG9-GEN-%s", FIRMWARE_VERSION);
+    snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG9-GEN-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "SPATIKA");
     strcpy(STATION_TYPE, "TRG");
     debug("[BOOT] Unit: ");
@@ -1065,7 +1077,7 @@ void setup() {
     http_no = 6; // 6 (SPATIKA GEN TRG - index 6 confirmed)
   } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 1))) {
     strcpy(universalNumber, "9980945474");
-    snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-GEN-%s", FIRMWARE_VERSION);
+    snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-GEN-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "SPATIKA");
     strcpy(STATION_TYPE, "TWS");
     debug("[BOOT] Unit: ");
@@ -1077,7 +1089,7 @@ void setup() {
     http_no = 8; // 8 (SPATIKA TWS)
   } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 2))) { // EMPRII
     strcpy(universalNumber, "9980945474"); //"9980945474"); // Universal number
-    snprintf(UNIT_VER, sizeof(UNIT_VER), "TWSRF9-GEN-%s", FIRMWARE_VERSION);
+    snprintf(UNIT_VER, sizeof(UNIT_VER), "TWSRF9-GEN-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "SPATIKA");
     strcpy(STATION_TYPE, "TWS-RF");
     debug("[BOOT] Unit: ");
@@ -1548,7 +1560,7 @@ void initialize_hw() {
   if (rr == DEEPSLEEP_RESET) {
       vTaskDelay(500 / portTICK_PERIOD_MS); // Warm wakeup: 500ms sufficient
   } else {
-      vTaskDelay(5000 / portTICK_PERIOD_MS); // Cold boot: full 5s for safety
+      vTaskDelay(1000 / portTICK_PERIOD_MS); // Cold boot: 1s sufficient for safety
   }
 
   // Setup Legacy ADC (To prevent driver_ng conflicts in Core 3.x)

@@ -738,8 +738,8 @@ void start_gprs() {
     // Power ON GPRS
     set_sys_status("GPRS POWERING");
     digitalWrite(26, HIGH);               // Power on GPRS module
-    // v5.83 Optimization: 3s on first cold boot, 500ms on retry (caps already charged)
-    vTaskDelay((attempt == 0 ? 3000 : 500) / portTICK_PERIOD_MS); 
+    // v5.83 Optimization: 1s on first cold boot, 500ms on retry (caps already charged)
+    vTaskDelay((attempt == 0 ? 1000 : 500) / portTICK_PERIOD_MS); 
     
     if (attempt > 0) {
       set_sys_status("GPRS HARD RESET");
@@ -768,13 +768,17 @@ void start_gprs() {
     }
 
     if (modem_ready) {
+      // Enable Netlight immediately so the user gets visual feedback that the modem has booted
+      SerialSIT.println("AT+CNETLIGHT=1");
+      waitForResponse("OK", 500);
+
       SerialSIT.println("AT+CMEE=2"); // v5.82 Diagnostic: Enable verbose error messages
       waitForResponse("OK", 500);
       SerialSIT.println("AT+CSDT=0"); // Disable mechanical SIM detect for BSNL/etc
       waitForResponse("OK", 500);
       SerialSIT.println("AT+UIMHOTSWAPON=0"); // Disable mechanical SIM hot-swap detect for SIM7600/A7672S
       waitForResponse("OK", 500);
-      vTaskDelay(3000 / portTICK_PERIOD_MS); // v7.88: Allow SIM reader to settle before polling (reduced CME errors)
+      vTaskDelay(500 / portTICK_PERIOD_MS); // Reduced from 3000ms to 500ms (SIM polling loop will wait dynamically if needed)
     }
 
     // PROACTIVE SIM POLLING

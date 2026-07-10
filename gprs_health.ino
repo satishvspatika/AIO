@@ -16,8 +16,8 @@ void get_signal_strength() {
   retries = 0;
 
   // [v5.86] Pre-settle delay: modem returns 85 (not ready) on first 1-3 polls
-  // immediately after boot. Increased to 1000ms to eliminate redundant retries.
-  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  // immediately after boot. Reduced to 200ms for faster startup.
+  vTaskDelay(200 / portTICK_PERIOD_MS);
 
   int invalid_signal_count = 0;
   // rssi 0 = -113dBm. Continuous -113 is essentially no signal.
@@ -366,10 +366,7 @@ void get_registration() {
   }
 
   // v5.79: Restore v5.75 Netlight logic (Ensures pulse even if Fast-Tracked)
-  SerialSIT.println("AT+CNETLIGHT=0"); // Reset LED driver
-  waitForResponse("OK", 500);
-  SerialSIT.println("AT+CNETLIGHT=1"); // Ensure LED blinks
-  waitForResponse("OK", 500);
+  // (Netlight already enabled in start_gprs for faster visual feedback)
 
 
   while (!is_registered && (retries < no_of_retries)) {

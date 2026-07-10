@@ -8,17 +8,17 @@ FLASH_SIZE=${1:-8mb}
 case "$FLASH_SIZE" in
   4mb)
     PARTITION_FILE="partitions_4mb.csv"
-    FQBN="esp32:esp32:esp32:FlashSize=4M,PartitionScheme=custom"
+    FQBN="esp32:esp32:esp32:FlashSize=4M,FlashMode=dio,PartitionScheme=custom"
     echo "--- Building for 4MB Flash ESP32 ---"
     ;;
   8mb)
     PARTITION_FILE="partitions.csv"
-    FQBN="esp32:esp32:esp32:FlashSize=8M,PartitionScheme=custom"
+    FQBN="esp32:esp32:esp32:FlashSize=8M,FlashMode=dio,PartitionScheme=custom"
     echo "--- Building for 8MB Flash ESP32 (Default) ---"
     ;;
   16mb)
     PARTITION_FILE="partitions_16mb.csv"
-    FQBN="esp32:esp32:esp32:FlashSize=16M,PartitionScheme=custom"
+    FQBN="esp32:esp32:esp32:FlashSize=16M,FlashMode=dio,FlashFreq=40,PartitionScheme=custom"
     echo "--- Building for 16MB Flash ESP32 ---"
     ;;
   *)

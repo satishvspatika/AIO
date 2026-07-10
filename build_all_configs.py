@@ -37,7 +37,7 @@ CONFIGS = [
 ALL_FLASH_VARIANTS = {
     "4mb":  ("4M",  "partitions_4mb.csv"),   # Legacy / older ESP32 units
     "8mb":  ("8M",  "partitions.csv"),        # Current production hardware
-    "16mb": ("16M", "partitions_16mb.csv"),   # Future 16MB units
+    "16mb": ("16M,FlashFreq=40", "partitions_16mb.csv"),   # Future 16MB units
 }
 
 # External Release Path
@@ -76,9 +76,9 @@ def restore_config():
         print_info("Restoring original user_config.h...")
         shutil.copy(BACKUP_CONFIG, USER_CONFIG_H)
 
-def update_config(system, unit, disable_webserver=False):
-    """Update user_config.h with new SYSTEM and UNIT values"""
-    print_info(f"Configuring: SYSTEM={system}, UNIT={unit}" + (" [WebServer OFF]" if disable_webserver else ""))
+def update_config(system, unit, disable_webserver=False, use_nuvoton_ui=1):
+    """Update user_config.h with new SYSTEM, UNIT, and USE_NUVOTON_UI values"""
+    print_info(f"Configuring: SYSTEM={system}, UNIT={unit}, USE_NUVOTON_UI={use_nuvoton_ui}" + (" [WebServer OFF]" if disable_webserver else ""))
     
     # Restore backup first to get a clean slate
     shutil.copy(BACKUP_CONFIG, USER_CONFIG_H)
@@ -93,6 +93,9 @@ def update_config(system, unit, disable_webserver=False):
     
     # Update UNIT
     content = re.sub(r'#define UNIT_CFG "[^"]*"', f'#define UNIT_CFG "{unit}"', content)
+
+    # Update USE_NUVOTON_UI
+    content = re.sub(r'#define USE_NUVOTON_UI \d+', f'#define USE_NUVOTON_UI {use_nuvoton_ui}', content)
 
     # Force DEBUG 0 for official builds
     # [BUILD-04] Optional Debug override:
@@ -119,6 +122,7 @@ def update_config(system, unit, disable_webserver=False):
     
     print(f"  SYSTEM set to: {system}")
     print(f"  UNIT set to: {unit}")
+    print(f"  USE_NUVOTON_UI set to: {use_nuvoton_ui}")
 
 def extract_build_defines(config_h_path):
     """Parse key compile-time defines from user_config.h.
@@ -182,14 +186,15 @@ def check_arduino_cli():
         print("Or download from: https://arduino.github.io/arduino-cli/")
         return False
 
-def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", partition_csv="partitions.csv"):
-    """Build a specific configuration for a specific flash hardware"""
-    # Tagged output name includes flash size
-    tagged_name = f"{output_name}_{flash_size}"
+def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", partition_csv="partitions.csv", use_nuvoton_ui=1):
+    """Build a specific configuration for a specific flash hardware and UI variant"""
+    # Tagged output name includes UI variant and flash size
+    ui_suffix = "NUV" if use_nuvoton_ui == 1 else "MAT"
+    tagged_name = f"{output_name}_{ui_suffix}_{flash_size}"
     print_header(f"Building: {tagged_name}")
 
     # Update user_config.h
-    update_config(system, unit, disable_webserver=(flash_size == "4mb"))
+    update_config(system, unit, disable_webserver=(flash_size == "4mb"), use_nuvoton_ui=use_nuvoton_ui)
 
 
     # Create output directory
@@ -208,7 +213,7 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
 
     cmd = [
         'arduino-cli', 'compile',
-        '--fqbn', f'esp32:esp32:esp32:FlashSize={flash_fqbn},PartitionScheme=custom',
+        '--fqbn', f'esp32:esp32:esp32:FlashSize={flash_fqbn},FlashMode=dio,PartitionScheme=custom',
         '--build-property', 'build.partitions=custom',
         '--build-property', f'build.custom_partitions={partitions_file}',
         '--build-path', str(config_build_dir),
@@ -261,6 +266,10 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
                 else:
                     client = unit
                 full_version = f"{type_prefix}-{client}-{firmware_version}"
+            
+            # Append UI Suffix (-N for Nuvoton, -M for Matrix)
+            ui_ver_suffix = "-N" if use_nuvoton_ui == 1 else "-M"
+            full_version = f"{full_version}{ui_ver_suffix}"
             
             fw_version_file = output_dir / "fw_version.txt"
             with open(fw_version_file, 'w') as f:
@@ -348,7 +357,12 @@ def main():
     )
     parser.add_argument(
         "--configs", nargs="+", default=None,
-        help="Specific configuration name(s) to build (e.g., KSNDMC_TRG)."
+        help="Specific configuration name(s) to build (e.g., KSNDMC_TRG or KSNDMC)."
+    )
+    parser.add_argument(
+        "--ui", nargs="+", default=["both"],
+        choices=["nuvoton", "matrix", "both", "n", "m"],
+        help="UI display variant to compile: 'nuvoton' (or 'n'), 'matrix' (or 'm'), or 'both'. Default: both"
     )
     args = parser.parse_args()
 
@@ -358,14 +372,37 @@ def main():
         fqbn, csv = ALL_FLASH_VARIANTS[size]
         FLASH_VARIANTS.append((size, fqbn, csv))
 
+    # Match configurations case-insensitively as substrings
     active_configs = CONFIGS
     if args.configs:
-        active_configs = [c for c in CONFIGS if c[2] in args.configs]
+        matched = []
+        for c in CONFIGS:
+            for term in args.configs:
+                if term.lower() in c[2].lower():
+                    matched.append(c)
+                    break
+        active_configs = matched
+        if not active_configs:
+            print_error(f"No configurations matched filter: {args.configs}")
+            sys.exit(1)
+
+    # Determine UI targets
+    ui_targets = []
+    requested_uis = [x.lower() for x in args.ui]
+    if "both" in requested_uis:
+        ui_targets = [1, 0]
+    else:
+        for ui in requested_uis:
+            if ui in ["nuvoton", "n"]:
+                if 1 not in ui_targets: ui_targets.append(1)
+            elif ui in ["matrix", "m"]:
+                if 0 not in ui_targets: ui_targets.append(0)
 
     print_header(f"AIO9_5.0 Multi-Configuration Builder")
     print(f"  Flash targets: {', '.join(args.flash).upper()}")
+    print(f"  UI targets: {', '.join(['NUVOTON' if u==1 else 'MATRIX' for u in ui_targets])}")
     print(f"  Configurations: {len(active_configs)}")
-    print(f"  Total builds: {len(FLASH_VARIANTS) * len(active_configs)}")
+    print(f"  Total builds: {len(FLASH_VARIANTS) * len(ui_targets) * len(active_configs)}")
     
     # Check arduino-cli
     if not check_arduino_cli():
@@ -380,21 +417,25 @@ def main():
     # Backup user_config.h
     backup_config()
     
-    # Build all configurations × all flash variants
+    # Build all configurations × all flash variants × all UI targets
     success_count = 0
     fail_count = 0
 
     for flash_size, flash_fqbn, partition_csv in FLASH_VARIANTS:
         print_header(f"=== Flash Variant: {flash_size.upper()} ===")
-        for system, unit, output_name in active_configs:
-            if build_config(system, unit, output_name, flash_size, flash_fqbn, partition_csv):
-                success_count += 1
-            else:
-                fail_count += 1
-                # [BUILD-06] FAIL FAST: Stop build process if any config fails
-                restore_config() # Ensure user_config.h is restored before exit
-                print_error(f"\nBUILD ABORTED: {output_name}_{flash_size} failed. Check logs.")
-                sys.exit(1)
+        for use_nuvoton_ui in ui_targets:
+            ui_label = "NUVOTON UI" if use_nuvoton_ui == 1 else "MATRIX UI"
+            print_info(f"Building for UI variant: {ui_label}")
+            for system, unit, output_name in active_configs:
+                if build_config(system, unit, output_name, flash_size, flash_fqbn, partition_csv, use_nuvoton_ui=use_nuvoton_ui):
+                    success_count += 1
+                else:
+                    fail_count += 1
+                    # [BUILD-06] FAIL FAST: Stop build process if any config fails
+                    restore_config() # Ensure user_config.h is restored before exit
+                    ui_suffix = "NUV" if use_nuvoton_ui == 1 else "MAT"
+                    print_error(f"\nBUILD ABORTED: {output_name}_{ui_suffix}_{flash_size} failed. Check logs.")
+                    sys.exit(1)
     
     # Restore user_config.h
     restore_config()
