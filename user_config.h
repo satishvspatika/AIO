@@ -7,13 +7,13 @@
  * ========================================================================= */
 
 // --- 1. CORE SYSTEM IDENTITY ---
-#define SYSTEM 0              // 0: TRG, 1: TWS, 2: TWS-RF Addon
-#define UNIT_CFG "KSNDMC_TRG" // Exact station network name:
+#define SYSTEM 2              // 0: TRG, 1: TWS, 2: TWS-RF Addon
+#define UNIT_CFG "SPATIKA_GEN" // Exact station network name:
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 
-#define FIRMWARE_VERSION "6.10"
+#define FIRMWARE_VERSION "6.11"
 
 #define ENABLE_HEALTH_REPORT                                                   \
   0 // Master Switch: Enable automated device health reporting
@@ -21,18 +21,16 @@
   0 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)
 
 // --- 2. COMPILE OPTIONS ---
-#define USE_NUVOTON_UI 1 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
+#define USE_NUVOTON_UI 0 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
 #define DEBUG 1 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
-#define ENABLE_WEBSERVER                                                       \
-  1 // 0: Disable, 1: Enable (requires 8MB flash partition)
+#define ENABLE_WEBSERVER 1 // 0: Disable, 1: Enable (requires 8MB flash partition)
 
 // --- 3. HARDWARE CAPABILITIES ---
 #define ENABLE_PRESSURE_SENSOR 0 // 0: Disable BMP/BME routines, 1: Enable
-#define DEFAULT_RF_RESOLUTION                                                  \
-  0.25 // Factory default rain resolution (0.50mm / 0.25mm)
+#define DEFAULT_RF_RESOLUTION 0.5 // Factory default rain resolution (0.50mm / 0.25mm)
 #define WIND_TEETH_COUNT 2.0 // H-02: Customizable anemometer teeth divisor
-#define ENABLE_CALIB_TEST                                                      \
-  0 // 1: IMD CALIB TEST in UI, 0: Field deployment mode
+#define WIND_DIR_ADC_MAX 3480 // Calibrated max raw ADC value at VCC (3.3V) right before dead zone
+#define ENABLE_CALIB_TEST 0 // 1: IMD CALIB TEST in UI, 0: Field deployment mode
 
 // --- 4. NETWORK BEHAVIOR ---
 #define FILLGAP 1

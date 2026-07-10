@@ -63,13 +63,20 @@ void windDirection(void *pvParameters) {
                 "further prints.");
       }
     } else {
-      // Smooth 0-4095 [INFO] 0-359 mapping
-      windDir = (tempWindDir * 360) / 4096;
+      // Smooth 0-WIND_DIR_ADC_MAX to 0-359 mapping
+      windDir = (tempWindDir * 360) / WIND_DIR_ADC_MAX;
       if (windDir > 359)
         windDir = 0; // Safety clamp
       if (!prev_wd_ok) {
         debugf2("[WD] Sensor reconnected. ADC:%d -> Dir:%d deg\n", tempWindDir,
                 windDir);
+      }
+
+      // Dynamic calibration debug info (prints on value change)
+      static int last_printed_wd = -1;
+      if (abs(windDir - last_printed_wd) >= 2) {
+        debugf2("[WD Debug] Raw ADC:%d (spread:%d) -> Mapped Dir:%d deg\n", tempWindDir, spread, windDir);
+        last_printed_wd = windDir;
       }
     }
     prev_wd_ok = wd_ok;

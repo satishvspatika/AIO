@@ -268,10 +268,10 @@ else
 fi
 
 if [ "$CONFIRM" = "y" ] || [ "$CONFIRM" = "Y" ]; then
-    git push origin main --tags
+    git push origin HEAD --tags
     print_success "Pushed to GitHub successfully"
 else
-    print_warning "Skipped git push. Run manually: git push origin main --tags"
+    print_warning "Skipped git push. Run manually: git push origin HEAD --tags"
 fi
 
 # 8. Summary
@@ -296,7 +296,7 @@ echo -e "  3. Upload ZIP to GitHub Releases (optional)"
 print_header "Step 7: Email Release Package"
 
 if [ "$NON_INTERACTIVE" = true ]; then
-    SEND_EMAIL="y"
+    SEND_EMAIL="n"
 else
     echo -e "${YELLOW}Send release package via email?${NC}"
     echo -e "  To: production.spatika@gmail.com, rajesh.spatika@gmail.com"
