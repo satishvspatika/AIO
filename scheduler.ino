@@ -30,7 +30,7 @@ void scheduler(void *pvParameters) {
     }
     if (solar_samples > 0) {
       solar = solar_sum / solar_samples;
-      solar_val = (solar / 4096.0) * 3.6 * 7.2;
+      solar_val = (solar / (float)WIND_DIR_ADC_MAX) * 3.3 * 7.8;
     }
   }
   bat_val = li_bat_val;
@@ -301,7 +301,7 @@ void scheduler(void *pvParameters) {
         }
         if (solar_samples_slot > 0) {
           solar = (float)solar_sum_slot / solar_samples_slot;
-          solar_val = (solar / 4096.0) * 3.6 * 7.2;
+          solar_val = (solar / (float)WIND_DIR_ADC_MAX) * 3.3 * 7.8;
           snprintf(solar_sense, sizeof(solar_sense), "%04.1f", solar_val);
         }
       }

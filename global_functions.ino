@@ -1479,7 +1479,7 @@ void read_and_calibrate_voltages() {
   uint32_t avg_bat_raw = bat_sum / 10;
   uint32_t bat_mv = esp_adc_cal_raw_to_voltage(avg_bat_raw, &adc_chars_unit1);
   float bat_pin_volt = (float)bat_mv / 1000.0;
-  li_bat_val = bat_pin_volt * (840.0 / 620.0) * last_cal_factor;
+  li_bat_val = bat_pin_volt * 1.48 * last_cal_factor;
   li_bat = li_bat_val;
 
   // 3. Read 3.3V Rail on GPIO36 (ADC1_CHANNEL_0)
@@ -1491,7 +1491,7 @@ void read_and_calibrate_voltages() {
   uint32_t avg_v33_raw = v33_sum / 10;
   uint32_t v33_mv = esp_adc_cal_raw_to_voltage(avg_v33_raw, &adc_chars_unit1);
   float v33_pin_volt = (float)v33_mv / 1000.0;
-  bat_3v3_val = v33_pin_volt * (840.0 / 620.0) * last_cal_factor;
+  bat_3v3_val = v33_pin_volt * 1.48 * last_cal_factor;
 
   // 4. Read Solar on GPIO25 (ADC2_CHANNEL_8)
   if (!wifi_active) {
@@ -1507,7 +1507,7 @@ void read_and_calibrate_voltages() {
     }
     if (solar_samples > 0) {
       float solar_pin_volt = (float)esp_adc_cal_raw_to_voltage(solar_sum / solar_samples, &adc_chars_unit2) / 1000.0;
-      solar_val = solar_pin_volt * 7.2 * last_cal_factor;
+      solar_val = solar_pin_volt * 7.8 * last_cal_factor;
       solar = solar_sum / solar_samples;
     }
   }
@@ -1526,7 +1526,7 @@ float get_calibrated_battery_voltage() {
     initialized = true;
   }
   uint32_t voltage_mv = esp_adc_cal_raw_to_voltage(adc1_get_raw(ADC1_CHANNEL_5), &adc_chars);
-  li_bat_val = ((float)voltage_mv / 1000.0) * (840.0 / 620.0);
+  li_bat_val = ((float)voltage_mv / 1000.0) * 1.48;
   li_bat = li_bat_val;
   return li_bat_val;
 #endif

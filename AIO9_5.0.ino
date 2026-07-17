@@ -1587,7 +1587,7 @@ void initialize_hw() {
   }
   if (solar_samples_init > 0) {
     solar = (float)solar_sum_init / solar_samples_init;
-    solar_val = (solar / 4096.0) * 3.6 * 7.2;
+    solar_val = (solar / (float)WIND_DIR_ADC_MAX) * 3.3 * 7.8;
   }
 #endif
 

@@ -14,6 +14,7 @@
 Adafruit_BME280 bme;
 
 #define QC_TEST_VERSION "6.09-QC"
+#define WIND_DIR_ADC_MAX 3480
 
 // --- PIN DEFINITIONS (ESP32-WROOM-32U) ---
 #define GPRS_CTRL_PIN   26  // Active-HIGH PMOS gate for GPRS board power
@@ -927,9 +928,9 @@ void setup() {
     int rawV33 = analogRead(SYS_3V3_PIN);
     int rawSolar = analogRead(SOLAR_ADC_PIN);
     
-    float battVolt = (rawBatt / 4095.0) * 3.3 * (840.0 / 620.0);
-    float v33Volt = (rawV33 / 4095.0) * 3.3 * (840.0 / 620.0); // Resistor divider matches Batt
-    float solarVolt = (rawSolar / 4095.0) * 3.3 * 7.2;
+    float battVolt = (rawBatt / (float)WIND_DIR_ADC_MAX) * 3.3 * 1.48;
+    float v33Volt = (rawV33 / (float)WIND_DIR_ADC_MAX) * 3.3 * 1.48; // Resistor divider matches Batt
+    float solarVolt = (rawSolar / (float)WIND_DIR_ADC_MAX) * 3.3 * 7.8;
 
     // [M-03] LDO out-of-range warning check
     if (v33Volt < 3.0 || v33Volt > 3.6) {
