@@ -105,6 +105,7 @@ extern volatile bool gprs_active;
 extern volatile bool timeSyncRequired;
 extern volatile bool schedulerBusy;
 extern volatile bool ota_writing_active;
+extern volatile bool initial_boot_complete;
 extern volatile uint32_t last_activity_time; // v5.85: Safety Heartbeat Timer
 
 // SAFETY BUFFER: Reserve 512 bytes at the start of RTC Memory to prevent

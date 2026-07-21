@@ -16,9 +16,12 @@ int calib_initial = 0;
       // Handled in task setup
   }
   void NuvotonLCD::clear() {
-      Serial1.write(0x01);
+      Serial1.write(0x01); // First send (sacrificial byte if MG51 UART is waking from idle)
       Serial1.flush();
-      delay(5);
+      delay(10);
+      Serial1.write(0x01); // Second send (guaranteed clear execution)
+      Serial1.flush();
+      delay(10);
   }
   void NuvotonLCD::setCursor(uint8_t col, uint8_t row) {
       uint8_t addr = (uint8_t)(row * 64 + col + 128);
@@ -230,8 +233,13 @@ void draw_current_page() {
         strcpy(line0, "TURN OFF LCD    ");
         strcpy(line1, "PRESS SET       ");
       } else {
-        snprintf(line0, 17, "%-16s", ui_data[cur_fld_no].topRow);
-        snprintf(line1, 17, "%-16s", ui_data[cur_fld_no].bottomRow);
+        if (!initial_boot_complete && cur_fld_no == FLD_STATION) {
+          strcpy(line0, "INITIALIZING... ");
+          strcpy(line1, "PLEASE WAIT...  ");
+        } else {
+          snprintf(line0, 17, "%-16s", ui_data[cur_fld_no].topRow);
+          snprintf(line1, 17, "%-16s", ui_data[cur_fld_no].bottomRow);
+        }
 
         // Blink active manual states so the user knows it hasn't crashed
         portENTER_CRITICAL(&syncMux);
@@ -467,7 +475,7 @@ void refresh_sensor_data() {
     snprintf(ui_data[FLD_BATTERY].bottomRow, 17, "%0.2fV %s", li_bat_val, is_charging_now ? "CHRG" : "NOT CHRG");
     snprintf(ui_data[FLD_SOLAR].bottomRow, 17, "%0.2f V", solar_val);
 #if USE_NUVOTON_UI == 1
-    snprintf(ui_data[FLD_BATTERY_3V3].bottomRow, 17, "%0.2f V", bat_3v3_val);
+    snprintf(ui_data[FLD_BATTERY_3V3].bottomRow, 17, "%0.2fV %s", bat_3v3_val, is_charging_now ? "CHRG" : "NOT CHRG");
 #endif
   }
 
@@ -664,13 +672,8 @@ void lcdkeypad(void *pvParameters) {
         vTaskDelay(200 / portTICK_PERIOD_MS); // Debounce
       } else if (Serial1.available()) {
         int c = Serial1.read();
-        delay(5);
-        if (Serial1.available()) {
-          int c2 = Serial1.read();
-          if (c2 == c && c >= '1' && c <= '6') wakeupKey = translate_nuvoton_key((char)c);
-        } else if (c >= '1' && c <= '6') {
-          wakeupKey = translate_nuvoton_key((char)c);
-        }
+        while (Serial1.available()) Serial1.read(); // Drain duplicate boot/wakeup bytes
+        if (c >= '1' && c <= '6') wakeupKey = translate_nuvoton_key((char)c);
       }
       bool verified_press = (wakeupKey != '\0');
       
@@ -767,13 +770,34 @@ void lcdkeypad(void *pvParameters) {
         // when RTC or Temp/Hum tasks are busy on the I2C bus.
 #if USE_NUVOTON_UI == 1
         Serial1.begin(9600, SERIAL_8N1, 14, 4);
-        delay(50); // Reduced from 100
-        while (Serial1.available()) Serial1.read();
-        delay(300); // Reduced from 1500ms since LCD has already been powered for several seconds at boot
-        lcd.backlight(); // Turn display pixels back ON after wakeup
-        lcd.clear();     // Reset cursor to home (0x01)
-        present_topRow[0] = 0; present_bottomRow[0] = 0; // Invalidate display cache to force full redraw
-        show_now = 1;
+
+        static bool is_cold_boot = true;
+        if (is_cold_boot) {
+          is_cold_boot = false;
+          vTaskDelay(1500 / portTICK_PERIOD_MS); // Allow Nuvoton MCU boot & internal splash stabilization
+          while (Serial1.available()) Serial1.read(); // Clear boot noise
+          lcd.backlight();
+          lcd.clear();
+          vTaskDelay(50 / portTICK_PERIOD_MS);
+          lcd.print("INITIALIZING.");
+          lcd.setCursor(0, 1);
+          lcd.print("PLEASE WAIT...  ");
+          for (int dot = 0; dot < 3; dot++) {
+            vTaskDelay(400 / portTICK_PERIOD_MS);
+            esp_task_wdt_reset();
+            lcd.setCursor(12 + dot, 0);
+            lcd.print(".");
+          }
+          vTaskDelay(1500 / portTICK_PERIOD_MS); // Hold INITIALIZING... on LCD so it's clearly visible
+          while (Serial1.available()) Serial1.read(); // Drain any key taps during splash
+          present_topRow[0] = 0; present_bottomRow[0] = 0; // Invalidate display cache for next redraw
+          show_now = 1;
+        } else {
+          lcd.backlight(); // Turn display pixels back ON after wakeup
+          lcd.clear();     // Reset cursor to home (0x01)
+          present_topRow[0] = 0; present_bottomRow[0] = 0; // Invalidate display cache to force full redraw
+          show_now = 1;
+        }
 #else
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
           lcd.init();
@@ -875,13 +899,8 @@ void lcdkeypad(void *pvParameters) {
       key = NO_KEY;
       if (Serial1.available()) {
         int c = Serial1.read();
-        delay(5); // Debounce double-send
-        if (Serial1.available()) {
-          int c2 = Serial1.read();
-          if (c2 == c && c >= '1' && c <= '6') {
-             key = translate_nuvoton_key((char)c);
-          }
-        } else if (c >= '1' && c <= '6') {
+        while (Serial1.available()) Serial1.read(); // Drain immediate duplicate UART bytes
+        if (c >= '1' && c <= '6') {
           key = translate_nuvoton_key((char)c);
         }
       }
@@ -897,7 +916,17 @@ void lcdkeypad(void *pvParameters) {
       }
 #endif
 
+      static unsigned long last_key_press_time = 0;
       if (key != NO_KEY) {
+        if (millis() - last_key_press_time < 180) {
+          key = NO_KEY; // Refractory lockout: filter duplicate UART frames & contact bounce within 180ms
+        } else {
+          last_key_press_time = millis();
+        }
+      }
+
+      if (key != NO_KEY) {
+        initial_boot_complete = true;
         extern unsigned long last_key_time;
         last_key_time = millis();
         if (lcd_timer) {

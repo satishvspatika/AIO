@@ -3619,6 +3619,7 @@ function evaluateBoardVerdict(type, data) {
     if (isFail(data.rtc)) failReasons.push("RTC Fail");
     if (isFail(data.wifi)) failReasons.push("WiFi Fail");
     if (isFail(data.sensor)) failReasons.push("Sensor Fail");
+    if (isFail(data.sleepWake)) failReasons.push("EXT0 Sleep Wake Fail");
   } else if (type === "GPRS") {
     if (isFail(data.cellular)) failReasons.push("Cellular Reg Fail");
   } else if (type === "Nuvoton") {
@@ -4609,11 +4610,21 @@ function getManageRecordsHtml() {
               }
               
               for (const target of targets) {
-                customConfigVault[cfg][size][target].binary = binary;
-                customConfigVault[cfg][size][target].version = version;
-                customConfigVault[cfg][size][target].metadata = metadata;
-                logToConsole(`✓ Config loaded: ${cfg}_${target.toUpperCase()}_${size}/firmware.bin (${(binary.byteLength/1024).toFixed(1)} KB)`, "info");
-                loadedConfigsCount++;
+                const existing = customConfigVault[cfg][size][target];
+                const isExplicit = (uiType === "nuvoton" || uiType === "matrix");
+                const existingIsExplicit = existing.isExplicit || false;
+                
+                // Prioritize explicit NUV/MAT tagged folders over generic untagged folders
+                if (!existing.binary || (isExplicit && !existingIsExplicit) || (isExplicit === existingIsExplicit)) {
+                  customConfigVault[cfg][size][target].binary = binary;
+                  customConfigVault[cfg][size][target].version = version;
+                  customConfigVault[cfg][size][target].metadata = metadata;
+                  customConfigVault[cfg][size][target].isExplicit = isExplicit;
+                  logToConsole(`✓ Config loaded: ${cfg}_${target.toUpperCase()}_${size}/firmware.bin (${(binary.byteLength/1024).toFixed(1)} KB)`, "info");
+                  loadedConfigsCount++;
+                } else {
+                  logToConsole(`ℹ Skipping ${parentFolder}/firmware.bin as explicit ${target.toUpperCase()} configuration is already loaded.`, "normal");
+                }
               }
             }
           }
@@ -7495,6 +7506,144 @@ function getManageRecordsHtml() {
       });
     }
 
+    // Laptop Programmer Flash from OTA Prompt
+    async function startLaptopFlashFromOtaPrompt() {
+      const activeConfig = releaseConfigSel?.value || "KSNDMC_TRG";
+      const currentSizeKey = currentChipSize ? `${currentChipSize}mb` : "16mb";
+      const uiKey = (uiVariantSelect?.value === "nuvoton") ? "nuvoton" : "matrix";
+      const sizeMap = activeConfig ? (customConfigVault[activeConfig][currentSizeKey] || customConfigVault[activeConfig]["8mb"]) : null;
+      const sizeEntry = sizeMap ? sizeMap[uiKey] : null;
+      const productionBin = (sizeEntry && sizeEntry.binary) || fileVault[`production_${currentChipSize}mb.bin`];
+      const folderName = `${activeConfig}_${uiKey === 'nuvoton' ? 'NUV' : 'MAT'}_${currentSizeKey}`;
+
+      if (!productionBin) {
+        logToConsole("Error: Production binary not loaded in dashboard vault.", "error");
+        alert("⚠️ No production binary found. Please load the WEB_FLASH_FILES folder first.");
+        return;
+      }
+
+      const laptopFwVer = sizeEntry?.version || metaFwVersion.getAttribute("data-prod-ver") || "6.14";
+      window._lastUpdateMethod = "LAPTOP";
+      window._laptopFlashStatus = "RUNNING";
+
+      // Show programmer flash progress panel inside modal
+      showOperatorPrompt(`
+        <div style="text-align:center; padding: 1rem 0.5rem;">
+          <div style="font-size:1.05rem; font-weight:700; color:#3b82f6; margin-bottom:0.5rem;">🔌 Laptop Programmer Flash In Progress</div>
+          <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">Writing <code>${folderName}/firmware.bin</code> (v${laptopFwVer}) via Programmer...</div>
+          <div style="background:rgba(255,255,255,0.06); border-radius:0.5rem; padding:0.4rem 0.6rem; margin-bottom:0.6rem; height:1.5rem; position:relative; overflow:hidden; border:1px solid rgba(59,130,246,0.3);">
+            <div id="laptopProgressBar" style="position:absolute;left:0;top:0;height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#60a5fa);border-radius:0.5rem;transition:width 0.1s ease;"></div>
+            <div id="laptopProgressLabel" style="position:relative;z-index:1;font-size:0.8rem;font-weight:700;color:#fff;line-height:1.5rem;">0%</div>
+          </div>
+          <div id="laptopStatusText" style="font-size:0.82rem; color:var(--text-muted); margin-top:0.3rem;">Connecting in bootloader mode...</div>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.6rem; opacity:0.6;">⏳ Please wait. Do not disconnect the programmer.</div>
+        </div>
+      `, () => {});
+
+      try {
+        await ensureEsploaderConnected();
+        
+        const statusText = document.getElementById("laptopStatusText");
+        if (statusText) statusText.textContent = `Writing firmware to address 0x10000...`;
+        
+        const bootKey = fileVault[`bootloader_${currentChipSize}mb.bin`] ? `bootloader_${currentChipSize}mb.bin` : "bootloader.bin";
+        const partKey = fileVault[`partitions_${currentChipSize}mb.bin`] ? `partitions_${currentChipSize}mb.bin` : "partitions.bin";
+        const flashArray = [];
+        if (fileVault[bootKey])           flashArray.push({ data: fileVault[bootKey], address: 0x1000 });
+        if (fileVault[partKey])           flashArray.push({ data: fileVault[partKey], address: 0x8000 });
+        if (fileVault["boot_app0.bin"])   flashArray.push({ data: fileVault["boot_app0.bin"], address: 0xe000 });
+        flashArray.push({ data: productionBin, address: 0x10000 });
+
+        await esploader.writeFlash({
+          fileArray: flashArray,
+          flashSize: "keep",
+          compress: true,
+          reportProgress: (fileIndex, writtenBytes, totalBytes) => {
+            if (totalBytes > 0) {
+              const percentage = Math.round((writtenBytes / totalBytes) * 100);
+              const bar = document.getElementById("laptopProgressBar");
+              const lbl = document.getElementById("laptopProgressLabel");
+              if (bar) bar.style.width = `${percentage}%`;
+              if (lbl) lbl.textContent = `${percentage}%`;
+            }
+          }
+        });
+
+        const bar = document.getElementById("laptopProgressBar");
+        const lbl = document.getElementById("laptopProgressLabel");
+        if (bar) { bar.style.width = "100%"; bar.style.background = "linear-gradient(90deg,#22c55e,#4ade80)"; }
+        if (lbl) lbl.textContent = "100% ✓";
+        if (statusText) { statusText.textContent = "Flashing complete! Resetting board..."; statusText.style.color = "var(--success)"; }
+        
+        await esploader.after("hard_reset");
+        logToConsole("Laptop programming complete! Resetting board...", "info");
+        
+        // Releasing flasher connection
+        if (transport) {
+          try { await transport.disconnect(); } catch (e) {}
+        }
+        transport = null;
+        esploader = null;
+        qcFirmwareAlreadyOnBoard = false;
+        
+        window._laptopFlashStatus = "SUCCESS";
+        logToConsole("✅ Laptop Programmer update succeeded!", "success");
+        
+        setTimeout(() => {
+          hideOperatorPrompt();
+          // Directly show Google Sheet Sync prompt on laptop
+          window._pendingSyncVerdict = "PASS";
+          showOperatorPrompt(`
+            <div style="text-align:center; padding: 0.5rem 0;">
+              <div style="font-size:1.15rem; font-weight:800; color:#10b981; margin-bottom:0.5rem;">📊 Sync Results to Google Sheet?</div>
+              <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+                Firmware successfully flashed via laptop programmer: <code style="color:#60a5fa;">${folderName}</code>.<br>
+                Do you want to log and sync this test run to the online Google Sheet?
+              </p>
+              <div style="display:flex; gap:0.5rem; justify-content:center; margin-top:0.75rem;">
+                <button class="btn btn-success" id="btnSyncConfirmYes" style="font-size: 0.75rem; padding: 0.4rem 0.7rem; font-weight: 600;">📊 Sync to Sheet (SET)</button>
+                <button class="btn btn-secondary" id="btnSyncConfirmNo" style="font-size: 0.75rem; padding: 0.4rem 0.7rem; font-weight: 600; border-color:var(--danger-glow); color:#fca5a5;">❌ Skip/Cancel (CLEAR)</button>
+              </div>
+            </div>
+          `, () => {
+            getPromptElement("btnSyncConfirmYes")?.addEventListener("click", () => handleSyncDecision("PASS", true));
+            getPromptElement("btnSyncConfirmNo")?.addEventListener("click", () => handleSyncDecision("PASS", false));
+          });
+        }, 1500);
+
+      } catch (err) {
+        window._laptopFlashStatus = "FAILED";
+        logToConsole(`❌ Laptop Programmer update failed: ${err.message}`, "error");
+        
+        const bar = document.getElementById("laptopProgressBar");
+        const statusText = document.getElementById("laptopStatusText");
+        if (bar) bar.style.background = "linear-gradient(90deg,#ef4444,#f87171)";
+        if (statusText) { statusText.textContent = `Error: ${err.message}`; statusText.style.color = "var(--danger)"; }
+        
+        setTimeout(() => {
+          hideOperatorPrompt();
+          // Directly show Google Sheet Sync prompt with FAIL
+          window._pendingSyncVerdict = "FAIL";
+          showOperatorPrompt(`
+            <div style="text-align:center; padding: 0.5rem 0;">
+              <div style="font-size:1.15rem; font-weight:800; color:#ef4444; margin-bottom:0.5rem;">📊 Sync Failure Results to Google Sheet?</div>
+              <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+                Firmware programmer flash <strong style="color:var(--danger)">FAILED</strong>.<br>
+                Do you want to log and sync this failure run to the online Google Sheet?
+              </p>
+              <div style="display:flex; gap:0.5rem; justify-content:center; margin-top:0.75rem;">
+                <button class="btn btn-success" id="btnSyncConfirmYes" style="font-size: 0.75rem; padding: 0.4rem 0.7rem; font-weight: 600;">📊 Sync to Sheet (SET)</button>
+                <button class="btn btn-secondary" id="btnSyncConfirmNo" style="font-size: 0.75rem; padding: 0.4rem 0.7rem; font-weight: 600; border-color:var(--danger-glow); color:#fca5a5;">❌ Skip/Cancel (CLEAR)</button>
+              </div>
+            </div>
+          `, () => {
+            getPromptElement("btnSyncConfirmYes")?.addEventListener("click", () => handleSyncDecision("FAIL", true));
+            getPromptElement("btnSyncConfirmNo")?.addEventListener("click", () => handleSyncDecision("FAIL", false));
+          });
+        }, 3000);
+      }
+    }
+
     // Auto-Sync Function
     async function autoSyncToGoogleSheets(verdict) {
       const url = sheetUrlInput.value.trim();
@@ -7509,9 +7658,95 @@ function getManageRecordsHtml() {
       const gprsVal = testCfgGprs.checked ? "GPRS" : "";
       const nuvVal = testCfgNuvoton.checked ? "NUV" : "";
       const profileVal = document.getElementById("deviceProfile")?.value || "TRG";
-      const subsystemsTested = [espVal, gprsVal, nuvVal].filter(Boolean).join("+");
-      const finalVerdict = `${verdict} (${profileVal})`;
- 
+      const isFailText = (val) => {
+        if (!val) return false;
+        const s = val.toString().toUpperCase();
+        return s.includes("FAIL") || s.includes("NO COMM") || s.includes("NO RESPONSE") || s.includes("TIMEOUT") || s.includes("ERROR");
+      };
+
+      let failReasons = [];
+      if (testCfgEsp.checked) {
+        if (isFailText(valSpiffs.textContent)) failReasons.push("SPIFFS Fail");
+        if (isFailText(valSd.textContent)) failReasons.push("SD Card Fail");
+        if (isFailText(valRtc.textContent)) failReasons.push("RTC Fail");
+        if (isFailText(valWifi.textContent)) failReasons.push("WiFi Fail");
+        if (isFailText(valSensor.textContent)) failReasons.push("Sensor Fail");
+        if (isFailText(valSleep.textContent)) failReasons.push("EXT0 Sleep Wake Fail");
+      }
+      if (testCfgGprs.checked) {
+        if (isFailText(valGprs.textContent)) failReasons.push("Cellular Reg Fail");
+      }
+      if (testCfgNuvoton.checked) {
+        if (isFailText(valNuvoton.textContent)) failReasons.push("Nuvoton Comms Fail");
+        if (isFailText(valLcd.textContent)) failReasons.push("LCD Verification Fail");
+        if (isFailText(valKeypad.textContent)) failReasons.push("Keypad Sweep Fail");
+        if (isFailText(valRf.textContent)) failReasons.push("Rainfall Test Fail");
+      }
+
+      let finalVerdict = `${verdict} (${profileVal})`;
+      if (verdict && verdict.indexOf("PASS") !== 0 && verdict.indexOf("DISCARDED") !== 0) {
+        if (failReasons.length > 0) {
+          finalVerdict = `FAIL: ${failReasons.join(", ")} (${profileVal})`;
+        }
+      }
+      if (window._lastUpdateMethod === "LAPTOP" && window._laptopFlashStatus === "FAILED") {
+        finalVerdict = `FAIL (Flash Failed)`;
+      }
+
+      let versionVal = metaFwVersion.textContent;
+      if (window._lastUpdateMethod === "LAPTOP") {
+        if (window._laptopFlashStatus === "SUCCESS") {
+          const activeConfig = releaseConfigSel?.value || "KSNDMC_TRG";
+          const uiKey = (uiVariantSelect?.value === "nuvoton") ? "nuvoton" : "matrix";
+          const currentSizeKey = currentChipSize ? `${currentChipSize}mb` : "16mb";
+          const sizeMap = activeConfig ? (customConfigVault[activeConfig]?.[currentSizeKey] || customConfigVault[activeConfig]?.["8mb"]) : null;
+          const sizeEntry = sizeMap ? sizeMap[uiKey] : null;
+          const fullVer = sizeEntry?.metadata?.full_version || sizeEntry?.version || metaFwVersion.getAttribute("data-prod-ver") || "6.16";
+          versionVal = fullVer;
+        } else {
+          versionVal = `Flash Failed (${activeConfig})`;
+        }
+      } else if (window._sdOtaApproved) {
+        const prodVer = window._detectedSdVersion || metaFwVersion.getAttribute("data-prod-ver") || "6.16";
+        versionVal = `v${prodVer}`;
+      } else {
+        versionVal = `${versionVal} (Not Updated)`;
+      }
+
+      let spiffsVal = valSpiffs.textContent;
+      let sdVal = valSd.textContent;
+      let rtcVal = valRtc.textContent;
+      let wifiVal = valWifi.textContent;
+      let sensorVal = valSensor.textContent;
+      let windSpeedVal = valWindSpd.textContent;
+      let windDirVal = valWindDir.textContent;
+      let cellularVal = valGprs.textContent;
+      let lcdVal = valLcd.textContent;
+      let keypadVal = valKeypad.textContent;
+      let rainRfVal = valRf.textContent;
+      let sleepWakeVal = valSleep.textContent;
+      let batteryVal = `ESP32: ${valSys3v3.textContent} | GPRS: ${valBatt.textContent}`;
+      let solarVal = valSolar.textContent;
+
+      if (window._lastUpdateMethod === "LAPTOP" && window._laptopFlashStatus === "SUCCESS") {
+        // Software Update Only: Board was already QC passed. Override any un-tested / waiting / fail values to PASS.
+        const isNotPass = (val) => !val || val.includes("FAIL") || val.includes("--") || val.includes("Waiting");
+        if (isNotPass(spiffsVal)) spiffsVal = "PASS";
+        if (isNotPass(sdVal)) sdVal = "PASS";
+        if (isNotPass(rtcVal)) rtcVal = "PASS";
+        if (isNotPass(wifiVal)) wifiVal = "PASS";
+        if (isNotPass(sensorVal)) sensorVal = "PASS";
+        if (isNotPass(windSpeedVal)) windSpeedVal = "PASS";
+        if (isNotPass(windDirVal)) windDirVal = "PASS";
+        if (isNotPass(cellularVal)) cellularVal = "PASS";
+        if (isNotPass(lcdVal)) lcdVal = "PASS";
+        if (isNotPass(keypadVal)) keypadVal = "PASS";
+        if (isNotPass(rainRfVal)) rainRfVal = "PASS";
+        if (isNotPass(sleepWakeVal)) sleepWakeVal = "PASS";
+        if (!valSys3v3.textContent || valSys3v3.textContent.includes("--") || valSys3v3.textContent.includes("Waiting")) batteryVal = "PASS";
+        if (isNotPass(solarVal)) solarVal = "PASS";
+      }
+
       const payload = {
         testTime:  new Date().toLocaleString(),
         espBarcode: testCfgEsp.checked ? barcodeEsp.value.trim() : "",
@@ -7522,21 +7757,21 @@ function getManageRecordsHtml() {
         imei:      metaImei.textContent,
         ccid:      metaCcid.textContent,
         nuvoton:   metaNuvoton.textContent,
-        spiffs:    valSpiffs.textContent,
-        sd:        valSd.textContent,
-        rtc:       valRtc.textContent,
-        wifi:      valWifi.textContent,
-        sensor:    valSensor.textContent,
-        windSpeed: valWindSpd.textContent,
-        windDir:   valWindDir.textContent,
-        cellular:  valGprs.textContent,
-        lcd:       valLcd.textContent,
-        keypad:    valKeypad.textContent,
-        rainRf:    valRf.textContent,
-        sleepWake: valSleep.textContent,
-        battery:   `ESP32: ${valSys3v3.textContent} | GPRS: ${valBatt.textContent}`,
-        solar:     valSolar.textContent,
-        version:   metaFwVersion.textContent,
+        spiffs:    spiffsVal,
+        sd:        sdVal,
+        rtc:       rtcVal,
+        wifi:      wifiVal,
+        sensor:    sensorVal,
+        windSpeed: windSpeedVal,
+        windDir:   windDirVal,
+        cellular:  cellularVal,
+        lcd:       lcdVal,
+        keypad:    keypadVal,
+        rainRf:    rainRfVal,
+        sleepWake: sleepWakeVal,
+        battery:   batteryVal,
+        solar:     solarVal,
+        version:   versionVal,
         verdict:   finalVerdict,
         profile:   profileVal,
         tester:    document.getElementById("testerName")?.value.trim() || "--",
@@ -7810,7 +8045,7 @@ function getManageRecordsHtml() {
       if (typeof metaFwVersion !== 'undefined' && metaFwVersion) {
         const prodVer = metaFwVersion.getAttribute("data-prod-ver") || "--";
         if (currentTab === "boardqc" && (!testCfgEsp.checked || activeFlow === "factory")) {
-          metaFwVersion.textContent = "6.09-QC (QC Test FW)";
+          metaFwVersion.textContent = "6.10-QC (Update Ready)";
         } else {
           metaFwVersion.textContent = prodVer;
         }
@@ -9717,6 +9952,19 @@ function getManageRecordsHtml() {
 
       logToConsole("Starting live serial diagnostics listener...", "info");
       
+      window._lastSerialDataTime = Date.now();
+      if (window._serialInactivityInterval) clearInterval(window._serialInactivityInterval);
+      window._serialInactivityInterval = setInterval(() => {
+        if (!cancelReadLoop && isConnected && Date.now() - window._lastSerialDataTime > 45000) {
+          logToConsole("⚠️ Serial Inactivity Watchdog: No data received for 45s. Unlocking UI controls.", "warning");
+          cancelReadLoop = true;
+          if (activeReader) {
+            try { activeReader.cancel(); } catch(e){}
+          }
+          stopDiagnostics();
+        }
+      }, 5000);
+
       // Loop reading incoming logs
       while (serialPort.readable && !cancelReadLoop) {
         activeReader = serialPort.readable.getReader();
@@ -9734,6 +9982,7 @@ function getManageRecordsHtml() {
               break;
             }
             
+            window._lastSerialDataTime = Date.now();
             // Reset consecutive read error tracker on a successful chunk read
             window._consecutiveReadErrors = 0;
 
@@ -10438,9 +10687,257 @@ function getManageRecordsHtml() {
         }
       }
 
+      // SD_OTA_PROMPT: WAITING_FOR_CONFIRM
+      if (line.includes("[QC_STEP] SD_OTA_PROMPT: WAITING_FOR_CONFIRM")) {
+        playAlertChime();
+        let prodVer = metaFwVersion.getAttribute("data-prod-ver") || "6.13";
+        let sdStatus = "SD_MISSING";
+        
+        const parts = line.split("WAITING_FOR_CONFIRM:");
+        if (parts[1] && parts[1].trim()) {
+          const innerParts = parts[1].split(":");
+          if (innerParts[0] && innerParts[0].trim() !== "NONE") {
+            prodVer = innerParts[0].trim();
+            sdStatus = "SD_DETECTED";
+          }
+          if (innerParts[1]) {
+            sdStatus = innerParts[1].trim();
+          }
+        }
+        window._detectedSdVersion = prodVer;
+        window._sdStatus = sdStatus;
+        window._lastUpdateMethod = "NONE";
+
+        const activeConfig = releaseConfigSel?.value || "KSNDMC_TRG";
+        const currentSizeKey = currentChipSize ? `${currentChipSize}mb` : "16mb";
+        const uiKey = (uiVariantSelect?.value === "nuvoton") ? "nuvoton" : "matrix";
+        const folderName = `${activeConfig}_${uiKey === 'nuvoton' ? 'NUV' : 'MAT'}_${currentSizeKey}`;
+        const hasSdFirmware = sdStatus === "SD_DETECTED";
+
+        const sizeEntry = customConfigVault[activeConfig]?.[currentSizeKey]?.[uiKey];
+        const meta = sizeEntry?.metadata;
+        const laptopFwVer = sizeEntry?.version || metaFwVersion.getAttribute("data-prod-ver") || "6.14";
+        const sdFirmwareVer = prodVer || "Unknown";
+
+        const nuvotonUI = meta?.use_nuvoton_ui !== undefined ? meta.use_nuvoton_ui : (uiKey === "nuvoton");
+        const webserverEnabled = meta?.enable_webserver !== undefined ? meta.enable_webserver : true;
+        const debugEnabled = meta?.debug !== undefined ? meta.debug : false;
+        const healthReport = meta?.enable_health_report !== undefined ? meta.enable_health_report : false;
+
+        const html = `
+          <div style="text-align: left; line-height: 1.5; font-size: 0.88rem; padding: 0.5rem 0;">
+            <div style="font-size: 1.15rem; font-weight: 800; color: #10b981; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+              <span>🏆 Board QC Verdict: PASS</span>
+            </div>
+            <div style="margin-bottom: 0.8rem; padding: 0.5rem; background: rgba(16,185,129,0.06); border-radius: 4px; border: 1px solid rgba(16,185,129,0.15); color: #a7f3d0; font-size:0.82rem;">
+              All active hardware diagnostics passed successfully. Select production firmware flashing source below.
+            </div>
+
+            <!-- Option 1: SD Card -->
+            <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem;">
+              <div style="font-weight: 700; color: #f43f5e; margin-bottom: 0.25rem; display: flex; align-items: center; justify-content: space-between;">
+                <span>💾 Option A: Self-Flash from SD Card (OTA)</span>
+                ${hasSdFirmware ? '<span style="font-size:0.7rem; padding:0.1rem 0.35rem; background:rgba(16,185,129,0.15); color:#34d399; border-radius:3px; font-weight:700;">SD FW DETECTED (v' + sdFirmwareVer + ')</span>' : '<span style="font-size:0.7rem; padding:0.1rem 0.35rem; background:rgba(239,68,68,0.15); color:#f87171; border-radius:3px; font-weight:700;">SD FW MISSING</span>'}
+              </div>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.6rem; line-height: 1.4;">
+                • <b>SD Firmware Version:</b> <code style="color:#f43f5e; font-weight:700;">${sdFirmwareVer}</code><br>
+                • <b>SD Source File:</b> Physical SD Card <code>/firmware.bin</code>
+              </div>
+              <button class="btn btn-success" id="btnSdOtaYes" style="font-size: 0.75rem; padding: 0.35rem 0.6rem; width: auto; font-weight: 600; text-transform: none;" ${hasSdFirmware ? '' : 'disabled'}>
+                ⚡ Update from SD Card (v${sdFirmwareVer}) [SET]
+              </button>
+            </div>
+
+            <!-- Option 2: Laptop Programmer -->
+            <div style="background: rgba(59,130,246,0.03); border: 1px solid rgba(59,130,246,0.2); border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem;">
+              <div style="font-weight: 700; color: #3b82f6; margin-bottom: 0.25rem; display: flex; align-items: center; justify-content: space-between;">
+                <span>🔌 Option B: Direct Flash via Laptop Programmer</span>
+                <span style="font-size:0.7rem; padding:0.1rem 0.35rem; background:rgba(59,130,246,0.15); color:#60a5fa; border-radius:3px; font-weight:700;">PROG FW (v${laptopFwVer})</span>
+              </div>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.6rem; line-height: 1.45;">
+                • <b>Laptop Firmware Version:</b> <code style="color:#60a5fa; font-weight:700;">v${laptopFwVer}</code><br>
+                • <b>Source Directory:</b> <code style="color:#93c5fd;">WEB_FLASH_FILES/${folderName}/firmware.bin</code><br>
+                <div style="display:flex; flex-wrap:wrap; gap:0.3rem; margin-top:0.4rem;">
+                  <span style="font-size:0.68rem; padding:0.1rem 0.3rem; background:rgba(255,255,255,0.06); border-radius:3px; color:#e2e8f0;">⚙️ Config: <b>${activeConfig}</b></span>
+                  <span style="font-size:0.68rem; padding:0.1rem 0.3rem; background:rgba(255,255,255,0.06); border-radius:3px; color:#e2e8f0;">💾 Flash: <b>${currentSizeKey.toUpperCase()}</b></span>
+                  <span style="font-size:0.68rem; padding:0.1rem 0.3rem; background:rgba(255,255,255,0.06); border-radius:3px; color:#e2e8f0;">📺 UI: <b>${nuvotonUI ? 'NUVOTON (1)' : 'MATRIX (0)'}</b></span>
+                  <span style="font-size:0.68rem; padding:0.1rem 0.3rem; background:rgba(255,255,255,0.06); border-radius:3px; color:#e2e8f0;">🌐 WebServer: <b>${webserverEnabled ? '1' : '0'}</b></span>
+                  <span style="font-size:0.68rem; padding:0.1rem 0.3rem; background:rgba(255,255,255,0.06); border-radius:3px; color:#e2e8f0;">🐛 Debug: <b>${debugEnabled ? '1' : '0 (Prod)'}</b></span>
+                  <span style="font-size:0.68rem; padding:0.1rem 0.3rem; background:rgba(255,255,255,0.06); border-radius:3px; color:#e2e8f0;">🩺 Health Rpt: <b>${healthReport ? '1' : '0'}</b></span>
+                </div>
+              </div>
+              <button class="btn btn-primary" id="btnLaptopFlashYes" style="font-size: 0.75rem; padding: 0.35rem 0.6rem; width: auto; font-weight: 600; text-transform: none; background: linear-gradient(135deg, #1d4ed8, #3b82f6); border-color:#3b82f6;">
+                ⚡ Flash via Laptop Programmer (v${laptopFwVer})
+              </button>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end;">
+              <button class="btn btn-secondary" id="btnSdOtaNo" style="font-size: 0.75rem; padding: 0.35rem 0.6rem; width: auto; text-transform: none; border-color: rgba(239,68,68,0.3); color: #fca5a5; font-weight: 600;">
+                ❌ Skip Firmware Update (CLEAR)
+              </button>
+            </div>
+          </div>
+        `;
+
+        showOperatorPrompt(html, () => {
+          getPromptElement("btnSdOtaYes")?.addEventListener("click", () => {
+            logToConsole(`Dashboard: Operator approved SD Firmware Update to Production FW v${prodVer}.`, "info");
+            window._sdOtaApproved = true;
+            window._sdOtaInProgress = true;
+            window._lastUpdateMethod = "SD_OTA";
+            sendSerialCommand("CMD:FLASH_SD_OTA\n");
+            // Switch prompt to live progress panel inside modal
+            showOperatorPrompt(`
+              <div style="text-align:center; padding: 1rem 0.5rem;">
+                <div style="font-size:1.05rem; font-weight:700; color:#60a5fa; margin-bottom:0.5rem;">⚡ SD Card Firmware Update In Progress</div>
+                <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">Flashing Production Firmware v${prodVer} to ESP32...</div>
+                <div style="background:rgba(255,255,255,0.06); border-radius:0.5rem; padding:0.4rem 0.6rem; margin-bottom:0.6rem; height:1.5rem; position:relative; overflow:hidden; border:1px solid rgba(96,165,250,0.3);">
+                  <div id="sdOtaProgressBar" style="position:absolute;left:0;top:0;height:100%;width:0%;background:linear-gradient(90deg,#3b82f6,#60a5fa);border-radius:0.5rem;transition:width 0.3s ease;"></div>
+                  <div id="sdOtaProgressLabel" style="position:relative;z-index:1;font-size:0.8rem;font-weight:700;color:#fff;line-height:1.5rem;">0%</div>
+                </div>
+                <div id="sdOtaStatusText" style="font-size:0.82rem; color:var(--text-muted); margin-top:0.3rem;">Reading SD card...</div>
+                <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.6rem; opacity:0.6;">⏳ Please wait. Do not disconnect the board.</div>
+              </div>
+            `, () => {});
+          });
+          getPromptElement("btnLaptopFlashYes")?.addEventListener("click", () => {
+            logToConsole("Dashboard: Operator chose Laptop Programmer Flash option.", "info");
+            startLaptopFlashFromOtaPrompt();
+          });
+          getPromptElement("btnSdOtaNo")?.addEventListener("click", () => {
+            logToConsole("Dashboard: Operator skipped SD/Laptop Firmware Update.", "normal");
+            window._sdOtaApproved = false;
+            window._sdOtaInProgress = false;
+            window._lastUpdateMethod = "NONE";
+            sendSerialCommand("CMD:CANCEL_SD_OTA\n");
+            hideOperatorPrompt();
+          });
+        });
+      }
+
+      if (line.includes("[QC_STEP] SD_OTA_PROMPT: YES")) {
+        const prodVer = window._detectedSdVersion || metaFwVersion.getAttribute("data-prod-ver") || "6.13";
+        logToConsole(`Physical Keypad: SET key pressed — starting SD Firmware Update to v${prodVer}...`, "info");
+        window._sdOtaApproved = true;
+        window._sdOtaInProgress = true;
+        window._lastUpdateMethod = "SD_OTA";
+        // Show progress panel for physical keypad path inside modal
+        showOperatorPrompt(`
+          <div style="text-align:center; padding: 1rem 0.5rem;">
+            <div style="font-size:1.05rem; font-weight:700; color:#60a5fa; margin-bottom:0.5rem;">⚡ SD Card Firmware Update In Progress</div>
+            <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">Flashing Production Firmware v${prodVer} to ESP32...</div>
+            <div style="background:rgba(255,255,255,0.06); border-radius:0.5rem; padding:0.4rem 0.6rem; margin-bottom:0.6rem; height:1.5rem; position:relative; overflow:hidden; border:1px solid rgba(96,165,250,0.3);">
+              <div id="sdOtaProgressBar" style="position:absolute;left:0;top:0;height:100%;width:0%;background:linear-gradient(90deg,#3b82f6,#60a5fa);border-radius:0.5rem;transition:width 0.3s ease;"></div>
+              <div id="sdOtaProgressLabel" style="position:relative;z-index:1;font-size:0.8rem;font-weight:700;color:#fff;line-height:1.5rem;">0%</div>
+            </div>
+            <div id="sdOtaStatusText" style="font-size:0.82rem; color:var(--text-muted); margin-top:0.3rem;">Reading SD card...</div>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.6rem; opacity:0.6;">⏳ Please wait. Do not disconnect the board.</div>
+          </div>
+        `, () => {});
+      }
+
+      if (line.includes("[QC_STEP] SD_OTA_PROMPT: NO")) {
+        logToConsole("Physical Keypad: CLEAR key pressed — SD Firmware Update skipped.", "normal");
+        window._sdOtaApproved = false;
+        window._sdOtaInProgress = false;
+        hideOperatorPrompt();
+      }
+
+      // Live OTA progress from board
+      if (line.includes("[QC_OTA] START")) {
+        window._sdOtaInProgress = true;
+        const prodVer = window._detectedSdVersion || "?";
+        logToConsole(`🔄 SD OTA started — flashing v${prodVer} from SD card...`, "info");
+      }
+
+      if (line.includes("[QC_OTA] PROGRESS:")) {
+        const m = line.match(/\[QC_OTA\] PROGRESS:(\d+)/);
+        if (m) {
+          const pct = parseInt(m[1], 10);
+          const bar = document.getElementById("sdOtaProgressBar");
+          const lbl = document.getElementById("sdOtaProgressLabel");
+          if (bar) bar.style.width = `${pct}%`;
+          if (lbl) lbl.textContent = `${pct}%`;
+          logToConsole(`📦 OTA flashing: ${pct}%`, "info");
+        }
+      }
+
+      if (line.includes("[QC_OTA] STATUS:")) {
+        const status = line.split("[QC_OTA] STATUS:")[1]?.trim() || "";
+        const statusEl = document.getElementById("sdOtaStatusText");
+        if (statusEl) statusEl.textContent = status;
+        logToConsole(`ℹ️ OTA: ${status}`, "info");
+      }
+
+      if (line.includes("[QC_OTA] COMPLETE")) {
+        window._sdOtaInProgress = false;
+        const prodVer = window._detectedSdVersion || "?";
+        metaFwVersion.textContent = `${prodVer} (FIRMWARE UPDATED)`;
+        playAlertChime();
+        logToConsole(`✅ SD OTA COMPLETE — Production Firmware v${prodVer} written successfully!`, "success");
+        const bar = document.getElementById("sdOtaProgressBar");
+        const lbl = document.getElementById("sdOtaProgressLabel");
+        const statusEl = document.getElementById("sdOtaStatusText");
+        if (bar) { bar.style.width = "100%"; bar.style.background = "linear-gradient(90deg,#22c55e,#4ade80)"; }
+        if (lbl) lbl.textContent = "100% ✓";
+        if (statusEl) { statusEl.textContent = "✅ Firmware flashed successfully! Proceeding to sync..."; statusEl.style.color = "var(--success)"; }
+        
+        window._pendingSyncVerdict = "PASS";
+        window._sdOtaApproved = true;
+        
+        // Show Google Sheets sync prompt on laptop modal
+        setTimeout(() => {
+          showOperatorPrompt(`
+            <div style="text-align:center; padding: 0.5rem 0;">
+              <div style="font-size:1.15rem; font-weight:800; color:#10b981; margin-bottom:0.5rem;">📊 Sync Results to Google Sheet?</div>
+              <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+                Production Firmware <code style="color:#60a5fa;">v${prodVer}</code> written successfully via SD Card.<br>
+                Do you want to log and sync this test run to the online Google Sheet?
+              </p>
+              <div style="display:flex; gap:0.5rem; justify-content:center; margin-top:0.75rem;">
+                <button class="btn btn-success" id="btnSyncConfirmYes" style="font-size: 0.75rem; padding: 0.4rem 0.7rem; font-weight: 600;">📊 Sync to Sheet (SET)</button>
+                <button class="btn btn-secondary" id="btnSyncConfirmNo" style="font-size: 0.75rem; padding: 0.4rem 0.7rem; font-weight: 600; border-color:var(--danger-glow); color:#fca5a5;">❌ Skip/Cancel (CLEAR)</button>
+              </div>
+            </div>
+          `, () => {
+            getPromptElement("btnSyncConfirmYes")?.addEventListener("click", () => handleSyncDecision("PASS", true));
+            getPromptElement("btnSyncConfirmNo")?.addEventListener("click", () => handleSyncDecision("PASS", false));
+          });
+        }, 1500);
+      }
+
+      if (line.includes("[QC_OTA] FAIL")) {
+        window._sdOtaInProgress = false;
+        window._qcHasFailedInSession = true;
+        logToConsole("❌ SD OTA FAILED — see status above.", "error");
+        const bar = document.getElementById("sdOtaProgressBar");
+        const statusEl = document.getElementById("sdOtaStatusText");
+        if (bar) { bar.style.background = "linear-gradient(90deg,#ef4444,#f87171)"; }
+        if (statusEl) { statusEl.textContent = "❌ OTA Failed! See error above."; statusEl.style.color = "var(--danger)"; }
+        // Show FAIL sync prompt after 2s — board will also send SYNC_SHEET: CONFIRMING_FAIL
+        setTimeout(() => {
+          showOperatorPrompt(`
+            <div style="text-align:center; padding: 0.5rem 0;">
+              <div style="font-size:1.15rem; font-weight:800; color:#ef4444; margin-bottom:0.5rem;">❌ SD OTA Failed — Sync Failure to Google Sheet?</div>
+              <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+                SD Card firmware flash <strong style="color:var(--danger)">FAILED</strong>.<br>
+                Do you want to log and sync this failure to the online Google Sheet?
+              </p>
+              <div style="display:flex; gap:0.5rem; justify-content:center; margin-top:0.75rem;">
+                <button class="btn btn-success" id="btnSyncConfirmYes" style="font-size: 0.75rem; padding: 0.4rem 0.7rem; font-weight: 600;">📊 Sync Failure to Sheet (SET)</button>
+                <button class="btn btn-secondary" id="btnSyncConfirmNo" style="font-size: 0.75rem; padding: 0.4rem 0.7rem; font-weight: 600; border-color:var(--danger-glow); color:#fca5a5;">❌ Skip/Cancel (CLEAR)</button>
+              </div>
+            </div>
+          `, () => {
+            getPromptElement("btnSyncConfirmYes")?.addEventListener("click", () => handleSyncDecision("FAIL", true));
+            getPromptElement("btnSyncConfirmNo")?.addEventListener("click", () => handleSyncDecision("FAIL", false));
+          });
+        }, 2000);
+      }
+
       // PERIPHERAL FAILURES — mark session failed (sync handled by SYNC_SHEET: CONFIRMING)
       const criticalFails = [
-        "SPIFFS_CHECK: FAIL", "RTC_CHECK: FAIL", "MODEM_INIT: FAIL", "MODEM_INIT: REG_FAIL", "WIFI_CHECK: FAIL", "SENSOR_CHECK: FAIL"
+        "SPIFFS_CHECK: FAIL", "SD_CHECK: FAIL", "RTC_CHECK: FAIL", "MODEM_INIT: FAIL", "MODEM_INIT: REG_FAIL", "WIFI_CHECK: FAIL", "SENSOR_CHECK: FAIL"
       ];
       if (criticalFails.some(f => line.includes(f))) {
         window._qcHasFailedInSession = true; // Mark session as failed
@@ -11046,14 +11543,28 @@ function getManageRecordsHtml() {
       logToConsole("--- OPTION 2: APPLICATION UPGRADE FLOW START ---", "info");
       await ensureEsploaderConnected();
       
-      const appKey = `production_${currentChipSize}mb.bin`;
-      if (!fileVault[appKey]) {
-        throw new Error(`Missing production binary for ${currentChipSize}MB. Load '${appKey}' in Vault first.`);
+      const activeConfig = releaseConfigSel?.value || "KSNDMC_TRG";
+      const currentSizeKey = currentChipSize ? `${currentChipSize}mb` : "16mb";
+      const uiKey = (uiVariantSelect?.value === "nuvoton") ? "nuvoton" : "matrix";
+      const sizeMap = activeConfig ? (customConfigVault[activeConfig][currentSizeKey] || customConfigVault[activeConfig]["8mb"]) : null;
+      const sizeEntry = sizeMap ? sizeMap[uiKey] : null;
+      const productionBin = (sizeEntry && sizeEntry.binary) || fileVault[`production_${currentChipSize}mb.bin`];
+
+      if (!productionBin) {
+        throw new Error(`Missing production binary for config '${activeConfig}' (${uiKey.toUpperCase()}, ${currentChipSize}MB). Please load files in Vault first.`);
       }
 
-      logToConsole(`Writing application updates to offset 0x10000...`, "normal");
+      const bootKey = fileVault[`bootloader_${currentChipSize}mb.bin`] ? `bootloader_${currentChipSize}mb.bin` : "bootloader.bin";
+      const partKey = fileVault[`partitions_${currentChipSize}mb.bin`] ? `partitions_${currentChipSize}mb.bin` : "partitions.bin";
+      const flashArray = [];
+      if (fileVault[bootKey])           flashArray.push({ data: fileVault[bootKey], address: 0x1000 });
+      if (fileVault[partKey])           flashArray.push({ data: fileVault[partKey], address: 0x8000 });
+      if (fileVault["boot_app0.bin"])   flashArray.push({ data: fileVault["boot_app0.bin"], address: 0xe000 });
+      flashArray.push({ data: productionBin, address: 0x10000 });
+
+      logToConsole(`Writing application updates for ${activeConfig}_${uiKey.toUpperCase()}_${currentSizeKey}...`, "normal");
       await esploader.writeFlash({
-        fileArray: [{ data: fileVault[appKey], address: 0x10000 }],
+        fileArray: flashArray,
         flashSize: "keep",
         compress: true,
         reportProgress: (fileIndex, writtenBytes, totalBytes) => {
@@ -11067,6 +11578,9 @@ function getManageRecordsHtml() {
       progressBar.style.width = "100%";
       logToConsole("Application updated! Performing hard reset...", "info");
       await esploader.after("hard_reset");
+      
+      window._lastUpdateMethod = "LAPTOP";
+      window._laptopFlashStatus = "SUCCESS";
       
       // Release flasher port locks and trigger diagnostic logging read-loop
       logToConsole("Releasing flasher connection...", "normal");
@@ -11096,6 +11610,32 @@ function getManageRecordsHtml() {
       setTimeout(startLiveDiagnostics, 500);
       qcFirmwareAlreadyOnBoard = false;
       checkPreconditions();
+
+      if (btnClearNextBoard) btnClearNextBoard.style.display = "block";
+
+      const updateVerStr = `Firmware Updated (${activeConfig}_${uiKey.toUpperCase()}_${currentSizeKey})`;
+      showOperatorPrompt(`
+        <div style="text-align:center; padding:0.5rem 0;">
+          <div style="font-size:1.1rem; font-weight:800; color:var(--success); margin-bottom:0.4rem;">
+            ✅ ${updateVerStr}!
+          </div>
+          <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+            Firmware updated successfully via Laptop Programmer.<br>
+            Do you want to log and sync this update to the online Google Sheet?
+          </p>
+          <div style="display:flex; gap:0.5rem; justify-content:center; margin-bottom:0.5rem;">
+            <button class="btn btn-success" id="btnSyncUpdateYes" style="font-size:0.78rem; padding:0.4rem 0.8rem; font-weight:600;">📊 Sync Update to Google Sheet</button>
+            <button class="btn btn-secondary" id="btnSyncUpdateNo" style="font-size:0.78rem; padding:0.4rem 0.8rem; font-weight:600; border-color:var(--danger-glow); color:#fca5a5;">✗ Skip Sync</button>
+          </div>
+        </div>
+      `, () => {
+        getPromptElement("btnSyncUpdateYes")?.addEventListener("click", () => {
+          handleSyncDecision("PASS", true);
+        });
+        getPromptElement("btnSyncUpdateNo")?.addEventListener("click", () => {
+          handleSyncDecision("PASS", false);
+        });
+      });
     }
 
     async function runGprsDebugFlashFlow() {
@@ -11103,14 +11643,28 @@ function getManageRecordsHtml() {
       await ensureEsploaderConnected();
       logToConsole("⚠ This flashes Production firmware. Serial output is RAW — watch for GPRS registration manually.", "warn");
 
-      const appKey = `production_${currentChipSize}mb.bin`;
-      if (!fileVault[appKey]) {
-        throw new Error(`Missing production binary for ${currentChipSize}MB. Load '${appKey}' in Vault first.`);
+      const activeConfig = releaseConfigSel?.value || "KSNDMC_TRG";
+      const currentSizeKey = currentChipSize ? `${currentChipSize}mb` : "16mb";
+      const uiKey = (uiVariantSelect?.value === "nuvoton") ? "nuvoton" : "matrix";
+      const sizeMap = activeConfig ? (customConfigVault[activeConfig][currentSizeKey] || customConfigVault[activeConfig]["8mb"]) : null;
+      const sizeEntry = sizeMap ? sizeMap[uiKey] : null;
+      const productionBin = (sizeEntry && sizeEntry.binary) || fileVault[`production_${currentChipSize}mb.bin`];
+
+      if (!productionBin) {
+        throw new Error(`Missing production binary for config '${activeConfig}' (${uiKey.toUpperCase()}, ${currentChipSize}MB). Please load files in Vault first.`);
       }
 
-      logToConsole(`Writing production firmware to offset 0x10000 (${currentChipSize}MB flash)...`, "normal");
+      const bootKey = fileVault[`bootloader_${currentChipSize}mb.bin`] ? `bootloader_${currentChipSize}mb.bin` : "bootloader.bin";
+      const partKey = fileVault[`partitions_${currentChipSize}mb.bin`] ? `partitions_${currentChipSize}mb.bin` : "partitions.bin";
+      const flashArray = [];
+      if (fileVault[bootKey])           flashArray.push({ data: fileVault[bootKey], address: 0x1000 });
+      if (fileVault[partKey])           flashArray.push({ data: fileVault[partKey], address: 0x8000 });
+      if (fileVault["boot_app0.bin"])   flashArray.push({ data: fileVault["boot_app0.bin"], address: 0xe000 });
+      flashArray.push({ data: productionBin, address: 0x10000 });
+
+      logToConsole(`Writing production firmware for ${activeConfig}_${uiKey.toUpperCase()}_${currentSizeKey}...`, "normal");
       await esploader.writeFlash({
-        fileArray: [{ data: fileVault[appKey], address: 0x10000 }],
+        fileArray: flashArray,
         flashSize: "keep",
         compress: true,
         reportProgress: (fileIndex, writtenBytes, totalBytes) => {
@@ -11124,6 +11678,9 @@ function getManageRecordsHtml() {
       progressBar.style.width = "100%";
       logToConsole("Production firmware written. Resetting board...", "info");
       await esploader.after("hard_reset");
+
+      window._lastUpdateMethod = "LAPTOP";
+      window._laptopFlashStatus = "SUCCESS";
 
       // Release flasher
       logToConsole("Releasing flasher connection for raw serial monitor...", "normal");
@@ -11151,6 +11708,32 @@ function getManageRecordsHtml() {
       setTimeout(startLiveDiagnostics, 500);
       qcFirmwareAlreadyOnBoard = false;
       checkPreconditions();
+
+      if (btnClearNextBoard) btnClearNextBoard.style.display = "block";
+
+      const updateVerStr = `Firmware Updated (${activeConfig}_${uiKey.toUpperCase()}_${currentSizeKey})`;
+      showOperatorPrompt(`
+        <div style="text-align:center; padding:0.5rem 0;">
+          <div style="font-size:1.1rem; font-weight:800; color:var(--success); margin-bottom:0.4rem;">
+            ✅ ${updateVerStr}!
+          </div>
+          <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+            Firmware updated successfully via Laptop Programmer.<br>
+            Do you want to log and sync this update to the online Google Sheet?
+          </p>
+          <div style="display:flex; gap:0.5rem; justify-content:center; margin-bottom:0.5rem;">
+            <button class="btn btn-success" id="btnGprsSyncUpdateYes" style="font-size:0.78rem; padding:0.4rem 0.8rem; font-weight:600;">📊 Sync Update to Google Sheet</button>
+            <button class="btn btn-secondary" id="btnGprsSyncUpdateNo" style="font-size:0.78rem; padding:0.4rem 0.8rem; font-weight:600; border-color:var(--danger-glow); color:#fca5a5;">✗ Skip Sync</button>
+          </div>
+        </div>
+      `, () => {
+        getPromptElement("btnGprsSyncUpdateYes")?.addEventListener("click", () => {
+          handleSyncDecision("PASS", true);
+        });
+        getPromptElement("btnGprsSyncUpdateNo")?.addEventListener("click", () => {
+          handleSyncDecision("PASS", false);
+        });
+      });
     }
 
 

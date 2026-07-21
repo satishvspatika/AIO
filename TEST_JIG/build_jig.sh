@@ -109,6 +109,7 @@ if [ "$BUILD_8MB" = true ]; then
   $ARDUINO_CLI compile \
       --fqbn "esp32:esp32:esp32:FlashSize=8M,FlashMode=dio,PartitionScheme=custom" \
       --build-property "build.partitions=custom" \
+      --build-property "build.custom_partitions=$TEST_JIG_DIR/qc_test/partitions.csv" \
       --build-property "upload.maximum_size=1769472" \
       --build-path "$QC_BUILD_BASE/8mb" \
       "$TEST_JIG_DIR/qc_test/qc_test.ino"
@@ -125,8 +126,9 @@ if [ "$BUILD_16MB" = true ]; then
   echo "→ Building 16MB QC Test..."
   cp "$WORKSPACE_ROOT/partitions_16mb.csv" "$TEST_JIG_DIR/qc_test/partitions.csv"
   $ARDUINO_CLI compile \
-      --fqbn "esp32:esp32:esp32:FlashSize=16M,FlashMode=dio,FlashFreq=40,PartitionScheme=custom" \
+      --fqbn "esp32:esp32:esp32:FlashSize=16M,FlashMode=dio,FlashFreq=80,PartitionScheme=custom" \
       --build-property "build.partitions=custom" \
+      --build-property "build.custom_partitions=$TEST_JIG_DIR/qc_test/partitions.csv" \
       --build-property "upload.maximum_size=2097152" \
       --build-path "$QC_BUILD_BASE/16mb" \
       "$TEST_JIG_DIR/qc_test/qc_test.ino"
@@ -152,6 +154,7 @@ if [ "$QC_ONLY" = false ]; then
     $ARDUINO_CLI compile \
         --fqbn "esp32:esp32:esp32:FlashSize=8M,FlashMode=dio,PartitionScheme=custom" \
         --build-property "build.partitions=custom" \
+        --build-property "build.custom_partitions=$WORKSPACE_ROOT/partitions.csv" \
         --build-property "upload.maximum_size=1769472" \
         --build-path "$APP_BUILD_BASE/8mb" \
         "$WORKSPACE_ROOT"
@@ -165,17 +168,14 @@ if [ "$QC_ONLY" = false ]; then
   if [ "$BUILD_16MB" = true ]; then
     # Build 16MB Production App
     echo "→ Building 16MB Production Application..."
-    cp "$WORKSPACE_ROOT/partitions.csv" /tmp/partitions_backup.csv 2>/dev/null || true
-    cp "$WORKSPACE_ROOT/partitions_16mb.csv" "$WORKSPACE_ROOT/partitions.csv"
     $ARDUINO_CLI compile \
-        --fqbn "esp32:esp32:esp32:FlashSize=16M,FlashMode=dio,FlashFreq=40,PartitionScheme=custom" \
+        --fqbn "esp32:esp32:esp32:FlashSize=16M,FlashMode=dio,FlashFreq=80,PartitionScheme=custom" \
         --build-property "build.partitions=custom" \
+        --build-property "build.custom_partitions=$WORKSPACE_ROOT/partitions_16mb.csv" \
         --build-property "upload.maximum_size=2097152" \
         --build-path "$APP_BUILD_BASE/16mb" \
         "$WORKSPACE_ROOT"
-    COMPILE_STATUS=$?
-    cp /tmp/partitions_backup.csv "$WORKSPACE_ROOT/partitions.csv" 2>/dev/null || true
-    if [ $COMPILE_STATUS -ne 0 ]; then
+    if [ $? -ne 0 ]; then
         echo "❌ App 16MB compile failed!"
         exit 1
     fi
@@ -217,13 +217,26 @@ if [ "$BUILD_16MB" = true ]; then
   cp "$QC_BUILD_BASE/16mb/qc_test.ino.bin" "$OUT_DIR/qc_test_16mb.bin"
 fi
 
-# Copy Production app binaries
+# Copy Production app binaries and verify version
 if [ "$QC_ONLY" = false ]; then
+  EXPECTED_VER=$(grep '#define FIRMWARE_VERSION' "$WORKSPACE_ROOT/user_config.h" | sed 's/.*"\(.*\)".*/\1/')
   if [ "$BUILD_8MB" = true ]; then
     cp "$APP_BUILD_BASE/8mb/AIO9_5.0.bin" "$OUT_DIR/production_8mb.bin" 2>/dev/null || cp "$APP_BUILD_BASE/8mb/AIO9_5.0.ino.bin" "$OUT_DIR/production_8mb.bin"
+    BIN_VER=$(strings "$OUT_DIR/production_8mb.bin" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+$' | head -1)
+    if [ "$BIN_VER" != "$EXPECTED_VER" ]; then
+      echo "❌ FATAL: production_8mb.bin has version '$BIN_VER' inside but user_config.h says '$EXPECTED_VER'!"
+      exit 1
+    fi
+    echo "✅ production_8mb.bin verified: v$BIN_VER"
   fi
   if [ "$BUILD_16MB" = true ]; then
     cp "$APP_BUILD_BASE/16mb/AIO9_5.0.bin" "$OUT_DIR/production_16mb.bin" 2>/dev/null || cp "$APP_BUILD_BASE/16mb/AIO9_5.0.ino.bin" "$OUT_DIR/production_16mb.bin"
+    BIN_VER=$(strings "$OUT_DIR/production_16mb.bin" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+$' | head -1)
+    if [ "$BIN_VER" != "$EXPECTED_VER" ]; then
+      echo "❌ FATAL: production_16mb.bin has version '$BIN_VER' inside but user_config.h says '$EXPECTED_VER'!"
+      exit 1
+    fi
+    echo "✅ production_16mb.bin verified: v$BIN_VER"
   fi
 else
   echo "→ QC-Only mode: retaining existing production application binaries."
@@ -292,8 +305,25 @@ if [ "$QC_ONLY" = false ]; then
               src_bin="$config_dir/firmware.bin"
               src_ver="$config_dir/fw_version.txt"
               src_meta="$config_dir/metadata.json"
-  
+
+              # Fallback: if builds/ firmware.bin missing, try build/config_* cache directly
+              if [ ! -f "$src_bin" ]; then
+                  cache_bin=$(find "$WORKSPACE_ROOT/build/config_${config_name}" -name "*.ino.bin" 2>/dev/null | head -1)
+                  if [ -n "$cache_bin" ]; then
+                      echo "  ⚠ builds/$config_name/firmware.bin missing — using build cache: $cache_bin"
+                      src_bin="$cache_bin"
+                  fi
+              fi
+
               if [ -f "$src_bin" ]; then
+                  # Verify version inside binary before packaging
+                  BIN_VER=$(strings "$src_bin" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+$' | head -1)
+                  if [ "$BIN_VER" != "$FW_VER" ]; then
+                      echo "  ❌ SKIP $config_name: firmware.bin has version '$BIN_VER' inside, expected '$FW_VER'!"
+                      echo "     → This binary is STALE. Run a full build to regenerate."
+                      continue
+                  fi
+
                   if [ "$FLASH_ARG" == "8mb" ]; then
                       # Package 8MB Folder
                       dest8="$OUT_DIR/$config_name"
@@ -301,6 +331,7 @@ if [ "$QC_ONLY" = false ]; then
                       cp "$src_bin" "$dest8/firmware.bin"
                       [ -f "$src_ver"  ] && cp "$src_ver"  "$dest8/fw_version.txt"
                       [ -f "$src_meta" ] && cp "$src_meta" "$dest8/metadata.json"
+                      echo "  ✓ $config_name — v$BIN_VER verified inside binary"
 
                       # Package 16MB Folder (reusing the same binaries)
                       if [ "$BUILD_16MB" = true ]; then
@@ -320,10 +351,7 @@ with open('$dest16/metadata.json', 'w') as f:
 "
                           fi
                           SIZE=$(du -sh "$src_bin" | cut -f1)
-                          echo "  ✓ $config_name ($SIZE) and ${base_name}_16mb ($SIZE)"
-                      else
-                          SIZE=$(du -sh "$src_bin" | cut -f1)
-                          echo "  ✓ $config_name ($SIZE)"
+                          echo "  ✓ ${base_name}_16mb ($SIZE) — v$BIN_VER verified"
                       fi
                   else
                       # FLASH_ARG is 16mb
@@ -333,7 +361,7 @@ with open('$dest16/metadata.json', 'w') as f:
                       [ -f "$src_ver"  ] && cp "$src_ver"  "$dest16/fw_version.txt"
                       [ -f "$src_meta" ] && cp "$src_meta" "$dest16/metadata.json"
                       SIZE=$(du -sh "$src_bin" | cut -f1)
-                      echo "  ✓ $config_name ($SIZE)"
+                      echo "  ✓ $config_name ($SIZE) — v$BIN_VER verified inside binary"
                   fi
               fi
           done

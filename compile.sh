@@ -18,7 +18,7 @@ case "$FLASH_SIZE" in
     ;;
   16mb)
     PARTITION_FILE="partitions_16mb.csv"
-    FQBN="esp32:esp32:esp32:FlashSize=16M,FlashMode=dio,FlashFreq=40,PartitionScheme=custom"
+    FQBN="esp32:esp32:esp32:FlashSize=16M,FlashMode=dio,FlashFreq=80,PartitionScheme=custom"
     echo "--- Building for 16MB Flash ESP32 ---"
     ;;
   *)

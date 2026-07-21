@@ -37,7 +37,7 @@ CONFIGS = [
 ALL_FLASH_VARIANTS = {
     "4mb":  ("4M",  "partitions_4mb.csv"),   # Legacy / older ESP32 units
     "8mb":  ("8M",  "partitions.csv"),        # Current production hardware
-    "16mb": ("16M,FlashFreq=40", "partitions_16mb.csv"),   # Future 16MB units
+    "16mb": ("16M,FlashFreq=80", "partitions_16mb.csv"),   # 16MB units (80MHz SPI, matches compile.sh)
 }
 
 # External Release Path
@@ -213,9 +213,11 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
 
     cmd = [
         'arduino-cli', 'compile',
+        '--clean',                                                              # Force fresh compile, no stale cache
         '--fqbn', f'esp32:esp32:esp32:FlashSize={flash_fqbn},FlashMode=dio,PartitionScheme=custom',
         '--build-property', 'build.partitions=custom',
         '--build-property', f'build.custom_partitions={partitions_file}',
+        '--build-property', 'upload.maximum_size=1769472',
         '--build-path', str(config_build_dir),
         '--export-binaries',
         str(SKETCH_DIR)
@@ -229,6 +231,14 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
         
         # Explicit binary file selection (matches v5.74 style resilience)
         binary = config_build_dir / f"{SKETCH_DIR.name}.ino.bin"
+        if not binary.exists():
+            binary = SKETCH_DIR / f"{SKETCH_DIR.name}.ino.bin"
+        if not binary.exists():
+            cached_bins = list(config_build_dir.glob("**/*.bin")) + list(SKETCH_DIR.glob("**/*.bin"))
+            for cb in cached_bins:
+                if "bootloader" not in cb.name and "partitions" not in cb.name and "qc" not in cb.name and cb.stat().st_size > 500000:
+                    binary = cb
+                    break
         if binary.exists():
             firmware_path = output_dir / "firmware.bin"
             shutil.copy(binary, firmware_path)
@@ -413,7 +423,21 @@ def main():
         print_info("Cleaning previous builds...")
         shutil.rmtree(OUTPUT_BASE)
     OUTPUT_BASE.mkdir(exist_ok=True)
-    
+
+    # Wipe arduino-cli global build cache (~/Library/Caches/arduino/)
+    # CRITICAL: arduino-cli 1.4.1 maintains a global sketch+core cache that persists
+    # across builds even when --clean and per-config --build-path are used.
+    # Without this wipe, stale .o files from old ESP32 core versions (e.g. 2.0.17)
+    # are silently reused, making builds appear instant while producing
+    # corrupted/mixed-version binaries.
+    arduino_cache = Path.home() / "Library" / "Caches" / "arduino"
+    for cache_sub in ("sketches", "cores"):
+        cache_dir = arduino_cache / cache_sub
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+    print_info("arduino-cli global build cache cleared (ensures clean compile from source)")
+
     # Backup user_config.h
     backup_config()
     

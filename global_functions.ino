@@ -234,6 +234,7 @@ void start_deep_sleep() {
   }
 
   Serial.flush();
+  flushSerialSIT(); // Drain modem UART before entering deep sleep
   debugln("[PWR] Entering Deep Sleep");
 
   esp_deep_sleep_start();
@@ -1462,15 +1463,17 @@ void read_and_calibrate_voltages() {
   }
 
   // If GPRS is powered on, the Zener diode provides a stable 2.7V reference.
-  // We calibrate the ADC using this reference.
-  if (ref_volt_measured > 1.5) {
+  // Only apply calibration if Zener voltage is within expected 2.5V - 2.9V range.
+  if (ref_volt_measured >= 2.5 && ref_volt_measured <= 2.9) {
     last_cal_factor = 2.7 / ref_volt_measured;
+  } else {
+    last_cal_factor = 1.0;
   }
 
   // Update REF VOLT value (apply calibration factor to the raw/measured reading)
   ref_volt_val = ref_volt_measured * last_cal_factor;
 
-  // 2. Read 3.7V Battery on GPIO33 (ADC1_CHANNEL_5)
+  // 2. Read Battery Voltage on GPIO33 (ADC1_CHANNEL_5)
   long bat_sum = 0;
   for (int i = 0; i < 10; i++) {
     bat_sum += adc1_get_raw(ADC1_CHANNEL_5);
@@ -1479,7 +1482,7 @@ void read_and_calibrate_voltages() {
   uint32_t avg_bat_raw = bat_sum / 10;
   uint32_t bat_mv = esp_adc_cal_raw_to_voltage(avg_bat_raw, &adc_chars_unit1);
   float bat_pin_volt = (float)bat_mv / 1000.0;
-  li_bat_val = bat_pin_volt * 1.48 * last_cal_factor;
+  li_bat_val = bat_pin_volt * (840.0 / 620.0) * last_cal_factor;  // Hardware resistor divider: R1=220k, R2=620k (840/620 = 1.3548)
   li_bat = li_bat_val;
 
   // 3. Read 3.3V Rail on GPIO36 (ADC1_CHANNEL_0)
@@ -1491,7 +1494,7 @@ void read_and_calibrate_voltages() {
   uint32_t avg_v33_raw = v33_sum / 10;
   uint32_t v33_mv = esp_adc_cal_raw_to_voltage(avg_v33_raw, &adc_chars_unit1);
   float v33_pin_volt = (float)v33_mv / 1000.0;
-  bat_3v3_val = v33_pin_volt * 1.48 * last_cal_factor;
+  bat_3v3_val = v33_pin_volt * (840.0 / 620.0) * last_cal_factor;  // Calibrated multiplier for 3.3V system rail
 
   // 4. Read Solar on GPIO25 (ADC2_CHANNEL_8)
   if (!wifi_active) {
@@ -1507,7 +1510,7 @@ void read_and_calibrate_voltages() {
     }
     if (solar_samples > 0) {
       float solar_pin_volt = (float)esp_adc_cal_raw_to_voltage(solar_sum / solar_samples, &adc_chars_unit2) / 1000.0;
-      solar_val = solar_pin_volt * 7.8 * last_cal_factor;
+      solar_val = solar_pin_volt * (720.0 / 100.0) * last_cal_factor;  // Hardware resistor divider: R1=620k, R2=100k (720/100 = 7.20)
       solar = solar_sum / solar_samples;
     }
   }
@@ -1526,7 +1529,7 @@ float get_calibrated_battery_voltage() {
     initialized = true;
   }
   uint32_t voltage_mv = esp_adc_cal_raw_to_voltage(adc1_get_raw(ADC1_CHANNEL_5), &adc_chars);
-  li_bat_val = ((float)voltage_mv / 1000.0) * 1.48;
+  li_bat_val = ((float)voltage_mv / 1000.0) * (840.0 / 620.0);  // Hardware resistor divider: R1=220k, R2=620k (840/620 = 1.3548)
   li_bat = li_bat_val;
   return li_bat_val;
 #endif

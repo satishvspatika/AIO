@@ -439,6 +439,7 @@ volatile bool rtcReady = false;
 volatile bool rtcTimeChanged = false;
 volatile int wakeup_reason_is = 0;
 volatile int lcdkeypad_start = 0;
+volatile bool initial_boot_complete = false;
 // --- End Volatile Definitions ---
 
 unsigned long last_nuvoton_power_off_time = 0;
@@ -477,6 +478,12 @@ void setup() {
       gpio_hold_dis(GPIO_NUM_32);
       if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
           wakeup_reason_is = ext0; // v5.77: Pre-anchor reason for task inheritance
+      }
+      // Create UI task early so INITIALIZING... splash is shown immediately during boot
+      if (wired == 1 && lcdkeypad_h == NULL) {
+          if (xTaskCreatePinnedToCore(lcdkeypad, "lcdkeypadTask", 6144, NULL, 3, &lcdkeypad_h, 0) != pdPASS) {
+              debugln("[BOOT] [ERR] lcdkeypadTask creation failed.");
+          }
       }
   }
   
@@ -1063,7 +1070,7 @@ void setup() {
     debug(" | Type: ");
     debugln(STATION_TYPE);
     http_no = 7; // 7 (KSNDMC ADDON)
-  } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 0))) {
+  } else if (((strstr(UNIT, "SPATIKA_GEN") || strstr(UNIT, "SPATIKA_TRG")) && (SYSTEM == 0))) {
     strcpy(universalNumber, "9980945474"); //"9980945474"); // Universal number
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG9-GEN-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "SPATIKA");
@@ -1075,7 +1082,7 @@ void setup() {
     debug(" | Type: ");
     debugln(STATION_TYPE);
     http_no = 6; // 6 (SPATIKA GEN TRG - index 6 confirmed)
-  } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 1))) {
+  } else if (((strstr(UNIT, "SPATIKA_GEN") || strstr(UNIT, "SPATIKA_TWS")) && (SYSTEM == 1))) {
     strcpy(universalNumber, "9980945474");
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-GEN-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "SPATIKA");
@@ -1087,7 +1094,7 @@ void setup() {
     debug(" | Type: ");
     debugln(STATION_TYPE);
     http_no = 8; // 8 (SPATIKA TWS)
-  } else if ((strstr(UNIT, "SPATIKA_GEN") && (SYSTEM == 2))) { // EMPRII
+  } else if (((strstr(UNIT, "SPATIKA_GEN") || strstr(UNIT, "SPATIKA_ADDON")) && (SYSTEM == 2))) { // EMPRII
     strcpy(universalNumber, "9980945474"); //"9980945474"); // Universal number
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TWSRF9-GEN-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "SPATIKA");
@@ -1107,6 +1114,21 @@ void setup() {
     // data to the first httpSet entry (KSNDMC endpoint) for any mis-typed UNIT string.
     http_no = -1;
     strncpy(UNIT_VER, "UNCONFIGURED", sizeof(UNIT_VER) - 1);
+  }
+
+  // Fail-safe fallback guard: Ensure STATION_TYPE and NETWORK are never empty
+  if (STATION_TYPE[0] == '\0') {
+#if SYSTEM == 0
+    strcpy(STATION_TYPE, "TRG");
+#elif SYSTEM == 1
+    strcpy(STATION_TYPE, "TWS");
+#elif SYSTEM == 2
+    strcpy(STATION_TYPE, "TWS-RF");
+#endif
+  }
+
+  if (NETWORK[0] == '\0') {
+    strcpy(NETWORK, "SPATIKA");
   }
 
   // v5.75 Hardened: [C-03] Server Index Protection
@@ -1407,10 +1429,11 @@ void setup() {
 
   // v7.95: CRITICAL RACE FIX — Initialize ULP and anchors BEFORE creating tasks.
   // This prevents the scheduler from reading uninitialized ULP RAM or stale 
-  // counters before setup() has finished zeroing/syncing them.
-  uint16_t preserved_rf = (rr == POWERON_RESET) ? 0 : rf_count.val;
+  // [ULP Preservation]: Only preserve ULP pulse counts during actual Deep Sleep wakeups (DEEPSLEEP_RESET).
+  // On Power-On, Software Reset (SD OTA), or HW Reset, reset counts to 0 to prevent huge garbage values on LCD.
+  uint16_t preserved_rf = (rr == DEEPSLEEP_RESET) ? rf_count.val : 0;
 #if (SYSTEM == 1) || (SYSTEM == 2)
-  uint32_t preserved_wind = (rr == POWERON_RESET) ? 0 : wind_count.val;
+  uint32_t preserved_wind = (rr == DEEPSLEEP_RESET) ? wind_count.val : 0;
 #endif
 
   debug("ULP Wakeup Period set to 1ms (High Resolution for Wind)");
@@ -1507,13 +1530,13 @@ void setup() {
   }
 #endif
 
-  if (wired == 1 && !skip_lcd_task) {  // v5.87 Hardening: [H-01] Snappy-UI Priority Elevation
-  // Elevating UI to Priority 3 ensures button-response is NEVER delayed by
-  // Modem MD5/TLS background processing (Priority 2).
-  if (xTaskCreatePinnedToCore(lcdkeypad, "lcdkeypadTask", 6144, NULL, 3,
-                              &lcdkeypad_h, 0) != pdPASS) {
-      debugln("[BOOT] [ERR] lcdkeypadTask creation failed.");
-  }
+  if (wired == 1 && !skip_lcd_task) {
+    if (lcdkeypad_h == NULL) {
+      if (xTaskCreatePinnedToCore(lcdkeypad, "lcdkeypadTask", 6144, NULL, 3,
+                                  &lcdkeypad_h, 0) != pdPASS) {
+          debugln("[BOOT] [ERR] lcdkeypadTask creation failed.");
+      }
+    }
     if (wakeup_reason_is != timer) {
       digitalWrite(32, HIGH);
       delay(100);
@@ -1530,6 +1553,8 @@ void setup() {
   debugln("ULP Counting Enabled (attachInterrupt 27 Disabled).");
   delay(1000);
   set_sys_status("IDLE");
+  initial_boot_complete = true;
+  show_now = 1;
 
   // Should be called only after getting the correct RF count from SPIFF. If
   // no RF is present, make rf_count.val = 0 and call this ()
@@ -1587,7 +1612,7 @@ void initialize_hw() {
   }
   if (solar_samples_init > 0) {
     solar = (float)solar_sum_init / solar_samples_init;
-    solar_val = (solar / (float)WIND_DIR_ADC_MAX) * 3.3 * 7.8;
+    solar_val = (solar / 4095.0) * 3.3 * 7.80;  // Calibrated solar panel multiplier
   }
 #endif
 

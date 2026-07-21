@@ -11,9 +11,12 @@
 #include <esp_task_wdt.h>
 #include <Preferences.h>
 
+#include <Update.h>
+#include <MD5Builder.h>
+
 Adafruit_BME280 bme;
 
-#define QC_TEST_VERSION "6.09-QC"
+#define QC_TEST_VERSION "6.10-QC"
 #define WIND_DIR_ADC_MAX 3480
 
 // --- PIN DEFINITIONS (ESP32-WROOM-32U) ---
@@ -53,6 +56,7 @@ enum QCState {
   STATE_RF_CONFIRM,
   STATE_WAKEUP_CONFIRM,
   STATE_SYNC_CONFIRM,
+  STATE_SD_OTA_CONFIRM,
   STATE_COMPLETE,
   STATE_FAILED
 };
@@ -199,6 +203,10 @@ void redrawCurrentStateScreen() {
       lcdSetCursor(0, 0); lcdPrint("SYNC TO SHEET?");
       lcdSetCursor(0, 1); lcdPrint("SET:YES CLR:NO");
       break;
+    case STATE_SD_OTA_CONFIRM:
+      lcdSetCursor(0, 0); lcdPrint("UPDATE TO PROD FW?");
+      lcdSetCursor(0, 1); lcdPrint("SET:YES  CLR:NO");
+      break;
     case STATE_COMPLETE:
       lcdSetCursor(0, 0); lcdPrint("WAKEUP: PASS!");
       lcdSetCursor(0, 1); lcdPrint("QC PASS: APPROVED");
@@ -282,10 +290,45 @@ bool testSPIFFS() {
   return success;
 }
 
+int detected_sd_cs = 5;
+bool sdHasFirmwareBin = false;
+String detectedSdFwVersion = "6.13";
+
 bool testSD(int csPin) {
   // Try initializing SPI SD on given CS pin
   if (!SD.begin(csPin)) return false;
   
+  String foundFw = "";
+  if (SD.exists("/firmware.bin")) foundFw = "/firmware.bin";
+  else if (SD.exists("/FIRMWARE.BIN")) foundFw = "/FIRMWARE.BIN";
+  else if (SD.exists("/Firmware.bin")) foundFw = "/Firmware.bin";
+
+  if (foundFw.length() > 0) {
+    sdHasFirmwareBin = true;
+    detectedSdFwVersion = "6.13";
+    if (SD.exists("/fw_version.txt")) {
+      File vf = SD.open("/fw_version.txt", FILE_READ);
+      if (vf) {
+        String s = vf.readStringUntil('\n');
+        s.trim(); s.replace("\r", "");
+        if (s.length() > 0) detectedSdFwVersion = s;
+        vf.close();
+      }
+    } else if (SD.exists("/version.txt")) {
+      File vf = SD.open("/version.txt", FILE_READ);
+      if (vf) {
+        String s = vf.readStringUntil('\n');
+        s.trim(); s.replace("\r", "");
+        if (s.length() > 0) detectedSdFwVersion = s;
+        vf.close();
+      }
+    }
+    Serial.printf("[QC_JIG] SD Firmware Check: %s FOUND (Version: v%s)\n", foundFw.c_str(), detectedSdFwVersion.c_str());
+  } else {
+    sdHasFirmwareBin = false;
+    Serial.println("[QC_JIG] SD Firmware Check: /firmware.bin NOT FOUND on SD Card.");
+  }
+
   File f = SD.open("/qc_sd.txt", FILE_WRITE);
   if (!f) {
     SD.end();
@@ -303,8 +346,170 @@ bool testSD(int csPin) {
   f.close();
   SD.remove("/qc_sd.txt");
   SD.end();
+  detected_sd_cs = csPin;
   return (s.indexOf("SD_CARD_OK") >= 0);
 }
+
+void otaProgressCallback(size_t currSize, size_t totalSize) {
+  int percent = (currSize * 100) / totalSize;
+  
+  static int lastPrintedPercent = -1;
+  if (percent != lastPrintedPercent && (percent % 5 == 0)) {
+    lastPrintedPercent = percent;
+    // Emit structured progress for laptop dashboard
+    Serial.printf("[QC_OTA] PROGRESS:%d\n", percent);
+    // Update LCD
+    char buf1[17];
+    snprintf(buf1, sizeof(buf1), "PROGRESS: %3d%%", percent);
+    lcdSetCursor(0, 0); lcdPrint("FLASHING PROD FW");
+    lcdSetCursor(0, 1); lcdPrint(buf1);
+  }
+  esp_task_wdt_reset();
+}
+
+bool flashProductionFirmwareFromSD(bool rebootAfterFlash = true) {
+  if (!enableNuvoton) {
+    enableNuvoton = true;
+    Serial1.begin(9600, SERIAL_8N1, NUV_RX_PIN, NUV_TX_PIN);
+  }
+
+  Serial.println("[QC_OTA] START");
+
+  int csPin = detected_sd_cs;
+  bool sdMounted = SD.begin(csPin);
+  if (!sdMounted) {
+    int altCs = (csPin == 5) ? 13 : 5;
+    if (SD.begin(altCs)) {
+      detected_sd_cs = altCs;
+      csPin = altCs;
+      sdMounted = true;
+    }
+  }
+
+  if (!sdMounted) {
+    Serial.println("[QC_OTA] STATUS:SD card not mounted!");
+    Serial.println("[QC_OTA] FAIL");
+    lcdClear();
+    lcdSetCursor(0, 0); lcdPrint("SD UPDATE FAIL!");
+    lcdSetCursor(0, 1); lcdPrint("NO SD CARD");
+    enterSyncConfirmState(false);
+    return false;
+  }
+
+  String fwPath = "";
+  if (SD.exists("/firmware.bin")) fwPath = "/firmware.bin";
+  else if (SD.exists("/FIRMWARE.BIN")) fwPath = "/FIRMWARE.BIN";
+  else if (SD.exists("/Firmware.bin")) fwPath = "/Firmware.bin";
+
+  if (fwPath.length() == 0) {
+    Serial.println("[QC_OTA] STATUS:firmware.bin not found on SD card!");
+    Serial.println("[QC_OTA] FAIL");
+    SD.end();
+    lcdClear();
+    lcdSetCursor(0, 0); lcdPrint("SD UPDATE FAIL!");
+    lcdSetCursor(0, 1); lcdPrint("NO FIRMWARE.BIN");
+    enterSyncConfirmState(false);
+    return false;
+  }
+
+  Serial.println("[QC_OTA] STATUS:Reading SD card...");
+  lcdClear();
+  lcdSetCursor(0, 0); lcdPrint("READING SD CARD");
+  lcdSetCursor(0, 1); lcdPrint("VERIFYING FW...");
+  delay(300);
+
+  File firmware = SD.open(fwPath.c_str(), FILE_READ);
+  if (!firmware) {
+    Serial.println("[QC_OTA] STATUS:Failed to open firmware file!");
+    Serial.println("[QC_OTA] FAIL");
+    SD.end();
+    lcdClear();
+    lcdSetCursor(0, 0); lcdPrint("SD UPDATE FAIL!");
+    lcdSetCursor(0, 1); lcdPrint("FILE OPEN ERR");
+    enterSyncConfirmState(false);
+    return false;
+  }
+
+  int firstByte = firmware.read();
+  if (firstByte != 0xE9) {
+    Serial.printf("[QC_OTA] STATUS:CORRUPT! Magic=0x%02X (expected 0xE9)\n", firstByte);
+    Serial.println("[QC_OTA] FAIL");
+    lcdClear();
+    lcdSetCursor(0, 0); lcdPrint("SD UPDATE FAIL!");
+    lcdSetCursor(0, 1); lcdPrint("CORRUPT BIN");
+    firmware.close();
+    SD.end();
+    enterSyncConfirmState(false);
+    return false;
+  }
+  firmware.seek(0);
+
+  size_t fwSize = firmware.size();
+  Serial.printf("[QC_OTA] STATUS:Valid firmware.bin (%u bytes). Flashing...\n", (unsigned int)fwSize);
+
+  lcdClear();
+  lcdSetCursor(0, 0); lcdPrint("FLASHING PROD FW");
+  lcdSetCursor(0, 1); lcdPrint("PROGRESS:   0%");
+
+  Update.onProgress(otaProgressCallback);
+  if (!Update.begin(fwSize, U_FLASH)) {
+    Serial.printf("[QC_OTA] STATUS:Update.begin failed: %s\n", Update.errorString());
+    Serial.println("[QC_OTA] FAIL");
+    lcdClear();
+    lcdSetCursor(0, 0); lcdPrint("SD UPDATE FAIL!");
+    lcdSetCursor(0, 1); lcdPrint("BEGIN ERR");
+    firmware.close();
+    SD.end();
+    enterSyncConfirmState(false);
+    return false;
+  }
+
+  size_t written = Update.writeStream(firmware);
+  firmware.close();
+  SD.end();
+
+  if (written == fwSize && Update.end(true)) {
+    Serial.println("[QC_OTA] PROGRESS:100");
+    Serial.println("[QC_OTA] COMPLETE");
+    
+    // Save flashed version into board NVS preferences so this board won't re-flash, while keeping SD card firmware intact for other boards!
+    Preferences prefs;
+    prefs.begin("spatika_qc", false);
+    prefs.putString("sd_fw_ver", detectedSdFwVersion);
+    prefs.end();
+    Serial.printf("[QC_OTA] STATUS:Saved flashed version v%s to board NVS.\n", detectedSdFwVersion.c_str());
+
+    lcdClear();
+    lcdSetCursor(0, 0); lcdPrint("PROD FW SUCCESS!");
+    if (rebootAfterFlash) {
+      Serial.println("[QC_OTA] STATUS:Firmware written! Rebooting...");
+      lcdSetCursor(0, 1); lcdPrint("REBOOTING...");
+      Serial.flush();
+      Serial1.flush();
+      SPI.end();
+      pinMode(csPin, OUTPUT);
+      digitalWrite(csPin, HIGH);
+      delay(1000);
+      ESP.restart();
+    } else {
+      Serial.println("[QC_OTA] STATUS:Firmware written! Proceeding to sync...");
+      lcdSetCursor(0, 1); lcdPrint("SYNCING...");
+      delay(1000);
+      // Now trigger Google Sheet sync step (OTA stored in flash; sync, then reboot via board power cycle)
+      enterSyncConfirmState(true);
+    }
+    return true;
+  } else {
+    Serial.printf("[QC_OTA] STATUS:Write failed %u/%u bytes. Error: %s\n", (unsigned int)written, (unsigned int)fwSize, Update.errorString());
+    Serial.println("[QC_OTA] FAIL");
+    lcdClear();
+    lcdSetCursor(0, 0); lcdPrint("SD UPDATE FAIL!");
+    lcdSetCursor(0, 1); lcdPrint("WRITE ERR");
+    enterSyncConfirmState(false);
+    return false;
+  }
+}
+
 
 bool testRTC() {
   Wire.begin(21, 22);
@@ -569,9 +774,106 @@ void failRfTest() {
   Serial.println("[QC_STEP] RF_CHECK: WAITING_JUMPER");
 }
 
+bool pendingSdOtaFlash = false;
+bool sdOtaDecisionMade = false;
+
+bool checkSdFirmwareExists() {
+  Preferences prefs;
+  prefs.begin("spatika_qc", true);
+  String alreadyFlashedVer = prefs.getString("sd_fw_ver", "");
+  prefs.end();
+
+  if (sdHasFirmwareBin && detectedSdFwVersion.length() > 0) {
+    if (alreadyFlashedVer.length() > 0 && alreadyFlashedVer.equalsIgnoreCase(detectedSdFwVersion)) {
+      Serial.printf("[QC_JIG] SD firmware version v%s already flashed on this board. Skipping update prompt.\n", detectedSdFwVersion.c_str());
+      return false;
+    }
+    return true;
+  }
+
+  delay(50); // Small pause for power stabilization
+  int csPins[2] = {(detected_sd_cs != 0) ? detected_sd_cs : 5, (detected_sd_cs == 5) ? 13 : 5};
+  for (int i = 0; i < 2; i++) {
+    int cs = csPins[i];
+    pinMode(cs, OUTPUT);
+    digitalWrite(cs, HIGH);
+    delay(10);
+    if (SD.begin(cs)) {
+      String foundFw = "";
+      if (SD.exists("/firmware.bin")) foundFw = "/firmware.bin";
+      else if (SD.exists("/FIRMWARE.BIN")) foundFw = "/FIRMWARE.BIN";
+      else if (SD.exists("/Firmware.bin")) foundFw = "/Firmware.bin";
+
+      if (foundFw.length() > 0) {
+        sdHasFirmwareBin = true;
+        detected_sd_cs = cs;
+        detectedSdFwVersion = "6.13";
+        if (SD.exists("/fw_version.txt")) {
+          File vf = SD.open("/fw_version.txt", FILE_READ);
+          if (vf) {
+            String s = vf.readStringUntil('\n');
+            s.trim(); s.replace("\r", "");
+            if (s.length() > 0) detectedSdFwVersion = s;
+            vf.close();
+          }
+        } else if (SD.exists("/version.txt")) {
+          File vf = SD.open("/version.txt", FILE_READ);
+          if (vf) {
+            String s = vf.readStringUntil('\n');
+            s.trim(); s.replace("\r", "");
+            if (s.length() > 0) detectedSdFwVersion = s;
+            vf.close();
+          }
+        }
+        SD.end();
+
+        if (alreadyFlashedVer.length() > 0 && alreadyFlashedVer.equalsIgnoreCase(detectedSdFwVersion)) {
+          Serial.printf("[QC_JIG] SD firmware version v%s already flashed on this board. Skipping update prompt.\n", detectedSdFwVersion.c_str());
+          return false;
+        }
+
+        return true;
+      }
+      SD.end();
+    }
+  }
+  return false;
+}
+
 void enterSyncConfirmState(bool pass) {
   // Safety: Turn off GPRS board power to ensure socket is safe for hot swapping in all outcomes (PASS or FAIL)
   digitalWrite(GPRS_CTRL_PIN, LOW);
+
+  if (pass && !sdOtaDecisionMade) {
+    sdOtaDecisionMade = true;
+    currentState = STATE_SD_OTA_CONFIRM;
+    lastStateChangeTime = millis();
+    syncVerdictPass = true;
+    
+    bool sdExists = checkSdFirmwareExists();
+    if (sdExists) {
+      Serial.printf("[QC_STEP] SD_OTA_PROMPT: WAITING_FOR_CONFIRM:%s:SD_DETECTED\n", detectedSdFwVersion.c_str());
+      Serial.printf("[QC_JIG] SD Card with Production FW v%s detected! Press SET to update, or CLR to skip.\n", detectedSdFwVersion.c_str());
+    } else {
+      Serial.println("[QC_STEP] SD_OTA_PROMPT: WAITING_FOR_CONFIRM:NONE:SD_MISSING");
+      Serial.println("[QC_JIG] No SD Card firmware detected. You can flash via Programmer on the laptop dashboard, or press CLR to skip.");
+    }
+    
+    if (enableNuvoton) {
+      delay(300);
+      lcdClear();
+      if (sdExists) {
+        char line0[17];
+        snprintf(line0, sizeof(line0), "UPDATE TO v%s?", detectedSdFwVersion.c_str());
+        lcdSetCursor(0, 0); lcdPrint(line0);
+        lcdSetCursor(0, 1); lcdPrint("SET:YES  CLR:NO");
+      } else {
+        lcdSetCursor(0, 0); lcdPrint("NO SD FW FOUND");
+        lcdSetCursor(0, 1); lcdPrint("CLR: SKIP UPDATE");
+      }
+    }
+    return;
+  }
 
   currentState = STATE_SYNC_CONFIRM;
   lastStateChangeTime = millis();
@@ -703,6 +1005,8 @@ void setup() {
 
   Serial.println("\n[QC_JIG] ======================================");
   Serial.printf("[QC_JIG] SPATIKA AIO BOARD QC TEST FIRMWARE v%s START\n", QC_TEST_VERSION);
+  Serial.println("[QC_STEP] SD_OTA: READY");
+  Serial.println("[QC_JIG] Board tested & Ready for SD Card Update (Insert SD card with /firmware.bin to load Production Firmware)");
   
   // Initialize WiFi driver to read MAC ID reliably
   WiFi.mode(WIFI_STA);
@@ -722,6 +1026,28 @@ void setup() {
     if (millis() - lastPrintTime >= 2000) {
       Serial.println("[QC_JIG] [READY] WAITING_FOR_CONFIG");
       lastPrintTime = millis();
+      
+      // Auto-detect SD card insert on boot
+      uint8_t cs_pin = (detected_sd_cs != 0) ? detected_sd_cs : 5;
+      if (SD.begin(cs_pin) || SD.begin(13) || SD.begin(5)) {
+        if (SD.exists("/firmware.bin") || SD.exists("/FIRMWARE.BIN")) {
+          String sdVer = "6.13";
+          if (SD.exists("/fw_version.txt")) {
+            File vf = SD.open("/fw_version.txt", FILE_READ);
+            if (vf) { sdVer = vf.readStringUntil('\n'); sdVer.trim(); sdVer.replace("\r", ""); vf.close(); }
+          }
+          Preferences prefs;
+          prefs.begin("spatika_qc", true);
+          String alreadyFlashed = prefs.getString("sd_fw_ver", "");
+          prefs.end();
+
+          if (alreadyFlashed.length() == 0 || !alreadyFlashed.equalsIgnoreCase(sdVer)) {
+            Serial.println("[QC_JIG] Startup: Found new /firmware.bin on SD Card! Triggering Production Firmware update...");
+            flashProductionFirmwareFromSD(true); // Boot-time: reboot immediately after flash
+          }
+        }
+        SD.end();
+      }
     }
     
     if (Serial.available()) {
@@ -928,9 +1254,9 @@ void setup() {
     int rawV33 = analogRead(SYS_3V3_PIN);
     int rawSolar = analogRead(SOLAR_ADC_PIN);
     
-    float battVolt = (rawBatt / (float)WIND_DIR_ADC_MAX) * 3.3 * 1.48;
-    float v33Volt = (rawV33 / (float)WIND_DIR_ADC_MAX) * 3.3 * 1.48; // Resistor divider matches Batt
-    float solarVolt = (rawSolar / (float)WIND_DIR_ADC_MAX) * 3.3 * 7.8;
+    float battVolt = (rawBatt / (float)WIND_DIR_ADC_MAX) * 3.3 * 1.151;  // R_top=220K R_bot=620K → 840/620, adj for ADC_MAX=3480
+    float v33Volt  = (rawV33  / (float)WIND_DIR_ADC_MAX) * 3.3 * 1.151;  // R_top=220K R_bot=620K → 840/620, adj for ADC_MAX=3480
+    float solarVolt = (rawSolar / (float)WIND_DIR_ADC_MAX) * 3.3 * 6.119;  // R_top=620K R_bot=100K → 720/100, adj for ADC_MAX=3480
 
     // [M-03] LDO out-of-range warning check
     if (v33Volt < 3.0 || v33Volt > 3.6) {
@@ -1544,6 +1870,15 @@ void processKeypress(char rawKey) {
       lastStateChangeTime = millis();
     }
   }
+  else if (currentState == STATE_SD_OTA_CONFIRM) {
+    if (rawKey == '6') { // SET key confirms YES — immediately start OTA
+      Serial.println("[QC_STEP] SD_OTA_PROMPT: YES");
+      flashProductionFirmwareFromSD(true); // Runs OTA then reboots into production firmware
+    } else if (rawKey == '1') { // CLEAR key confirms NO (Skip Update)
+      Serial.println("[QC_STEP] SD_OTA_PROMPT: NO");
+      enterSyncConfirmState(true);
+    }
+  }
 }
 
 void loop() {
@@ -1632,6 +1967,10 @@ void loop() {
       Serial.println("[QC_JIG] Received CMD:SLEEP_PASS serial override.");
       Serial.println("[QC_STEP] EXT0_WAKEUP: PASS");
       enterSyncConfirmState(true);
+    } else if (cmd == "CMD:SLEEP_FAIL") {
+      Serial.println("[QC_JIG] Received CMD:SLEEP_FAIL serial command.");
+      Serial.println("[QC_STEP] EXT0_WAKEUP: FAIL");
+      enterSyncConfirmState(false);
     } else if (cmd == "CMD:WAKEUP_PASS") {
       if (currentState == STATE_WAKEUP_CONFIRM) {
         Serial.println("[QC_JIG] Received CMD:WAKEUP_PASS serial command.");
@@ -1670,13 +2009,13 @@ void loop() {
         Serial.println("[QC_JIG] [QC_RESULT: DISCARDED] QC Test was cancelled/discarded by the operator.");
         currentState = STATE_FAILED; // transition to a safe state
       }
-    } else if (cmd == "CMD:SYNC_SUCCESS") {
+    } else if (cmd == "CMD:SYNC_SUCCESS" || cmd == "CMD:SYNC_FAIL") {
       if (currentState == STATE_SYNC_CONFIRM) {
         if (enableNuvoton) {
           lcdClear();
           lcdSetCursor(0, 0);
-          lcdPrint("SYNC SUCCESS");
-          delay(2000);
+          lcdPrint(cmd == "CMD:SYNC_SUCCESS" ? "SYNC SUCCESS" : "SYNC FAILED");
+          delay(1500);
           lcdClear();
           lcdSetCursor(0, 0);
           lcdPrint(syncVerdictPass ? "QC PASSED" : "QC FAILED");
@@ -1689,25 +2028,12 @@ void loop() {
           currentState = STATE_FAILED;
         }
       }
-    } else if (cmd == "CMD:SYNC_FAIL") {
-      if (currentState == STATE_SYNC_CONFIRM) {
-        if (enableNuvoton) {
-          lcdClear();
-          lcdSetCursor(0, 0);
-          lcdPrint("SYNC FAILED");
-          delay(2000);
-          lcdClear();
-          lcdSetCursor(0, 0);
-          lcdPrint(syncVerdictPass ? "QC PASSED" : "QC FAILED");
-        }
-        if (syncVerdictPass) {
-          Serial.println("[QC_JIG] [QC_RESULT: PASS] QC Test sequence completed successfully!");
-          currentState = STATE_COMPLETE;
-        } else {
-          Serial.println("[QC_JIG] [QC_RESULT: FAIL] Hardware peripheral check(s) failed!");
-          currentState = STATE_FAILED;
-        }
-      }
+    } else if (cmd == "CMD:FLASH_SD_OTA") {
+      Serial.println("[QC_JIG] Received CMD:FLASH_SD_OTA. Starting SD OTA immediately...");
+      flashProductionFirmwareFromSD(); // Runs OTA then calls enterSyncConfirmState
+    } else if (cmd == "CMD:CANCEL_SD_OTA") {
+      Serial.println("[QC_JIG] Received CMD:CANCEL_SD_OTA. Skipping SD OTA...");
+      enterSyncConfirmState(true);
     } else if (cmd == "CMD:KEY_CLR") {
       processKeypress('1');
     } else if (cmd == "CMD:KEY_LEFT") {
@@ -1724,6 +2050,36 @@ void loop() {
       Serial.println("[QC_JIG] Received CMD:GOTO_SLEEP serial command. Entering deep sleep...");
       Serial.flush();
       goToIdleSleep();
+    }
+  }
+
+  // Auto-detect SD Card insert at completion state or idle and toggle visual SD Update prompt
+  static uint32_t lastSdCheckTime = 0;
+  static bool sdPromptToggle = false;
+  if ((currentState == STATE_COMPLETE || currentState == STATE_FAILED) && (millis() - lastSdCheckTime >= 3000)) {
+    lastSdCheckTime = millis();
+    sdPromptToggle = !sdPromptToggle;
+    if (enableNuvoton && !in_countdown_warning) {
+      lcdClear();
+      if (sdPromptToggle) {
+        lcdSetCursor(0, 0); lcdPrint("SD UPDATE READY");
+        lcdSetCursor(0, 1); lcdPrint("INSERT SD CARD");
+      } else {
+        if (currentState == STATE_COMPLETE) {
+          lcdSetCursor(0, 0); lcdPrint("WAKEUP: PASS!");
+          lcdSetCursor(0, 1); lcdPrint("QC PASS: APPROVED");
+        } else {
+          lcdSetCursor(0, 0); lcdPrint("QC FAILED!");
+          lcdSetCursor(0, 1); lcdPrint("INSPECT BOARD");
+        }
+      }
+    }
+    if (SD.begin(detected_sd_cs)) {
+      if (SD.exists("/firmware.bin")) {
+        Serial.println("[QC_JIG] Automatic SD check found /firmware.bin! Triggering Production Firmware update...");
+        flashProductionFirmwareFromSD();
+      }
+      SD.end();
     }
   }
 
@@ -1791,10 +2147,15 @@ void loop() {
     }
   }
 
-  // Check for inactivity/idle timeout with visual countdown warning
+  // Check for inactivity/idle timeout
   uint32_t elapsed_inactivity = millis() - last_activity_time;
   if (elapsed_inactivity >= INACTIVITY_TIMEOUT_MS) {
-    goToIdleSleep();
+    if (currentState != STATE_SYNC_CONFIRM && currentState != STATE_FAILED) {
+      Serial.println("[QC_STEP] STAGE_TIMEOUT: Stage inactivity timeout reached. Marking test as FAIL.");
+      enterSyncConfirmState(false);
+    } else {
+      last_activity_time = millis(); // Keep timer refreshed during sync confirmation
+    }
   } else if (INACTIVITY_TIMEOUT_MS - elapsed_inactivity <= 60000UL) {
     in_countdown_warning = true;
     static uint32_t last_countdown_update = 0;

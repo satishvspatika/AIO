@@ -58,8 +58,11 @@ void webServer(void *pvParameters) {
     }
   }
 
-  // Use a completely unique password to instantly break any OS caching bugs
-  WiFi.softAP(ap_name, ap_pass_buf);
+  // Explicitly initialize Wi-Fi AP mode and DHCP IP configuration
+  WiFi.mode(WIFI_AP);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
+  WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
+  WiFi.softAP(ap_name, ap_pass_buf, 1, 0, 4);
   IPAddress IP = WiFi.softAPIP();
   debug("AP IP address: ");
   debugln(IP);
@@ -132,6 +135,7 @@ void webServer(void *pvParameters) {
         debugln("WiFi Disabled externally. Stopping WebServer task...");
       }
       WiFi.softAPdisconnect(true);
+      WiFi.mode(WIFI_OFF); // Completely power OFF Wi-Fi RF radio stack
       setCpuFrequencyMhz(80); // Back to power-save mode
       wifi_active = false;
       set_sys_status("IDLE");
@@ -389,10 +393,13 @@ void handleRoot() { // v5.70 STREAMING
       "data.mslp.toFixed(2); document.getElementById('live_pres').innerHTML = "
       "val + ' <span style=\"font-size:0.6em\">hPa</span>'; }");
   server.sendContent(
-      "if(data.wifi_left < 15) { "
+      "if(data.wifi_left !== undefined) { "
+      "document.getElementById('wifi_timer_display').innerText = data.wifi_left + 's'; "
+      "if(data.wifi_left < 45) { "
       "document.getElementById('warnModal').style.display='block'; "
       "document.getElementById('timeLeft').innerText = data.wifi_left; } else "
-      "{ document.getElementById('warnModal').style.display='none'; }");
+      "{ document.getElementById('warnModal').style.display='none'; } "
+      "}");
   server.sendContent(
       "if(data.sys_status) document.getElementById('live_sys_status').innerText = data.sys_status; "
       "if(data.issues) { var el = document.getElementById('live_issues'); el.innerText = data.issues; el.style.color = (data.issues === 'NONE') ? 'green' : 'red'; } "
@@ -458,6 +465,8 @@ void handleRoot() { // v5.70 STREAMING
           : "GPS (Lat, Lon)";
 
   server.sendContent("<div class='container'>");
+  server.sendContent(
+      "<div id='wifi_timer_banner' style='background:#e3f2fd;border:1px solid #90caf9;padding:10px 15px;border-radius:8px;margin-bottom:15px;display:flex;justify-content:space-between;align-items:center;'><span style='font-size:0.95em;color:#0d47a1;'>⏰ <b>Wi-Fi Auto-Disconnect:</b> <span id='wifi_timer_display' style='font-weight:bold;color:#1565c0;'>180s</span></span><button onclick='extendInfo()' class='btn' style='margin:0;padding:6px 14px;background:#28a745;font-size:0.85em;'>🔄 Reset Timer (+3m)</button></div>");
 
   // --- SECTION 1: LIVE MONITOR ---
   server.sendContent("<div class='section-title'>" + String(s_live) +
@@ -561,7 +570,8 @@ void handleRoot() { // v5.70 STREAMING
   server.sendContent("<br><a href='#' onclick=\"if(confirm('Disconnect?')) "
                      "window.location='/disconnect';\" class='btn btn-danger' "
                      "style='width:auto;padding:10px 20px;'>Close WiFi</a>");
-  server.sendContent("</div></div></body></html>");
+  server.sendContent("</div></div>");
+  server.sendContent("<div id='warnModal' class='warning-modal'><div class='warning-box'><h3 style='color:#dc3545;margin-top:0;'>⚠️ Wi-Fi Disconnect Warning</h3><p>Wi-Fi will auto-disconnect in <strong id='timeLeft' style='font-size:1.4em;color:#dc3545;'>45</strong>s due to inactivity.</p><button onclick='extendInfo()' class='btn' style='background:#28a745;padding:12px 24px;font-size:1.1em;width:100%;margin-top:10px;'>Stay Connected</button></div></div></body></html>");
   server.sendContent(""); // End
 }
 
@@ -1158,6 +1168,8 @@ void handleDisconnect() {
 
   vTaskDelay(1000 / portTICK_PERIOD_MS); // Allow HTTP response to flush
   WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_OFF); // Completely power OFF Wi-Fi RF radio stack
+  setCpuFrequencyMhz(80); // Restore CPU power-save clock
   wifi_active = false;
   set_sys_status("IDLE");
   webServerStarted = false;

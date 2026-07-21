@@ -1001,7 +1001,7 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
       solar = solar_raw;
     }
   }
-  solar_val = (solar / (float)WIND_DIR_ADC_MAX) * 3.3 * 7.8;
+  solar_val = (solar / (float)WIND_DIR_ADC_MAX) * 3.3 * 6.119;  // R_top=620K R_bot=100K → 720/100, adj for ADC_MAX=3480
 
   if (solar_val > 4)
     solar_conn = 1;
