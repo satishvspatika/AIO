@@ -1400,8 +1400,10 @@ void setup() {
     SPIFFS.remove("/ftpunsent.txt");
     SPIFFS.remove("/signature.txt");
 
-    // 5. Reset ULP counters
+    // 5. Reset ULP counters and calibration state
     SPIFFS.remove("/calib.txt");
+    calib_year = 0; calib_month = 0; calib_day = 0; calib_sts = 0;
+    calib_text[0] = '\0'; // Clear display string so LCD shows "PRESS SET" after reboot
     rf_count.val = 0;
     wind_count.val = 0;
     // v5.57 Fix: Sync 32-bit accumulator anchors immediately after zeroing ULP

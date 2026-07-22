@@ -16,39 +16,25 @@ int calib_initial = 0;
       // Handled in task setup
   }
   void NuvotonLCD::clear() {
-      Serial1.write(0x01); // First send (sacrificial byte if MG51 UART is waking from idle)
-      Serial1.flush();
-      delay(10);
-      Serial1.write(0x01); // Second send (guaranteed clear execution)
-      Serial1.flush();
-      delay(10);
+      Serial1.write(0x01);
+      vTaskDelay(2 / portTICK_PERIOD_MS);
   }
   void NuvotonLCD::setCursor(uint8_t col, uint8_t row) {
       uint8_t addr = (uint8_t)(row * 64 + col + 128);
-      Serial1.write(addr); // First send (may be dropped if MG51 UART is waking from idle)
-      Serial1.flush();
-      delay(10);
-      Serial1.write(addr); // Second send (guaranteed to be caught and sets cursor correctly)
-      Serial1.flush();
-      delay(10);
+      Serial1.write(addr);
+      vTaskDelay(1 / portTICK_PERIOD_MS);
   }
   void NuvotonLCD::print(const char* str) {
-      while (*str) {
-          uint8_t b = (uint8_t)*str;
-          if (b >= 0x20 && b <= 0x7E) {
-              Serial1.write(b);
-              Serial1.flush();
-              delay(3);
-          }
-          str++;
+      if (!str) return;
+      size_t len = strlen(str);
+      if (len > 0) {
+          Serial1.write((const uint8_t*)str, len);
       }
   }
   void NuvotonLCD::print(String str) { print(str.c_str()); }
   void NuvotonLCD::print(char c) {
       if (c >= 0x20 && c <= 0x7E) {
           Serial1.write(c);
-          Serial1.flush();
-          delay(3);
       }
   }
   void NuvotonLCD::print(int num) {
@@ -63,36 +49,21 @@ int calib_initial = 0;
   }
   void NuvotonLCD::blink() {
       Serial1.write(0x0F);
-      Serial1.flush();
-      delay(5);
   }
   void NuvotonLCD::noBlink() {
       Serial1.write(0x0C);
-      Serial1.flush();
-      delay(5);
   }
   void NuvotonLCD::cursor() {
       Serial1.write(0x0E);
-      Serial1.flush();
-      delay(5);
   }
   void NuvotonLCD::noCursor() {
       Serial1.write(0x0C);
-      Serial1.flush();
-      delay(5);
   }
   void NuvotonLCD::backlight() {
-      // HD44780: Display ON, cursor off, blink off (0x08 | D=1 -> 0x0C)
       Serial1.write(0x0C);
-      Serial1.flush();
-      delay(5);
   }
   void NuvotonLCD::noBacklight() {
-      // HD44780: Display OFF — blanks pixels but Nuvoton MCU stays powered
-      // so it can continue scanning keys and wake ESP32 via GPIO27 (ext0)
       Serial1.write(0x08);
-      Serial1.flush();
-      delay(5);
   }
 
   char translate_nuvoton_key(char n_key) {
@@ -218,7 +189,7 @@ void IRAM_ATTR lcdTimer() {
 
 // v5.60: Central drawing function - differential to eliminate flicker
 void draw_current_page() {
-  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
     if (cur_mode == eEditOff) {
       lcd.noBlink();
       char line0[17], line1[17];
@@ -246,7 +217,8 @@ void draw_current_page() {
         int mode_snap = sync_mode;
         portEXIT_CRITICAL(&syncMux);
 
-        bool is_pending = (pending_manual_status && cur_fld_no == FLD_SEND_STATUS) ||
+        bool is_pending = (!initial_boot_complete && cur_fld_no == FLD_STATION) ||
+                          (pending_manual_status && cur_fld_no == FLD_SEND_STATUS) ||
                           (pending_manual_gps && cur_fld_no == FLD_SEND_GPS) ||
                           (pending_manual_health && cur_fld_no == FLD_SEND_HEALTH) ||
                           (mode_snap == eHealthStart && cur_fld_no == FLD_SEND_HEALTH) ||
@@ -538,6 +510,22 @@ void refresh_sensor_data() {
                current_year, current_month, current_day, current_hour, p_min);
     }
   }
+  else if (cur_fld_no == FLD_RF_CALIB) {
+    // Show persisted result from calib_text (loaded from /calib.txt on boot).
+    // Fallback: if calib_text not yet populated but RTC vars are parsed, rebuild from them.
+    // Only show "PRESS SET" if there is genuinely no calibration data at all.
+    if (strlen(calib_text) > 0) {
+      snprintf(ui_data[FLD_RF_CALIB].bottomRow, 17, "%-16s", calib_text);
+    } else if (calib_year > 2000) {
+      // calib.txt was parsed but calib_text may not have been copied yet — rebuild it
+      snprintf(calib_text, sizeof(calib_text), "%04d-%02d-%02d %s",
+               calib_year, calib_month, calib_day,
+               (calib_sts == 1 ? "PASS" : "FAIL"));
+      snprintf(ui_data[FLD_RF_CALIB].bottomRow, 17, "%-16s", calib_text);
+    } else {
+      strcpy(ui_data[FLD_RF_CALIB].bottomRow, "PRESS SET       ");
+    }
+  }
 }
 
 void lcdkeypad(void *pvParameters) {
@@ -771,33 +759,23 @@ void lcdkeypad(void *pvParameters) {
 #if USE_NUVOTON_UI == 1
         Serial1.begin(9600, SERIAL_8N1, 14, 4);
 
-        static bool is_cold_boot = true;
-        if (is_cold_boot) {
-          is_cold_boot = false;
-          vTaskDelay(1500 / portTICK_PERIOD_MS); // Allow Nuvoton MCU boot & internal splash stabilization
-          while (Serial1.available()) Serial1.read(); // Clear boot noise
-          lcd.backlight();
-          lcd.clear();
-          vTaskDelay(50 / portTICK_PERIOD_MS);
-          lcd.print("INITIALIZING.");
-          lcd.setCursor(0, 1);
-          lcd.print("PLEASE WAIT...  ");
-          for (int dot = 0; dot < 3; dot++) {
-            vTaskDelay(400 / portTICK_PERIOD_MS);
-            esp_task_wdt_reset();
-            lcd.setCursor(12 + dot, 0);
-            lcd.print(".");
-          }
-          vTaskDelay(1500 / portTICK_PERIOD_MS); // Hold INITIALIZING... on LCD so it's clearly visible
-          while (Serial1.available()) Serial1.read(); // Drain any key taps during splash
-          present_topRow[0] = 0; present_bottomRow[0] = 0; // Invalidate display cache for next redraw
-          show_now = 1;
-        } else {
-          lcd.backlight(); // Turn display pixels back ON after wakeup
-          lcd.clear();     // Reset cursor to home (0x01)
-          present_topRow[0] = 0; present_bottomRow[0] = 0; // Invalidate display cache to force full redraw
-          show_now = 1;
+        vTaskDelay(600 / portTICK_PERIOD_MS); // Allow Nuvoton MCU boot & internal splash stabilization
+        while (Serial1.available()) Serial1.read(); // Clear boot noise
+        lcd.backlight();
+        lcd.clear();
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+        lcd.print("INITIALIZING.");
+        lcd.setCursor(0, 1);
+        lcd.print("PLEASE WAIT...  ");
+        for (int dot = 0; dot < 3; dot++) {
+          vTaskDelay(300 / portTICK_PERIOD_MS);
+          esp_task_wdt_reset();
+          lcd.setCursor(12 + dot, 0);
+          lcd.print(".");
         }
+        while (Serial1.available()) Serial1.read(); // Drain any key taps during splash
+        present_topRow[0] = 0; present_bottomRow[0] = 0; // Invalidate display cache for next redraw
+        show_now = 1;
 #else
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
           lcd.init();
@@ -829,18 +807,27 @@ void lcdkeypad(void *pvParameters) {
         if (millis() - calib_start_time > 300000) { // 5 min timeout
           calib_flag = 2; // Auto stop
         }
-        float live_c_rf = (float)calib_count.val * RF_RESOLUTION;
-        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-          if (!calib_header_drawn) {
-            lcd.setCursor(0, 0);
-            lcd.print("Count     RF(mm)");
-            calib_header_drawn = 1;
+        static int last_calib_cnt = -1;
+        static unsigned long last_calib_render = 0;
+        int cur_cnt = (int)calib_count.val;
+        if (cur_cnt != last_calib_cnt || (millis() - last_calib_render > 300)) {
+          last_calib_cnt = cur_cnt;
+          last_calib_render = millis();
+          float live_c_rf = (float)cur_cnt * RF_RESOLUTION;
+          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            if (!calib_header_drawn) {
+              lcd.clear();
+              vTaskDelay(5 / portTICK_PERIOD_MS);
+              lcd.setCursor(0, 0);
+              lcd.print("Count     RF(mm)");
+              calib_header_drawn = 1;
+            }
+            lcd.setCursor(0, 1);
+            char b[17];
+            snprintf(b, 17, "%-5d     %-6.2f", cur_cnt, live_c_rf);
+            lcd.print(b);
+            xSemaphoreGive(i2cMutex);
           }
-          lcd.setCursor(0, 1);
-          char b[17];
-          snprintf(b, 17, "%-5d     %-6.2f", (int)calib_count.val, live_c_rf);
-          lcd.print(b);
-          xSemaphoreGive(i2cMutex);
         }
       } else if (calib_flag == 2) {
         // Calibration Result logic
@@ -899,7 +886,6 @@ void lcdkeypad(void *pvParameters) {
       key = NO_KEY;
       if (Serial1.available()) {
         int c = Serial1.read();
-        while (Serial1.available()) Serial1.read(); // Drain immediate duplicate UART bytes
         if (c >= '1' && c <= '6') {
           key = translate_nuvoton_key((char)c);
         }
@@ -918,10 +904,13 @@ void lcdkeypad(void *pvParameters) {
 
       static unsigned long last_key_press_time = 0;
       if (key != NO_KEY) {
-        if (millis() - last_key_press_time < 180) {
-          key = NO_KEY; // Refractory lockout: filter duplicate UART frames & contact bounce within 180ms
+        if (millis() - last_key_press_time < 90) {
+          key = NO_KEY; // Refractory lockout: filter duplicate UART frames & contact bounce within 90ms
         } else {
           last_key_press_time = millis();
+#if USE_NUVOTON_UI == 1
+          while (Serial1.available()) Serial1.read(); // Clear trailing duplicate UART bytes from multi-tap
+#endif
         }
       }
 
@@ -1042,13 +1031,15 @@ void lcdkeypad(void *pvParameters) {
             if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
               send_status = 1; sync_mode = eSMSStart;
               portEXIT_CRITICAL(&syncMux);
-              strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "SENDING...     ");
+              strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "SENDING STATUS..");
+              show_now = 1;
             } else {
+              portENTER_CRITICAL(&syncMux);
+              send_status = 1;
+              pending_manual_status = true;
               portEXIT_CRITICAL(&syncMux);
-            portENTER_CRITICAL(&syncMux);
-            pending_manual_status = true;
-            portEXIT_CRITICAL(&syncMux);
               strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "PLEASE WAIT..  ");
+              show_now = 1;
             }
           } else if (cur_fld_no == FLD_SEND_GPS) {
             portENTER_CRITICAL(&syncMux);

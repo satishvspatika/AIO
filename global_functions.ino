@@ -1389,7 +1389,7 @@ int get_total_backlogs(bool force) {
     return diag_backlog_total;
   }
 
-  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(force ? 5000 : 50)) != pdTRUE) {
     return diag_backlog_total; // Return cached value on contention
   }
 

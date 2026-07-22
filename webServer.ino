@@ -78,7 +78,7 @@ void webServer(void *pvParameters) {
     handleRoot();
   });
   server.on("/data", []() {
-    updateActivity();
+    // NOTE: Do NOT call updateActivity() here – background polling must not reset the idle timer
     handleData();
   });
   server.on("/files", []() {
@@ -413,7 +413,6 @@ void handleRoot() { // v5.70 STREAMING
       "if(data.unsent_ftp_count !== undefined) document.getElementById('live_bk_ftp').innerText = data.unsent_ftp_count; "
       "if(data.sd_card_ok !== undefined) { var el = document.getElementById('live_sd'); el.innerText = (data.sd_card_ok === 1) ? 'OK' : 'ERROR'; el.style.color = (data.sd_card_ok === 1) ? 'green' : 'red'; } "
       "if(data.rtc_battery_ok !== undefined) { var el = document.getElementById('live_rtc_bat'); el.innerText = (data.rtc_battery_ok === 1) ? 'OK' : 'FAULT'; el.style.color = (data.rtc_battery_ok === 1) ? 'green' : 'red'; } "
-      "if(data.reset_reason) document.getElementById('live_reset_reason').innerText = data.reset_reason; "
       "if(data.mcu_bat_v !== undefined) document.getElementById('live_mcu_bat').innerText = data.mcu_bat_v.toFixed(2) + ' V'; "
   );
   server.sendContent("} else if (this.readyState == 4 && (this.status == 0 || "
@@ -498,8 +497,10 @@ void handleRoot() { // v5.70 STREAMING
     server.sendContent("<div class='card'><div class='label'>" + String(s_bat) +
                        "</div><div id='live_bat' class='value'>" +
                        bat_html + "</div></div>");
+    // MCU 3.3V Rail displayed side-by-side with GPRS Battery
+    server.sendContent("<div class='card'><div class='label'>MCU 3.3V Rail</div><div id='live_mcu_bat' class='value' style='font-size:1.1em;'>--</div></div>");
     server.sendContent("<div class='card'><div class='label'>" + String(s_sol) +
-                       "</div><div id='live_sol' class='value'>" +
+                       "</div><div id='live_sol' class='value' style='font-size:0.9em;'>" +
                        String(solar_val, 2) +
                        " <span style='font-size:0.6em'>V</span></div></div>");
 
@@ -554,8 +555,6 @@ void handleRoot() { // v5.70 STREAMING
   server.sendContent("<div class='card'><div class='label'>Unsent Backlog</div><div class='value' style='font-size:1.0em; color:#555;'>HTTP: <span id='live_bk_http'>0</span> | FTP: <span id='live_bk_ftp'>0</span></div></div>");
   server.sendContent("<div class='card'><div class='label'>SD Card</div><div id='live_sd' class='value' style='font-size:1.1em;'>--</div></div>");
   server.sendContent("<div class='card'><div class='label'>RTC Battery</div><div id='live_rtc_bat' class='value' style='font-size:1.1em;'>--</div></div>");
-  server.sendContent("<div class='card'><div class='label'>MCU 3.3V Rail</div><div id='live_mcu_bat' class='value' style='font-size:1.1em;'>--</div></div>");
-  server.sendContent("<div class='card'><div class='label'>Reset Reason</div><div id='live_reset_reason' class='value' style='font-size:1.1em;'>--</div></div>");
   server.sendContent("</div>");
 
   // --- ACTIONS ---
@@ -1222,6 +1221,7 @@ void handleData() {
 
   unsigned long elapsed = millis() - last_wifi_activity_time;
   long left = (elapsed < 180000) ? (180000 - elapsed) / 1000 : 0;
+  json += ", \"wifi_left\": " + String(left);  // Countdown seconds until Wi-Fi auto-disconnect
   json += ", \"bat_v\": " + String(li_bat_val, 2);
   bool is_charging_now = (solar_val > li_bat_val + 0.3f && solar_val >= 4.0f);
   json += ", \"bat_status\": \"" + String(is_charging_now ? "CHRG" : "NOT CHRG") + "\"";

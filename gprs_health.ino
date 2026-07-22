@@ -1014,10 +1014,20 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
   snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
   bat_val = li_bat_val; // bat_val is given for storage in spiffs
 
+  if (STATION_TYPE[0] == '\0') {
+#if SYSTEM == 0
+    strcpy(STATION_TYPE, "TRG");
+#elif SYSTEM == 1
+    strcpy(STATION_TYPE, "TWS");
+#elif SYSTEM == 2
+    strcpy(STATION_TYPE, "TWS-RF");
+#endif
+  }
+
   if (firmwareUpdated == 1) {
     strcpy(msg_type, "FW-UPD");
     firmwareUpdated = 0;
-  } else if (send_status == 1) { // SMS trigger from LCD SEND_STATUS
+  } else if (send_status == 1 || sync_mode == eSMSStart) { // SMS trigger from LCD SEND_STATUS
     send_status = 0;
     strcpy(msg_type, "STATUS-F");
   } else {
@@ -1037,14 +1047,22 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
     tLen--;
   }
 
+  // Send primary 3.2V battery and secondary 3.7V GPRS battery from global voltage readings
+#if USE_NUVOTON_UI == 1
+  float primary_bat = (bat_3v3_val > 0.5) ? bat_3v3_val : (bat_val > 0.5 ? bat_val : 3.2);
+#else
+  float primary_bat = (bat_val > 0.5) ? bat_val : 3.2;
+#endif
+  float secondary_bat = (li_bat_val > 0.5) ? li_bat_val : 3.7;
+
   // RF & TWS
   snprintf(
       status_response, sizeof(status_response),
-      "%s,%s,%s,%s,%04d-%02d-%02dT%02d:%02d,%s,15,%04d,%04.1f,0.0,%s,%s,%s,"
+      "%s,%s,%s,%s,%04d-%02d-%02dT%02d:%02d,%s,15,%04d,%04.1f,%04.1f,%s,%s,%s,"
       "%04d-%02d-%02d,%04d-%02d-%02dT%02d:%02d,0\r\n\032",
       NETWORK, STATION_TYPE, msg_type, cleanStn, current_year, current_month,
       current_day, current_hour, current_min, UNIT_VER, signal_strength,
-      bat_val, (solar_conn ? "Y" : "N"), (sd_card_ok ? "SDC-OK" : "SDC-FAIL"),
+      primary_bat, secondary_bat, (solar_conn ? "Y" : "N"), (sd_card_ok ? "SDC-OK" : "SDC-FAIL"),
       (calib_sts == 1 ? "CLB-OK" : "CLB-FAIL"),
       calib_year,  // calib
       calib_month, // calib
@@ -1225,10 +1243,27 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
     }
   } 
 
+  if (STATION_TYPE[0] == '\0') {
+#if SYSTEM == 0
+    strcpy(STATION_TYPE, "TRG");
+#elif SYSTEM == 1
+    strcpy(STATION_TYPE, "TWS");
+#elif SYSTEM == 2
+    strcpy(STATION_TYPE, "TWS-RF");
+#endif
+  }
+
+  char gps_msg_type[12];
+  if (alreadyLocked && !pending_manual_gps && sync_mode != eGPSStart) {
+    strcpy(gps_msg_type, "STAT_AD-C");
+  } else {
+    strcpy(gps_msg_type, "STAT_AD-F");
+  }
+
   snprintf(status_response, sizeof(status_response),
-           "%s,%s,STAT_AD-C,%s,%04d-%02d-%02dT%02d:%02d,SIM_1,%04d,%.6f,%.6f,0."
+           "%s,%s,%s,%s,%04d-%02d-%02dT%02d:%02d,SIM_1,%04d,%.6f,%.6f,0."
            "0\r\n\032",
-           NETWORK, STATION_TYPE, station_name, current_year, current_month,
+           NETWORK, STATION_TYPE, gps_msg_type, station_name, current_year, current_month,
            current_day, current_hour, current_min, signal_strength, lati,
            longi);
 

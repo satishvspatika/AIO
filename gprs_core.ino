@@ -37,7 +37,10 @@ void gprs(void *pvParameters) {
         mode_snap == eHttpStop || mode_snap == eExceptionHandled) {
       if (pending_manual_status || pending_manual_gps || pending_manual_health) {
         portENTER_CRITICAL(&syncMux);
-        if (pending_manual_status) sync_mode = eSMSStart;
+        if (pending_manual_status) {
+          send_status = 1;
+          sync_mode = eSMSStart;
+        }
         else if (pending_manual_gps) sync_mode = eGPSStart;
         else if (pending_manual_health) sync_mode = eHealthStart;
         mode_snap = sync_mode; // Update local snap to trigger the handler below
@@ -65,6 +68,7 @@ void gprs(void *pvParameters) {
         if (gprs_mode == eGprsInitial) {
           debugln("[GPRS] Manual Trigger: Initiating Power On...");
           strcpy(ui_data[target_fld].bottomRow, "GPRS POWER ON...");
+          show_now = 1;
           start_gprs();
           
           if (gprs_mode != eGprsSignalOk) {
@@ -92,6 +96,7 @@ void gprs(void *pvParameters) {
 
       if (gprs_mode == eGprsSignalOk) {
         strcpy(ui_data[target_fld].bottomRow, "CONNECTING...");
+        show_now = 1;
         if (mode_snap == eSMSStart) {
           debugln("[GPRS] Keypad Triggered SMS Status");
 
@@ -101,8 +106,9 @@ void gprs(void *pvParameters) {
           get_registration();
           get_a7672s();
 
-          strcpy(ui_data[target_fld].bottomRow, "SENDING SMS...  ");
-          vTaskDelay(2000 / portTICK_PERIOD_MS);
+          strcpy(ui_data[target_fld].bottomRow, "SENDING STATUS..");
+          show_now = 1;
+          vTaskDelay(500 / portTICK_PERIOD_MS);
           
           prepare_and_send_status(universalNumber, true);
 

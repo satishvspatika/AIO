@@ -16,7 +16,7 @@
 
 Adafruit_BME280 bme;
 
-#define QC_TEST_VERSION "6.10-QC"
+#define QC_TEST_VERSION "6.11-QC"
 #define WIND_DIR_ADC_MAX 3480
 
 // --- PIN DEFINITIONS (ESP32-WROOM-32U) ---
@@ -254,8 +254,11 @@ bool testSPIFFS() {
     success = true;
   } else {
     Serial.println("\n[QC_JIG] SPIFFS not formatted. Formatting partition (takes 10-30s)...");
+    Serial.flush();
     if (SPIFFS.begin(true)) {
       success = true;
+      Serial.println("[QC_JIG] SPIFFS formatting complete. Partition mounted successfully.");
+      Serial.flush();
     }
   }
 
@@ -305,7 +308,7 @@ bool testSD(int csPin) {
 
   if (foundFw.length() > 0) {
     sdHasFirmwareBin = true;
-    detectedSdFwVersion = "6.13";
+    detectedSdFwVersion = "6.18";
     if (SD.exists("/fw_version.txt")) {
       File vf = SD.open("/fw_version.txt", FILE_READ);
       if (vf) {
@@ -313,6 +316,20 @@ bool testSD(int csPin) {
         s.trim(); s.replace("\r", "");
         if (s.length() > 0) detectedSdFwVersion = s;
         vf.close();
+      }
+    } else if (SD.exists("/metadata.json")) {
+      File vf = SD.open("/metadata.json", FILE_READ);
+      if (vf) {
+        String content = vf.readString();
+        vf.close();
+        int idx = content.indexOf("\"full_version\":");
+        if (idx >= 0) {
+          int start = content.indexOf("\"", idx + 15);
+          int end = content.indexOf("\"", start + 1);
+          if (start >= 0 && end > start) {
+            detectedSdFwVersion = content.substring(start + 1, end);
+          }
+        }
       }
     } else if (SD.exists("/version.txt")) {
       File vf = SD.open("/version.txt", FILE_READ);
@@ -323,7 +340,7 @@ bool testSD(int csPin) {
         vf.close();
       }
     }
-    Serial.printf("[QC_JIG] SD Firmware Check: %s FOUND (Version: v%s)\n", foundFw.c_str(), detectedSdFwVersion.c_str());
+    Serial.printf("[QC_JIG] SD Firmware Check: %s FOUND (Full Version: %s)\n", foundFw.c_str(), detectedSdFwVersion.c_str());
   } else {
     sdHasFirmwareBin = false;
     Serial.println("[QC_JIG] SD Firmware Check: /firmware.bin NOT FOUND on SD Card.");
@@ -1250,9 +1267,16 @@ void setup() {
     WiFi.mode(WIFI_OFF);
     delay(50);
 
-    int rawBatt = analogRead(BATT_3V7_PIN);
-    int rawV33 = analogRead(SYS_3V3_PIN);
-    int rawSolar = analogRead(SOLAR_ADC_PIN);
+    int rawBatt = 0, rawV33 = 0, rawSolar = 0;
+    for (int i = 0; i < 8; i++) {
+      rawBatt  += analogRead(BATT_3V7_PIN);
+      rawV33   += analogRead(SYS_3V3_PIN);
+      rawSolar += analogRead(SOLAR_ADC_PIN);
+      delay(2);
+    }
+    rawBatt  /= 8;
+    rawV33   /= 8;
+    rawSolar /= 8;
     
     float battVolt = (rawBatt / (float)WIND_DIR_ADC_MAX) * 3.3 * 1.151;  // R_top=220K R_bot=620K → 840/620, adj for ADC_MAX=3480
     float v33Volt  = (rawV33  / (float)WIND_DIR_ADC_MAX) * 3.3 * 1.151;  // R_top=220K R_bot=620K → 840/620, adj for ADC_MAX=3480
@@ -1721,7 +1745,7 @@ void processKeypress(char rawKey) {
 
   // Cooldown validation for sensitive state changes to prevent key bounce/repeat
   if ((currentState == STATE_SYNC_CONFIRM || currentState == STATE_RF_RUNNING || currentState == STATE_RF_CONFIRM) && 
-      (millis() - lastStateChangeTime < 1000)) {
+      (millis() - lastStateChangeTime < 350)) {
     Serial.printf("[QC_JIG] Cooldown active: Ignoring keypress '%s' in state %d\n", keyName, currentState);
     return;
   }

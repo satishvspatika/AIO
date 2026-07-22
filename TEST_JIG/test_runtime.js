@@ -34,6 +34,7 @@ function test() {
         value: '',
         textContent: '',
         innerHTML: '',
+        checked: true,
         closest: () => ({ classList: { contains: () => false } })
     });
     
@@ -50,6 +51,14 @@ function test() {
             };
         }
     };
+
+    global.fetch = async () => ({
+        ok: true,
+        status: 200,
+        text: async () => "",
+        json: async () => ({}),
+        blob: async () => ({ arrayBuffer: async () => new ArrayBuffer(0) })
+    });
     
     global.document = {
         getElementById: (id) => {
@@ -79,7 +88,18 @@ function test() {
         let code = scripts[0];
         code = code.replace(/import\s+\{\s*ESPLoader\s*,\s*Transport\s*\}\s+from\s+["'][^"']+["'];/g, 'const ESPLoader = {}, Transport = {};');
         eval(code);
-        console.log("✅ Script executed successfully without runtime errors!");
+        console.log("✅ Script parsed successfully! Testing autoSyncToGoogleSheets invocation...");
+        eval(code);
+        console.log("✅ Script parsed successfully! Testing autoSyncToGoogleSheets invocation...");
+        if (typeof autoSyncToGoogleSheets === 'function') {
+            sheetUrlInput.value = "https://script.google.com/macros/s/mock/exec";
+            autoSyncToGoogleSheets("PASS").then((res) => {
+                console.log(`✅ autoSyncToGoogleSheets executed without ReferenceErrors! Result: ${res}`);
+            }).catch((err) => {
+                console.error("❌ Error in autoSyncToGoogleSheets:", err);
+                process.exit(1);
+            });
+        }
     } catch (err) {
         console.error("❌ Runtime Error during script execution:");
         console.error(err);

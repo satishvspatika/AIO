@@ -5998,7 +5998,7 @@ function getManageRecordsHtml() {
           method: "POST",
           mode: "no-cors",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "text/plain"
           },
           body: JSON.stringify(payload)
         }, 30000);
@@ -6149,7 +6149,7 @@ function getManageRecordsHtml() {
           method: "POST",
           mode: "no-cors",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "text/plain"
           },
           body: JSON.stringify(payload)
         }, 90000);
@@ -6489,7 +6489,7 @@ function getManageRecordsHtml() {
           method: "POST",
           mode: "no-cors",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "text/plain"
           },
           body: JSON.stringify({ initOnly: true })
         }, 30000);
@@ -7319,7 +7319,7 @@ function getManageRecordsHtml() {
         url: url
       });
       saveOfflineQueue(queue);
-      logToConsole(`⚠️ Network offline. Sync queued locally (Pending: ${queue.length}).`, "warning");
+      logToConsole(`⚠️ Network offline/timeout. Sync queued locally (Pending: ${queue.length}).`, "warning");
     }
 
     async function processOfflineQueue() {
@@ -7328,7 +7328,7 @@ function getManageRecordsHtml() {
       if (queue.length === 0) return;
       
       isSyncingQueue = true;
-      logToConsole(`🔄 Connecting... Syncing ${queue.length} offline records...`, "info");
+      logToConsole(`🔄 Network active. Auto-syncing ${queue.length} queued offline records to Google Sheets...`, "info");
       
       let successfulIds = [];
       try {
@@ -7338,14 +7338,14 @@ function getManageRecordsHtml() {
               method: "POST",
               mode: "no-cors",
               headers: {
-                "Content-Type": "application/json"
+                "Content-Type": "text/plain"
               },
               body: JSON.stringify(item.payload)
-            }, 30000);
+            }, 10000);
             successfulIds.push(item.id);
-            logToConsole(`✓ Offline record synced to Google Sheets.`, "info");
+            logToConsole(`✓ Queued record (${item.payload.verdict || "QC"}) synced to Google Sheets.`, "info");
           } catch (err) {
-            logToConsole(`❌ Sync failed: ${err.message}. Offline queue paused.`, "error");
+            logToConsole(`❌ Background sync paused: ${err.message}. Will retry when connection stabilizes.`, "warning");
             break;
           }
         }
@@ -7359,45 +7359,85 @@ function getManageRecordsHtml() {
       }
     }
 
+    // Automatic Background Auto-Sync Worker (Triggers on reconnect + periodic check)
+    window.addEventListener("online", () => {
+      logToConsole("🌐 Network connection restored! Flushing queued offline records...", "info");
+      processOfflineQueue();
+    });
+
+    setInterval(() => {
+      if (navigator.onLine && getOfflineQueue().length > 0) {
+        processOfflineQueue();
+      }
+    }, 20000);
+
     async function handleSyncDecision(verdict, shouldSync) {
       hideOperatorPrompt();
+      if (window._isSyncingDecision) return;
+      window._isSyncingDecision = true;
+      window._pendingSyncVerdict = null;
       
-      if (testStartTime) {
-        testDuration = Math.round((Date.now() - testStartTime) / 1000);
-      }
-      
-      let syncMsg = "";
-      if (shouldSync) {
-        logToConsole(`📊 Syncing ${verdict} result to Google Sheet...`, "info");
-        showVerdict("PENDING", `📊 Syncing ${verdict} result to Google Sheet...`);
-        const synced = await autoSyncToGoogleSheets(verdict);
-        
-        const sheetUrl = sheetUrlInput.value.trim();
-        if (!sheetUrl) {
-          syncMsg = `<span style="color:var(--warning); font-size:0.75rem;">⚠️ Google Sheet sync skipped (No Script URL configured).</span>`;
-        } else if (synced) {
-          syncMsg = `<span style="color:var(--success); font-size:0.75rem;">✓ Results posted to Google Sheet successfully.</span>`;
-        } else {
-          syncMsg = `<span style="color:var(--warning); font-size:0.75rem;">⚠️ Google Sheet sync failed (saved to offline queue).</span>`;
+      try {
+        if (testStartTime) {
+          testDuration = Math.round((Date.now() - testStartTime) / 1000);
         }
         
-        window._lastSyncMessage = syncMsg;
-        sendSerialCommand(synced ? "CMD:SYNC_SUCCESS\n" : "CMD:SYNC_FAIL\n");
-      } else {
-        logToConsole("⚠️ Google Sheet sync cancelled by operator override.", "warning");
-        syncMsg = `<span style="color:var(--warning); font-size:0.75rem;">⚠️ Google Sheet sync cancelled by operator (Not Logged).</span>`;
-        window._lastSyncMessage = syncMsg;
-        sendSerialCommand("CMD:SYNC_CANCEL\n");
+        let syncMsg = "";
+        if (shouldSync) {
+          logToConsole(`📊 Syncing ${verdict} result to Google Sheet...`, "info");
+          showVerdict("PENDING", `📊 Syncing ${verdict} result to Google Sheet...`);
+          const synced = await autoSyncToGoogleSheets(verdict);
+          
+          const sheetUrl = sheetUrlInput.value.trim();
+          if (!sheetUrl) {
+            syncMsg = `<span style="color:var(--warning); font-size:0.75rem;">⚠️ Google Sheet sync skipped (No Script URL configured).</span>`;
+          } else if (synced) {
+            syncMsg = `<span style="color:var(--success); font-size:0.75rem;">✓ Results posted to Google Sheet successfully.</span>`;
+          } else {
+            syncMsg = `<span style="color:var(--warning); font-size:0.75rem;">⚠️ Google Sheet sync failed (saved to offline queue).</span>`;
+          }
+          
+          window._lastSyncMessage = syncMsg;
+          try { sendSerialCommand(synced ? "CMD:SYNC_SUCCESS\n" : "CMD:SYNC_FAIL\n"); } catch(e){}
+
+          if (window._lastUpdateMethod === "LAPTOP" || activeFlow === 'production' || !qcFirmwareAlreadyOnBoard) {
+            const espVal = testCfgEsp.checked ? "ESP" : "";
+            const gprsVal = testCfgGprs.checked ? "GPRS" : "";
+            const nuvVal = testCfgNuvoton.checked ? "NUV" : "";
+            const subsystemsTested = [espVal, gprsVal, nuvVal].filter(Boolean).join(" + ") || "Production Firmware";
+            
+            if (verdict === "PASS") {
+              showVerdict("PASS", `Software update completed successfully for:<br><b>${subsystemsTested}</b><br><br>${syncMsg}`);
+            } else {
+              showVerdict("FAIL", `Software update failed.<br><br>${syncMsg}`);
+            }
+            updateStepTracker();
+            updateGuidanceBanner();
+            if (btnClearNextBoard) btnClearNextBoard.style.display = "block";
+          }
+        } else {
+          logToConsole("⚠️ Google Sheet sync cancelled by operator override.", "warning");
+          syncMsg = `<span style="color:var(--warning); font-size:0.75rem;">⚠️ Google Sheet sync cancelled by operator (Not Logged).</span>`;
+          window._lastSyncMessage = syncMsg;
+          try { sendSerialCommand("CMD:SYNC_CANCEL\n"); } catch(e){}
+
+          if (window._lastUpdateMethod === "LAPTOP" || activeFlow === 'production' || !qcFirmwareAlreadyOnBoard) {
+            showVerdict(verdict, `Software update completed.<br><br>${syncMsg}`);
+            updateStepTracker();
+            updateGuidanceBanner();
+            if (btnClearNextBoard) btnClearNextBoard.style.display = "block";
+          }
+        }
+      } finally {
+        window._isSyncingDecision = false;
       }
-      
-      window._pendingSyncVerdict = null;
 
       // Fallback timer to force the final verdict display if the board fails to send the QC_RESULT acknowledgement over serial
       const targetVerdict = verdict;
       const targetSyncMsg = syncMsg;
       setTimeout(() => {
         const titleEl = document.getElementById("verdictTitle");
-        if (titleEl && titleEl.textContent === "SYNCING...") {
+        if (titleEl && (titleEl.textContent === "SYNCING..." || titleEl.textContent === "PENDING")) {
           logToConsole("⚠️ Timeout waiting for board serial confirmation. Forcing verdict display.", "warning");
           
           const espVal = testCfgEsp.checked ? "ESP" : "";
@@ -7657,6 +7697,7 @@ function getManageRecordsHtml() {
       const espVal = testCfgEsp.checked ? "ESP" : "";
       const gprsVal = testCfgGprs.checked ? "GPRS" : "";
       const nuvVal = testCfgNuvoton.checked ? "NUV" : "";
+      const subsystemsTested = [espVal, gprsVal, nuvVal].filter(Boolean).join(" + ");
       const profileVal = document.getElementById("deviceProfile")?.value || "TRG";
       const isFailText = (val) => {
         if (!val) return false;
@@ -7785,16 +7826,16 @@ function getManageRecordsHtml() {
           method: "POST",
           mode: "no-cors",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "text/plain"
           },
           body: JSON.stringify(payload)
-        }, 30000);
+        }, 8000);
         logToConsole("✓ Successfully synced data to Google Sheet!", "info");
         return true;
       } catch (err) {
-        logToConsole(`Google Sheets sync failed: ${err.message}`, "error");
+        logToConsole(`Google Sheets sync failed / timed out (${err.message}). Saving payload to offline queue...`, "error");
         addToOfflineQueue(payload, "board_qc", url);
-        alert(`⚠️ Google Sheets Sync Failed!\n\nReason: ${err.message}\n\nYour test data has been saved to the Offline Queue (see red flashing button in top right) and will sync automatically once network connection is reestablished.`);
+        logToConsole("⚠️ Saved to offline queue (will auto-sync in background as soon as network is stable).", "warning");
         return false;
       }
     }
@@ -8045,7 +8086,7 @@ function getManageRecordsHtml() {
       if (typeof metaFwVersion !== 'undefined' && metaFwVersion) {
         const prodVer = metaFwVersion.getAttribute("data-prod-ver") || "--";
         if (currentTab === "boardqc" && (!testCfgEsp.checked || activeFlow === "factory")) {
-          metaFwVersion.textContent = "6.10-QC (Update Ready)";
+          metaFwVersion.textContent = "6.11-QC (Update Ready)";
         } else {
           metaFwVersion.textContent = prodVer;
         }
@@ -9746,7 +9787,7 @@ function getManageRecordsHtml() {
           method: "POST",
           mode: "no-cors",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "text/plain"
           },
           body: JSON.stringify(payload)
         }, 30000);
@@ -9955,8 +9996,8 @@ function getManageRecordsHtml() {
       window._lastSerialDataTime = Date.now();
       if (window._serialInactivityInterval) clearInterval(window._serialInactivityInterval);
       window._serialInactivityInterval = setInterval(() => {
-        if (!cancelReadLoop && isConnected && Date.now() - window._lastSerialDataTime > 45000) {
-          logToConsole("⚠️ Serial Inactivity Watchdog: No data received for 45s. Unlocking UI controls.", "warning");
+        if (!cancelReadLoop && isConnected && Date.now() - window._lastSerialDataTime > 120000) {
+          logToConsole("⚠️ Serial Inactivity Watchdog: No data received for 120s. Unlocking UI controls.", "warning");
           cancelReadLoop = true;
           if (activeReader) {
             try { activeReader.cancel(); } catch(e){}
@@ -10498,6 +10539,7 @@ function getManageRecordsHtml() {
           Press the <b>External Wakeup Switch</b> on the physical board to wake the ESP32 up and finish the test.<br><br>
           <div style="display:flex; gap:0.5rem; align-items:center;">
             <button class="btn btn-success" id="btnOverrideSleepPass" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none; font-weight:600;">✓ Force Wakeup Pass [Y]</button>
+            <button class="btn btn-danger" id="btnOverrideSleepFail" style="font-size:0.78rem; padding:0.4rem 0.8rem; width:auto; text-transform:none; font-weight:600; background-color:#dc2626; border-color:#dc2626; color:#ffffff;">✗ Wakeup FAIL (Board Won't Wake Up) [N]</button>
           </div>
         `;
         operatorGuideText.innerHTML = html;
@@ -10506,6 +10548,13 @@ function getManageRecordsHtml() {
             logToConsole("Dashboard Override: Sleep Wakeup Pass sent.", "info");
             sendSerialCommand("CMD:SLEEP_PASS\n");
             hideOperatorPrompt();
+          });
+          getPromptElement("btnOverrideSleepFail")?.addEventListener("click", () => {
+            logToConsole("Dashboard Override: Deep sleep wakeup failed. Board failed to wake up.", "error");
+            window._qcHasFailedInSession = true;
+            setCheckState(chkSleep, valSleep, "fail", "FAILED (Wakeup Fail)");
+            sendSerialCommand("CMD:SLEEP_FAIL\n");
+            showAbortSyncPrompt("FAIL: Deep Sleep Wakeup Fail", "Deep sleep wakeup verification failed: ESP32 board did not wake up when external switch was pressed.");
           });
         });
       }
@@ -10533,8 +10582,11 @@ function getManageRecordsHtml() {
             sendSerialCommand("CMD:KEY_SET\n");
           });
           getPromptElement("btnConfirmWakeupNo")?.addEventListener("click", () => {
-            logToConsole("Dashboard: Simulating CLR to reject wakeup...", "info");
+            logToConsole("Dashboard: Simulating CLR to reject wakeup...", "warning");
+            window._qcHasFailedInSession = true;
+            setCheckState(chkSleep, valSleep, "fail", "FAILED (Wakeup Rejected)");
             sendSerialCommand("CMD:KEY_CLR\n");
+            showAbortSyncPrompt("FAIL: Deep Sleep Wakeup Rejected", "Deep sleep wakeup verification rejected by operator.");
           });
           getPromptElement("btnConfirmWakeupFail")?.addEventListener("click", () => {
             logToConsole("Dashboard Override: KEYPAD FAIL. Keypad is not working.", "error");
@@ -10553,7 +10605,10 @@ function getManageRecordsHtml() {
       if (line.includes("EXT0_WAKEUP: FAIL")) {
         setCheckState(chkSleep, valSleep, "fail", "FAIL");
         operatorGuideText.innerHTML = "❌ Deep sleep wakeup failed!";
-        hideOperatorPrompt();
+        const currentModal = document.getElementById("operatorPromptModal");
+        if (!currentModal || currentModal.style.display === "none" || !operatorGuideText.innerHTML.includes("Sync Aborted")) {
+          showAbortSyncPrompt("FAIL: Deep Sleep Wakeup Fail", "Deep sleep wakeup verification failed on board.");
+        }
       }
       if (line.includes("[QC_STEP] RF_CHECK: FAIL_PROCEED")) {
         const match = line.match(/got\s*(\d+)/);
@@ -10716,8 +10771,18 @@ function getManageRecordsHtml() {
 
         const sizeEntry = customConfigVault[activeConfig]?.[currentSizeKey]?.[uiKey];
         const meta = sizeEntry?.metadata;
-        const laptopFwVer = sizeEntry?.version || metaFwVersion.getAttribute("data-prod-ver") || "6.14";
+        const targetFullVer = meta?.full_version || sizeEntry?.version || metaFwVersion.getAttribute("data-prod-ver") || "6.18";
+        const laptopFwVer = sizeEntry?.version || metaFwVersion.getAttribute("data-prod-ver") || "6.18";
         const sdFirmwareVer = prodVer || "Unknown";
+
+        const isExactMatch = hasSdFirmware && (sdFirmwareVer === targetFullVer || sdFirmwareVer === laptopFwVer || sdFirmwareVer === `v${laptopFwVer}`);
+        const isSdVersionStale = hasSdFirmware && !isExactMatch;
+
+        const sdBadge = !hasSdFirmware ? 
+          '<span style="font-size:0.7rem; padding:0.1rem 0.35rem; background:rgba(239,68,68,0.15); color:#f87171; border-radius:3px; font-weight:700;">SD FW MISSING</span>' : 
+          (isSdVersionStale ? 
+            '<span style="font-size:0.7rem; padding:0.1rem 0.35rem; background:rgba(239,68,68,0.2); color:#f87171; border-radius:3px; font-weight:700;">⚠️ STALE/MISMATCHED SD FW (' + sdFirmwareVer + ')</span>' : 
+            '<span style="font-size:0.7rem; padding:0.1rem 0.35rem; background:rgba(16,185,129,0.15); color:#34d399; border-radius:3px; font-weight:700;">✓ MATCHES FULL CONFIG & VER (' + sdFirmwareVer + ')</span>');
 
         const nuvotonUI = meta?.use_nuvoton_ui !== undefined ? meta.use_nuvoton_ui : (uiKey === "nuvoton");
         const webserverEnabled = meta?.enable_webserver !== undefined ? meta.enable_webserver : true;
@@ -10734,17 +10799,19 @@ function getManageRecordsHtml() {
             </div>
 
             <!-- Option 1: SD Card -->
-            <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem;">
-              <div style="font-weight: 700; color: #f43f5e; margin-bottom: 0.25rem; display: flex; align-items: center; justify-content: space-between;">
+            <div style="background: ${isSdVersionStale ? 'rgba(239,68,68,0.04)' : 'rgba(255,255,255,0.02)'}; border: 1px solid ${isSdVersionStale ? 'rgba(239,68,68,0.3)' : 'rgba(255,255,255,0.06)'}; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem;">
+              <div style="font-weight: 700; color: ${isSdVersionStale ? '#f87171' : '#f43f5e'}; margin-bottom: 0.25rem; display: flex; align-items: center; justify-content: space-between;">
                 <span>💾 Option A: Self-Flash from SD Card (OTA)</span>
-                ${hasSdFirmware ? '<span style="font-size:0.7rem; padding:0.1rem 0.35rem; background:rgba(16,185,129,0.15); color:#34d399; border-radius:3px; font-weight:700;">SD FW DETECTED (v' + sdFirmwareVer + ')</span>' : '<span style="font-size:0.7rem; padding:0.1rem 0.35rem; background:rgba(239,68,68,0.15); color:#f87171; border-radius:3px; font-weight:700;">SD FW MISSING</span>'}
+                ${sdBadge}
               </div>
               <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.6rem; line-height: 1.4;">
-                • <b>SD Firmware Version:</b> <code style="color:#f43f5e; font-weight:700;">${sdFirmwareVer}</code><br>
+                • <b>SD Full Firmware & Config:</b> <code style="color:${isSdVersionStale ? '#f87171' : '#f43f5e'}; font-weight:700;">${sdFirmwareVer}</code><br>
+                • <b>Target Release & Config:</b> <code style="color:#60a5fa; font-weight:700;">${targetFullVer}</code><br>
                 • <b>SD Source File:</b> Physical SD Card <code>/firmware.bin</code>
+                ${isSdVersionStale ? '<div style="margin-top:0.4rem; padding:0.35rem 0.5rem; background:rgba(239,68,68,0.15); border-radius:4px; color:#fca5a5; font-size:0.75rem; font-weight:600;">⚠️ CONFIG / VERSION MISMATCH WARNING: SD card contains <code>' + sdFirmwareVer + '</code>, but current target config & release is <code>' + targetFullVer + '</code>. Please flash via Laptop Programmer (Option B) or copy new firmware to SD card.</div>' : ''}
               </div>
-              <button class="btn btn-success" id="btnSdOtaYes" style="font-size: 0.75rem; padding: 0.35rem 0.6rem; width: auto; font-weight: 600; text-transform: none;" ${hasSdFirmware ? '' : 'disabled'}>
-                ⚡ Update from SD Card (v${sdFirmwareVer}) [SET]
+              <button class="btn ${isSdVersionStale ? 'btn-danger' : 'btn-success'}" id="btnSdOtaYes" style="font-size: 0.75rem; padding: 0.35rem 0.6rem; width: auto; font-weight: 600; text-transform: none;" ${hasSdFirmware ? '' : 'disabled'}>
+                ${isSdVersionStale ? '⚠️ Flash SD Card Anyway (' + sdFirmwareVer + ' Mismatch)' : '⚡ Update from SD Card (' + sdFirmwareVer + ') [SET]'}
               </button>
             </div>
 
@@ -11427,6 +11494,29 @@ function getManageRecordsHtml() {
       esploader = new ESPLoader({ transport, baudrate: 115200, terminal });
       logToConsole("Connecting to chip...", "normal");
       await esploader.main();
+
+      // Smart Baud Rate Auto-Negotiation for high-speed flashing
+      try {
+        if (typeof esploader.changeBaudrate === "function") {
+          await esploader.changeBaudrate(921600);
+          logToConsole("⚡ High-speed baud rate 921600 active! (Ultra-Fast Flashing Enabled)", "info");
+        } else if (typeof esploader.changeBaud === "function") {
+          await esploader.changeBaud(921600);
+          logToConsole("⚡ High-speed baud rate 921600 active! (Ultra-Fast Flashing Enabled)", "info");
+        }
+      } catch (e1) {
+        try {
+          if (typeof esploader.changeBaudrate === "function") {
+            await esploader.changeBaudrate(460800);
+            logToConsole("⚡ High-speed baud rate 460800 active! (Fast Flashing Enabled)", "info");
+          } else if (typeof esploader.changeBaud === "function") {
+            await esploader.changeBaud(460800);
+            logToConsole("⚡ High-speed baud rate 460800 active! (Fast Flashing Enabled)", "info");
+          }
+        } catch (e2) {
+          logToConsole("Continuing flashing at default 115200 baud.", "normal");
+        }
+      }
     }
 
     async function runFactoryFlashingFlow() {
@@ -11976,7 +12066,7 @@ function getManageRecordsHtml() {
               method: "POST",
               mode: "no-cors",
               headers: {
-                "Content-Type": "application/json"
+                "Content-Type": "text/plain"
               },
               body: JSON.stringify(item.payload)
             }, 30000);
