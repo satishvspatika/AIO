@@ -3168,7 +3168,8 @@
             <option value="GPRS">GPRS Only</option>
             <option value="NUVOTON">Nuvoton Only</option>
             <option value="MPPT">MPPT Only</option>
-            <option value="BATTERY">Battery Only</option>
+            <option value="BATTERY 3.2V">Battery 3.2V Only</option>
+            <option value="BATTERY 3.7V">Battery 3.7V Only</option>
           </select>
           <select id="summaryExplorerFilter" style="font-size: 0.72rem; padding: 0.25rem 0.5rem; background: #0f172a; border: 1px solid var(--card-border); color: #fff; border-radius: 0.3rem; font-family: inherit; cursor: pointer;">
             <option value="ALL">All Statuses</option>
@@ -7853,7 +7854,8 @@ function getManageRecordsHtml() {
       if (bcUpper.startsWith("7000-F-")) return "NUVOTON";
       if (bcUpper.startsWith("3002-F-")) return "GPRS";
       if (bcUpper.startsWith("3003-F-") || bcUpper.startsWith("3005-F-")) return "MPPT";
-      if (bcUpper.startsWith("3006-F-") || bcUpper.startsWith("3007-F-") || bcUpper.startsWith("4002-F-") || bcUpper.startsWith("4003-F-")) return "BATTERY";
+      if (bcUpper.startsWith("4002-F-") || bcUpper.startsWith("3006-F-")) return "BATTERY 3.2V";
+      if (bcUpper.startsWith("4003-F-") || bcUpper.startsWith("3007-F-")) return "BATTERY 3.7V";
       if (bcUpper.startsWith("3001-F-")) return "ESP32";
       if (bcUpper.startsWith("5001-F-")) return "BOX 1";
       if (bcUpper.startsWith("6000-F-") || bcUpper.startsWith("6001-F-")) return "BOX 2";
@@ -7861,7 +7863,9 @@ function getManageRecordsHtml() {
       if (typeLower.includes("gprs")) return "GPRS";
       if (typeLower.includes("nuvoton") || typeLower.includes("display")) return "NUVOTON";
       if (typeLower.includes("mppt") || typeLower.includes("solar")) return "MPPT";
-      if (typeLower.includes("batt") || typeLower.includes("battery")) return "BATTERY";
+      if (typeLower.includes("3.2v") || typeLower.includes("lifepo4") || typeLower.includes("batt 1") || typeLower.includes("battery 1")) return "BATTERY 3.2V";
+      if (typeLower.includes("3.7v") || typeLower.includes("li-ion") || typeLower.includes("batt 2") || typeLower.includes("battery 2")) return "BATTERY 3.7V";
+      if (typeLower.includes("batt") || typeLower.includes("battery")) return "BATTERY 3.2V";
       if (typeLower.includes("esp")) return "ESP32";
       return (rawType || "ESP32").toUpperCase();
     }
@@ -7880,12 +7884,12 @@ function getManageRecordsHtml() {
         
         // 2. Filter by category type
         if (typeVal !== "ALL") {
-          const catLower = typeVal.toLowerCase();
-          const derivedTypeLower = deriveCategoryFromBarcode(b.barcode, b.type).toLowerCase();
-          if (catLower === "battery") {
-            if (!derivedTypeLower.includes("battery")) return false;
+          const catUpper = typeVal.toUpperCase();
+          const derivedTypeUpper = deriveCategoryFromBarcode(b.barcode, b.type).toUpperCase();
+          if (catUpper === "BATTERY") {
+            if (!derivedTypeUpper.includes("BATTERY")) return false;
           } else {
-            if (derivedTypeLower !== catLower) return false;
+            if (derivedTypeUpper !== catUpper) return false;
           }
         }
 
@@ -7974,11 +7978,12 @@ function getManageRecordsHtml() {
         // --- Category Breakdown Table ---
         // Dynamically compute category stats client-side using barcode prefix standards
         const categories = {
-          "ESP32":   { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 },
-          "GPRS":    { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 },
-          "Nuvoton": { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 },
-          "MPPT":    { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 },
-          "Battery": { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 }
+          "ESP32":        { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 },
+          "GPRS":         { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 },
+          "Nuvoton":      { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 },
+          "MPPT":         { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 },
+          "Battery 3.2V": { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 },
+          "Battery 3.7V": { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 }
         };
 
         summaryBoardData.forEach(b => {
@@ -7987,7 +7992,9 @@ function getManageRecordsHtml() {
           if (derivedType === "GPRS") normCat = "GPRS";
           else if (derivedType === "NUVOTON") normCat = "Nuvoton";
           else if (derivedType === "MPPT") normCat = "MPPT";
-          else if (derivedType.includes("BATTERY")) normCat = "Battery";
+          else if (derivedType === "BATTERY 3.2V") normCat = "Battery 3.2V";
+          else if (derivedType === "BATTERY 3.7V") normCat = "Battery 3.7V";
+          else if (derivedType.includes("BATTERY")) normCat = "Battery 3.2V";
 
           const cStats = categories[normCat];
           if (cStats) {
@@ -8002,7 +8009,7 @@ function getManageRecordsHtml() {
           }
         });
 
-        const catNames = ["ESP32", "GPRS", "Nuvoton", "MPPT", "Battery"];
+        const catNames = ["ESP32", "GPRS", "Nuvoton", "MPPT", "Battery 3.2V", "Battery 3.7V"];
         if (boardTbl) {
           if (!catNames.some(c => categories[c])) {
             boardTbl.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:1.5rem;color:var(--text-muted);">No category data available.</td></tr>`;
@@ -8053,13 +8060,20 @@ function getManageRecordsHtml() {
               });
 
               cell.addEventListener("click", () => {
-                const typeVal   = cell.dataset.type   || "ALL";
+                const rawType   = (cell.dataset.type   || "ALL").toUpperCase();
                 const filterVal = cell.dataset.filter || "ALL";
 
                 const typeSel   = document.getElementById("summaryExplorerTypeFilter");
                 const statusSel = document.getElementById("summaryExplorerFilter");
 
-                if (typeSel)   typeSel.value   = typeVal;
+                if (typeSel) {
+                  const matchOpt = Array.from(typeSel.options).find(opt => opt.value.toUpperCase() === rawType);
+                  if (matchOpt) {
+                    typeSel.value = matchOpt.value;
+                  } else {
+                    typeSel.value = "ALL";
+                  }
+                }
                 if (statusSel) statusSel.value = filterVal;
 
                 renderSummaryExplorer();
