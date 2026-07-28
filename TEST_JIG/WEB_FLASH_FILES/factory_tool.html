@@ -4888,13 +4888,20 @@ function doGet(e) {
             var details = (idxDetails >= 0 && row[idxDetails] != null) ? row[idxDetails].toString().trim() : "";
             var lastAction = (idxLastAction >= 0 && row[idxLastAction] != null) ? row[idxLastAction].toString().trim() : "";
             
-            // Normalize categories
+            // Normalize categories via barcode prefix standards & type checks
             var normCat = "ESP32";
+            var bcUpper = bc.toUpperCase();
             var typeLower = type.toLowerCase();
-            if (typeLower.includes("gprs")) normCat = "GPRS";
-            else if (typeLower.includes("nuvoton")) normCat = "Nuvoton";
-            else if (typeLower.includes("mppt")) normCat = "MPPT";
-            else if (typeLower.includes("battery")) normCat = "Battery";
+            
+            if (bcUpper.indexOf("7000-F-") === 0) normCat = "Nuvoton";
+            else if (bcUpper.indexOf("3002-F-") === 0) normCat = "GPRS";
+            else if (bcUpper.indexOf("3003-F-") === 0 || bcUpper.indexOf("3005-F-") === 0) normCat = "MPPT";
+            else if (bcUpper.indexOf("3006-F-") === 0 || bcUpper.indexOf("3007-F-") === 0 || bcUpper.indexOf("4002-F-") === 0 || bcUpper.indexOf("4003-F-") === 0) normCat = "Battery";
+            else if (bcUpper.indexOf("3001-F-") === 0) normCat = "ESP32";
+            else if (typeLower.indexOf("gprs") >= 0) normCat = "GPRS";
+            else if (typeLower.indexOf("nuvoton") >= 0 || typeLower.indexOf("display") >= 0) normCat = "Nuvoton";
+            else if (typeLower.indexOf("mppt") >= 0 || typeLower.indexOf("solar") >= 0) normCat = "MPPT";
+            else if (typeLower.indexOf("batt") >= 0 || typeLower.indexOf("battery") >= 0) normCat = "Battery";
             else normCat = "ESP32";
             
             var catStats = summary.categories[normCat];
@@ -7840,6 +7847,25 @@ function getManageRecordsHtml() {
     // -------------------------------------------------------
     let summaryBoardData = []; // Cached full board list from getInventorySummary
 
+    function deriveCategoryFromBarcode(bc, rawType) {
+      const bcUpper = (bc || "").toUpperCase().trim();
+      const typeLower = (rawType || "").toLowerCase().trim();
+      if (bcUpper.startsWith("7000-F-")) return "NUVOTON";
+      if (bcUpper.startsWith("3002-F-")) return "GPRS";
+      if (bcUpper.startsWith("3003-F-") || bcUpper.startsWith("3005-F-")) return "MPPT";
+      if (bcUpper.startsWith("3006-F-") || bcUpper.startsWith("3007-F-") || bcUpper.startsWith("4002-F-") || bcUpper.startsWith("4003-F-")) return "BATTERY";
+      if (bcUpper.startsWith("3001-F-")) return "ESP32";
+      if (bcUpper.startsWith("5001-F-")) return "BOX 1";
+      if (bcUpper.startsWith("6000-F-") || bcUpper.startsWith("6001-F-")) return "BOX 2";
+
+      if (typeLower.includes("gprs")) return "GPRS";
+      if (typeLower.includes("nuvoton") || typeLower.includes("display")) return "NUVOTON";
+      if (typeLower.includes("mppt") || typeLower.includes("solar")) return "MPPT";
+      if (typeLower.includes("batt") || typeLower.includes("battery")) return "BATTERY";
+      if (typeLower.includes("esp")) return "ESP32";
+      return (rawType || "ESP32").toUpperCase();
+    }
+
     function renderSummaryExplorer() {
       const explorerBody = document.getElementById("summaryExplorerBody");
       if (!explorerBody || !summaryBoardData.length) return;
@@ -7855,11 +7881,11 @@ function getManageRecordsHtml() {
         // 2. Filter by category type
         if (typeVal !== "ALL") {
           const catLower = typeVal.toLowerCase();
-          const itemTypeLower = (b.type || "").toLowerCase();
+          const derivedTypeLower = deriveCategoryFromBarcode(b.barcode, b.type).toLowerCase();
           if (catLower === "battery") {
-            if (!itemTypeLower.includes("battery")) return false;
+            if (!derivedTypeLower.includes("battery")) return false;
           } else {
-            if (itemTypeLower !== catLower) return false;
+            if (derivedTypeLower !== catLower) return false;
           }
         }
 
@@ -7893,7 +7919,7 @@ function getManageRecordsHtml() {
         else if (b.verdict === "FAIL")     { invState = "🔧 In Repair";  invColor = "#f87171"; }
         else if (b.verdict === "SCRAPPED") { invState = "🗑️ Scrapped"; invColor = "#6b7280"; }
 
-        const type = (b.type || "--").toUpperCase();
+        const type = deriveCategoryFromBarcode(b.barcode, b.type);
         let typeBg = "rgba(59,130,246,0.1)"; let typeColor = "#60a5fa";
         if (type === "GPRS")    { typeBg = "rgba(52,211,153,0.1)"; typeColor = "#34d399"; }
         if (type === "NUVOTON") { typeBg = "rgba(251,191,36,0.1)"; typeColor = "#fbbf24"; }
