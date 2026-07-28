@@ -5042,30 +5042,65 @@ function doGet(e) {
         var firstRow = allRows[0];
         var actionType = colActionType >= 0 ? latest[colActionType].toString().trim() : "ORIGINAL_BUILD";
         var verdict    = colVerdict >= 0 ? latest[colVerdict].toString().trim() : "--";
-        var box2Val    = colBox2 >= 0 ? latest[colBox2].toString().trim() : "--";
+        var box2Val = (function() {
+          if (colBox2 >= 0) {
+            var v = latest[colBox2];
+            if (v !== undefined && v !== null) {
+              var str = v.toString().trim();
+              if (str !== "" && str !== "--") return str;
+            }
+          }
+          return "--";
+        })();
+
+        var hasBox2 = (box2Val !== "--" && box2Val !== "");
+
         // Determine current state: FULL INTEGRATED vs PARTIAL_INTEGRATED
         var state = "INTEGRATED";
         if (actionType === "DISPATCH_FIELD") {
           state = "DISPATCHED";
         } else if (actionType === "REPAIR_DONE") {
           state = "REPAIRED_UNIT";
-        } else if (!box1Key || box1Key === "--" || !box2Val || box2Val === "--") {
+        } else if (!box1Key || box1Key === "--" || !hasBox2) {
           state = "PARTIAL_INTEGRATED";
         }
+
         systems.push({
           box1:     box1Key,
-          box2:     box2Val,
-          esp:      colEsp >= 0     ? firstRow[colEsp].toString().trim()  : "--",
-          gprs:     colGprs >= 0    ? firstRow[colGprs].toString().trim() : "--",
+          box2:     hasBox2 ? box2Val : "--",
+          esp:      (function() {
+            if (colEsp >= 0) {
+              for (var vi = allRows.length - 1; vi >= 0; vi--) {
+                var v = allRows[vi][colEsp];
+                if (v !== undefined && v !== null) {
+                  var str = v.toString().trim();
+                  if (str === "--") return "--";
+                  if (str !== "") return str;
+                }
+              }
+            }
+            return "--";
+          })(),
+          gprs:     (function() {
+            if (colGprs >= 0) {
+              for (var vi = allRows.length - 1; vi >= 0; vi--) {
+                var v = allRows[vi][colGprs];
+                if (v !== undefined && v !== null) {
+                  var str = v.toString().trim();
+                  if (str === "--") return "--";
+                  if (str !== "") return str;
+                }
+              }
+            }
+            return "--";
+          })(),
           nuvoton:  (function() {
-            // Use latest row first; only fall back if it is truly blank (not explicitly "--")
             var latestVal = colNuv >= 0 ? allRows[allRows.length - 1][colNuv] : undefined;
             if (latestVal !== undefined && latestVal !== null) {
               var latestStr = latestVal.toString().trim();
-              if (latestStr === "--") return "--"; // explicitly cleared — honour it
+              if (latestStr === "--") return "--";
               if (latestStr !== "") return latestStr;
             }
-            // Latest row was empty (old row without field) — scan backward for any value
             if (colNuv >= 0) {
               for (var vi = allRows.length - 2; vi >= 0; vi--) {
                 var v = allRows[vi][colNuv];
@@ -5078,6 +5113,7 @@ function doGet(e) {
             return "--";
           })(),
           batt1:  (function() {
+            if (!hasBox2) return "--"; // Box 2 removed — Battery 1 is removed
             var latestVal = colBatt1 >= 0 ? allRows[allRows.length - 1][colBatt1] : undefined;
             if (latestVal !== undefined && latestVal !== null) {
               var latestStr = latestVal.toString().trim();
@@ -5096,6 +5132,7 @@ function doGet(e) {
             return "--";
           })(),
           batt2:  (function() {
+            if (!hasBox2) return "--"; // Box 2 removed — Battery 2 is removed
             var latestVal = colBatt2 >= 0 ? allRows[allRows.length - 1][colBatt2] : undefined;
             if (latestVal !== undefined && latestVal !== null) {
               var latestStr = latestVal.toString().trim();
@@ -5114,6 +5151,7 @@ function doGet(e) {
             return "--";
           })(),
           mppt:  (function() {
+            if (!hasBox2) return "--"; // Box 2 removed — MPPT is removed
             var latestVal = colMppt >= 0 ? allRows[allRows.length - 1][colMppt] : undefined;
             if (latestVal !== undefined && latestVal !== null) {
               var latestStr = latestVal.toString().trim();
@@ -7985,6 +8023,17 @@ function getManageRecordsHtml() {
     function renderSysTable() {
       const tbody = document.getElementById("sysTableBody");
       if (!tbody) return;
+
+      // Dynamically update KPI summary cards from sysAllData cache
+      const kpiTotal = document.getElementById("sysKpiTotal");
+      const kpiInt = document.getElementById("sysKpiIntegrated");
+      const kpiPartial = document.getElementById("sysKpiPartial");
+      const kpiDisp = document.getElementById("sysKpiDispatched");
+      if (kpiTotal)   kpiTotal.textContent   = sysAllData.length;
+      if (kpiInt)     kpiInt.textContent     = sysAllData.filter(s => s.state === "INTEGRATED").length;
+      if (kpiPartial) kpiPartial.textContent = sysAllData.filter(s => s.state === "PARTIAL_INTEGRATED").length;
+      if (kpiDisp)    kpiDisp.textContent    = sysAllData.filter(s => s.state === "DISPATCHED").length;
+
       const stateFilter = document.getElementById("sysStateFilter")?.value || "ALL";
       const search = (document.getElementById("sysSearchBox")?.value || "").toLowerCase().trim();
 
@@ -8639,19 +8688,25 @@ function getManageRecordsHtml() {
         sysPairSubmitBtn.disabled = true;
 
         const sys = sysPairTarget;
+        const hasBox2 = box2Val && box2Val !== "--";
+        const finalBox2  = hasBox2 ? box2Val : "--";
+        const finalBatt1 = hasBox2 ? (batt1Val.trim() || "--") : "--";
+        const finalBatt2 = hasBox2 ? (batt2Val.trim() || "--") : "--";
+        const finalMppt  = hasBox2 ? (mpptVal.trim()  || "--") : "--";
+
         // Always send the form value — empty/cleared field sends "--" so the sheet and cache both honour the removal
         const payload = {
           integrationSync: true,
           testTime: new Date().toLocaleString(),
           integrationMode: "both",
           box1: box1Val,
-          box2: box2Val || "--",
+          box2: finalBox2,
           espBarcode:    espVal.trim()   || "--",
           gprsBarcode:   gprsVal.trim()  || "--",
           nuvotonBarcode: nuvVal.trim()   || "--",
-          batt1Barcode:  batt1Val.trim() || "--",
-          batt2Barcode:  batt2Val.trim() || "--",
-          mpptBarcode:   mpptVal.trim()  || "--",
+          batt1Barcode:  finalBatt1,
+          batt2Barcode:  finalBatt2,
+          mpptBarcode:   finalMppt,
           mac: sys.mac || "",
           imei: sys.imei || "",
           ccid: sys.ccid || "",
@@ -8659,7 +8714,7 @@ function getManageRecordsHtml() {
           verdict: "PASS",
           tester: testerVal,
           duration: 0,
-          notes: notesVal || `System Assembly update (Box1: ${box1Val}, Box2: ${box2Val}) from Summary panel`,
+          notes: notesVal || `System Assembly update (Box1: ${box1Val}, Box2: ${finalBox2}) from Summary panel`,
           actionType: "BUILD_VERIFY",
           fieldEngineer: sys.fieldEngineer || "",
           dispatchLocation: sys.dispatchLocation || "",
@@ -8677,20 +8732,20 @@ function getManageRecordsHtml() {
           }, 30000);
 
           if (statusEl) { statusEl.textContent = "✅ System Assembly Saved!"; statusEl.style.color = "#34d399"; }
-          logToConsole(`✓ System ${box1Val} assembly updated (Box 1: ${box1Val}, Box 2: ${box2Val}, ESP32: ${espVal || '--'}, GPRS: ${gprsVal || '--'})`, "info");
+          logToConsole(`✓ System ${box1Val} assembly updated (Box 1: ${box1Val}, Box 2: ${finalBox2}, ESP32: ${espVal || '--'}, GPRS: ${gprsVal || '--'})`, "info");
 
           // Always overwrite ALL fields from the form (including cleared/empty ones),
           // then recompute state so Partial-Integrated flips correctly
           const idx = sysAllData.findIndex(s => s.box1 === sys.box1 || s.box1 === box1Val);
           if (idx >= 0) {
             sysAllData[idx].box1    = box1Val;
-            sysAllData[idx].box2    = box2Val || "--";
+            sysAllData[idx].box2    = finalBox2;
             sysAllData[idx].esp     = espVal.trim()   || "--";
             sysAllData[idx].gprs    = gprsVal.trim()  || "--";
             sysAllData[idx].nuvoton = nuvVal.trim()   || "--";
-            sysAllData[idx].batt1   = batt1Val.trim() || "--";
-            sysAllData[idx].batt2   = batt2Val.trim() || "--";
-            sysAllData[idx].mppt    = mpptVal.trim()  || "--";
+            sysAllData[idx].batt1   = finalBatt1;
+            sysAllData[idx].batt2   = finalBatt2;
+            sysAllData[idx].mppt    = finalMppt;
             if (notesVal) sysAllData[idx].notes = notesVal;
             // Recompute integration state based on whether both boxes are present
             const hasBoth = sysAllData[idx].box1 && sysAllData[idx].box1 !== "--" &&
