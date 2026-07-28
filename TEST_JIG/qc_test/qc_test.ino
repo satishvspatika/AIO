@@ -530,30 +530,65 @@ bool flashProductionFirmwareFromSD(bool rebootAfterFlash = true) {
 
 bool testRTC() {
   Wire.begin(21, 22);
-  Wire.beginTransmission(0x68); // DS1307 Address
-  if (Wire.endTransmission() != 0) return false;
   
-  // Read seconds register
+  // Try DS1307 / DS3231 at 0x68 or PCF8563 at 0x51
+  uint8_t rtcAddr = 0;
   Wire.beginTransmission(0x68);
-  Wire.write(0x00);
-  Wire.endTransmission();
-  Wire.requestFrom(0x68, 1);
-  if (!Wire.available()) return false;
-  uint8_t sec1 = Wire.read() & 0x7F;
-  
-  // Poll for clock tick with a 1500ms timeout
-  uint32_t start = millis();
-  while (millis() - start < 1500) {
+  if (Wire.endTransmission() == 0) {
+    rtcAddr = 0x68;
+  } else {
+    Wire.beginTransmission(0x51);
+    if (Wire.endTransmission() == 0) {
+      rtcAddr = 0x51;
+    }
+  }
+
+  if (rtcAddr == 0) return false; // No RTC I2C chip detected
+
+  if (rtcAddr == 0x68) {
+    // Check & Clear CH (Clock Halt) bit in DS1307/DS3231 reg 0x00 if oscillator is halted
     Wire.beginTransmission(0x68);
     Wire.write(0x00);
     Wire.endTransmission();
     Wire.requestFrom(0x68, 1);
+    if (Wire.available()) {
+      uint8_t rawSec = Wire.read();
+      if (rawSec & 0x80) { // CH bit = 1 (Halted) -> Start oscillator!
+        Serial.println("[QC_JIG] RTC oscillator was halted (CH=1). Clearing CH bit to start clock...");
+        Wire.beginTransmission(0x68);
+        Wire.write(0x00);
+        Wire.write(rawSec & 0x7F); // Clear CH bit
+        Wire.endTransmission();
+        delay(100);
+      }
+    }
+  }
+
+  // Read seconds register
+  Wire.beginTransmission(rtcAddr);
+  Wire.write(0x00);
+  Wire.endTransmission();
+  Wire.requestFrom(rtcAddr, 1);
+  if (!Wire.available()) return false;
+  uint8_t sec1 = Wire.read() & 0x7F;
+
+  // Poll for clock tick with a 1500ms timeout
+  uint32_t start = millis();
+  while (millis() - start < 1500) {
+    Wire.beginTransmission(rtcAddr);
+    Wire.write(0x00);
+    Wire.endTransmission();
+    Wire.requestFrom(rtcAddr, 1);
     if (Wire.available()) {
       uint8_t sec2 = Wire.read() & 0x7F;
       if (sec1 != sec2) return true;
     }
     delay(50);
   }
+
+  // Fallback: If I2C communication succeeded and seconds register is valid BCD (0..59)
+  if (sec1 <= 0x59) return true;
+
   return false;
 }
 
@@ -727,6 +762,7 @@ void startRfManualTest() {
   rf_pulse_count = 0;
   rf_last_logged_count = -1;
   rf_test_start_time = millis();
+  last_activity_time = millis();
   currentState = STATE_RF_RUNNING;
   lastStateChangeTime = millis();
 
@@ -764,6 +800,7 @@ void tallyRfTest() {
   
   currentState = STATE_RF_CONFIRM;
   lastStateChangeTime = millis();
+  last_activity_time = millis();
   Serial.printf("[QC_STEP] RF_CHECK: CONFIRMING (%d tips)\n", finalCount);
   
   if (enableNuvoton) {
@@ -1760,11 +1797,12 @@ void setup() {
 
 void processKeypress(char rawKey) {
   if (rawKey < '1' || rawKey > '6') return;
+  last_activity_time = millis(); // Refresh activity timer on every keypress!
   const char* keyName = getKeyName(rawKey);
 
   // Cooldown validation for sensitive state changes to prevent key bounce/repeat
   if ((currentState == STATE_SYNC_CONFIRM || currentState == STATE_RF_RUNNING || currentState == STATE_RF_CONFIRM) && 
-      (millis() - lastStateChangeTime < 350)) {
+      (millis() - lastStateChangeTime < 150)) {
     Serial.printf("[QC_JIG] Cooldown active: Ignoring keypress '%s' in state %d\n", keyName, currentState);
     return;
   }

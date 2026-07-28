@@ -9857,12 +9857,13 @@ function getManageRecordsHtml() {
 
     function detectBootLoop(line) {
       const lineUpper = line.toUpperCase();
-      if (lineUpper.includes("ENTRY 0X4008059C") || lineUpper.includes("RTCWDT_RTC_RESET") || lineUpper.includes("RTCWDT")) {
+      // Only count genuine hardware watchdog panics or SPI flash read error banners
+      if (lineUpper.includes("RTCWDT_RTC_RESET") || lineUpper.includes("TG0WDT_SYS_RESET") || lineUpper.includes("FLASH_READ_ERR") || lineUpper.includes("SPI_FAST_FLASH_BOOT FAILED")) {
         bootLoopCounter++;
-        logToConsole(`⚠️ Warning: Bootloader entry or Watchdog reset signature detected (${bootLoopCounter}/3). Checking for boot loop...`, "warning");
+        logToConsole(`⚠️ Warning: Watchdog panic or flash read failure detected (${bootLoopCounter}/3).`, "warning");
         
         if (bootLoopCounter >= 3) {
-          logToConsole("🚨 CRITICAL ERROR: Boot loop detected! The ESP32 is resetting repeatedly at the bootloader entry point. SPI Flash reads are failing.", "error");
+          logToConsole("🚨 CRITICAL ERROR: True Boot loop detected! The ESP32 is resetting repeatedly due to RTC Watchdog or SPI flash failure.", "error");
           
           cancelReadLoop = true;
           
@@ -9870,7 +9871,7 @@ function getManageRecordsHtml() {
             const bootloopDetails = `
               <div style="text-align: left; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 0.5rem; padding: 0.8rem 1rem; color: var(--text-color); margin-top: 1rem; line-height: 1.4; font-size: 0.8rem; width: 100%; box-sizing: border-box;">
                 <strong style="color: var(--danger); display: block; font-size: 0.85rem; margin-bottom: 0.3rem;">🚨 Boot Loop / SPI Flash read failure detected!</strong>
-                The board is resetting repeatedly (RTC Watchdog Reset) at bootloader entry. Check the following:
+                The board is resetting repeatedly (RTC Watchdog Reset). Check the following:
                 <ul style="margin: 0.3rem 0 0 1.2rem; padding: 0; color: hsl(3, 84%, 84%);">
                   <li><b>Solder Joint:</b> Re-flow ESP32 module SPI flash pins (CLK, DATA_0/1, CMD).</li>
                   <li><b>Decoupling Caps:</b> Check 100nF / 10uF capacitors near module 3V3 input.</li>
@@ -9898,7 +9899,9 @@ function getManageRecordsHtml() {
       
       if (lineUpper.includes("WAITING_FOR_CONFIG") || 
           lineUpper.includes("[QC_START]") || 
-          lineUpper.includes("QC TEST FIRMWARE START") ||
+          lineUpper.includes("[QC_STEP]") ||
+          lineUpper.includes("QC TEST FIRMWARE") ||
+          lineUpper.includes("FIRMWARE BUILD INFO") ||
           lineUpper.includes("SYS_BOOT") ||
           lineUpper.includes("BOOTING")) {
         bootLoopCounter = 0;
