@@ -3766,19 +3766,23 @@
         <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.45rem;">
           <div>
             <label style="font-size: 0.63rem; color: #94a3b8; display: block; margin-bottom: 0.1rem;">Box 1 Barcode *</label>
-            <input type="text" id="sysPairBox1Input" placeholder="5001-F-XXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <input type="text" id="sysPairBox1Input" placeholder="5001-F-XXXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <span id="warnSysPairBox1" style="display:none;font-size:0.58rem;color:#fbbf24;margin-top:0.1rem;"></span>
           </div>
           <div>
             <label style="font-size: 0.63rem; color: #34d399; display: block; margin-bottom: 0.1rem;">ESP32 Barcode</label>
-            <input type="text" id="sysPairEspInput" placeholder="ESP32-XXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <input type="text" id="sysPairEspInput" placeholder="3001-F-XXXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <span id="warnSysPairEsp" style="display:none;font-size:0.58rem;color:#fbbf24;margin-top:0.1rem;"></span>
           </div>
           <div>
             <label style="font-size: 0.63rem; color: #34d399; display: block; margin-bottom: 0.1rem;">GPRS Barcode</label>
-            <input type="text" id="sysPairGprsInput" placeholder="GPRS-XXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <input type="text" id="sysPairGprsInput" placeholder="3002-F-XXXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <span id="warnSysPairGprs" style="display:none;font-size:0.58rem;color:#fbbf24;margin-top:0.1rem;"></span>
           </div>
           <div>
             <label style="font-size: 0.63rem; color: #fbbf24; display: block; margin-bottom: 0.1rem;">Nuvoton Barcode</label>
-            <input type="text" id="sysPairNuvInput" placeholder="NUV-XXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <input type="text" id="sysPairNuvInput" placeholder="7000-F-XXXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <span id="warnSysPairNuv" style="display:none;font-size:0.58rem;color:#fbbf24;margin-top:0.1rem;"></span>
           </div>
         </div>
       </div>
@@ -3791,19 +3795,23 @@
         <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.45rem;">
           <div>
             <label style="font-size: 0.63rem; color: #94a3b8; display: block; margin-bottom: 0.1rem;">Box 2 Barcode</label>
-            <input type="text" id="sysPairBox2Input" placeholder="5001-P-XXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <input type="text" id="sysPairBox2Input" placeholder="6000-F-XXXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <span id="warnSysPairBox2" style="display:none;font-size:0.58rem;color:#fbbf24;margin-top:0.1rem;"></span>
           </div>
           <div>
             <label style="font-size: 0.63rem; color: #a78bfa; display: block; margin-bottom: 0.1rem;">MPPT Barcode</label>
-            <input type="text" id="sysPairMpptInput" placeholder="MPPT-XXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <input type="text" id="sysPairMpptInput" placeholder="3003-F-XXXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <span id="warnSysPairMppt" style="display:none;font-size:0.58rem;color:#fbbf24;margin-top:0.1rem;"></span>
           </div>
           <div>
             <label style="font-size: 0.63rem; color: #94a3b8; display: block; margin-bottom: 0.1rem;">Battery 1 Barcode</label>
-            <input type="text" id="sysPairBatt1Input" placeholder="BAT1-XXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <input type="text" id="sysPairBatt1Input" placeholder="4002-F-XXXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <span id="warnSysPairBatt1" style="display:none;font-size:0.58rem;color:#fbbf24;margin-top:0.1rem;"></span>
           </div>
           <div>
             <label style="font-size: 0.63rem; color: #94a3b8; display: block; margin-bottom: 0.1rem;">Battery 2 Barcode</label>
-            <input type="text" id="sysPairBatt2Input" placeholder="BAT2-XXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <input type="text" id="sysPairBatt2Input" placeholder="4003-F-XXXXX" style="width: 100%; padding: 0.25rem 0.45rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 0.3rem; color: #fff; font-size: 0.72rem; font-family: monospace;">
+            <span id="warnSysPairBatt2" style="display:none;font-size:0.58rem;color:#fbbf24;margin-top:0.1rem;"></span>
           </div>
         </div>
       </div>
@@ -7186,6 +7194,36 @@ function getManageRecordsHtml() {
       }
     }
 
+    // -------------------------------------------------------
+    // Barcode Prefix Format Rules & Validation
+    // -------------------------------------------------------
+    const BARCODE_PREFIX_RULES = {
+      "BOX1": { prefixes: ["5001-F-"], expected: "5001-F-XXXXX", label: "DL Enclosure Box 1" },
+      "BOX2": { prefixes: ["6000-F-"], expected: "6000-F-XXXXX", label: "PS Enclosure Box 2" },
+      "ESP":  { prefixes: ["3001-F-"], expected: "3001-F-XXXXX", label: "ESP32 Board" },
+      "GPRS": { prefixes: ["3002-F-"], expected: "3002-F-XXXXX", label: "GPRS Board" },
+      "NUV":  { prefixes: ["7000-F-"], expected: "7000-F-XXXXX", label: "UI / Nuvoton Board" },
+      "BATT": { prefixes: ["4002-F-", "4003-F-"], expected: "4002-F-XXXXX / 4003-F-XXXXX", label: "3.2V / 3.7V Battery" },
+      "MPPT": { prefixes: ["3003-F-", "3005-F-"], expected: "3003-F-XXXXX / 3005-F-XXXXX", label: "MPPT Board" }
+    };
+
+    function checkBarcodePrefix(val, typeKey) {
+      if (!val || val.trim() === "" || val.trim() === "--") return { valid: true };
+      const rule = BARCODE_PREFIX_RULES[typeKey];
+      if (!rule) return { valid: true };
+      const clean = val.trim().toUpperCase();
+      const match = rule.prefixes.some(p => clean.startsWith(p.toUpperCase()));
+      if (!match) {
+        return {
+          valid: false,
+          expected: rule.expected,
+          label: rule.label,
+          warning: `⚠️ Non-standard prefix for ${rule.label} ("${val}"). Expected format: ${rule.expected}`
+        };
+      }
+      return { valid: true };
+    }
+
     let repairBinInventory = [];
     let hasInventoryBlocker = false;
 
@@ -7243,7 +7281,30 @@ function getManageRecordsHtml() {
           return;
         }
 
-        // 1. Check if in Repair Bin
+        // 1. Check Prefix Format Warning
+        const typeKeyMap = {
+          "ESP32 Board": "ESP",
+          "GPRS Modem": "GPRS",
+          "Nuvoton LCD": "NUV",
+          "PS Enclosure": "BOX2",
+          "DL Enclosure": "BOX1",
+          "Battery 1": "BATT",
+          "Battery 2": "BATT",
+          "MPPT Board": "MPPT"
+        };
+        const typeKey = typeKeyMap[typeName];
+        if (typeKey) {
+          const pCheck = checkBarcodePrefix(val, typeKey);
+          if (!pCheck.valid) {
+            badgeEl.textContent = "⚠️ FORMAT WARN";
+            badgeEl.style.background = "rgba(245,158,11,0.2)";
+            badgeEl.style.color = "#fbbf24";
+            badgeEl.style.border = "1px solid rgba(245,158,11,0.5)";
+            badgeEl.title = pCheck.warning;
+          }
+        }
+
+        // 2. Check if in Repair Bin
         const repairItem = checkBarcodeInventoryStatus(val);
         if (repairItem) {
           const status = repairItem["Status"] || "NEEDS_REPAIR";
@@ -7290,7 +7351,7 @@ function getManageRecordsHtml() {
           }
         }
 
-        // 2. If not in Repair Bin, show normal badges
+        // 3. If not in Repair Bin, show normal badges
         if (isRepairTab) {
           if (originalVal && val !== originalVal) {
             badgeEl.textContent = "SWAPPED!";
@@ -8289,6 +8350,40 @@ function getManageRecordsHtml() {
             if (customIn) customIn.style.display = (testerInput.value === "custom") ? "block" : "none";
           }
 
+          // Wire realtime barcode prefix validation & border glow
+          const wireRealtimePrefixCheck = (inputEl, warnEl, typeKey) => {
+            if (!inputEl || !warnEl) return;
+            const updateWarn = () => {
+              const val = inputEl.value.trim();
+              if (!val || val === "--") {
+                warnEl.style.display = "none";
+                inputEl.style.borderColor = "var(--card-border)";
+                return;
+              }
+              const res = checkBarcodePrefix(val, typeKey);
+              if (!res.valid) {
+                warnEl.textContent = `⚠️ Expected: ${res.expected}`;
+                warnEl.style.display = "block";
+                inputEl.style.borderColor = "#f59e0b";
+              } else {
+                warnEl.style.display = "none";
+                inputEl.style.borderColor = "#10b981";
+              }
+            };
+            inputEl.removeEventListener("input", updateWarn);
+            inputEl.addEventListener("input", updateWarn);
+            updateWarn();
+          };
+
+          wireRealtimePrefixCheck(box1Input, document.getElementById("warnSysPairBox1"), "BOX1");
+          wireRealtimePrefixCheck(espInput, document.getElementById("warnSysPairEsp"), "ESP");
+          wireRealtimePrefixCheck(gprsInput, document.getElementById("warnSysPairGprs"), "GPRS");
+          wireRealtimePrefixCheck(nuvInput, document.getElementById("warnSysPairNuv"), "NUV");
+          wireRealtimePrefixCheck(box2Input, document.getElementById("warnSysPairBox2"), "BOX2");
+          wireRealtimePrefixCheck(mpptInput, document.getElementById("warnSysPairMppt"), "MPPT");
+          wireRealtimePrefixCheck(batt1Input, document.getElementById("warnSysPairBatt1"), "BATT");
+          wireRealtimePrefixCheck(batt2Input, document.getElementById("warnSysPairBatt2"), "BATT");
+
           const modal = document.getElementById("modalSystemPair");
           if (modal) {
             modal.style.display = "flex";
@@ -8694,6 +8789,41 @@ function getManageRecordsHtml() {
               return;
             }
             logToConsole(`⚠️ User confirmed unpairing GPRS [${gprsVal}] from ${existingSys.box1} to pair with ${box1Val}`, "warning");
+          }
+        }
+
+        // 3. BARCODE PREFIX FORMAT WARNINGS
+        const prefixChecks = [
+          { val: box1Val, key: "BOX1", name: "Box 1 (DL Enclosure)" },
+          { val: box2Val, key: "BOX2", name: "Box 2 (PS Enclosure)" },
+          { val: espVal, key: "ESP", name: "ESP32 Board" },
+          { val: gprsVal, key: "GPRS", name: "GPRS Board" },
+          { val: nuvVal, key: "NUV", name: "Nuvoton Display" },
+          { val: batt1Val, key: "BATT", name: "Battery 1" },
+          { val: batt2Val, key: "BATT", name: "Battery 2" },
+          { val: mpptVal, key: "MPPT", name: "MPPT Board" }
+        ];
+
+        const formatWarnings = [];
+        prefixChecks.forEach(c => {
+          if (c.val && c.val !== "--") {
+            const res = checkBarcodePrefix(c.val, c.key);
+            if (!res.valid) {
+              formatWarnings.push(`• ${c.name} [${c.val}]: Expected format ${res.expected}`);
+            }
+          }
+        });
+
+        if (formatWarnings.length > 0) {
+          const confirmFormat = confirm(
+            `⚠️ Non-Standard Barcode Format Warning:\n\n` +
+            `The following scanned barcodes do not follow the standard prefix format:\n\n` +
+            formatWarnings.join("\n") + `\n\n` +
+            `Do you still want to proceed and save assembly with these barcodes?`
+          );
+          if (!confirmFormat) {
+            if (statusEl) { statusEl.textContent = "Cancelled to correct barcode formats."; statusEl.style.color = "#fbbf24"; }
+            return;
           }
         }
 
