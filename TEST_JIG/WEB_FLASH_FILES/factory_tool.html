@@ -12467,15 +12467,15 @@ function getManageRecordsHtml() {
       window._lastSerialDataTime = Date.now();
       if (window._serialInactivityInterval) clearInterval(window._serialInactivityInterval);
       window._serialInactivityInterval = setInterval(() => {
-        if (!cancelReadLoop && isConnected && Date.now() - window._lastSerialDataTime > 120000) {
-          logToConsole("⚠️ Serial Inactivity Watchdog: No data received for 120s. Unlocking UI controls.", "warning");
+        if (!cancelReadLoop && isConnected && !isFlashing && (Date.now() - window._lastSerialDataTime > 300000)) {
+          logToConsole("⚠️ Serial Inactivity Watchdog: No data received for >300s. Unlocking UI controls.", "warning");
           cancelReadLoop = true;
           if (activeReader) {
             try { activeReader.cancel(); } catch(e){}
           }
           stopDiagnostics();
         }
-      }, 5000);
+      }, 10000);
 
       // Loop reading incoming logs
       while (serialPort.readable && !cancelReadLoop) {
