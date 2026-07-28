@@ -7972,7 +7972,36 @@ function getManageRecordsHtml() {
         const totalSpares     = stats.totalSpares     || 0;
 
         // --- Category Breakdown Table ---
-        const categories = stats.categories || {};
+        // Dynamically compute category stats client-side using barcode prefix standards
+        const categories = {
+          "ESP32":   { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 },
+          "GPRS":    { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 },
+          "Nuvoton": { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 },
+          "MPPT":    { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 },
+          "Battery": { "tested": 0, "passed": 0, "failed": 0, "repaired": 0, "scrapped": 0, "integrated": 0, "spares": 0 }
+        };
+
+        summaryBoardData.forEach(b => {
+          const derivedType = deriveCategoryFromBarcode(b.barcode, b.type);
+          let normCat = "ESP32";
+          if (derivedType === "GPRS") normCat = "GPRS";
+          else if (derivedType === "NUVOTON") normCat = "Nuvoton";
+          else if (derivedType === "MPPT") normCat = "MPPT";
+          else if (derivedType.includes("BATTERY")) normCat = "Battery";
+
+          const cStats = categories[normCat];
+          if (cStats) {
+            cStats.tested++;
+            if (b.verdict === "PASS") cStats.passed++;
+            else if (b.verdict && b.verdict.indexOf("FAIL") === 0) cStats.failed++;
+            else if (b.verdict === "REPAIRED") cStats.repaired++;
+            else if (b.verdict === "SCRAPPED") cStats.scrapped++;
+
+            if (b.integrated) cStats.integrated++;
+            else if (b.spare) cStats.spares++;
+          }
+        });
+
         const catNames = ["ESP32", "GPRS", "Nuvoton", "MPPT", "Battery"];
         if (boardTbl) {
           if (!catNames.some(c => categories[c])) {
