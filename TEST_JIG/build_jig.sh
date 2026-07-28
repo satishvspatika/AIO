@@ -263,8 +263,9 @@ if [ $HTML_DIFF_STATUS -ne 0 ]; then
 fi
 echo "✅ HTML verification passed successfully!"
 
-# Copy the HTML serial portal dashboard
-cp "$TEST_JIG_DIR/factory_tool.html" "$OUT_DIR/factory_tool.html"
+# Copy the HTML serial portal dashboard (force physical file copy, not symlink)
+rm -f "$OUT_DIR/factory_tool.html"
+cp -f "$TEST_JIG_DIR/factory_tool.html" "$OUT_DIR/factory_tool.html"
 
 # Extract Firmware Version from user_config.h and write to version.txt
 FW_VER=$(grep '#define FIRMWARE_VERSION' "$WORKSPACE_ROOT/user_config.h" | sed 's/.*"\(.*\)".*/\1/')
@@ -281,32 +282,159 @@ if [ "$QC_ONLY" = false ]; then
   echo "=================================================="
   echo "  STEP 4: Building Named Release Configurations   "
   echo "=================================================="
-  
-  if [ -f "$WORKSPACE_ROOT/build_all_configs.py" ]; then
+
+  # Read current user_config.h to determine if production_Xmb.bin already matches target config
+  CURRENT_UNIT=$(grep '#define UNIT_CFG' "$WORKSPACE_ROOT/user_config.h" | sed 's/.*"\(.*\)".*/\1/')
+  CURRENT_UI=$(grep '#define USE_NUVOTON_UI' "$WORKSPACE_ROOT/user_config.h" | awk '{print $3}')
+  CURRENT_UI_SUFFIX=$([ "$CURRENT_UI" = "1" ] && echo "NUV" || echo "MAT")
+  CURRENT_UI_NAME=$([ "$CURRENT_UI" = "1" ] && echo "nuvoton" || echo "matrix")
+
+  echo "→ Current config in user_config.h: UNIT=${CURRENT_UNIT}, UI=${CURRENT_UI_SUFFIX}"
+
+  # Check if the requested --configs and --ui match what was already compiled in Phase 1
+  SINGLE_CONFIG_MATCH=false
+  if [ "$CONFIGS_VAL" = "$CURRENT_UNIT" ] && [ "$UI_VAL" = "$CURRENT_UI_NAME" ] || \
+     [ "$CONFIGS_VAL" = "$CURRENT_UNIT" ] && [ "$UI_VAL" = "nuvoton" ] && [ "$CURRENT_UI" = "1" ] || \
+     [ "$CONFIGS_VAL" = "$CURRENT_UNIT" ] && [ "$UI_VAL" = "matrix" ] && [ "$CURRENT_UI" = "0" ]; then
+    SINGLE_CONFIG_MATCH=true
+  fi
+
+  if [ "$SINGLE_CONFIG_MATCH" = true ]; then
+    echo "✓ Config '${CONFIGS_VAL} (${CURRENT_UI_SUFFIX})' matches already-compiled production binary."
+    echo "  → Reusing production_Xmb.bin directly (skipping redundant recompile)."
+    echo ""
+
+    # Generate metadata using Python from current user_config.h
+    FLASH_ARG="8mb"
+    if [ "$BUILD_8MB" = false ] && [ "$BUILD_16MB" = true ]; then
+      FLASH_ARG="16mb"
+    fi
+
+    cd "$WORKSPACE_ROOT"
+    python3 - <<PYEOF
+import json, re, sys, os, shutil
+from datetime import datetime
+from pathlib import Path
+
+ws = Path("$WORKSPACE_ROOT")
+out_dir = Path("$OUT_DIR")
+fw_ver = "$FW_VER"
+unit = "$CURRENT_UNIT"
+ui_val = $CURRENT_UI
+current_ui_suffix = "$CURRENT_UI_SUFFIX"
+build_8mb = "$BUILD_8MB" == "true"
+build_16mb = "$BUILD_16MB" == "true"
+
+cfg_h = ws / "user_config.h"
+raw = cfg_h.read_text()
+joined = re.sub(r'\\\s*\n\s*', ' ', raw)
+
+def get_int(name):
+    m = re.search(rf'#define {name}\s+(\d+)', joined)
+    return int(m.group(1)) if m else None
+
+def get_float(name):
+    m = re.search(rf'#define {name}\s+([0-9.]+)', joined)
+    return float(m.group(1)) if m else None
+
+health_val = get_int('TEST_HEALTH_DEFAULT')
+health_en_val = get_int('ENABLE_HEALTH_REPORT')
+health_freq_map = {0: 'Daily (11am)', 1: 'Every 15 mins', 2: 'Disabled'}
+
+# Full version string
+system_val = get_int('SYSTEM') or 0
+if unit == "KSNDMC_TRG":
+    base_ver = f"TRG9-DMC-{fw_ver}"
+elif unit == "BIHAR_TRG":
+    base_ver = f"TRG9-BIH-{fw_ver}"
+elif unit == "KSNDMC_TWS":
+    base_ver = f"TWS9-DMC-{fw_ver}"
+elif unit == "KSNDMC_ADDON":
+    base_ver = f"TWSRF9-DMC-{fw_ver}"
+elif unit == "SPATIKA_GEN":
+    base_ver = f"TWSRF9-GEN-{fw_ver}"
+else:
+    base_ver = f"UNK-{fw_ver}"
+ui_suffix = "-N" if ui_val == 1 else "-M"
+full_version = base_ver + ui_suffix
+
+system_type = ['TRG','TWS','TWS-RF'][system_val] if system_val in [0,1,2] else str(system_val)
+
+sizes_to_build = []
+if build_8mb:
+    sizes_to_build.append(("8mb", out_dir / "production_8mb.bin"))
+if build_16mb:
+    sizes_to_build.append(("16mb", out_dir / "production_16mb.bin"))
+
+for flash_size, src_bin in sizes_to_build:
+    if not src_bin.exists():
+        print(f"  ⚠ {src_bin.name} not found, skipping {flash_size}")
+        continue
+
+    config_name = f"{unit}_{current_ui_suffix}_{flash_size}"
+    dest = out_dir / config_name
+    dest.mkdir(parents=True, exist_ok=True)
+
+    shutil.copy(src_bin, dest / "firmware.bin")
+    (dest / "fw_version.txt").write_text(full_version)
+
+    bin_size = src_bin.stat().st_size
+    metadata = {
+        "config": unit,
+        "unit_cfg": unit,
+        "system_type": system_type,
+        "flash_size": flash_size,
+        "full_version": full_version,
+        "firmware_version": fw_ver,
+        "binary_size_bytes": bin_size,
+        "build_timestamp": datetime.now().isoformat(timespec='seconds'),
+        "debug": bool(get_int('DEBUG')),
+        "enable_webserver": bool(get_int('ENABLE_WEBSERVER')),
+        "use_nuvoton_ui": bool(ui_val),
+        "enable_health_report": bool(health_en_val) if health_en_val is not None else False,
+        "health_report_freq": health_freq_map.get(health_val, 'Unknown') if health_val is not None else 'Unknown',
+        "rf_resolution_mm": get_float('DEFAULT_RF_RESOLUTION'),
+        "wind_teeth_count": get_float('WIND_TEETH_COUNT'),
+        "enable_pressure_sensor": bool(get_int('ENABLE_PRESSURE_SENSOR')),
+        "enable_calib_test": bool(get_int('ENABLE_CALIB_TEST')),
+    }
+    (dest / "metadata.json").write_text(json.dumps(metadata, indent=2))
+    size_mb = bin_size / (1024*1024)
+    print(f"  ✓ {config_name} ({size_mb:.2f} MB) — {full_version} (reused from production binary)")
+
+print("→ Named configs packaged (fast reuse mode).")
+PYEOF
+    STEP4_STATUS=$?
+    if [ $STEP4_STATUS -ne 0 ]; then
+      echo "❌ Fast-reuse packaging failed."
+    fi
+
+  else
+    # Config doesn't match — need build_all_configs.py to compile separately
+    if [ -f "$WORKSPACE_ROOT/build_all_configs.py" ]; then
       FLASH_ARG="8mb"
       if [ "$BUILD_8MB" = false ] && [ "$BUILD_16MB" = true ]; then
           FLASH_ARG="16mb"
       fi
 
-      echo "→ Running build_all_configs.py (${FLASH_ARG} targets)..."
+      echo "→ Config '${CONFIGS_VAL}' differs from compiled '${CURRENT_UNIT}' — running build_all_configs.py..."
       cd "$WORKSPACE_ROOT"
       python3 build_all_configs.py --flash $FLASH_ARG --configs "$CONFIGS_VAL" --ui "$UI_VAL"
       BUILD_STATUS=$?
-  
+
       if [ $BUILD_STATUS -ne 0 ]; then
           echo "❌ build_all_configs.py failed. Named configs will not be included."
       else
           echo ""
           echo "--- Copying named config subdirs to WEB_FLASH_FILES ---"
           BUILDS_DIR="$WORKSPACE_ROOT/builds"
-  
+
           for config_dir in "$BUILDS_DIR"/*/; do
               config_name=$(basename "$config_dir")
               src_bin="$config_dir/firmware.bin"
               src_ver="$config_dir/fw_version.txt"
               src_meta="$config_dir/metadata.json"
 
-              # Fallback: if builds/ firmware.bin missing, try build/config_* cache directly
               if [ ! -f "$src_bin" ]; then
                   cache_bin=$(find "$WORKSPACE_ROOT/build/config_${config_name}" -name "*.ino.bin" 2>/dev/null | head -1)
                   if [ -n "$cache_bin" ]; then
@@ -316,7 +444,6 @@ if [ "$QC_ONLY" = false ]; then
               fi
 
               if [ -f "$src_bin" ]; then
-                  # Verify version inside binary before packaging
                   BIN_VER=$(strings "$src_bin" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+$' | head -1)
                   if [ "$BIN_VER" != "$FW_VER" ]; then
                       echo "  ❌ SKIP $config_name: firmware.bin has version '$BIN_VER' inside, expected '$FW_VER'!"
@@ -325,7 +452,6 @@ if [ "$QC_ONLY" = false ]; then
                   fi
 
                   if [ "$FLASH_ARG" == "8mb" ]; then
-                      # Package 8MB Folder
                       dest8="$OUT_DIR/$config_name"
                       mkdir -p "$dest8"
                       cp "$src_bin" "$dest8/firmware.bin"
@@ -333,7 +459,6 @@ if [ "$QC_ONLY" = false ]; then
                       [ -f "$src_meta" ] && cp "$src_meta" "$dest8/metadata.json"
                       echo "  ✓ $config_name — v$BIN_VER verified inside binary"
 
-                      # Package 16MB Folder (reusing the same binaries)
                       if [ "$BUILD_16MB" = true ]; then
                           base_name=$(echo "$config_name" | sed 's/_8mb$//')
                           dest16="$OUT_DIR/${base_name}_16mb"
@@ -354,7 +479,6 @@ with open('$dest16/metadata.json', 'w') as f:
                           echo "  ✓ ${base_name}_16mb ($SIZE) — v$BIN_VER verified"
                       fi
                   else
-                      # FLASH_ARG is 16mb
                       dest16="$OUT_DIR/$config_name"
                       mkdir -p "$dest16"
                       cp "$src_bin" "$dest16/firmware.bin"
@@ -367,8 +491,9 @@ with open('$dest16/metadata.json', 'w') as f:
           done
           echo "→ Named configs packaged."
       fi
-  else
-      echo "⚠  build_all_configs.py not found — skipping named configs."
+    else
+        echo "⚠  build_all_configs.py not found — skipping named configs."
+    fi
   fi
 else
   echo "--- Skipping Named Release Configurations ---"

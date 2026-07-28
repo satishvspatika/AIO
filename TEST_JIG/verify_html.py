@@ -32,8 +32,14 @@ class HTMLValidator(html.parser.HTMLParser):
 
 def main():
     import os
+    import shutil
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    html_path = os.path.join(base_dir, 'factory_tool.html')
+    web_html_path = os.path.join(base_dir, 'WEB_FLASH_FILES', 'factory_tool.html')
+    jig_html_path = os.path.join(base_dir, 'factory_tool.html')
+
+    # Use the WEB_FLASH_FILES version as primary source if newer or present
+    html_path = web_html_path if os.path.exists(web_html_path) else jig_html_path
+
     with open(html_path, 'r', encoding='utf-8') as f:
         html_content = f.read()
 
@@ -56,6 +62,30 @@ def main():
         sys.exit(1)
 
     print("\n✅ HTML is structurally valid!")
+    
+    # Sync bidirectionally so both files are 100% identical
+    if html_path != jig_html_path:
+        shutil.copy2(html_path, jig_html_path)
+    if html_path != web_html_path:
+        shutil.copy2(html_path, web_html_path)
+    # Also explicitly sync web_html_path to jig_html_path and Downloads folder
+    shutil.copy2(web_html_path, jig_html_path)
+    
+    # Sync Windows & Mac launcher scripts
+    web_dir = os.path.join(base_dir, 'WEB_FLASH_FILES')
+    for script_name in ['launch_windows.bat', 'server.ps1', 'launch_mac.command']:
+        src = os.path.join(web_dir, script_name)
+        dst = os.path.join(base_dir, script_name)
+        if os.path.exists(src):
+            shutil.copy2(src, dst)
+        elif os.path.exists(dst):
+            shutil.copy2(dst, src)
+
+    downloads_path = os.path.expanduser('~/Downloads/factory_tool.html')
+    if os.path.exists(os.path.dirname(downloads_path)):
+        shutil.copy2(web_html_path, downloads_path)
+        print("✅ Synced physical file copy to ~/Downloads/factory_tool.html")
+    print("✅ Synced physical file copies and launch scripts (launch_windows.bat / launch_mac.command / server.ps1) between TEST_JIG/ and WEB_FLASH_FILES/")
 
 if __name__ == '__main__':
     main()

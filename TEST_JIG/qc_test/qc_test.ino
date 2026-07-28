@@ -16,7 +16,7 @@
 
 Adafruit_BME280 bme;
 
-#define QC_TEST_VERSION "6.11-QC"
+#define QC_TEST_VERSION "6.13-QC"
 #define WIND_DIR_ADC_MAX 3480
 
 // --- PIN DEFINITIONS (ESP32-WROOM-32U) ---
@@ -669,6 +669,14 @@ bool testTempHum(String &sensorName, float &temp, float &hum) {
   return false;
 }
 
+// Helper to safely cut power and tri-state GPRS UART pins to prevent parasitic powering
+void powerOffGprsModem() {
+  Serial2.end();
+  pinMode(GPRS_TX_PIN, INPUT);
+  pinMode(GPRS_RX_PIN, INPUT);
+  digitalWrite(GPRS_CTRL_PIN, LOW);
+}
+
 // Helper to query Modem with AT commands
 String sendModemAT(const char* cmd, uint32_t timeoutMs) {
   while (Serial2.available()) Serial2.read(); // Flush input
@@ -677,8 +685,13 @@ String sendModemAT(const char* cmd, uint32_t timeoutMs) {
   String response = "";
   uint32_t start = millis();
   while (millis() - start < timeoutMs) {
-    if (Serial2.available()) {
-      response += (char)Serial2.read();
+    while (Serial2.available()) {
+      char c = (char)Serial2.read();
+      response += c;
+      if (response.indexOf("OK\r") >= 0 || response.indexOf("OK\n") >= 0 || 
+          response.indexOf("ERROR\r") >= 0 || response.indexOf("ERROR\n") >= 0) {
+        return response; // Return early on match to eliminate unnecessary delay
+      }
     }
     delay(1); // Yield CPU and feed watchdog
   }
@@ -859,7 +872,7 @@ bool checkSdFirmwareExists() {
 
 void enterSyncConfirmState(bool pass) {
   // Safety: Turn off GPRS board power to ensure socket is safe for hot swapping in all outcomes (PASS or FAIL)
-  digitalWrite(GPRS_CTRL_PIN, LOW);
+  powerOffGprsModem();
 
   if (pass && !sdOtaDecisionMade) {
     sdOtaDecisionMade = true;
@@ -915,7 +928,7 @@ void startDeepSleepTest() {
   
   // Cut power to LCD and GPRS PMOS gates (active-HIGH PMOS gate, write LOW to turn off)
   digitalWrite(LCD_CTRL_PIN, LOW);
-  digitalWrite(GPRS_CTRL_PIN, LOW);
+  powerOffGprsModem();
   delay(100);
   
   // Set the flag so we know this sleep was for the test verification wakeup
@@ -935,7 +948,7 @@ void goToIdleSleep() {
   
   // Cut power to LCD and GPRS PMOS gates (active-HIGH PMOS gate, write LOW to turn off)
   digitalWrite(LCD_CTRL_PIN, LOW);
-  digitalWrite(GPRS_CTRL_PIN, LOW);
+  powerOffGprsModem();
   delay(100);
   
   // This is a power-saving sleep, not the test verification wakeup
@@ -1295,21 +1308,26 @@ void setup() {
   
   // 5. GPRS Modem Setup and Test
   if (enableGPRS && !hardware_check_failed) {
-    showProgress("DIAG: GPRS MDM", "DISCHARGING 4s");
-    delay(4000);                       // Keep GPRS off for 4 seconds to fully discharge
+    showProgress("DIAG: GPRS MDM", "STABILIZING 4s");
     digitalWrite(GPRS_CTRL_PIN, HIGH); // Power ON GPRS board
-    showProgress("DIAG: GPRS MDM", "STABILIZING 3s");
-    delay(3000);                       // Wait 3 seconds for power rails to stabilize
+    delay(4000);                       // Allow 4 seconds for bulk capacitors & modem PMIC to stabilize cleanly
     
     showProgress("DIAG: GPRS MDM", "INITIALIZING...");
     Serial.println("[QC_JIG] Initializing GPRS Modem UART2...");
     Serial2.begin(115200, SERIAL_8N1, GPRS_RX_PIN, GPRS_TX_PIN);
     
+    // Pulse dummy AT commands to lock auto-baud rate detector
+    for (int bSync = 0; bSync < 3; bSync++) {
+      Serial2.println("AT");
+      delay(150);
+      while (Serial2.available()) Serial2.read();
+    }
+    
     bool modem_init_ok = false;
-    // Poll AT up to 15 times to wait for boot
-    for (int i = 0; i < 15; i++) {
+    // Poll AT up to 20 times (10s window) to ensure modem PMIC soft-start completes
+    for (int i = 0; i < 20; i++) {
       char statusBuf[32];
-      snprintf(statusBuf, sizeof(statusBuf), "POLL AT %d/15", i + 1);
+      snprintf(statusBuf, sizeof(statusBuf), "POLL AT %d/20", i + 1);
       showProgress("DIAG: GPRS MDM", statusBuf);
       String res = sendModemAT("AT", 500);
       if (res.indexOf("OK") >= 0) {
@@ -1322,6 +1340,7 @@ void setup() {
     if (modem_init_ok) {
       Serial.println("[PASS] MODEM_INIT: OK");
       showProgress("DIAG: GPRS MDM", "AT OK");
+      sendModemAT("AT+IPR=115200", 500); // Lock modem baud rate permanently
 
       // Enable verbose error messages
       sendModemAT("AT+CMEE=2", 500);
