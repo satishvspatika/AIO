@@ -1278,6 +1278,40 @@
     .console-err  { color: hsl(3, 88%, 68%); }
     .console-warn { color: hsl(40, 90%, 64%); }
     .console-info { color: hsl(160, 58%, 54%); }
+    
+    .console-yes {
+      color: #10b981 !important;
+      font-weight: 800 !important;
+      background: rgba(16, 185, 129, 0.16) !important;
+      padding: 1px 6px !important;
+      border-radius: 4px !important;
+      border: 1px solid rgba(16, 185, 129, 0.4) !important;
+      display: inline-block !important;
+      line-height: 1.2 !important;
+    }
+    .console-no {
+      color: #ef4444 !important;
+      font-weight: 800 !important;
+      background: rgba(239, 68, 68, 0.16) !important;
+      padding: 1px 6px !important;
+      border-radius: 4px !important;
+      border: 1px solid rgba(239, 68, 68, 0.4) !important;
+      display: inline-block !important;
+      line-height: 1.2 !important;
+    }
+
+    body.theme-light .console-yes {
+      color: #15803d !important;
+      font-weight: 800 !important;
+      background: #dcfce7 !important;
+      border: 1px solid #86efac !important;
+    }
+    body.theme-light .console-no {
+      color: #dc2626 !important;
+      font-weight: 800 !important;
+      background: #fee2e2 !important;
+      border: 1px solid #fca5a5 !important;
+    }
 
     /* Progress bar */
     .progress-bar-container {
@@ -10289,7 +10323,7 @@ function getManageRecordsHtml() {
       else if (type === "info") p.className = "console-info";
 
       // Color YES green and NO red if they appear next to a colon
-      if (message.includes(": YES") || message.includes(": NO")) {
+      if (/(:\s*)(YES|NO)\b/.test(message)) {
         let lastIdx = 0;
         const regex = /(:\s*)(YES|NO)\b/g;
         let match;
@@ -10300,12 +10334,7 @@ function getManageRecordsHtml() {
           p.appendChild(document.createTextNode(match[1]));
           const span = document.createElement("span");
           span.textContent = match[2];
-          span.style.fontWeight = "700";
-          if (match[2] === "YES") {
-            span.style.color = "hsl(140, 80%, 65%)"; // Vibrant green
-          } else {
-            span.style.color = "hsl(3, 85%, 65%)"; // Vibrant red
-          }
+          span.className = match[2] === "YES" ? "console-yes" : "console-no";
           p.appendChild(span);
           lastIdx = regex.lastIndex;
         }
