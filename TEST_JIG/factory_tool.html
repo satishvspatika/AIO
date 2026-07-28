@@ -9779,7 +9779,10 @@ function getManageRecordsHtml() {
 
     async function handleSyncDecision(verdict, shouldSync) {
       hideOperatorPrompt();
-      if (window._isSyncingDecision) return;
+      if (window._isSyncingDecision) {
+        logToConsole("⚠️ Previous sync lock released. Resetting state for fresh sync request...", "warning");
+        window._isSyncingDecision = false;
+      }
       window._isSyncingDecision = true;
       window._pendingSyncVerdict = null;
       let syncMsg = "";
@@ -10085,7 +10088,7 @@ function getManageRecordsHtml() {
 
     // Auto-Sync Function
     async function autoSyncToGoogleSheets(verdict) {
-      const url = sheetUrlInput.value.trim();
+      const url = sheetUrlInput?.value?.trim() || "";
       if (!url) {
         logToConsole("Google Sheet sync skipped (No Script URL configured).", "warning");
         return false;
@@ -10093,134 +10096,136 @@ function getManageRecordsHtml() {
       
       logToConsole("Syncing test results to Google Sheet...", "normal");
       
-      const espVal = testCfgEsp.checked ? "ESP" : "";
-      const gprsVal = testCfgGprs.checked ? "GPRS" : "";
-      const nuvVal = testCfgNuvoton.checked ? "NUV" : "";
-      const subsystemsTested = [espVal, gprsVal, nuvVal].filter(Boolean).join(" + ");
-      const profileVal = document.getElementById("deviceProfile")?.value || "TRG";
-      const isFailText = (val) => {
-        if (!val) return false;
-        const s = val.toString().toUpperCase();
-        return s.includes("FAIL") || s.includes("NO COMM") || s.includes("NO RESPONSE") || s.includes("TIMEOUT") || s.includes("ERROR");
-      };
-
-      let failReasons = [];
-      if (testCfgEsp.checked) {
-        if (isFailText(valSpiffs.textContent)) failReasons.push("SPIFFS Fail");
-        if (isFailText(valSd.textContent)) failReasons.push("SD Card Fail");
-        if (isFailText(valRtc.textContent)) failReasons.push("RTC Fail");
-        if (isFailText(valWifi.textContent)) failReasons.push("WiFi Fail");
-        if (isFailText(valSensor.textContent)) failReasons.push("Sensor Fail");
-        if (isFailText(valSleep.textContent)) failReasons.push("EXT0 Sleep Wake Fail");
-      }
-      if (testCfgGprs.checked) {
-        if (isFailText(valGprs.textContent)) failReasons.push("Cellular Reg Fail");
-      }
-      if (testCfgNuvoton.checked) {
-        if (isFailText(valNuvoton.textContent)) failReasons.push("Nuvoton Comms Fail");
-        if (isFailText(valLcd.textContent)) failReasons.push("LCD Verification Fail");
-        if (isFailText(valKeypad.textContent)) failReasons.push("Keypad Sweep Fail");
-        if (isFailText(valRf.textContent)) failReasons.push("Rainfall Test Fail");
-      }
-
-      let finalVerdict = `${verdict} (${profileVal})`;
-      if (verdict && verdict.indexOf("PASS") !== 0 && verdict.indexOf("DISCARDED") !== 0) {
-        if (failReasons.length > 0) {
-          finalVerdict = `FAIL: ${failReasons.join(", ")} (${profileVal})`;
-        }
-      }
-      if (window._lastUpdateMethod === "LAPTOP" && window._laptopFlashStatus === "FAILED") {
-        finalVerdict = `FAIL (Flash Failed)`;
-      }
-
-      let versionVal = metaFwVersion.textContent;
-      if (window._lastUpdateMethod === "LAPTOP") {
-        if (window._laptopFlashStatus === "SUCCESS") {
-          const activeConfig = releaseConfigSel?.value || "KSNDMC_TRG";
-          const uiKey = (uiVariantSelect?.value === "nuvoton") ? "nuvoton" : "matrix";
-          const currentSizeKey = currentChipSize ? `${currentChipSize}mb` : "16mb";
-          const sizeMap = activeConfig ? (customConfigVault[activeConfig]?.[currentSizeKey] || customConfigVault[activeConfig]?.["8mb"]) : null;
-          const sizeEntry = sizeMap ? sizeMap[uiKey] : null;
-          const fullVer = sizeEntry?.metadata?.full_version || sizeEntry?.version || metaFwVersion.getAttribute("data-prod-ver") || "6.16";
-          versionVal = fullVer;
-        } else {
-          versionVal = `Flash Failed (${activeConfig})`;
-        }
-      } else if (window._sdOtaApproved) {
-        const prodVer = window._detectedSdVersion || metaFwVersion.getAttribute("data-prod-ver") || "6.16";
-        versionVal = `v${prodVer}`;
-      } else {
-        versionVal = `${versionVal} (Not Updated)`;
-      }
-
-      let spiffsVal = valSpiffs.textContent;
-      let sdVal = valSd.textContent;
-      let rtcVal = valRtc.textContent;
-      let wifiVal = valWifi.textContent;
-      let sensorVal = valSensor.textContent;
-      let windSpeedVal = valWindSpd.textContent;
-      let windDirVal = valWindDir.textContent;
-      let cellularVal = valGprs.textContent;
-      let lcdVal = valLcd.textContent;
-      let keypadVal = valKeypad.textContent;
-      let rainRfVal = valRf.textContent;
-      let sleepWakeVal = valSleep.textContent;
-      let batteryVal = `ESP32: ${valSys3v3.textContent} | GPRS: ${valBatt.textContent}`;
-      let solarVal = valSolar.textContent;
-
-      if (window._lastUpdateMethod === "LAPTOP" && window._laptopFlashStatus === "SUCCESS") {
-        // Software Update Only: Board was already QC passed. Override any un-tested / waiting / fail values to PASS.
-        const isNotPass = (val) => !val || val.includes("FAIL") || val.includes("--") || val.includes("Waiting");
-        if (isNotPass(spiffsVal)) spiffsVal = "PASS";
-        if (isNotPass(sdVal)) sdVal = "PASS";
-        if (isNotPass(rtcVal)) rtcVal = "PASS";
-        if (isNotPass(wifiVal)) wifiVal = "PASS";
-        if (isNotPass(sensorVal)) sensorVal = "PASS";
-        if (isNotPass(windSpeedVal)) windSpeedVal = "PASS";
-        if (isNotPass(windDirVal)) windDirVal = "PASS";
-        if (isNotPass(cellularVal)) cellularVal = "PASS";
-        if (isNotPass(lcdVal)) lcdVal = "PASS";
-        if (isNotPass(keypadVal)) keypadVal = "PASS";
-        if (isNotPass(rainRfVal)) rainRfVal = "PASS";
-        if (isNotPass(sleepWakeVal)) sleepWakeVal = "PASS";
-        if (!valSys3v3.textContent || valSys3v3.textContent.includes("--") || valSys3v3.textContent.includes("Waiting")) batteryVal = "PASS";
-        if (isNotPass(solarVal)) solarVal = "PASS";
-      }
-
-      const payload = {
-        testTime:  new Date().toLocaleString(),
-        espBarcode: testCfgEsp.checked ? barcodeEsp.value.trim() : "",
-        gprsBarcode: testCfgGprs.checked ? barcodeGprs.value.trim() : "",
-        nuvotonBarcode: testCfgNuvoton.checked ? barcodeNuvoton.value.trim() : "",
-        mac:       metaMac.textContent,
-        flashSize: metaFlashSize.textContent,
-        imei:      metaImei.textContent,
-        ccid:      metaCcid.textContent,
-        nuvoton:   metaNuvoton.textContent,
-        spiffs:    spiffsVal,
-        sd:        sdVal,
-        rtc:       rtcVal,
-        wifi:      wifiVal,
-        sensor:    sensorVal,
-        windSpeed: windSpeedVal,
-        windDir:   windDirVal,
-        cellular:  cellularVal,
-        lcd:       lcdVal,
-        keypad:    keypadVal,
-        rainRf:    rainRfVal,
-        sleepWake: sleepWakeVal,
-        battery:   batteryVal,
-        solar:     solarVal,
-        version:   versionVal,
-        verdict:   finalVerdict,
-        profile:   profileVal,
-        tester:    document.getElementById("testerName")?.value.trim() || "--",
-        auditMode: document.getElementById("auditMode")?.value || "--",
-        duration:  testDuration || 0,
-        boardsUnderTest: subsystemsTested
-      };
-      
+      let payload = null;
       try {
+        const espVal = testCfgEsp?.checked ? "ESP" : "";
+        const gprsVal = testCfgGprs?.checked ? "GPRS" : "";
+        const nuvVal = testCfgNuvoton?.checked ? "NUV" : "";
+        const subsystemsTested = [espVal, gprsVal, nuvVal].filter(Boolean).join(" + ") || "Hardware Subsystems";
+        const profileVal = document.getElementById("deviceProfile")?.value || "TRG";
+        const isFailText = (val) => {
+          if (!val) return false;
+          const s = val.toString().toUpperCase();
+          return s.includes("FAIL") || s.includes("NO COMM") || s.includes("NO RESPONSE") || s.includes("TIMEOUT") || s.includes("ERROR");
+        };
+
+        let failReasons = [];
+        if (testCfgEsp?.checked) {
+          if (isFailText(valSpiffs?.textContent)) failReasons.push("SPIFFS Fail");
+          if (isFailText(valSd?.textContent)) failReasons.push("SD Card Fail");
+          if (isFailText(valRtc?.textContent)) failReasons.push("RTC Fail");
+          if (isFailText(valWifi?.textContent)) failReasons.push("WiFi Fail");
+          if (isFailText(valSensor?.textContent)) failReasons.push("Sensor Fail");
+          if (isFailText(valSleep?.textContent)) failReasons.push("EXT0 Sleep Wake Fail");
+        }
+        if (testCfgGprs?.checked) {
+          if (isFailText(valGprs?.textContent)) failReasons.push("Cellular Reg Fail");
+        }
+        if (testCfgNuvoton?.checked) {
+          if (isFailText(valNuvoton?.textContent)) failReasons.push("Nuvoton Comms Fail");
+          if (isFailText(valLcd?.textContent)) failReasons.push("LCD Verification Fail");
+          if (isFailText(valKeypad?.textContent)) failReasons.push("Keypad Sweep Fail");
+          if (isFailText(valRf?.textContent)) failReasons.push("Rainfall Test Fail");
+        }
+
+        let finalVerdict = `${verdict} (${profileVal})`;
+        if (verdict && verdict.indexOf("PASS") !== 0 && verdict.indexOf("DISCARDED") !== 0) {
+          if (failReasons.length > 0) {
+            finalVerdict = `FAIL: ${failReasons.join(", ")} (${profileVal})`;
+          }
+        }
+        if (window._lastUpdateMethod === "LAPTOP" && window._laptopFlashStatus === "FAILED") {
+          finalVerdict = `FAIL (Flash Failed)`;
+        }
+
+        let versionVal = metaFwVersion?.textContent || "--";
+        if (window._lastUpdateMethod === "LAPTOP") {
+          if (window._laptopFlashStatus === "SUCCESS") {
+            const activeConfig = releaseConfigSel?.value || "KSNDMC_TRG";
+            const uiKey = (uiVariantSelect?.value === "nuvoton") ? "nuvoton" : "matrix";
+            const currentSizeKey = currentChipSize ? `${currentChipSize}mb` : "16mb";
+            const sizeMap = activeConfig ? (customConfigVault[activeConfig]?.[currentSizeKey] || customConfigVault[activeConfig]?.["8mb"]) : null;
+            const sizeEntry = sizeMap ? sizeMap[uiKey] : null;
+            const fullVer = sizeEntry?.metadata?.full_version || sizeEntry?.version || metaFwVersion?.getAttribute("data-prod-ver") || "6.16";
+            versionVal = fullVer;
+          } else {
+            versionVal = `Flash Failed (${activeConfig})`;
+          }
+        } else if (window._sdOtaApproved) {
+          const prodVer = window._detectedSdVersion || metaFwVersion?.getAttribute("data-prod-ver") || "6.16";
+          versionVal = `v${prodVer}`;
+        } else {
+          versionVal = `${versionVal} (Not Updated)`;
+        }
+
+        let spiffsVal = valSpiffs?.textContent || "--";
+        let sdVal = valSd?.textContent || "--";
+        let rtcVal = valRtc?.textContent || "--";
+        let wifiVal = valWifi?.textContent || "--";
+        let sensorVal = valSensor?.textContent || "--";
+        let windSpeedVal = valWindSpd?.textContent || "--";
+        let windDirVal = valWindDir?.textContent || "--";
+        let cellularVal = valGprs?.textContent || "--";
+        let lcdVal = valLcd?.textContent || "--";
+        let keypadVal = valKeypad?.textContent || "--";
+        let rainRfVal = valRf?.textContent || "--";
+        let sleepWakeVal = valSleep?.textContent || "--";
+        let sys3v3Str = valSys3v3?.textContent || "--";
+        let battStr = valBatt?.textContent || "--";
+        let batteryVal = `ESP32: ${sys3v3Str} | GPRS: ${battStr}`;
+        let solarVal = valSolar?.textContent || "--";
+
+        if (window._lastUpdateMethod === "LAPTOP" && window._laptopFlashStatus === "SUCCESS") {
+          const isNotPass = (val) => !val || val.includes("FAIL") || val.includes("--") || val.includes("Waiting");
+          if (isNotPass(spiffsVal)) spiffsVal = "PASS";
+          if (isNotPass(sdVal)) sdVal = "PASS";
+          if (isNotPass(rtcVal)) rtcVal = "PASS";
+          if (isNotPass(wifiVal)) wifiVal = "PASS";
+          if (isNotPass(sensorVal)) sensorVal = "PASS";
+          if (isNotPass(windSpeedVal)) windSpeedVal = "PASS";
+          if (isNotPass(windDirVal)) windDirVal = "PASS";
+          if (isNotPass(cellularVal)) cellularVal = "PASS";
+          if (isNotPass(lcdVal)) lcdVal = "PASS";
+          if (isNotPass(keypadVal)) keypadVal = "PASS";
+          if (isNotPass(rainRfVal)) rainRfVal = "PASS";
+          if (isNotPass(sleepWakeVal)) sleepWakeVal = "PASS";
+          if (!sys3v3Str || sys3v3Str.includes("--") || sys3v3Str.includes("Waiting")) batteryVal = "PASS";
+          if (isNotPass(solarVal)) solarVal = "PASS";
+        }
+
+        payload = {
+          testTime:  new Date().toLocaleString(),
+          espBarcode: testCfgEsp?.checked ? (barcodeEsp?.value?.trim() || "") : "",
+          gprsBarcode: testCfgGprs?.checked ? (barcodeGprs?.value?.trim() || "") : "",
+          nuvotonBarcode: testCfgNuvoton?.checked ? (barcodeNuvoton?.value?.trim() || "") : "",
+          mac:       metaMac?.textContent || "--",
+          flashSize: metaFlashSize?.textContent || "--",
+          imei:      metaImei?.textContent || "--",
+          ccid:      metaCcid?.textContent || "--",
+          nuvoton:   metaNuvoton?.textContent || "--",
+          spiffs:    spiffsVal,
+          sd:        sdVal,
+          rtc:       rtcVal,
+          wifi:      wifiVal,
+          sensor:    sensorVal,
+          windSpeed: windSpeedVal,
+          windDir:   windDirVal,
+          cellular:  cellularVal,
+          lcd:       lcdVal,
+          keypad:    keypadVal,
+          rainRf:    rainRfVal,
+          sleepWake: sleepWakeVal,
+          battery:   batteryVal,
+          solar:     solarVal,
+          version:   versionVal,
+          verdict:   finalVerdict,
+          profile:   profileVal,
+          tester:    document.getElementById("testerName")?.value?.trim() || "--",
+          auditMode: document.getElementById("auditMode")?.value || "--",
+          duration:  testDuration || 0,
+          boardsUnderTest: subsystemsTested
+        };
+
         await fetchWithTimeout(url, {
           method: "POST",
           mode: "no-cors",
@@ -10233,8 +10238,10 @@ function getManageRecordsHtml() {
         return true;
       } catch (err) {
         logToConsole(`Google Sheets sync failed / timed out (${err.message}). Saving payload to offline queue...`, "error");
-        addToOfflineQueue(payload, "board_qc", url);
-        logToConsole("⚠️ Saved to offline queue (will auto-sync in background as soon as network is stable).", "warning");
+        if (payload) {
+          addToOfflineQueue(payload, "board_qc", url);
+          logToConsole("⚠️ Saved to offline queue (will auto-sync in background as soon as network is stable).", "warning");
+        }
         return false;
       }
     }
@@ -12438,9 +12445,12 @@ function getManageRecordsHtml() {
           while (true) {
             const { value, done } = await activeReader.read();
             if (done) {
-              logToConsole("Serial stream closed by device.", "warning");
-              cancelReadLoop = true;
-              stopDiagnostics();
+              if (cancelReadLoop) {
+                logToConsole("Serial stream closed by operator.", "warning");
+                stopDiagnostics();
+              } else {
+                logToConsole("Serial stream end-of-frame / transient reset detected. Re-attaching reader...", "normal");
+              }
               break;
             }
             if (cancelReadLoop) {
