@@ -8816,13 +8816,23 @@ function getManageRecordsHtml() {
 
         if (formatWarnings.length > 0) {
           const confirmFormat = confirm(
-            `⚠️ Non-Standard Barcode Format Warning:\n\n` +
-            `The following scanned barcodes do not follow the standard prefix format:\n\n` +
+            `⚠️ NON-STANDARD BARCODE PREFIX DETECTED!\n\n` +
+            `The following scanned barcode(s) do NOT adhere to standard prefix rules:\n\n` +
             formatWarnings.join("\n") + `\n\n` +
-            `Do you still want to proceed and save assembly with these barcodes?`
+            `Standard Expected Prefixes:\n` +
+            `- DL Box 1: 5001-F-XXXXX\n` +
+            `- PS Box 2: 6000-F-XXXXX\n` +
+            `- ESP32: 3001-F-XXXXX\n` +
+            `- GPRS: 3002-F-XXXXX\n` +
+            `- Nuvoton UI: 7000-F-XXXXX\n` +
+            `- Batteries: 4002-F-XXXXX / 4003-F-XXXXX\n` +
+            `- MPPT Board: 3003-F-XXXXX / 3005-F-XXXXX\n\n` +
+            `❌ Saving is BLOCKED unless explicitly confirmed by operator.\n\n` +
+            `• Click OK to CONFIRM and OVERRIDE saving with these non-standard barcode(s).\n` +
+            `• Click CANCEL to GO BACK and edit/correct the barcode.`
           );
           if (!confirmFormat) {
-            if (statusEl) { statusEl.textContent = "Cancelled to correct barcode formats."; statusEl.style.color = "#fbbf24"; }
+            if (statusEl) { statusEl.textContent = "❌ Blocked: User cancelled to correct non-standard barcode format."; statusEl.style.color = "#f87171"; }
             return;
           }
         }
@@ -12446,6 +12456,50 @@ function getManageRecordsHtml() {
         swapReason: isRepair ? repairReason.value.trim() : "",
         swappedBoards: swappedBoards
       };
+
+      // Barcode prefix format confirmation check
+      const prefixChecks = [
+        { val: payload.box1, key: "BOX1", name: "Box 1 (DL Enclosure)" },
+        { val: payload.box2, key: "BOX2", name: "Box 2 (PS Enclosure)" },
+        { val: payload.espBarcode, key: "ESP", name: "ESP32 Board" },
+        { val: payload.gprsBarcode, key: "GPRS", name: "GPRS Board" },
+        { val: payload.nuvotonBarcode, key: "NUV", name: "Nuvoton Display" },
+        { val: payload.batt1Barcode, key: "BATT", name: "Battery 1" },
+        { val: payload.batt2Barcode, key: "BATT", name: "Battery 2" },
+        { val: payload.mpptBarcode, key: "MPPT", name: "MPPT Board" }
+      ];
+      const formatWarnings = [];
+      prefixChecks.forEach(c => {
+        if (c.val && c.val !== "--") {
+          const res = checkBarcodePrefix(c.val, c.key);
+          if (!res.valid) {
+            formatWarnings.push(`• ${c.name} [${c.val}]: Expected format ${res.expected}`);
+          }
+        }
+      });
+
+      if (formatWarnings.length > 0) {
+        const confirmFormat = confirm(
+          `⚠️ NON-STANDARD BARCODE PREFIX DETECTED!\n\n` +
+          `The following scanned barcode(s) do NOT adhere to standard prefix rules:\n\n` +
+          formatWarnings.join("\n") + `\n\n` +
+          `Standard Expected Prefixes:\n` +
+          `- DL Box 1: 5001-F-XXXXX\n` +
+          `- PS Box 2: 6000-F-XXXXX\n` +
+          `- ESP32: 3001-F-XXXXX\n` +
+          `- GPRS: 3002-F-XXXXX\n` +
+          `- Nuvoton UI: 7000-F-XXXXX\n` +
+          `- Batteries: 4002-F-XXXXX / 4003-F-XXXXX\n` +
+          `- MPPT Board: 3003-F-XXXXX / 3005-F-XXXXX\n\n` +
+          `❌ Saving is BLOCKED unless explicitly confirmed by operator.\n\n` +
+          `• Click OK to CONFIRM and OVERRIDE saving with these non-standard barcode(s).\n` +
+          `• Click CANCEL to GO BACK and edit/correct the barcode.`
+        );
+        if (!confirmFormat) {
+          logToConsole("❌ Integration record sync cancelled by operator due to non-standard barcode format.", "error");
+          return false;
+        }
+      }
 
       try {
         await fetchWithTimeout(url, {
