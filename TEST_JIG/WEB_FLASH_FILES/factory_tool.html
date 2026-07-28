@@ -8319,16 +8319,29 @@ function getManageRecordsHtml() {
         const resp = await fetchWithTimeout(`${url}?action=getEnclosureSystems`, {}, 60000);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
-        sysAllData = data.systems || [];
+        const rawSystems = data.systems || [];
+        sysAllData = rawSystems.map(s => {
+          const box1Valid = s.box1 && s.box1 !== "--" && s.box1 !== "Unknown";
+          const box2Valid = s.box2 && s.box2 !== "--" && s.box2 !== "Unknown";
+          
+          if (!box2Valid) {
+            s.box2  = "--";
+            s.mppt  = "--";
+            s.batt1 = "--";
+            s.batt2 = "--";
+          }
+          if (!box1Valid) {
+            s.box1    = "--";
+            s.esp     = "--";
+            s.gprs    = "--";
+            s.nuvoton = "--";
+          }
 
-        const nTotal = sysAllData.length;
-        const nInt = sysAllData.filter(s => s.state === "INTEGRATED").length;
-        const nPartial = sysAllData.filter(s => s.state === "PARTIAL_INTEGRATED").length;
-        const nDisp = sysAllData.filter(s => s.state === "DISPATCHED").length;
-        if (kpiTotal) kpiTotal.textContent = nTotal;
-        if (kpiInt)   kpiInt.textContent   = nInt;
-        if (kpiPartial) kpiPartial.textContent = nPartial;
-        if (kpiDisp)  kpiDisp.textContent  = nDisp;
+          if (s.state !== "DISPATCHED" && s.state !== "REPAIRED_UNIT") {
+            s.state = (box1Valid && box2Valid) ? "INTEGRATED" : "PARTIAL_INTEGRATED";
+          }
+          return s;
+        });
 
         renderSysTable();
       } catch(err) {
