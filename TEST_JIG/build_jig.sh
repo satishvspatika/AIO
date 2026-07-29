@@ -107,9 +107,11 @@ if [ "$BUILD_8MB" = true ]; then
   echo "→ Building 8MB QC Test..."
   cp "$WORKSPACE_ROOT/partitions.csv" "$TEST_JIG_DIR/qc_test/partitions.csv"
   $ARDUINO_CLI compile \
-      --fqbn "esp32:esp32:esp32:FlashSize=8M,FlashMode=dio,PartitionScheme=custom" \
+      --fqbn "esp32:esp32:esp32:FlashSize=8M,FlashMode=dio,FlashFreq=80,PartitionScheme=custom" \
       --build-property "build.partitions=custom" \
       --build-property "build.custom_partitions=$TEST_JIG_DIR/qc_test/partitions.csv" \
+      --build-property "build.flash_size=8MB" \
+      --build-property "build.flash_freq=80m" \
       --build-property "upload.maximum_size=1769472" \
       --build-path "$QC_BUILD_BASE/8mb" \
       "$TEST_JIG_DIR/qc_test/qc_test.ino"
@@ -129,6 +131,8 @@ if [ "$BUILD_16MB" = true ]; then
       --fqbn "esp32:esp32:esp32:FlashSize=16M,FlashMode=dio,FlashFreq=80,PartitionScheme=custom" \
       --build-property "build.partitions=custom" \
       --build-property "build.custom_partitions=$TEST_JIG_DIR/qc_test/partitions.csv" \
+      --build-property "build.flash_size=16MB" \
+      --build-property "build.flash_freq=80m" \
       --build-property "upload.maximum_size=2097152" \
       --build-path "$QC_BUILD_BASE/16mb" \
       "$TEST_JIG_DIR/qc_test/qc_test.ino"
@@ -152,9 +156,11 @@ if [ "$QC_ONLY" = false ]; then
     # Build 8MB Production App
     echo "→ Building 8MB Production Application..."
     $ARDUINO_CLI compile \
-        --fqbn "esp32:esp32:esp32:FlashSize=8M,FlashMode=dio,PartitionScheme=custom" \
+        --fqbn "esp32:esp32:esp32:FlashSize=8M,FlashMode=dio,FlashFreq=80,PartitionScheme=custom" \
         --build-property "build.partitions=custom" \
         --build-property "build.custom_partitions=$WORKSPACE_ROOT/partitions.csv" \
+        --build-property "build.flash_size=8MB" \
+        --build-property "build.flash_freq=80m" \
         --build-property "upload.maximum_size=1769472" \
         --build-path "$APP_BUILD_BASE/8mb" \
         "$WORKSPACE_ROOT"
@@ -172,6 +178,8 @@ if [ "$QC_ONLY" = false ]; then
         --fqbn "esp32:esp32:esp32:FlashSize=16M,FlashMode=dio,FlashFreq=80,PartitionScheme=custom" \
         --build-property "build.partitions=custom" \
         --build-property "build.custom_partitions=$WORKSPACE_ROOT/partitions_16mb.csv" \
+        --build-property "build.flash_size=16MB" \
+        --build-property "build.flash_freq=80m" \
         --build-property "upload.maximum_size=2097152" \
         --build-path "$APP_BUILD_BASE/16mb" \
         "$WORKSPACE_ROOT"
