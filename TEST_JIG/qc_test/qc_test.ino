@@ -559,7 +559,7 @@ bool testRTC() {
         Wire.write(0x00);
         Wire.write(rawSec & 0x7F); // Clear CH bit
         Wire.endTransmission();
-        delay(100);
+        delay(500); // Give crystal 500ms to stabilize after oscillator restart
       }
     }
   }
@@ -572,9 +572,9 @@ bool testRTC() {
   if (!Wire.available()) return false;
   uint8_t sec1 = Wire.read() & 0x7F;
 
-  // Poll for clock tick with a 1500ms timeout
+  // Poll for clock tick with a 2500ms timeout (crystal may need time to stabilize)
   uint32_t start = millis();
-  while (millis() - start < 1500) {
+  while (millis() - start < 2500) {
     Wire.beginTransmission(rtcAddr);
     Wire.write(0x00);
     Wire.endTransmission();
@@ -966,6 +966,20 @@ void startDeepSleepTest() {
   // Cut power to LCD and GPRS PMOS gates (active-HIGH PMOS gate, write LOW to turn off)
   digitalWrite(LCD_CTRL_PIN, LOW);
   powerOffGprsModem();
+  delay(100);
+  
+  // --- CRITICAL: Wait for SET key (GPIO27) to be released before enabling EXT0 ---
+  // If the key is still held LOW when esp_sleep_enable_ext0_wakeup(GPIO27, 0) is called,
+  // the ESP32 will wake up IMMEDIATELY, causing the LCD-flash-then-fail symptom on Windows.
+  pinMode(KEYPAD_INT_PIN, INPUT_PULLUP);
+  Serial.println("[QC_JIG] Waiting for SET key release before deep sleep...");
+  uint32_t keyReleaseStart = millis();
+  while (digitalRead(KEYPAD_INT_PIN) == LOW && millis() - keyReleaseStart < 3000) {
+    delay(20);
+  }
+  delay(300); // Extra debounce after key fully released
+  Serial.println("[QC_JIG] SET key released. Entering deep sleep now.");
+  Serial.flush();
   delay(100);
   
   // Set the flag so we know this sleep was for the test verification wakeup
@@ -2210,6 +2224,18 @@ void loop() {
     // Tally automatically after 60 second timeout
     if (millis() - rf_test_start_time >= 60000UL) {
       tallyRfTest();
+    }
+  }
+
+  // 5. Re-broadcast EXT0_WAKEUP: CONFIRMING every 1s while waiting for operator confirmation
+  // Windows USB re-enumeration can take 3-5s — keep broadcasting so dashboard catches it once reconnected
+  if (currentState == STATE_WAKEUP_CONFIRM) {
+    static uint32_t lastConfirmBroadcast = 0;
+    if (millis() - lastConfirmBroadcast >= 1000) {
+      lastConfirmBroadcast = millis();
+      last_activity_time = millis(); // Prevent idle timeout during wakeup confirm wait
+      Serial.println("[QC_STEP] EXT0_WAKEUP: CONFIRMING");
+      Serial.flush();
     }
   }
 

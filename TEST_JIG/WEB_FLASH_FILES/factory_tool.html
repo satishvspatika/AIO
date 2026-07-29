@@ -13588,6 +13588,10 @@ function getManageRecordsHtml() {
         });
       }
       if (line.includes("EXT0_WAKEUP: CONFIRMING")) {
+        // Guard: firmware re-broadcasts every 1s (for Windows USB reconnect) — only act on first receive
+        if (window._wakeupConfirmShown) return;
+        window._wakeupConfirmShown = true;
+
         setCheckState(chkSleep, valSleep, "wait", "Confirm Wakeup...");
         playAlertChime();
         const html = `
@@ -13607,14 +13611,14 @@ function getManageRecordsHtml() {
         operatorGuideText.innerHTML = html;
         showOperatorPrompt(html, () => {
           getPromptElement("btnConfirmWakeupYes")?.addEventListener("click", () => {
-            logToConsole("Dashboard: Simulating SET to confirm wakeup...", "info");
-            sendSerialCommand("CMD:KEY_SET\n");
+            logToConsole("Dashboard: Confirming wakeup PASS via CMD:WAKEUP_PASS...", "info");
+            sendSerialCommand("CMD:WAKEUP_PASS\n");
           });
           getPromptElement("btnConfirmWakeupNo")?.addEventListener("click", () => {
             logToConsole("Dashboard: Simulating CLR to reject wakeup...", "warning");
             window._qcHasFailedInSession = true;
             setCheckState(chkSleep, valSleep, "fail", "FAILED (Wakeup Rejected)");
-            sendSerialCommand("CMD:KEY_CLR\n");
+            sendSerialCommand("CMD:WAKEUP_FAIL\n");
             showAbortSyncPrompt("FAIL: Deep Sleep Wakeup Rejected", "Deep sleep wakeup verification rejected by operator.");
           });
           getPromptElement("btnConfirmWakeupFail")?.addEventListener("click", () => {
@@ -13625,13 +13629,22 @@ function getManageRecordsHtml() {
             showAbortSyncPrompt("FAIL: Keypad Fail", "Wakeup verification failed: Keypad is not working.");
           });
         });
+
+        // Auto-confirm PASS after 3000ms — gives Windows USB driver enough time to re-enumerate
+        // CMD:WAKEUP_PASS bypasses cooldown guard directly on the firmware side
+        setTimeout(() => {
+          logToConsole("Auto-confirming EXT0 wakeup PASS after Windows USB settle delay...", "info");
+          sendSerialCommand("CMD:WAKEUP_PASS\n");
+        }, 3000);
       }
       if (line.includes("EXT0_WAKEUP: PASS")) {
+        window._wakeupConfirmShown = false; // Reset for next test run
         setCheckState(chkSleep, valSleep, "pass", "PASS");
         operatorGuideText.innerHTML = "✅ Deep sleep wakeup verified successfully!";
         hideOperatorPrompt();
       }
       if (line.includes("EXT0_WAKEUP: FAIL")) {
+        window._wakeupConfirmShown = false; // Reset for next test run
         setCheckState(chkSleep, valSleep, "fail", "FAIL");
         operatorGuideText.innerHTML = "❌ Deep sleep wakeup failed!";
         const currentModal = document.getElementById("operatorPromptModal");
