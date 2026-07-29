@@ -4825,7 +4825,11 @@
       b.details,
       b.verdict,
       "Battery: " + (data.battery || "--") + " | Solar: " + (data.solar || "--"),
-      data.version || "Unknown",
+      (b.verdict && b.verdict.indexOf("FAIL") !== -1) ? "QC-Test Fail" : (function(v) {
+        if (!v || v === "--" || v === "Unknown") return "TRG9-DMC-6.19-N";
+        var s = String(v).trim().replace(/^v/i, "").replace(/\s*\(Not Updated\)/gi, "").replace(/\s*\(Update Ready\)/gi, "").replace(/\s*\(QC.*?\)/gi, "").replace(/\s*-QC$/i, "").trim();
+        return s || "TRG9-DMC-6.19-N";
+      })(data.version),
       data.auditMode || "--",
       data.duration || "--",
       data.tester || "--",
@@ -5543,8 +5547,72 @@ function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('Spatika Tools')
       .addItem('Initialize Sheet Tabs & Headers', 'initializeSheets')
+      .addItem('Clean & Unify Firmware Versions', 'cleanupAndUnifySheetData')
       .addItem('Manage & Archive Records...', 'openManageRecordsModal')
       .addToUi();
+}
+
+function cleanupAndUnifySheetData() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheets = ["Test_Logs", "Master_Status", "Integration_Logs"];
+  var totalCleaned = 0;
+  
+  sheets.forEach(function(sheetName) {
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return;
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return;
+    
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    var verdictColIdx = -1;
+    var fwColIdx = -1;
+    
+    for (var c = 0; c < headers.length; c++) {
+      var h = String(headers[c] || "").trim();
+      if (h === "QC Verdict" || h === "Integration Verdict") verdictColIdx = c + 1;
+      if (h === "Firmware Ver") fwColIdx = c + 1;
+    }
+    
+    if (verdictColIdx === -1 || fwColIdx === -1) return;
+    
+    var numRows = lastRow - 1;
+    var verdicts = sheet.getRange(2, verdictColIdx, numRows, 1).getValues();
+    var fwVers = sheet.getRange(2, fwColIdx, numRows, 1).getValues();
+    var changed = false;
+    
+    for (var r = 0; r < numRows; r++) {
+      var v = String(verdicts[r][0] || "").trim();
+      var fw = String(fwVers[r][0] || "").trim();
+      var targetFw = fw;
+      
+      if (v.indexOf("FAIL") !== -1 || v.indexOf("REJECT") !== -1) {
+        targetFw = "QC-Test Fail";
+      } else if (v.indexOf("PASS") === 0) {
+        var clean = fw.replace(/^v/i, "")
+                      .replace(/\s*\(Not Updated\)/gi, "")
+                      .replace(/\s*\(Update Ready\)/gi, "")
+                      .replace(/\s*\(QC.*?\)/gi, "")
+                      .replace(/\s*-QC$/i, "")
+                      .trim();
+        if (!clean || clean === "--" || clean === "Unknown" || clean === "6.19") {
+          clean = "TRG9-DMC-6.19-N";
+        }
+        targetFw = clean;
+      }
+      
+      if (targetFw !== fw) {
+        fwVers[r][0] = targetFw;
+        changed = true;
+        totalCleaned++;
+      }
+    }
+    
+    if (changed) {
+      sheet.getRange(2, fwColIdx, numRows, 1).setValues(fwVers);
+    }
+  });
+  
+  SpreadsheetApp.getUi().alert("✅ Cleanup Complete! Unified " + totalCleaned + " firmware version entries across sheets.");
 }
 
 function initializeSheets() {
