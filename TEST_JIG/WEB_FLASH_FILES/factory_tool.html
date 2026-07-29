@@ -14503,6 +14503,8 @@ function getManageRecordsHtml() {
         cancelReadLoop = false;
         startLiveDiagnostics();
       }, 2500);
+    }
+
     async function safeOpenPort(targetPort, options, maxRetries = 10, retryDelayMs = 400) {
       if (!targetPort) throw new Error("No serial port instance provided.");
       
