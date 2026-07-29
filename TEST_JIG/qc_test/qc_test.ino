@@ -1671,45 +1671,30 @@ void setup() {
           break;
         }
 
-        // Tiered recovery every 5 retries (Carrier-Aware)
+        // Tiered recovery every 5 retries (Carrier-Aware, non-destructive)
         if (retries > 0 && retries % 5 == 0) {
+          sendModemAT("AT+CSCLK=0", 500);
+          sendModemAT("AT+CNETLIGHT=1", 500);
+          
           if (retries == 5) {
-            if (simCarrier == "BSNL") {
-              Serial.println("[GPRS] Tier1 @ iter5: BSNL Locking to GSM-only (CNMP=13)...");
-              showProgress("DIAG: RECOVERY", "BSNL 2G LOCK...");
-              sendModemAT("AT+CNMP=13", 1000);
-            } else {
-              Serial.println("[GPRS] Tier1 @ iter5: Airtel/Jio/Vi Auto Mode stalled. Refreshing operator (COPS=0)...");
-              showProgress("DIAG: RECOVERY", "COPS=0 RESET...");
-            }
-            sendModemAT("AT+COPS=0", 5000);
-            sendModemAT("AT+CGATT=1", 3000);
+            Serial.println("[GPRS] Recovery @ iter5: Triggering automatic network re-scan (COPS=0)...");
+            showProgress("DIAG: RECOVERY", "NET RE-SCAN...");
+            sendModemAT("AT+COPS=0", 3000);
+            sendModemAT("AT+CGATT=1", 2000);
           } else if (retries == 10) {
-            Serial.println("[GPRS] Tier2 @ iter10: Radio-Off SIM Scrub...");
+            Serial.println("[GPRS] Recovery @ iter10: Radio Interface Soft Reset (CFUN 0 -> 1)...");
             showProgress("DIAG: RECOVERY", "RADIO RESET...");
-            sendModemAT("AT+CFUN=0", 5000);
-            sendModemAT("AT+CRSM=214,28539,0,0,12,\"FFFFFFFFFFFFFFFFFFFFFFFF\"", 2000);
-            sendModemAT("AT+CFUN=1", 5000);
-            sendModemAT("AT+COPS=0", 5000);
-            sendModemAT("AT+CGATT=1", 3000);
-          } else if (retries == 15) {
-            if (simCarrier == "BSNL") {
-              Serial.println("[GPRS] BSNL Tier3 @ iter15: Skipping LTE probe. Refreshing GSM connection...");
-              showProgress("DIAG: RECOVERY", "BSNL RE-SCAN...");
-              sendModemAT("AT+COPS=0", 5000);
-            } else {
-              Serial.println("[GPRS] Tier3 @ iter15: Testing LTE-Only Mode (AT+CNMP=38)...");
-              showProgress("DIAG: RECOVERY", "LTE-ONLY MODE...");
-              sendModemAT("AT+CNMP=38", 2000);
-              sendModemAT("AT+COPS=0", 5000);
-            }
-            sendModemAT("AT+CGATT=1", 3000);
-          } else if (retries == 23) {
-            Serial.println("[GPRS] Tier4 @ iter23: Restoring Auto-Mode (CNMP=2, COPS=0)...");
-            showProgress("DIAG: RECOVERY", "AUTO-MODE RESTORE");
+            sendModemAT("AT+CFUN=0", 2000);
+            delay(1000);
+            sendModemAT("AT+CFUN=1", 2000);
+            sendModemAT("AT+COPS=0", 3000);
+            sendModemAT("AT+CGATT=1", 2000);
+          } else if (retries >= 15) {
+            Serial.println("[GPRS] Recovery @ iter15+: Re-asserting Auto-Mode (CNMP=2, COPS=0)...");
+            showProgress("DIAG: RECOVERY", "AUTO-MODE SYNC");
             sendModemAT("AT+CNMP=2", 1000);
-            sendModemAT("AT+COPS=0", 5000);
-            sendModemAT("AT+CGATT=1", 3000);
+            sendModemAT("AT+COPS=0", 3000);
+            sendModemAT("AT+CGATT=1", 2000);
           }
         }
 
@@ -1801,8 +1786,8 @@ void processKeypress(char rawKey) {
   const char* keyName = getKeyName(rawKey);
 
   // Cooldown validation for sensitive state changes to prevent key bounce/repeat
-  if ((currentState == STATE_SYNC_CONFIRM || currentState == STATE_RF_RUNNING || currentState == STATE_RF_CONFIRM) && 
-      (millis() - lastStateChangeTime < 150)) {
+  if ((currentState == STATE_SYNC_CONFIRM || currentState == STATE_RF_RUNNING || currentState == STATE_RF_CONFIRM || currentState == STATE_WAKEUP_CONFIRM || currentState == STATE_SD_OTA_CONFIRM) && 
+      (millis() - lastStateChangeTime < 400)) {
     Serial.printf("[QC_JIG] Cooldown active: Ignoring keypress '%s' in state %d\n", keyName, currentState);
     return;
   }

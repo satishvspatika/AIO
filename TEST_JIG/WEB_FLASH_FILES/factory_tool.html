@@ -4623,79 +4623,67 @@
   // C. Handle Integration Sync Payload
   if (data.integrationSync) {
     var intSheet = ss.getSheetByName("Integration_Logs") || ss.insertSheet("Integration_Logs");
-    // Full canonical header list — 23 columns
-    var intHeaders = [
-      "Timestamp",        // col 1
-      "Local Test Time",  // col 2
-      "Box 1 Barcode",    // col 3
-      "Box 2 Barcode",    // col 4
-      "ESP32 Barcode",    // col 5
-      "GPRS Barcode",     // col 6
-      "Nuvoton Barcode",  // col 7
-      "Battery 1 Barcode",// col 8
-      "Battery 2 Barcode",// col 9
-      "MPPT Barcode",     // col 10
-      "MAC Address",      // col 11
-      "IMEI",             // col 12
-      "CCID",             // col 13
-      "Firmware Ver",     // col 14
-      "Integration Verdict", // col 15
-      "Tester",           // col 16
-      "Duration (s)",     // col 17
-      "Action Type",      // col 18
-      "Swap Reason",      // col 19
-      "Notes",            // col 20
-      "Field Engineer",   // col 21
-      "Dispatch Location",// col 22
-      "Station ID"        // col 23
+    var canonicalHeaders = [
+      "Timestamp", "Local Test Time", "Box 1 Barcode", "Box 2 Barcode", "ESP32 Barcode", "GPRS Barcode", "Nuvoton Barcode", 
+      "Battery 1 Barcode", "Battery 2 Barcode", "MPPT Barcode", "MAC Address", "IMEI", "CCID", "Firmware Ver", "Integration Verdict", "Tester", "Duration (s)", "Action Type", "Swap Reason", "Notes", "Field Engineer", "Dispatch Location", "Station ID"
     ];
-    // Always sync header row (handles new columns added after sheet was created)
+
     if (intSheet.getLastRow() === 0) {
-      intSheet.appendRow(intHeaders);
-    } else {
-      // Repair / update existing header row to match canonical list
-      var existingHdrCount = intSheet.getRange(1, 1, 1, intSheet.getLastColumn()).getValues()[0].length;
-      if (existingHdrCount < intHeaders.length) {
-        intSheet.getRange(1, 1, 1, intHeaders.length).setValues([intHeaders]);
+      intSheet.appendRow(canonicalHeaders);
+      intSheet.getRange(1, 1, 1, canonicalHeaders.length).setFontWeight("bold").setBackground("#4338ca").setFontColor("#ffffff");
+      intSheet.setFrozenRows(1);
+    }
+
+    var sheetHeaders = intSheet.getRange(1, 1, 1, intSheet.getLastColumn()).getValues()[0];
+
+    // Field-name map dictionary
+    var valMap = {
+      "Timestamp": new Date(),
+      "Local Test Time": data.testTime || "--",
+      "Box 1 Barcode": data.box1 || "--",
+      "Box 2 Barcode": data.box2 || "--",
+      "ESP32 Barcode": data.espBarcode || "--",
+      "GPRS Barcode": data.gprsBarcode || "--",
+      "Nuvoton Barcode": data.nuvotonBarcode || "--",
+      "Battery 1 Barcode": data.batt1Barcode || "--",
+      "Battery 2 Barcode": data.batt2Barcode || "--",
+      "MPPT Barcode": data.mpptBarcode || "--",
+      "MAC Address": data.mac || "--",
+      "IMEI": data.imei || "--",
+      "CCID": data.ccid || "--",
+      "Firmware Ver": data.version || "--",
+      "Integration Verdict": data.verdict || "--",
+      "Tester": data.tester || "--",
+      "Duration (s)": data.duration !== undefined ? data.duration : 0,
+      "Action Type": data.actionType || "ORIGINAL_BUILD",
+      "Swap Reason": data.swapReason || "",
+      "Notes": data.notes || "",
+      "Field Engineer": data.fieldEngineer || "",
+      "Dispatch Location": data.dispatchLocation || "",
+      "Station ID": data.stationId || ""
+    };
+
+    var intRow = [];
+    for (var h = 0; h < sheetHeaders.length; h++) {
+      var hName = String(sheetHeaders[h]).trim();
+      if (valMap.hasOwnProperty(hName)) {
+        intRow.push(valMap[hName]);
+      } else {
+        intRow.push("--");
       }
     }
-    intSheet.getRange(1, 1, 1, intHeaders.length).setFontWeight("bold").setBackground("#4338ca").setFontColor("#ffffff");
-    intSheet.setFrozenRows(1);
-    
-    var intRow = [
-      new Date(),                          // col 1  Timestamp
-      data.testTime || "--",               // col 2  Local Test Time
-      data.box1 || "--",                   // col 3  Box 1 Barcode
-      data.box2 || "--",                   // col 4  Box 2 Barcode
-      data.espBarcode || "--",             // col 5  ESP32 Barcode
-      data.gprsBarcode || "--",            // col 6  GPRS Barcode
-      data.nuvotonBarcode || "--",         // col 7  Nuvoton Barcode
-      data.batt1Barcode || "--",           // col 8  Battery 1 Barcode
-      data.batt2Barcode || "--",           // col 9  Battery 2 Barcode
-      data.mpptBarcode || "--",            // col 10 MPPT Barcode
-      data.mac || "--",                    // col 11 MAC Address
-      data.imei || "--",                   // col 12 IMEI
-      data.ccid || "--",                   // col 13 CCID
-      data.version || "--",               // col 14 Firmware Ver
-      data.verdict || "--",               // col 15 Integration Verdict
-      data.tester || "--",                // col 16 Tester
-      data.duration || 0,                  // col 17 Duration (s)
-      data.actionType || "ORIGINAL_BUILD", // col 18 Action Type
-      data.swapReason || "",               // col 19 Swap Reason
-      data.notes || "",                    // col 20 Notes
-      data.fieldEngineer || "",            // col 21 Field Engineer
-      data.dispatchLocation || "",         // col 22 Dispatch Location
-      data.stationId || ""                 // col 23 Station ID
-    ];
+
     intSheet.appendRow(intRow);
-    
-    // Color verdict cell — column 15 in canonical schema
-    var verdictColIdx = intHeaders.indexOf("Integration Verdict") + 1; // 1-based
-    var verdictCell = intSheet.getRange(intSheet.getLastRow(), verdictColIdx);
-    if (data.verdict && data.verdict.indexOf("PASS") === 0) {
-      verdictCell.setBackground("#14532d").setFontColor("#4ade80").setFontWeight("bold");
-    } else {
-      verdictCell.setBackground("#450a0a").setFontColor("#f87171").setFontWeight("bold");
+
+    // Color verdict cell by header name match
+    var verdictColIdx = sheetHeaders.indexOf("Integration Verdict") + 1;
+    if (verdictColIdx > 0) {
+      var verdictCell = intSheet.getRange(intSheet.getLastRow(), verdictColIdx);
+      if (data.verdict && data.verdict.indexOf("PASS") === 0) {
+        verdictCell.setBackground("#14532d").setFontColor("#4ade80").setFontWeight("bold");
+      } else {
+        verdictCell.setBackground("#450a0a").setFontColor("#f87171").setFontWeight("bold");
+      }
     }
 
     if (data.swappedBoards && data.swappedBoards.length > 0) {
