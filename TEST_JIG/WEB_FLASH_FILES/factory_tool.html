@@ -13702,13 +13702,6 @@ function getManageRecordsHtml() {
             showAbortSyncPrompt("FAIL: Keypad Fail", "Wakeup verification failed: Keypad is not working.");
           });
         });
-
-        // Auto-confirm PASS after 3000ms — gives Windows USB driver enough time to re-enumerate
-        // CMD:WAKEUP_PASS bypasses cooldown guard directly on the firmware side
-        setTimeout(() => {
-          logToConsole("Auto-confirming EXT0 wakeup PASS after Windows USB settle delay...", "info");
-          sendSerialCommand("CMD:WAKEUP_PASS\n");
-        }, 3000);
       }
       if (line.includes("EXT0_WAKEUP: PASS")) {
         window._wakeupConfirmShown = false; // Reset for next test run
