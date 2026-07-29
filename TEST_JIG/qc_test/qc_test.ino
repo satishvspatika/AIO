@@ -7,6 +7,7 @@
 #include <WiFi.h>
 #include <esp_mac.h>
 #include "esp_ota_ops.h"
+#include "soc/rtc_cntl_reg.h"
 #include <Adafruit_BME280.h>
 #include <esp_task_wdt.h>
 #include <Preferences.h>
@@ -246,8 +247,9 @@ const char* getKeyName(char rawKey) {
 // --- PERIPHERAL TEST LOGIC ---
 
 bool testSPIFFS() {
-  // Temporary unsubscribe current task from watchdog during long mount/format operations to prevent resets
+  // Temporary unsubscribe current task and RTC watchdog during long mount/format operations to prevent resets
   esp_task_wdt_delete(NULL);
+  WRITE_PERI_REG(RTC_CNTL_WDTCONFIG0_REG, 0);
 
   bool success = false;
   if (SPIFFS.begin(false)) {
@@ -280,7 +282,7 @@ bool testSPIFFS() {
     }
   }
 
-  // Re-enable watchdog
+  // Re-enable watchdogs
   esp_task_wdt_config_t wdt_config = {
       .timeout_ms = 60000,
       .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
