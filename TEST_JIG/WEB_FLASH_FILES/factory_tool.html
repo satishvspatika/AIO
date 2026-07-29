@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Spatika AIO Board Factory Tool v5.3</title>
+  <title>Spatika AIO Board Factory Tool v5.4</title>
   
   <!-- Modern Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -2233,7 +2233,7 @@
     <div style="display:flex;flex-direction:column;align-items:flex-start;gap:0.15rem;flex-shrink:0;padding-right:0.65rem;border-right:2px solid hsla(240,50%,55%,0.25);">
       <div style="display:flex;align-items:center;gap:0.35rem;">
         <div class="brand-title">Spatika Jig</div>
-        <span style="font-size:0.65rem;font-weight:800;background:#6366f1 !important;color:#ffffff !important;border:1px solid #818cf8 !important;border-radius:0.3rem;padding:0.08rem 0.4rem;letter-spacing:0.03em;box-shadow:0 0 8px rgba(99,102,241,0.5);" title="Factory Tool Version 5.3">v5.3</span>
+        <span style="font-size:0.65rem;font-weight:800;background:#6366f1 !important;color:#ffffff !important;border:1px solid #818cf8 !important;border-radius:0.3rem;padding:0.08rem 0.4rem;letter-spacing:0.03em;box-shadow:0 0 8px rgba(99,102,241,0.5);" title="Factory Tool Version 5.4">v5.4</span>
       </div>
       <span class="badge badge-disconnected" id="connBadge" style="font-size:0.56rem;padding:0.1rem 0.4rem;align-self:flex-start;font-weight:800;letter-spacing:0.04em;border-radius:0.25rem;">DISCONNECTED</span>
     </div>
@@ -12028,7 +12028,7 @@ function getManageRecordsHtml() {
             let needClose = false;
             if (!port.readable) {
               try {
-                await port.open({ baudRate: 115200 });
+                await safeOpenPort(port, { baudRate: 115200 });
                 needClose = true;
               } catch (openErr) {
                 logToConsole(`Reset failed (could not open port): ${openErr.message}`, "error");
@@ -14226,7 +14226,7 @@ function getManageRecordsHtml() {
         if (port && !port.readable) {
           logToConsole("Opening serial diagnostics channel at 115200 baud...", "normal");
           try {
-            await port.open({ baudRate: 115200 });
+            await safeOpenPort(port, { baudRate: 115200 });
             await port.setSignals({ dataTerminalReady: false, requestToSend: true });
             await new Promise(r => setTimeout(r, 200));
             await port.setSignals({ dataTerminalReady: false, requestToSend: false });
@@ -14307,7 +14307,7 @@ function getManageRecordsHtml() {
 
         logToConsole("Opening serial diagnostics channel at 115200 baud...", "normal");
         try {
-          await port.open({ baudRate: 115200 });
+          await safeOpenPort(port, { baudRate: 115200 });
           await port.setSignals({ dataTerminalReady: false, requestToSend: true });
           await new Promise(r => setTimeout(r, 200));
           await port.setSignals({ dataTerminalReady: false, requestToSend: false });
@@ -14371,7 +14371,7 @@ function getManageRecordsHtml() {
       // 2. Open port at 115200 to listen
       let qcDetected = false;
       try {
-        await port.open({ baudRate: 115200 });
+        await safeOpenPort(port, { baudRate: 115200 });
         
         // Send reset pulse
         await port.setSignals({ dataTerminalReady: false, requestToSend: true });
@@ -14479,7 +14479,7 @@ function getManageRecordsHtml() {
       // Step 3: Reopen port cleanly at 115200 for serial monitoring
       logToConsole("Opening port at 115200 baud for diagnostics...", "normal");
       try {
-        await port.open({ baudRate: 115200 });
+        await safeOpenPort(port, { baudRate: 115200 });
       } catch (err) {
         logToConsole(`Could not open port: ${err.message}`, "error");
         btnStartDiag.disabled = false;
@@ -14503,6 +14503,26 @@ function getManageRecordsHtml() {
         cancelReadLoop = false;
         startLiveDiagnostics();
       }, 2500);
+    async function safeOpenPort(targetPort, options, maxRetries = 10, retryDelayMs = 400) {
+      if (!targetPort) throw new Error("No serial port instance provided.");
+      
+      // Allow Windows OS driver kernel 400ms to release any previous file handle
+      await new Promise(r => setTimeout(r, 400));
+      
+      let lastErr = null;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          await targetPort.open(options);
+          return true;
+        } catch (err) {
+          lastErr = err;
+          if (attempt < maxRetries) {
+            logToConsole(`Waiting for Windows serial port release (attempt ${attempt}/${maxRetries})...`, "warning");
+            await new Promise(r => setTimeout(r, retryDelayMs));
+          }
+        }
+      }
+      throw lastErr;
     }
 
     async function ensureEsploaderConnected() {
@@ -14577,7 +14597,7 @@ function getManageRecordsHtml() {
 
         logToConsole("Opening serial monitor at 115200 baud...", "normal");
         try {
-          await port.open({ baudRate: 115200 });
+          await safeOpenPort(port, { baudRate: 115200 });
           // Reset the board to start diagnostics fresh
           await port.setSignals({ dataTerminalReady: false, requestToSend: true });
           await new Promise(r => setTimeout(r, 200));
@@ -14653,7 +14673,7 @@ function getManageRecordsHtml() {
       // Reopen port directly for serial reading
       logToConsole("Opening serial diagnostics channel at 115200 baud...", "normal");
       try {
-        await port.open({ baudRate: 115200 });
+        await safeOpenPort(port, { baudRate: 115200 });
         // Send a clean reset pulse to reboot the ESP32
         logToConsole("Sending reset pulse to board...", "normal");
         await port.setSignals({ dataTerminalReady: false, requestToSend: true });   // EN low (hold reset)
@@ -14726,7 +14746,7 @@ function getManageRecordsHtml() {
 
       logToConsole("Opening serial diagnostics channel at 115200 baud...", "normal");
       try {
-        await port.open({ baudRate: 115200 });
+        await safeOpenPort(port, { baudRate: 115200 });
         // Send a clean reset pulse to reboot the ESP32
         logToConsole("Sending reset pulse to board...", "normal");
         await port.setSignals({ dataTerminalReady: false, requestToSend: true });   // EN low (hold reset)
@@ -14825,7 +14845,7 @@ function getManageRecordsHtml() {
       logToConsole("Opening raw serial monitor at 115200 baud...", "normal");
       logToConsole("👁 Watch for GPRS registration below. Look for 'REG OK', 'GSM:Home', 'LTE:Home' or signal lines.", "info");
       try {
-        await port.open({ baudRate: 115200 });
+        await safeOpenPort(port, { baudRate: 115200 });
         await port.setSignals({ dataTerminalReady: false, requestToSend: true });
         await new Promise(r => setTimeout(r, 200));
         await port.setSignals({ dataTerminalReady: false, requestToSend: false });
