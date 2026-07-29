@@ -10689,7 +10689,11 @@ function getManageRecordsHtml() {
         }
 
         let versionVal = normalizeVersion(metaFwVersion?.textContent);
-        if (window._lastUpdateMethod === "LAPTOP") {
+        if (finalVerdict.includes("FAIL")) {
+          versionVal = (window._lastUpdateMethod === "LAPTOP" && window._laptopFlashStatus === "FAILED")
+            ? `Flash Failed (${releaseConfigSel?.value || "KSNDMC_TRG"})`
+            : "QC-Test Fail";
+        } else if (window._lastUpdateMethod === "LAPTOP") {
           if (window._laptopFlashStatus === "SUCCESS") {
             const activeConfig = releaseConfigSel?.value || "KSNDMC_TRG";
             const uiKey = (uiVariantSelect?.value === "nuvoton") ? "nuvoton" : "matrix";
@@ -10699,7 +10703,7 @@ function getManageRecordsHtml() {
             const fullVer = sizeEntry?.metadata?.full_version || sizeEntry?.version || metaFwVersion?.getAttribute("data-prod-ver") || "TRG9-DMC-6.19-N";
             versionVal = normalizeVersion(fullVer);
           } else {
-            versionVal = `Flash Failed (${activeConfig})`;
+            versionVal = `Flash Failed (${releaseConfigSel?.value || "KSNDMC_TRG"})`;
           }
         } else if (window._sdOtaApproved) {
           const prodVer = window._detectedSdVersion || metaFwVersion?.getAttribute("data-prod-ver") || "TRG9-DMC-6.19-N";
@@ -12743,6 +12747,7 @@ function getManageRecordsHtml() {
         imei: (mode === "both" || mode === "box1") ? metaImei.textContent : "",
         ccid: (mode === "both" || mode === "box1") ? metaCcid.textContent : "",
         version: (mode === "both" || mode === "box1") ? (function(){
+          if (verdict && verdict.includes("FAIL")) return "QC-Test Fail";
           var raw = integrationFwVersion.textContent.trim();
           if (!raw || raw === "--") raw = metaFwVersion.textContent.trim();
           if (!raw || raw === "--") raw = "TRG9-DMC-6.19-N";
