@@ -729,7 +729,7 @@
     body.theme-light #helpModal div[style*="background"],
     body.theme-light #offlineQueueModal div[style*="background"],
     body.theme-light #historyModal div[style*="background"],
-    body.theme-light #operatorPromptModal div[style*="background"],
+    body.theme-light #operatorPromptModal div[style*="background"]:not(#laptopProgressBar):not(#laptopProgressTrack),
     body.theme-light #failureReasonModal div[style*="background"],
     body.theme-light #directFlashModal div[style*="background"],
     body.theme-light #abortSyncModal div[style*="background"],
@@ -737,6 +737,20 @@
       background: #f8fafc !important;
       border-color: #cbd5e1 !important;
       color: #0f172a !important;
+    }
+
+    /* ✅ Protect progress bar from being overridden by the broad modal div[style*=background] rule */
+    body.theme-light #laptopProgressTrack {
+      background: #d1fae5 !important;
+      border: 2px solid #059669 !important;
+    }
+    body.theme-light #laptopProgressBar {
+      background: linear-gradient(90deg, #059669, #10b981, #34d399) !important;
+    }
+    body.theme-light #laptopProgressLabel {
+      color: #064e3b !important;
+      font-weight: 900 !important;
+      text-shadow: none !important;
     }
 
     body.theme-light #modalSystemPair code,
@@ -10519,13 +10533,16 @@ function getManageRecordsHtml() {
               const lbl = document.getElementById("laptopProgressLabel");
               if (bar) {
                 bar.style.width = `${overallPct}%`;
-                bar.style.background = "linear-gradient(90deg, #10b981, #34d399)";
+                bar.style.background = "linear-gradient(90deg, #059669, #10b981, #34d399)";
               }
               if (lbl) lbl.textContent = `${overallPct}%`;
 
+              // Status text updates every % so it always matches the bar
+              if (statusText) statusText.textContent = `Writing firmware... ${overallPct}% complete`;
+
+              // Console log only at 10% increments to avoid spam
               if (overallPct !== lastReportedPct && overallPct % 10 === 0) {
                 lastReportedPct = overallPct;
-                if (statusText) statusText.textContent = `Writing firmware... ${overallPct}% complete`;
                 logToConsole(`Flashing progress: ${overallPct}%`, "normal");
               }
             }
