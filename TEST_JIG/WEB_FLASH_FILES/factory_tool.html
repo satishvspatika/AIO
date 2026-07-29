@@ -10452,9 +10452,9 @@ function getManageRecordsHtml() {
         <div style="text-align:center; padding: 1rem 0.5rem;">
           <div style="font-size:1.05rem; font-weight:700; color:#3b82f6; margin-bottom:0.5rem;">🔌 Laptop Programmer Flash In Progress</div>
           <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">Writing <code>${folderName}/firmware.bin</code> (v${laptopFwVer}) via Programmer...</div>
-          <div style="background:rgba(255,255,255,0.06); border-radius:0.5rem; padding:0.4rem 0.6rem; margin-bottom:0.6rem; height:1.5rem; position:relative; overflow:hidden; border:1px solid rgba(59,130,246,0.3);">
-            <div id="laptopProgressBar" style="position:absolute;left:0;top:0;height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#60a5fa);border-radius:0.5rem;transition:width 0.1s ease;"></div>
-            <div id="laptopProgressLabel" style="position:relative;z-index:1;font-size:0.8rem;font-weight:700;color:#fff;line-height:1.5rem;">0%</div>
+          <div style="background:rgba(0,0,0,0.25); border-radius:0.5rem; padding:0.4rem 0.6rem; margin-bottom:0.6rem; height:1.5rem; position:relative; overflow:hidden; border:1.5px solid #10b981;">
+            <div id="laptopProgressBar" style="position:absolute;left:0;top:0;height:100%;width:0%;background:linear-gradient(90deg,#10b981,#34d399);border-radius:0.5rem;transition:width 0.15s ease;"></div>
+            <div id="laptopProgressLabel" style="position:relative;z-index:1;font-size:0.8rem;font-weight:800;color:#ffffff;text-shadow:0 1px 3px rgba(0,0,0,0.6);line-height:1.5rem;">0%</div>
           </div>
           <div id="laptopStatusText" style="font-size:0.82rem; color:var(--text-muted); margin-top:0.3rem;">Connecting in bootloader mode...</div>
           <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.6rem; opacity:0.6;">⏳ Please wait. Do not disconnect the programmer.</div>
@@ -10475,24 +10475,49 @@ function getManageRecordsHtml() {
         if (fileVault["boot_app0.bin"])   flashArray.push({ data: fileVault["boot_app0.bin"], address: 0xe000 });
         flashArray.push({ data: productionBin, address: 0x10000 });
 
+        const totalFlashFiles = flashArray.length;
+        let lastReportedPct = -1;
+
         await safeWriteFlash(esploader, {
           fileArray: flashArray,
           flashSize: "keep",
           compress: true,
           reportProgress: (fileIndex, writtenBytes, totalBytes) => {
             if (totalBytes > 0) {
-              const percentage = Math.round((writtenBytes / totalBytes) * 100);
+              let overallPct = 0;
+              if (totalFlashFiles > 1) {
+                if (fileIndex < totalFlashFiles - 1) {
+                  // Small header files (0% to 5%)
+                  overallPct = Math.round((writtenBytes / totalBytes) * 5);
+                } else {
+                  // Main production binary (5% to 100%)
+                  overallPct = 5 + Math.round((writtenBytes / totalBytes) * 95);
+                }
+              } else {
+                overallPct = Math.round((writtenBytes / totalBytes) * 100);
+              }
+              overallPct = Math.min(100, Math.max(0, overallPct));
+
               const bar = document.getElementById("laptopProgressBar");
               const lbl = document.getElementById("laptopProgressLabel");
-              if (bar) bar.style.width = `${percentage}%`;
-              if (lbl) lbl.textContent = `${percentage}%`;
+              if (bar) {
+                bar.style.width = `${overallPct}%`;
+                bar.style.background = "linear-gradient(90deg, #10b981, #34d399)";
+              }
+              if (lbl) lbl.textContent = `${overallPct}%`;
+
+              if (overallPct !== lastReportedPct && overallPct % 10 === 0) {
+                lastReportedPct = overallPct;
+                if (statusText) statusText.textContent = `Writing firmware... ${overallPct}% complete`;
+                logToConsole(`Flashing progress: ${overallPct}%`, "normal");
+              }
             }
           }
         });
 
         const bar = document.getElementById("laptopProgressBar");
         const lbl = document.getElementById("laptopProgressLabel");
-        if (bar) { bar.style.width = "100%"; bar.style.background = "linear-gradient(90deg,#22c55e,#4ade80)"; }
+        if (bar) { bar.style.width = "100%"; bar.style.background = "linear-gradient(90deg, #10b981, #34d399)"; }
         if (lbl) lbl.textContent = "100% ✓";
         if (statusText) { statusText.textContent = "Flashing complete! Resetting board..."; statusText.style.color = "var(--success)"; }
         
