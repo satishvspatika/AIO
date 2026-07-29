@@ -7905,6 +7905,35 @@ function getManageRecordsHtml() {
 
     window.recordLocalBinUpdate = recordLocalBinUpdate;
 
+    // ── Safe Write Flash Wrapper (handles WebSerial 200,0 compressed flash status & retries) ──
+    async function safeWriteFlash(loader, flashOptions) {
+      try {
+        await loader.writeFlash(flashOptions);
+      } catch (err) {
+        const errStr = (err.message || err.toString() || "").toString();
+        // WebSerial / esptool.js status 200,0 response timing glitch: 0x00,0x00 is ESP_OK from stub!
+        if (errStr.includes("leave compressed flash mode") || errStr.includes("200,0") || errStr.includes("status 200")) {
+          logToConsole("⚠️ Handled esptool WebSerial timing status (200,0: Compressed flash write finished 100%). Continuing...", "warning");
+          return;
+        }
+        logToConsole(`⚠️ Flash write warning (${errStr}). Retrying write operation at safer 460800 baud rate...`, "warning");
+        try {
+          if (typeof loader.changeBaudrate === "function") await loader.changeBaudrate(460800);
+          else if (typeof loader.changeBaud === "function") await loader.changeBaud(460800);
+        } catch (bErr) {}
+        try {
+          await loader.writeFlash(flashOptions);
+        } catch (retryErr) {
+          const rStr = (retryErr.message || retryErr.toString() || "").toString();
+          if (rStr.includes("leave compressed flash mode") || rStr.includes("200,0") || rStr.includes("status 200")) {
+            logToConsole("⚠️ Handled esptool WebSerial timing status on retry (Compressed flash write finished 100%). Continuing...", "warning");
+            return;
+          }
+          throw retryErr;
+        }
+      }
+    }
+
     async function commitRepairBinChanges() {
       const url = sheetUrlInput.value.trim();
       const commitBtn = document.getElementById("btnCommitBinChanges");
@@ -14410,35 +14439,6 @@ function getManageRecordsHtml() {
       }
       await new Promise(r => setTimeout(r, 200));
 
-    // ── Safe Write Flash Wrapper (handles WebSerial 200,0 compressed flash status & retries) ──
-    async function safeWriteFlash(loader, flashOptions) {
-      try {
-        await loader.writeFlash(flashOptions);
-      } catch (err) {
-        const errStr = (err.message || err.toString() || "").toString();
-        // WebSerial / esptool.js status 200,0 response timing glitch: 0x00,0x00 is ESP_OK from stub!
-        if (errStr.includes("leave compressed flash mode") || errStr.includes("200,0") || errStr.includes("status 200")) {
-          logToConsole("⚠️ Handled esptool WebSerial timing status (200,0: Compressed flash write finished 100%). Continuing...", "warning");
-          return;
-        }
-        logToConsole(`⚠️ Flash write warning (${errStr}). Retrying write operation at safer 460800 baud rate...`, "warning");
-        try {
-          if (typeof loader.changeBaudrate === "function") await loader.changeBaudrate(460800);
-          else if (typeof loader.changeBaud === "function") await loader.changeBaud(460800);
-        } catch (bErr) {}
-        try {
-          await loader.writeFlash(flashOptions);
-        } catch (retryErr) {
-          const rStr = (retryErr.message || retryErr.toString() || "").toString();
-          if (rStr.includes("leave compressed flash mode") || rStr.includes("200,0") || rStr.includes("status 200")) {
-            logToConsole("⚠️ Handled esptool WebSerial timing status on retry (Compressed flash write finished 100%). Continuing...", "warning");
-            return;
-          }
-          throw retryErr;
-        }
-      }
-    }
-      
       // Step 2: Close the serial port
       if (port) {
         try { await port.close(); } catch (e) {}
