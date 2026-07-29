@@ -14625,27 +14625,17 @@ function getManageRecordsHtml() {
       logToConsole("Connecting to chip...", "normal");
       await esploader.main();
 
-      // Smart Baud Rate Auto-Negotiation for high-speed flashing
+      // Smart Baud Rate Auto-Negotiation for high-speed flashing (460800 max for reliable USB-UART transfers)
       try {
         if (typeof esploader.changeBaudrate === "function") {
-          await esploader.changeBaudrate(921600);
-          logToConsole("⚡ High-speed baud rate 921600 active! (Ultra-Fast Flashing Enabled)", "info");
+          await esploader.changeBaudrate(460800);
+          logToConsole("⚡ High-speed baud rate 460800 active! (Fast Flashing Enabled)", "info");
         } else if (typeof esploader.changeBaud === "function") {
-          await esploader.changeBaud(921600);
-          logToConsole("⚡ High-speed baud rate 921600 active! (Ultra-Fast Flashing Enabled)", "info");
+          await esploader.changeBaud(460800);
+          logToConsole("⚡ High-speed baud rate 460800 active! (Fast Flashing Enabled)", "info");
         }
       } catch (e1) {
-        try {
-          if (typeof esploader.changeBaudrate === "function") {
-            await esploader.changeBaudrate(460800);
-            logToConsole("⚡ High-speed baud rate 460800 active! (Fast Flashing Enabled)", "info");
-          } else if (typeof esploader.changeBaud === "function") {
-            await esploader.changeBaud(460800);
-            logToConsole("⚡ High-speed baud rate 460800 active! (Fast Flashing Enabled)", "info");
-          }
-        } catch (e2) {
-          logToConsole("Continuing flashing at default 115200 baud.", "normal");
-        }
+        logToConsole("Continuing flashing at default 115200 baud.", "normal");
       }
     }
 
