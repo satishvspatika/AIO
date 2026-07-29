@@ -306,36 +306,85 @@
     body.theme-light .console-warn { color: #b45309 !important; font-weight: 700; }
     body.theme-light .console-err  { color: #b91c1c !important; font-weight: 700; }
 
-    /* Enclosure Register Table High Contrast Light Mode Overrides */
-    body.theme-light .table-scroll-container {
+    /* 🌟 Search Result Windows, Modals & Search Controls High Contrast Light Mode Overrides */
+    body.theme-light #sysSearchBox,
+    body.theme-light #summaryExplorerSearch,
+    body.theme-light #txtSearchQuery,
+    body.theme-light #searchBarcode,
+    body.theme-light #sysStateFilter,
+    body.theme-light #summaryExplorerTypeFilter,
+    body.theme-light #summaryExplorerFilter {
+      background: #ffffff !important;
+      border: 1.5px solid #94a3b8 !important;
+      color: #0f172a !important;
+      font-weight: 700 !important;
+    }
+    body.theme-light #sysSearchBox::placeholder,
+    body.theme-light #summaryExplorerSearch::placeholder,
+    body.theme-light #txtSearchQuery::placeholder,
+    body.theme-light #searchBarcode::placeholder {
+      color: #64748b !important;
+    }
+    body.theme-light #historyModal {
+      background: rgba(15, 23, 42, 0.65) !important;
+      backdrop-filter: blur(8px) !important;
+    }
+    body.theme-light #historyModal > div {
       background: #ffffff !important;
       border: 1.5px solid #cbd5e1 !important;
+      color: #0f172a !important;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15) !important;
     }
-    body.theme-light .sys-table-header {
+    body.theme-light #historyModal h2 {
+      background: linear-gradient(110deg, #1e3a8a 0%, #1d4ed8 60%, #2563eb 100%) !important;
+      -webkit-background-clip: text !important;
+      -webkit-text-fill-color: transparent !important;
+    }
+    body.theme-light #historyModalSubtitle {
+      color: #334155 !important;
+      font-weight: 600 !important;
+    }
+    body.theme-light #btnCloseHistory {
+      color: #334155 !important;
+    }
+    body.theme-light #btnCloseHistory:hover {
+      color: #0f172a !important;
+    }
+    body.theme-light #historyModalBody {
+      color: #0f172a !important;
+      --card-inner-bg: #f8fafc;
+      --card-sub-bg: #f1f5f9;
+      --card-border: #cbd5e1;
+    }
+    body.theme-light #historyModalBody div,
+    body.theme-light #historyModalBody span,
+    body.theme-light #historyModalBody b,
+    body.theme-light #historyModalBody code {
+      --text-color: #0f172a;
+      --text-muted: #475569;
+    }
+    body.theme-light #resultsCard {
+      background: #ffffff !important;
+      border: 1.5px solid #cbd5e1 !important;
+      color: #0f172a !important;
+    }
+    body.theme-light #historyTable {
+      background: #ffffff !important;
+      border-color: #cbd5e1 !important;
+    }
+    body.theme-light #historyTable th {
       background: #e2e8f0 !important;
+      color: #0f172a !important;
+      font-weight: 700 !important;
       border-bottom: 2px solid #cbd5e1 !important;
     }
-    body.theme-light .sys-table-header th {
+    body.theme-light #historyTable td {
       color: #0f172a !important;
-      font-weight: 800 !important;
+      border-bottom: 1px solid #e2e8f0 !important;
     }
-    body.theme-light .sys-row {
-      border-bottom: 1px solid #cbd5e1 !important;
-    }
-    body.theme-light .sys-row:hover {
-      background: #f8fafc !important;
-    }
-    body.theme-light .sys-pair-btn {
-      background: #e0e7ff !important;
-      color: #3730a3 !important;
-      border: 1px solid #c7d2fe !important;
-      font-weight: 700 !important;
-    }
-    body.theme-light .sys-dispatch-btn {
-      background: #fef3c7 !important;
-      color: #b45309 !important;
-      border: 1px solid #fde68a !important;
-      font-weight: 700 !important;
+    body.theme-light #searchStatusLine {
+      color: #334155 !important;
+      font-weight: 600 !important;
     }
 
     body.theme-emerald {
@@ -579,33 +628,118 @@
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25) !important;
     }
 
+    /* 🌟 Universal High-Contrast Light Mode Overrides for ALL Pop-Up Modals & Floating Windows */
+    body.theme-light #modalSystemPair,
+    body.theme-light #modalSystemDispatch,
+    body.theme-light #sysBulkDispatchModal,
+    body.theme-light #sysPairBarcodePromptModal,
+    body.theme-light #specModal,
+    body.theme-light #helpModal,
+    body.theme-light #offlineQueueModal,
+    body.theme-light #historyModal,
+    body.theme-light #operatorPromptModal,
+    body.theme-light #failureReasonModal,
+    body.theme-light #directFlashModal,
+    body.theme-light #abortSyncModal,
+    body.theme-light #codeModal,
+    body.theme-light #verdictOverlay {
+      background: rgba(15, 23, 42, 0.7) !important;
+      backdrop-filter: blur(8px) !important;
+    }
+
+    body.theme-light #modalSystemPair > div,
+    body.theme-light #modalSystemDispatch > div,
+    body.theme-light #sysBulkDispatchModal > div,
+    body.theme-light #sysPairBarcodePromptModal > div,
+    body.theme-light #specModal > div,
+    body.theme-light #helpModal > div,
+    body.theme-light #offlineQueueModal > div,
+    body.theme-light #historyModal > div,
+    body.theme-light #operatorPromptModal > div,
+    body.theme-light #failureReasonModal > div,
+    body.theme-light #directFlashModal > div,
+    body.theme-light #abortSyncModal > div,
+    body.theme-light #codeModal > div,
+    body.theme-light #verdictBox {
+      background: #ffffff !important;
+      border: 2px solid #cbd5e1 !important;
+      color: #0f172a !important;
+      box-shadow: 0 25px 70px rgba(0, 0, 0, 0.25) !important;
+    }
+
     body.theme-light #modalSystemPair *,
     body.theme-light #modalSystemDispatch *,
+    body.theme-light #sysBulkDispatchModal *,
+    body.theme-light #sysPairBarcodePromptModal *,
     body.theme-light #specModal *,
     body.theme-light #helpModal *,
     body.theme-light #offlineQueueModal *,
-    body.theme-light #historyModal * {
+    body.theme-light #historyModal *,
+    body.theme-light #operatorPromptModal *,
+    body.theme-light #failureReasonModal *,
+    body.theme-light #directFlashModal *,
+    body.theme-light #abortSyncModal *,
+    body.theme-light #codeModal *,
+    body.theme-light #verdictOverlay * {
       color: #0f172a;
     }
 
-    body.theme-light #modalSystemPair h2,
-    body.theme-light #modalSystemPair h3,
-    body.theme-light #modalSystemDispatch h2,
-    body.theme-light #modalSystemDispatch h3,
-    body.theme-light #specModal h2,
-    body.theme-light #specModal h3,
-    body.theme-light #helpModal h2,
-    body.theme-light #helpModal h3,
-    body.theme-light #panelFlows h2,
-    body.theme-light #panelFlows h3,
-    body.theme-light #panelFlows .flow-title {
+    body.theme-light #modalSystemPair h1, body.theme-light #modalSystemPair h2, body.theme-light #modalSystemPair h3, body.theme-light #modalSystemPair h4,
+    body.theme-light #modalSystemDispatch h1, body.theme-light #modalSystemDispatch h2, body.theme-light #modalSystemDispatch h3, body.theme-light #modalSystemDispatch h4,
+    body.theme-light #sysBulkDispatchModal h1, body.theme-light #sysBulkDispatchModal h2, body.theme-light #sysBulkDispatchModal h3,
+    body.theme-light #sysPairBarcodePromptModal h1, body.theme-light #sysPairBarcodePromptModal h2, body.theme-light #sysPairBarcodePromptModal h3,
+    body.theme-light #specModal h1, body.theme-light #specModal h2, body.theme-light #specModal h3,
+    body.theme-light #helpModal h1, body.theme-light #helpModal h2, body.theme-light #helpModal h3,
+    body.theme-light #offlineQueueModal h1, body.theme-light #offlineQueueModal h2, body.theme-light #offlineQueueModal h3,
+    body.theme-light #historyModal h1, body.theme-light #historyModal h2, body.theme-light #historyModal h3,
+    body.theme-light #operatorPromptModal h1, body.theme-light #operatorPromptModal h2, body.theme-light #operatorPromptModal h3,
+    body.theme-light #failureReasonModal h1, body.theme-light #failureReasonModal h2, body.theme-light #failureReasonModal h3,
+    body.theme-light #directFlashModal h1, body.theme-light #directFlashModal h2, body.theme-light #directFlashModal h3,
+    body.theme-light #abortSyncModal h1, body.theme-light #abortSyncModal h2, body.theme-light #abortSyncModal h3,
+    body.theme-light #codeModal h1, body.theme-light #codeModal h2, body.theme-light #codeModal h3,
+    body.theme-light #panelFlows h2, body.theme-light #panelFlows h3, body.theme-light #panelFlows .flow-title {
       color: #0f172a !important;
       font-weight: 800 !important;
       -webkit-text-fill-color: initial !important;
+      background: none !important;
     }
 
+    body.theme-light #modalSystemPair div[style*="background"],
+    body.theme-light #modalSystemDispatch div[style*="background"],
+    body.theme-light #sysBulkDispatchModal div[style*="background"],
+    body.theme-light #sysPairBarcodePromptModal div[style*="background"],
+    body.theme-light #specModal div[style*="background"],
+    body.theme-light #helpModal div[style*="background"],
+    body.theme-light #offlineQueueModal div[style*="background"],
+    body.theme-light #historyModal div[style*="background"],
+    body.theme-light #operatorPromptModal div[style*="background"],
+    body.theme-light #failureReasonModal div[style*="background"],
+    body.theme-light #directFlashModal div[style*="background"],
+    body.theme-light #abortSyncModal div[style*="background"],
+    body.theme-light #codeModal div[style*="background"] {
+      background: #f8fafc !important;
+      border-color: #cbd5e1 !important;
+      color: #0f172a !important;
+    }
+
+    body.theme-light #modalSystemPair code,
+    body.theme-light #modalSystemDispatch code,
+    body.theme-light #specModal code,
+    body.theme-light #helpModal code,
+    body.theme-light #historyModal code,
+    body.theme-light #operatorPromptModal code,
+    body.theme-light #codeModal pre {
+      background: #f1f5f9 !important;
+      color: #1d4ed8 !important;
+      border: 1px solid #cbd5e1 !important;
+      font-weight: 700 !important;
+    }
+
+    body.theme-light #modalSystemPair th,
+    body.theme-light #modalSystemDispatch th,
     body.theme-light #specModal th,
     body.theme-light #helpModal th,
+    body.theme-light #historyModal th,
     body.theme-light #panelFlows th {
       background: #e2e8f0 !important;
       color: #0f172a !important;
@@ -613,8 +747,11 @@
       border-bottom: 2px solid #cbd5e1 !important;
     }
 
+    body.theme-light #modalSystemPair td,
+    body.theme-light #modalSystemDispatch td,
     body.theme-light #specModal td,
     body.theme-light #helpModal td,
+    body.theme-light #historyModal td,
     body.theme-light #panelFlows td {
       color: #1e293b !important;
       border-bottom: 1px solid #cbd5e1 !important;
@@ -9290,38 +9427,38 @@ function getManageRecordsHtml() {
             <!-- Top row: verdict badge + timestamp + Latest/Action tags -->
             <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
               <span style="font-size:1.05rem; font-weight:800; color:${vColor}; padding:0.15rem 0.5rem; background:rgba(255,255,255,0.02); border-radius:0.3rem; border:1px solid ${borderCol};">${verdict}</span>
-              ${index === 0 ? `<span style="background:rgba(59,130,246,0.2); color:#60a5fa; font-size:0.64rem; font-weight:700; padding:0.15rem 0.5rem; border-radius:99px; border:1px solid rgba(59,130,246,0.4); letter-spacing:0.05em;">LATEST</span>` : `<span style="background:rgba(255,255,255,0.05); color:#64748b; font-size:0.64rem; font-weight:600; padding:0.15rem 0.5rem; border-radius:99px;">#${total - index} of ${total}</span>`}
+              ${index === 0 ? `<span style="background:rgba(59,130,246,0.2); color:#60a5fa; font-size:0.64rem; font-weight:700; padding:0.15rem 0.5rem; border-radius:99px; border:1px solid rgba(59,130,246,0.4); letter-spacing:0.05em;">LATEST</span>` : `<span style="background:rgba(255,255,255,0.05); color:var(--text-muted, #64748b); font-size:0.64rem; font-weight:600; padding:0.15rem 0.5rem; border-radius:99px;">#${total - index} of ${total}</span>`}
               <span style="background:rgba(167,139,250,0.15); color:#c084fc; font-size:0.64rem; font-weight:700; padding:0.15rem 0.5rem; border-radius:99px; border:1px solid rgba(167,139,250,0.3); letter-spacing:0.04em;">${action}</span>
-              <span style="margin-left:auto; font-size:0.72rem; color:#64748b;">${rec["Local Test Time"] || rec["Timestamp"] || "--"}</span>
+              <span style="margin-left:auto; font-size:0.72rem; color:var(--text-muted, #64748b);">${rec["Local Test Time"] || rec["Timestamp"] || "--"}</span>
             </div>
 
             <!-- Identity block -->
-            <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px,1fr)); gap:0.3rem 1.5rem; padding:0.6rem 0.75rem; background:rgba(255,255,255,0.03); border-radius:0.4rem; border:1px solid rgba(255,255,255,0.04);">
-              <div style="font-size:0.72rem;"><span style="color:#64748b;">Box 1 (DL): </span><code style="color:#a5b4fc; font-weight:700; font-size:0.75rem;">${rec["Box 1 Barcode"] || "--"}</code></div>
-              <div style="font-size:0.72rem;"><span style="color:#64748b;">Box 2 (PS): </span><code style="color:#a5b4fc; font-weight:700; font-size:0.75rem;">${rec["Box 2 Barcode"] || "--"}</code></div>
-              <div style="font-size:0.72rem;"><span style="color:#64748b;">Tester: </span><b style="color:#e2e8f0;">${rec["Tester"] || "--"}</b></div>
-              <div style="font-size:0.72rem;"><span style="color:#64748b;">Mode: </span><b style="color:#e2e8f0;">INTEGRATION</b></div>
-              <div style="font-size:0.72rem;"><span style="color:#64748b;">Duration: </span><b style="color:#fbbf24;">${rec["Duration (s)"] && rec["Duration (s)"] !== "--" ? rec["Duration (s)"] + " s" : "--"}</b></div>
-              <div style="font-size:0.72rem;"><span style="color:#64748b;">Prod FW: </span><b style="color:#e2e8f0;">${rec["Firmware Ver"] || "--"}</b></div>
-              ${rec["MAC Address"] && rec["MAC Address"] !== "--" ? `<div style="font-size:0.72rem;"><span style="color:#64748b;">MAC: </span><code style="color:#38bdf8; font-size:0.7rem;">${rec["MAC Address"]}</code></div>` : ""}
+            <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px,1fr)); gap:0.3rem 1.5rem; padding:0.6rem 0.75rem; background:var(--card-inner-bg, rgba(255,255,255,0.03)); border-radius:0.4rem; border:1px solid var(--card-border, rgba(255,255,255,0.04));">
+              <div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">Box 1 (DL): </span><code style="color:#818cf8; font-weight:700; font-size:0.75rem;">${rec["Box 1 Barcode"] || "--"}</code></div>
+              <div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">Box 2 (PS): </span><code style="color:#818cf8; font-weight:700; font-size:0.75rem;">${rec["Box 2 Barcode"] || "--"}</code></div>
+              <div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">Tester: </span><b style="color:var(--text-color, #e2e8f0);">${rec["Tester"] || "--"}</b></div>
+              <div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">Mode: </span><b style="color:var(--text-color, #e2e8f0);">INTEGRATION</b></div>
+              <div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">Duration: </span><b style="color:#d97706;">${rec["Duration (s)"] && rec["Duration (s)"] !== "--" ? rec["Duration (s)"] + " s" : "--"}</b></div>
+              <div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">Prod FW: </span><b style="color:var(--text-color, #e2e8f0);">${rec["Firmware Ver"] || "--"}</b></div>
+              ${rec["MAC Address"] && rec["MAC Address"] !== "--" ? `<div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">MAC: </span><code style="color:#0284c7; font-size:0.7rem; font-weight:700;">${rec["MAC Address"]}</code></div>` : ""}
             </div>
 
             <!-- Genealogy Tree View -->
-            <div style="font-size:0.75rem; color:#94a3b8; font-family:monospace; background:rgba(0,0,0,0.22); border-radius:0.4rem; padding:0.6rem 0.8rem; border:1px solid rgba(255,255,255,0.04);">
-              <div style="color:#fff; font-weight:700; margin-bottom:0.25rem;">📦 Integrated System Parts:</div>
-              <div style="margin-left:0.5rem; color:#a5b4fc; font-weight:600; margin-bottom:0.15rem;">📦 DL Box (Box 1):</div>
-              <div style="margin-left:0.5rem;">├── 🧠 ESP32 Board: <code style="color:#38bdf8;">${rec["ESP32 Barcode"] || "--"}</code></div>
-              <div style="margin-left:0.5rem;">├── 📶 GPRS Board:  <code style="color:#34d399;">${rec["GPRS Barcode"] || "--"}</code></div>
-              <div style="margin-left:0.5rem; margin-bottom:0.35rem;">└── 📟 Nuvoton LCD: <code style="color:#fbbf24;">${rec["Nuvoton Barcode"] || "--"}</code></div>
+            <div style="font-size:0.75rem; color:var(--text-muted, #94a3b8); font-family:monospace; background:var(--card-sub-bg, rgba(0,0,0,0.22)); border-radius:0.4rem; padding:0.6rem 0.8rem; border:1px solid var(--card-border, rgba(255,255,255,0.04));">
+              <div style="color:var(--text-color, #fff); font-weight:700; margin-bottom:0.25rem;">📦 Integrated System Parts:</div>
+              <div style="margin-left:0.5rem; color:#6366f1; font-weight:700; margin-bottom:0.15rem;">📦 DL Box (Box 1):</div>
+              <div style="margin-left:0.5rem;">├── 🧠 ESP32 Board: <code style="color:#0284c7; font-weight:700;">${rec["ESP32 Barcode"] || "--"}</code></div>
+              <div style="margin-left:0.5rem;">├── 📶 GPRS Board:  <code style="color:#059669; font-weight:700;">${rec["GPRS Barcode"] || "--"}</code></div>
+              <div style="margin-left:0.5rem; margin-bottom:0.35rem;">└── 📟 Nuvoton LCD: <code style="color:#d97706; font-weight:700;">${rec["Nuvoton Barcode"] || "--"}</code></div>
               
-              <div style="margin-left:0.5rem; color:#4ade80; font-weight:600; margin-bottom:0.15rem;">⚡ PS Box (Box 2):</div>
-              <div style="margin-left:0.5rem;">├── 🔋 Battery 1:   <code style="color:#cbd5e1;">${rec["Battery 1 Barcode"] || "--"}</code></div>
-              <div style="margin-left:0.5rem;">├── 🔋 Battery 2:   <code style="color:#cbd5e1;">${rec["Battery 2 Barcode"] || "--"}</code></div>
-              <div style="margin-left:0.5rem;">└── 🔌 MPPT Board:  <code style="color:#cbd5e1;">${rec["MPPT Barcode"] || "--"}</code></div>
+              <div style="margin-left:0.5rem; color:#16a34a; font-weight:700; margin-bottom:0.15rem;">⚡ PS Box (Box 2):</div>
+              <div style="margin-left:0.5rem;">├── 🔋 Battery 1:   <code style="color:var(--text-color, #cbd5e1); font-weight:700;">${rec["Battery 1 Barcode"] || "--"}</code></div>
+              <div style="margin-left:0.5rem;">├── 🔋 Battery 2:   <code style="color:var(--text-color, #cbd5e1); font-weight:700;">${rec["Battery 2 Barcode"] || "--"}</code></div>
+              <div style="margin-left:0.5rem;">└── 🔌 MPPT Board:  <code style="color:var(--text-color, #cbd5e1); font-weight:700;">${rec["MPPT Barcode"] || "--"}</code></div>
             </div>
 
             <!-- Approved By footer -->
-            ${rec["Approved By"] ? `<div style="font-size:0.7rem; color:#64748b; border-top:1px solid rgba(255,255,255,0.04); padding-top:0.4rem;">✅ Approved by: <b style="color:#a78bfa;">${rec["Approved By"]}</b></div>` : ""}
+            ${rec["Approved By"] ? `<div style="font-size:0.7rem; color:var(--text-muted, #64748b); border-top:1px solid var(--card-border, rgba(255,255,255,0.04)); padding-top:0.4rem;">✅ Approved by: <b style="color:#7c3aed;">${rec["Approved By"]}</b></div>` : ""}
           </div>
         `;
       }
@@ -9364,39 +9501,39 @@ function getManageRecordsHtml() {
           <!-- Top row: verdict badge + timestamp + Latest tag -->
           <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
             <span style="font-size:1.05rem; font-weight:800; color:${vColor}; padding:0.15rem 0.5rem; background:rgba(255,255,255,0.02); border-radius:0.3rem; border:1px solid ${borderCol};">${verdict}</span>
-            ${isLatest ? `<span style="background:rgba(59,130,246,0.2); color:#60a5fa; font-size:0.64rem; font-weight:700; padding:0.15rem 0.5rem; border-radius:99px; border:1px solid rgba(59,130,246,0.4); letter-spacing:0.05em;">LATEST</span>` : `<span style="background:rgba(255,255,255,0.05); color:#64748b; font-size:0.64rem; font-weight:600; padding:0.15rem 0.5rem; border-radius:99px;">#${total - index} of ${total}</span>`}
-            <span style="margin-left:auto; font-size:0.72rem; color:#64748b;">${rec["Local Test Time"] || rec["Timestamp"] || "--"}</span>
+            ${isLatest ? `<span style="background:rgba(59,130,246,0.2); color:#60a5fa; font-size:0.64rem; font-weight:700; padding:0.15rem 0.5rem; border-radius:99px; border:1px solid rgba(59,130,246,0.4); letter-spacing:0.05em;">LATEST</span>` : `<span style="background:rgba(255,255,255,0.05); color:var(--text-muted, #64748b); font-size:0.64rem; font-weight:600; padding:0.15rem 0.5rem; border-radius:99px;">#${total - index} of ${total}</span>`}
+            <span style="margin-left:auto; font-size:0.72rem; color:var(--text-muted, #64748b);">${rec["Local Test Time"] || rec["Timestamp"] || "--"}</span>
           </div>
 
           <!-- Identity block -->
-          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px,1fr)); gap:0.3rem 1.5rem; padding:0.6rem 0.75rem; background:rgba(255,255,255,0.03); border-radius:0.4rem; border:1px solid rgba(255,255,255,0.04);">
-            <div style="font-size:0.72rem;"><span style="color:#64748b;">DUT Type: </span><b style="color:#e2e8f0; text-transform:uppercase;">${rec["DUT Type"] || "--"}</b></div>
-            <div style="font-size:0.72rem;"><span style="color:#64748b;">Barcode: </span><code style="color:#a5b4fc; font-weight:700; font-size:0.75rem;">${rec["Barcode"] || "--"}</code></div>
-            <div style="font-size:0.72rem;"><span style="color:#64748b;">Tester: </span><b style="color:#e2e8f0;">${rec["Tester"] || "--"}</b></div>
-            <div style="font-size:0.72rem;"><span style="color:#64748b;">Mode: </span><b style="color:#e2e8f0;">${rec["Verification Mode"] || "--"}</b></div>
-            <div style="font-size:0.72rem;"><span style="color:#64748b;">Duration: </span><b style="color:#fbbf24;">${rec["Duration (s)"] && rec["Duration (s)"] !== "--" ? rec["Duration (s)"] + " s" : "--"}</b></div>
-            <div style="font-size:0.72rem;"><span style="color:#64748b;">Test FW: </span><b style="color:#e2e8f0;">${rec["Firmware Ver"] || "--"}</b></div>
-            ${rec["MAC Address"] && rec["MAC Address"] !== "--" ? `<div style="font-size:0.72rem;"><span style="color:#64748b;">MAC: </span><code style="color:#38bdf8; font-size:0.7rem;">${rec["MAC Address"]}</code></div>` : ""}
-            ${rec["Flash Size"] && rec["Flash Size"] !== "--" ? `<div style="font-size:0.72rem;"><span style="color:#64748b;">Flash: </span><b style="color:#e2e8f0;">${rec["Flash Size"]}</b></div>` : ""}
-            ${rec["GPRS IMEI"] && rec["GPRS IMEI"] !== "--" ? `<div style="font-size:0.72rem;"><span style="color:#64748b;">IMEI: </span><code style="color:#e2e8f0; font-size:0.7rem;">${rec["GPRS IMEI"]}</code></div>` : ""}
-            ${rec["SIM CCID"] && rec["SIM CCID"] !== "--" ? `<div style="font-size:0.72rem;"><span style="color:#64748b;">SIM CCID: </span><code style="color:#e2e8f0; font-size:0.7rem;">${rec["SIM CCID"]}</code></div>` : ""}
+          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px,1fr)); gap:0.3rem 1.5rem; padding:0.6rem 0.75rem; background:var(--card-inner-bg, rgba(255,255,255,0.03)); border-radius:0.4rem; border:1px solid var(--card-border, rgba(255,255,255,0.04));">
+            <div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">DUT Type: </span><b style="color:var(--text-color, #e2e8f0); text-transform:uppercase;">${rec["DUT Type"] || "--"}</b></div>
+            <div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">Barcode: </span><code style="color:#6366f1; font-weight:700; font-size:0.75rem;">${rec["Barcode"] || "--"}</code></div>
+            <div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">Tester: </span><b style="color:var(--text-color, #e2e8f0);">${rec["Tester"] || "--"}</b></div>
+            <div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">Mode: </span><b style="color:var(--text-color, #e2e8f0);">${rec["Verification Mode"] || "--"}</b></div>
+            <div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">Duration: </span><b style="color:#d97706;">${rec["Duration (s)"] && rec["Duration (s)"] !== "--" ? rec["Duration (s)"] + " s" : "--"}</b></div>
+            <div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">Test FW: </span><b style="color:var(--text-color, #e2e8f0);">${rec["Firmware Ver"] || "--"}</b></div>
+            ${rec["MAC Address"] && rec["MAC Address"] !== "--" ? `<div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">MAC: </span><code style="color:#0284c7; font-size:0.7rem; font-weight:700;">${rec["MAC Address"]}</code></div>` : ""}
+            ${rec["Flash Size"] && rec["Flash Size"] !== "--" ? `<div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">Flash: </span><b style="color:var(--text-color, #e2e8f0);">${rec["Flash Size"]}</b></div>` : ""}
+            ${rec["GPRS IMEI"] && rec["GPRS IMEI"] !== "--" ? `<div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">IMEI: </span><code style="color:var(--text-color, #e2e8f0); font-size:0.7rem;">${rec["GPRS IMEI"]}</code></div>` : ""}
+            ${rec["SIM CCID"] && rec["SIM CCID"] !== "--" ? `<div style="font-size:0.72rem;"><span style="color:var(--text-muted, #64748b);">SIM CCID: </span><code style="color:var(--text-color, #e2e8f0); font-size:0.7rem;">${rec["SIM CCID"]}</code></div>` : ""}
           </div>
 
           <!-- Co-tested Companion Info -->
-          <div style="font-size:0.72rem; padding:0.4rem 0.75rem; background:rgba(99,102,241,0.06); border:1px solid rgba(99,102,241,0.15); border-radius:0.4rem; color:#a5b4fc;">
-            💬 <span style="font-weight:700;">Co-tested Barcodes:</span> <code style="color:#fff; font-size:0.75rem;">${rec["Co-tested Barcodes"] || "--"}</code>
+          <div style="font-size:0.72rem; padding:0.4rem 0.75rem; background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.2); border-radius:0.4rem; color:#4f46e5;">
+            💬 <span style="font-weight:700;">Co-tested Barcodes:</span> <code style="color:var(--text-color, #fff); font-size:0.75rem; font-weight:700;">${rec["Co-tested Barcodes"] || "--"}</code>
           </div>
 
           <!-- Diagnostics details -->
-          <div style="font-size:0.75rem; background:rgba(0,0,0,0.18); border:1px solid rgba(255,255,255,0.04); border-radius:0.4rem; padding:0.7rem 0.9rem; display:flex; flex-direction:column; gap:0.4rem;">
-            <div style="color:#94a3b8; font-weight:700; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em;">📋 Test Details:</div>
-            <div><span style="color:#64748b;">Tests Performed:</span> <span style="color:#e2e8f0; font-weight:600;">${rec["Tests Run"] || "--"}</span></div>
-            <div><span style="color:#64748b;">Diagnostic Logs:</span> <span style="color:#38bdf8; font-family:monospace; font-size:0.72rem;">${rec["Test Details"] || "--"}</span></div>
-            <div><span style="color:#64748b;">Voltages Logged:</span> <span style="color:#fbbf24; font-family:monospace; font-size:0.72rem;">${rec["Voltages"] || rec["Voltages Logged"] || "--"}</span></div>
+          <div style="font-size:0.75rem; background:var(--card-sub-bg, rgba(0,0,0,0.18)); border:1px solid var(--card-border, rgba(255,255,255,0.04)); border-radius:0.4rem; padding:0.7rem 0.9rem; display:flex; flex-direction:column; gap:0.4rem;">
+            <div style="color:var(--text-muted, #94a3b8); font-weight:700; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em;">📋 Test Details:</div>
+            <div><span style="color:var(--text-muted, #64748b);">Tests Performed:</span> <span style="color:var(--text-color, #e2e8f0); font-weight:600;">${rec["Tests Run"] || "--"}</span></div>
+            <div><span style="color:var(--text-muted, #64748b);">Diagnostic Logs:</span> <span style="color:#0284c7; font-family:monospace; font-size:0.72rem; font-weight:700;">${rec["Test Details"] || "--"}</span></div>
+            <div><span style="color:var(--text-muted, #64748b);">Voltages Logged:</span> <span style="color:#d97706; font-family:monospace; font-size:0.72rem; font-weight:700;">${rec["Voltages"] || rec["Voltages Logged"] || "--"}</span></div>
           </div>
 
           <!-- Approved By footer -->
-          ${rec["Approved By"] ? `<div style="font-size:0.7rem; color:#64748b; border-top:1px solid rgba(255,255,255,0.04); padding-top:0.4rem;">✅ Approved by: <b style="color:#a78bfa;">${rec["Approved By"]}</b></div>` : ""}
+          ${rec["Approved By"] ? `<div style="font-size:0.7rem; color:var(--text-muted, #64748b); border-top:1px solid var(--card-border, rgba(255,255,255,0.04)); padding-top:0.4rem;">✅ Approved by: <b style="color:#7c3aed;">${rec["Approved By"]}</b></div>` : ""}
         </div>
       `;
     }
