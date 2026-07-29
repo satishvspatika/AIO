@@ -10676,7 +10676,19 @@ function getManageRecordsHtml() {
           finalVerdict = `FAIL (Flash Failed)`;
         }
 
-        let versionVal = metaFwVersion?.textContent || "--";
+        // Normalize firmware version string to canonical form (no leading v, no QC/OTA suffixes)
+        function normalizeVersion(v) {
+          if (!v || v === "--" || v === "") return "--";
+          var s = String(v).trim();
+          s = s.replace(/^v/i, "");                         // strip leading 'v'
+          s = s.replace(/\s*\(Not Updated\)/gi, "");         // strip (Not Updated)
+          s = s.replace(/\s*\(Update Ready\)/gi, "");       // strip (Update Ready)
+          s = s.replace(/\s*\(QC.*?\)/gi, "");              // strip (QC ...) annotations
+          s = s.replace(/\s*-QC$/i, "");                    // strip trailing -QC
+          return s.trim() || "--";
+        }
+
+        let versionVal = normalizeVersion(metaFwVersion?.textContent);
         if (window._lastUpdateMethod === "LAPTOP") {
           if (window._laptopFlashStatus === "SUCCESS") {
             const activeConfig = releaseConfigSel?.value || "KSNDMC_TRG";
@@ -10684,16 +10696,17 @@ function getManageRecordsHtml() {
             const currentSizeKey = currentChipSize ? `${currentChipSize}mb` : "16mb";
             const sizeMap = activeConfig ? (customConfigVault[activeConfig]?.[currentSizeKey] || customConfigVault[activeConfig]?.["8mb"]) : null;
             const sizeEntry = sizeMap ? sizeMap[uiKey] : null;
-            const fullVer = sizeEntry?.metadata?.full_version || sizeEntry?.version || metaFwVersion?.getAttribute("data-prod-ver") || "6.16";
-            versionVal = fullVer;
+            const fullVer = sizeEntry?.metadata?.full_version || sizeEntry?.version || metaFwVersion?.getAttribute("data-prod-ver") || "TRG9-DMC-6.19-N";
+            versionVal = normalizeVersion(fullVer);
           } else {
             versionVal = `Flash Failed (${activeConfig})`;
           }
         } else if (window._sdOtaApproved) {
-          const prodVer = window._detectedSdVersion || metaFwVersion?.getAttribute("data-prod-ver") || "6.16";
-          versionVal = `v${prodVer}`;
+          const prodVer = window._detectedSdVersion || metaFwVersion?.getAttribute("data-prod-ver") || "TRG9-DMC-6.19-N";
+          versionVal = normalizeVersion(prodVer);
         } else {
-          versionVal = `${versionVal} (Not Updated)`;
+          // QC-only test — strip QC annotation and (Not Updated) suffix for clean log
+          versionVal = normalizeVersion(metaFwVersion?.textContent);
         }
 
         let spiffsVal = valSpiffs?.textContent || "--";
@@ -12729,7 +12742,12 @@ function getManageRecordsHtml() {
         mac: (mode === "both" || mode === "box1") ? integrationMac.textContent : "",
         imei: (mode === "both" || mode === "box1") ? metaImei.textContent : "",
         ccid: (mode === "both" || mode === "box1") ? metaCcid.textContent : "",
-        version: (mode === "both" || mode === "box1") ? (integrationFwVersion.textContent.trim() !== "--" && integrationFwVersion.textContent.trim() !== "" ? integrationFwVersion.textContent.trim() : (metaFwVersion.textContent.trim() !== "--" && metaFwVersion.textContent.trim() !== "" ? metaFwVersion.textContent.trim() : "TRG9-DMC-6.19-N")) : "",
+        version: (mode === "both" || mode === "box1") ? (function(){
+          var raw = integrationFwVersion.textContent.trim();
+          if (!raw || raw === "--") raw = metaFwVersion.textContent.trim();
+          if (!raw || raw === "--") raw = "TRG9-DMC-6.19-N";
+          return raw.replace(/^v/i,"").replace(/\s*\(Not Updated\)/gi,"").replace(/\s*\(Update Ready\)/gi,"").replace(/\s*\(QC.*?\)/gi,"").replace(/\s*-QC$/i,"").trim();
+        })() : "",
         verdict: verdict,
         tester: document.getElementById("testerName")?.value.trim() || "--",
         duration: testDuration || 0,
