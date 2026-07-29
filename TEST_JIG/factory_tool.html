@@ -10579,7 +10579,7 @@ function getManageRecordsHtml() {
 
         await safeWriteFlash(esploader, {
           fileArray: flashArray,
-          flashSize: "keep",
+          flashSize: `${currentChipSize}MB`,
           compress: true,
           reportProgress: (fileIndex, writtenBytes, totalBytes) => {
             if (totalBytes > 0) {
@@ -14259,7 +14259,7 @@ function getManageRecordsHtml() {
           logToConsole(`Flashing Production binary (${(productionBin.byteLength/1024).toFixed(1)} KB) to offset 0x10000...`, "normal");
           await safeWriteFlash(esploader, {
             fileArray: [{ data: productionBin, address: 0x10000 }],
-            flashSize: "keep",
+            flashSize: `${currentChipSize}MB`,
             compress: true,
             reportProgress: (fileIndex, writtenBytes, totalBytes) => {
               if (totalBytes > 0) {
@@ -14349,7 +14349,7 @@ function getManageRecordsHtml() {
         logToConsole(`Flashing Production binary (${(productionBin.byteLength/1024).toFixed(1)} KB) to offset 0x10000...`, "normal");
         await safeWriteFlash(esploader, {
           fileArray: [{ data: productionBin, address: 0x10000 }],
-          flashSize: "keep",
+          flashSize: `${currentChipSize}MB`,
           compress: true,
           reportProgress: (fileIndex, writtenBytes, totalBytes) => {
             if (totalBytes > 0) {
@@ -14702,7 +14702,7 @@ function getManageRecordsHtml() {
       
       await safeWriteFlash(esploader, {
         fileArray: flashArray,
-        flashSize: "keep",
+        flashSize: `${currentChipSize}MB`,
         compress: true,
         reportProgress: (fileIndex, writtenBytes, totalBytes) => {
           if (totalBytes > 0) {
@@ -14775,7 +14775,7 @@ function getManageRecordsHtml() {
       logToConsole(`Writing application updates for ${activeConfig}_${uiKey.toUpperCase()}_${currentSizeKey}...`, "normal");
       await safeWriteFlash(esploader, {
         fileArray: flashArray,
-        flashSize: "keep",
+        flashSize: `${currentChipSize}MB`,
         compress: true,
         reportProgress: (fileIndex, writtenBytes, totalBytes) => {
           if (totalBytes > 0) {
@@ -14875,7 +14875,7 @@ function getManageRecordsHtml() {
       logToConsole(`Writing production firmware for ${activeConfig}_${uiKey.toUpperCase()}_${currentSizeKey}...`, "normal");
       await safeWriteFlash(esploader, {
         fileArray: flashArray,
-        flashSize: "keep",
+        flashSize: `${currentChipSize}MB`,
         compress: true,
         reportProgress: (fileIndex, writtenBytes, totalBytes) => {
           if (totalBytes > 0) {
