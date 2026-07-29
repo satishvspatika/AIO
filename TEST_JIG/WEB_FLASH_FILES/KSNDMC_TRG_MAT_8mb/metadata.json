@@ -5,7 +5,7 @@
   "flash_size": "8mb",
   "full_version": "TRG9-DMC-6.19-M",
   "binary_size_bytes": 1289264,
-  "build_timestamp": "2026-07-28T15:47:52",
+  "build_timestamp": "2026-07-29T11:49:33",
   "firmware_version": "6.19",
   "debug": false,
   "enable_webserver": true,
