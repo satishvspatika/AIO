@@ -3325,6 +3325,38 @@
       </div>
     </div>
 
+    <!-- 🧠 ESP32 Firmware & QC Test Status Details -->
+    <div class="card" style="flex: none; margin-top: 1rem;">
+      <h4 class="card-title" style="margin-bottom: 0.75rem; font-size: 0.85rem; display: flex; align-items: center; gap: 0.35rem;">
+        <span>🧠 ESP32 Firmware & QC Test Status Details</span>
+      </h4>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">
+        
+        <!-- Card 1: Production Firmware -->
+        <div style="background: rgba(96, 165, 250, 0.06); border: 1px solid rgba(96, 165, 250, 0.25); border-radius: 0.5rem; padding: 0.85rem;">
+          <h5 style="margin: 0 0 0.4rem 0; font-size: 0.78rem; color: #93c5fd; text-transform: uppercase; letter-spacing: 0.04em; display: flex; align-items: center; justify-content: space-between;">
+            <span>🚀 Production Firmware</span>
+            <span id="espFwProdCount" style="font-size: 1.3rem; font-weight: 800; color: #60a5fa; cursor: pointer;" title="Click to filter explorer to all upgraded production ESP32 boards">0</span>
+          </h5>
+          <div id="espFwProdList" style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.3rem;">
+            <span style="opacity:0.6;">No data loaded. Refresh dashboard.</span>
+          </div>
+        </div>
+
+        <!-- Card 2: QC Test State -->
+        <div style="background: rgba(245, 158, 11, 0.06); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 0.5rem; padding: 0.85rem;">
+          <h5 style="margin: 0 0 0.4rem 0; font-size: 0.78rem; color: #fde047; text-transform: uppercase; letter-spacing: 0.04em; display: flex; align-items: center; justify-content: space-between;">
+            <span>🔬 QC Test State</span>
+            <span id="espFwQcCount" style="font-size: 1.3rem; font-weight: 800; color: #fbbf24; cursor: pointer;" title="Click to filter explorer to all ESP32 boards in QC test loop">0</span>
+          </h5>
+          <div id="espFwQcList" style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.3rem;">
+            <span style="opacity:0.6;">No data loaded. Refresh dashboard.</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
     <!-- Board Explorer -->
     <div class="card" style="flex: 1;">
       <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.65rem;">
@@ -3343,10 +3375,16 @@
             <option value="ALL">All Statuses</option>
             <option value="PASS">✅ Passed Only</option>
             <option value="FAIL">❌ Failed Only</option>
+            <option value="QC_PASS_UNUPGRADED">✅ QC Passed (Not Upgraded)</option>
+            <option value="QC_FAIL_STAGED">❌ QC Failed / Staged</option>
+            <option value="PRODUCTION_FW">🚀 Production FW (Upgraded)</option>
             <option value="REPAIRED">🔧 Repaired Only</option>
             <option value="SCRAPPED">🗑️ Scrapped Only</option>
             <option value="INTEGRATED">📦 Integrated Only</option>
             <option value="SPARE">⚡ Spares Only</option>
+          </select>
+          <select id="summaryExplorerFwFilter" style="font-size: 0.72rem; padding: 0.25rem 0.5rem; background: #0f172a; border: 1px solid var(--card-border); color: #fff; border-radius: 0.3rem; font-family: inherit; cursor: pointer; max-width: 140px;">
+            <option value="ALL">All Versions</option>
           </select>
           <input type="text" id="summaryExplorerSearch" placeholder="Search barcode..." style="font-size: 0.72rem; padding: 0.25rem 0.5rem; background: #0f172a; border: 1px solid var(--card-border); color: #fff; border-radius: 0.3rem; font-family: inherit; width: 140px;">
           <button id="btnDownloadExplorerCsv" class="btn" style="font-size: 0.68rem; padding: 0.22rem 0.55rem; background: rgba(52,211,153,0.12); border: 1px solid rgba(52,211,153,0.35); color: #34d399; font-weight: 600; white-space: nowrap; cursor: pointer; border-radius: 0.3rem; width: auto; flex-shrink: 0;">⬇️ Download CSV</button>
@@ -3359,14 +3397,16 @@
               <th style="padding: 0.45rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">Barcode</th>
               <th style="padding: 0.45rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">Type</th>
               <th style="padding: 0.45rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">Status</th>
+              <th style="padding: 0.45rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">Firmware</th>
               <th style="padding: 0.45rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">Inventory State</th>
               <th style="padding: 0.45rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">Test Time</th>
               <th style="padding: 0.45rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">Tester</th>
               <th style="padding: 0.45rem 0.6rem; text-align: left; color: var(--text-muted); font-weight: 600;">Action Time</th>
+              <th style="padding: 0.45rem 0.6rem; text-align: center; color: var(--text-muted); font-weight: 600;">Action</th>
             </tr>
           </thead>
           <tbody id="summaryExplorerBody">
-            <tr><td colspan="7" style="text-align: center; padding: 2rem; color: var(--text-muted);">📊 Click 🔄 Refresh to load board explorer.</td></tr>
+            <tr><td colspan="9" style="text-align: center; padding: 2rem; color: var(--text-muted);">📊 Click 🔄 Refresh to load board explorer.</td></tr>
           </tbody>
         </table>
       </div>
@@ -4601,6 +4641,18 @@
     return ContentService.createTextOutput("ERROR");
   }
 
+  if (data.action === "updateFirmwareVersion") {
+    var masterSheet = ss.getSheetByName("Master_Status");
+    var rowIndex = parseInt(data.rowIndex);
+    if (masterSheet && rowIndex > 1 && rowIndex <= masterSheet.getLastRow()) {
+      var newVersion = data.version;
+      masterSheet.getRange(rowIndex, 14).setValue(newVersion); // Col 14 is Firmware Ver
+      masterSheet.getRange(rowIndex, 19).setValue(new Date().toLocaleString()); // Col 19 is Last Action Time
+      return ContentService.createTextOutput("UPDATED");
+    }
+    return ContentService.createTextOutput("ERROR");
+  }
+
   // Define Standard Columns & Headers (New 19-Column Schema - Rearranged)
   var headers = [
     "Timestamp", "Local Test Time", "Barcode", "DUT Type", "Co-tested Barcodes", "MAC Address", "Flash Size", "GPRS IMEI", "SIM CCID", "Tests Run", "Test Details", "QC Verdict", "Voltages", "Firmware Ver", "Verification Mode", "Duration (s)", "Tester", "Approved By", "Last Action Time"
@@ -4914,21 +4966,17 @@
 
 function evaluateBoardVerdict(type, data) {
   var failReasons = [];
-  if (type === "ESP32") {
-    if (isFail(data.spiffs)) failReasons.push("SPIFFS Fail");
-    if (isFail(data.sd)) failReasons.push("SD Card Fail");
-    if (isFail(data.rtc)) failReasons.push("RTC Fail");
-    if (isFail(data.wifi)) failReasons.push("WiFi Fail");
-    if (isFail(data.sensor)) failReasons.push("Sensor Fail");
-    if (isFail(data.sleepWake)) failReasons.push("EXT0 Sleep Wake Fail");
-  } else if (type === "GPRS") {
-    if (isFail(data.cellular)) failReasons.push("Cellular Reg Fail");
-  } else if (type === "Nuvoton") {
-    if (isFail(data.nuvoton)) failReasons.push("Nuvoton Comms Fail");
-    if (isFail(data.lcd)) failReasons.push("LCD Verification Fail");
-    if (isFail(data.keypad)) failReasons.push("Keypad Sweep Fail");
-    if (isFail(data.rainRf)) failReasons.push("Rainfall Test Fail");
-  }
+  if (isFail(data.spiffs)) failReasons.push("SPIFFS Fail");
+  if (isFail(data.sd)) failReasons.push("SD Card Fail");
+  if (isFail(data.rtc)) failReasons.push("RTC Fail");
+  if (isFail(data.wifi)) failReasons.push("WiFi Fail");
+  if (isFail(data.sensor)) failReasons.push("Sensor Fail");
+  if (isFail(data.sleepWake)) failReasons.push("EXT0 Fail");
+  if (isFail(data.cellular)) failReasons.push("Cellular Reg Fail");
+  if (isFail(data.nuvoton)) failReasons.push("Nuvoton Comms Fail");
+  if (isFail(data.lcd)) failReasons.push("LCD Fail");
+  if (isFail(data.keypad)) failReasons.push("Keypad Fail");
+  if (isFail(data.rainRf)) failReasons.push("RF Fail");
   
   if (failReasons.length > 0) {
     var profile = data.profile || "TRG";
@@ -5021,6 +5069,7 @@ function doGet(e) {
         var idxDetails = headers.indexOf("Test Details");
         var idxTester = headers.indexOf("Tester");
         var idxLastAction = headers.indexOf("Last Action Time");
+        var idxFwVer = headers.indexOf("Firmware Ver");
         
         // Use a map to only process the latest record of each barcode
         var barcodeMap = {};
@@ -5048,6 +5097,12 @@ function doGet(e) {
             var tester = (idxTester >= 0 && row[idxTester] != null) ? row[idxTester].toString().trim() : "";
             var details = (idxDetails >= 0 && row[idxDetails] != null) ? row[idxDetails].toString().trim() : "";
             var lastAction = (idxLastAction >= 0 && row[idxLastAction] != null) ? row[idxLastAction].toString().trim() : "";
+            var version = "";
+            if (idxFwVer >= 0 && row[idxFwVer] != null) {
+              version = row[idxFwVer].toString().trim();
+            } else if (row.length > 13 && row[13] != null) {
+              version = row[13].toString().trim();
+            }
             
             // Normalize categories via barcode prefix standards & type checks
             var normCat = "ESP32";
@@ -5086,6 +5141,7 @@ function doGet(e) {
                 "type": normCat,
                 "originalType": type,
                 "verdict": verdict,
+                "version": version,
                 "details": details,
                 "integrated": isIntegrated,
                 "spare": isSpare,
@@ -8123,12 +8179,173 @@ function getManageRecordsHtml() {
       return (rawType || "ESP32").toUpperCase();
     }
 
+    function showUpdateFwModal(barcode, currentFw, productionVersions, onSave) {
+      // Create modal container
+      const backdrop = document.createElement("div");
+      backdrop.style.position = "fixed";
+      backdrop.style.top = "0";
+      backdrop.style.left = "0";
+      backdrop.style.width = "100%";
+      backdrop.style.height = "100%";
+      backdrop.style.background = "rgba(15, 23, 42, 0.6)";
+      backdrop.style.backdropFilter = "blur(4px)";
+      backdrop.style.display = "flex";
+      backdrop.style.alignItems = "center";
+      backdrop.style.justifyContent = "center";
+      backdrop.style.zIndex = "99999";
+      backdrop.id = "customFwModal";
+
+      // Modal Card
+      const card = document.createElement("div");
+      card.style.background = "var(--card-bg)";
+      card.style.border = "1px solid var(--card-border)";
+      card.style.borderRadius = "0.75rem";
+      card.style.padding = "1.5rem";
+      card.style.width = "400px";
+      card.style.maxWidth = "90%";
+      card.style.boxShadow = "0 10px 25px -5px rgba(0, 0, 0, 0.3)";
+      card.style.color = "var(--text-color)";
+      card.style.fontFamily = "inherit";
+
+      // Title
+      const title = document.createElement("h3");
+      title.textContent = "✏️ Update Firmware Version";
+      title.style.margin = "0 0 0.5rem 0";
+      title.style.fontSize = "1rem";
+      title.style.color = "var(--primary)";
+      card.appendChild(title);
+
+      // Subtitle Barcode
+      const sub = document.createElement("p");
+      sub.innerHTML = `Board Barcode: <strong style="color:var(--text-color); font-family:monospace;">${barcode}</strong>`;
+      sub.style.margin = "0 0 1rem 0";
+      sub.style.fontSize = "0.78rem";
+      sub.style.color = "var(--text-muted)";
+      card.appendChild(sub);
+
+      // Form group for dropdown selection
+      const labelSelect = document.createElement("label");
+      labelSelect.textContent = "Select Existing Production FW:";
+      labelSelect.style.display = "block";
+      labelSelect.style.fontSize = "0.72rem";
+      labelSelect.style.fontWeight = "600";
+      labelSelect.style.marginBottom = "0.35rem";
+      labelSelect.style.color = "var(--text-muted)";
+      card.appendChild(labelSelect);
+
+      const select = document.createElement("select");
+      select.style.width = "100%";
+      select.style.padding = "0.45rem";
+      select.style.fontSize = "0.76rem";
+      select.style.background = "var(--bg-color)";
+      select.style.border = "1px solid var(--card-border)";
+      select.style.borderRadius = "0.375rem";
+      select.style.color = "var(--text-color)";
+      select.style.marginBottom = "1rem";
+      select.style.cursor = "pointer";
+
+      // Populate options
+      const defaultOpt = document.createElement("option");
+      defaultOpt.value = "";
+      defaultOpt.textContent = "-- Or type custom version below --";
+      select.appendChild(defaultOpt);
+
+      productionVersions.forEach(v => {
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent = v;
+        if (v === currentFw) {
+          opt.selected = true;
+        }
+        select.appendChild(opt);
+      });
+      card.appendChild(select);
+
+      // Form group for custom entry
+      const labelText = document.createElement("label");
+      labelText.textContent = "Or Type Custom Firmware Version:";
+      labelText.style.display = "block";
+      labelText.style.fontSize = "0.72rem";
+      labelText.style.fontWeight = "600";
+      labelText.style.marginBottom = "0.35rem";
+      labelText.style.color = "var(--text-muted)";
+      card.appendChild(labelText);
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = currentFw || "";
+      input.placeholder = "e.g. TRG9-DMC-6.19-N";
+      input.style.width = "100%";
+      input.style.padding = "0.45rem";
+      input.style.fontSize = "0.76rem";
+      input.style.background = "var(--bg-color)";
+      input.style.border = "1px solid var(--card-border)";
+      input.style.borderRadius = "0.375rem";
+      input.style.color = "var(--text-color)";
+      input.style.marginBottom = "1.25rem";
+      input.style.boxSizing = "border-box";
+      card.appendChild(input);
+
+      // Dropdown changes text input
+      select.addEventListener("change", () => {
+        if (select.value) {
+          input.value = select.value;
+        }
+      });
+
+      // Actions buttons layout
+      const actions = document.createElement("div");
+      actions.style.display = "flex";
+      actions.style.justifyContent = "flex-end";
+      actions.style.gap = "0.5rem";
+
+      const btnCancel = document.createElement("button");
+      btnCancel.textContent = "Cancel";
+      btnCancel.style.padding = "0.4rem 0.85rem";
+      btnCancel.style.fontSize = "0.72rem";
+      btnCancel.style.borderRadius = "0.375rem";
+      btnCancel.style.border = "1px solid var(--card-border)";
+      btnCancel.style.background = "transparent";
+      btnCancel.style.color = "var(--text-color)";
+      btnCancel.style.cursor = "pointer";
+      btnCancel.addEventListener("click", () => {
+        document.body.removeChild(backdrop);
+      });
+      actions.appendChild(btnCancel);
+
+      const btnSave = document.createElement("button");
+      btnSave.textContent = "Save Changes";
+      btnSave.style.padding = "0.4rem 0.85rem";
+      btnSave.style.fontSize = "0.72rem";
+      btnSave.style.borderRadius = "0.375rem";
+      btnSave.style.border = "none";
+      btnSave.style.background = "var(--primary)";
+      btnSave.style.color = "#fff";
+      btnSave.style.fontWeight = "600";
+      btnSave.style.cursor = "pointer";
+      btnSave.addEventListener("click", () => {
+        const val = input.value.trim();
+        if (!val) {
+          alert("Version cannot be empty!");
+          return;
+        }
+        onSave(val);
+        document.body.removeChild(backdrop);
+      });
+      actions.appendChild(btnSave);
+
+      card.appendChild(actions);
+      backdrop.appendChild(card);
+      document.body.appendChild(backdrop);
+    }
+
     function renderSummaryExplorer() {
       const explorerBody = document.getElementById("summaryExplorerBody");
       if (!explorerBody || !summaryBoardData.length) return;
       
       const filterVal  = document.getElementById("summaryExplorerFilter")?.value || "ALL";
       const typeVal    = document.getElementById("summaryExplorerTypeFilter")?.value || "ALL";
+      const fwFilterVal = document.getElementById("summaryExplorerFwFilter")?.value || "ALL";
       const searchVal  = (document.getElementById("summaryExplorerSearch")?.value || "").trim().toLowerCase();
 
       const filtered = summaryBoardData.filter(b => {
@@ -8146,7 +8363,10 @@ function getManageRecordsHtml() {
           }
         }
 
-        // 3. Filter by status
+        // 3. Filter by firmware version
+        if (fwFilterVal !== "ALL" && b.version !== fwFilterVal) return false;
+
+        // 4. Filter by status
         if (filterVal === "ALL")       return true;
         if (filterVal === "PASS")      return b.verdict === "PASS";
         if (filterVal === "FAIL")      return b.verdict.indexOf("FAIL") === 0;
@@ -8154,11 +8374,28 @@ function getManageRecordsHtml() {
         if (filterVal === "SCRAPPED")  return b.verdict === "SCRAPPED";
         if (filterVal === "INTEGRATED") return b.integrated === true;
         if (filterVal === "SPARE")     return b.spare === true;
+
+        // Special status filters
+        if (filterVal === "QC_PASS_UNUPGRADED") {
+          const ver = (b.version || "").trim();
+          const isQcState = ver === "QC-Test Fail" || ver === "QC" || ver === "--" || ver.toLowerCase().includes("fail") || ver.toLowerCase().includes("ready") || ver.toLowerCase().includes("not updated");
+          return b.verdict === "PASS" && isQcState;
+        }
+        if (filterVal === "QC_FAIL_STAGED") {
+          const ver = (b.version || "").trim();
+          const isQcState = ver === "QC-Test Fail" || ver === "QC" || ver === "--" || ver.toLowerCase().includes("fail") || ver.toLowerCase().includes("ready") || ver.toLowerCase().includes("not updated");
+          return isQcState && (b.verdict.indexOf("FAIL") === 0 || ver === "QC-Test Fail");
+        }
+        if (filterVal === "PRODUCTION_FW") {
+          const ver = (b.version || "").trim();
+          const isQcState = ver === "QC-Test Fail" || ver === "QC" || ver === "--" || ver.toLowerCase().includes("fail") || ver.toLowerCase().includes("ready") || ver.toLowerCase().includes("not updated");
+          return !isQcState;
+        }
         return true;
       });
 
       if (!filtered.length) {
-        explorerBody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:1.5rem;color:var(--text-muted);">No boards match the selected filter.</td></tr>`;
+        explorerBody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:1.5rem;color:var(--text-muted);">No boards match the selected filter.</td></tr>`;
         return;
       }
 
@@ -8183,16 +8420,84 @@ function getManageRecordsHtml() {
         if (type === "MPPT")    { typeBg = "rgba(167,139,250,0.1)"; typeColor = "#a78bfa"; }
         if (type.includes("BATTERY")) { typeBg = "rgba(148,163,184,0.1)"; typeColor = "#94a3b8"; }
 
+        const actionHtml = (type === "ESP32") 
+          ? `<button class="btn btn-secondary btn-edit-fw" data-barcode="${b.barcode}" data-rowindex="${b.rowIndex}" data-version="${b.version || ""}" style="font-size:0.65rem; padding:0.15rem 0.35rem; text-transform:none; width:auto;">✏️ Update FW</button>`
+          : `--`;
+
         return `<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
           <td style="padding:0.5rem 0.5rem;font-family:monospace;font-weight:700;color:#fff;">${b.barcode || "--"}</td>
           <td style="padding:0.5rem 0.5rem;"><span style="background:${typeBg};color:${typeColor};padding:0.1rem 0.35rem;border-radius:0.25rem;font-size:0.7rem;font-weight:600;">${type}</span></td>
           <td style="padding:0.5rem 0.5rem;"><span style="color:${verdictColor};font-weight:700;font-size:0.72rem;">${b.verdict || "--"}</span></td>
+          <td style="padding:0.5rem 0.5rem;color:#cbd5e1;font-size:0.72rem;font-weight:600;">${b.version || "--"}</td>
           <td style="padding:0.5rem 0.5rem;color:${invColor};font-size:0.72rem;font-weight:600;">${invState}</td>
           <td style="padding:0.5rem 0.5rem;color:var(--text-muted);font-size:0.7rem;">${b.timestamp || "--"}</td>
           <td style="padding:0.5rem 0.5rem;color:var(--text-muted);font-size:0.7rem;">${b.tester || "--"}</td>
           <td style="padding:0.5rem 0.5rem;color:var(--text-muted);font-size:0.7rem;">${b.lastAction || "--"}</td>
+          <td style="padding:0.5rem 0.5rem;text-align:center;">${actionHtml}</td>
         </tr>`;
       }).join("");
+
+      // Bind click listeners for "Update FW" buttons
+      explorerBody.querySelectorAll(".btn-edit-fw").forEach(btn => {
+        const rIdx = parseInt(btn.dataset.rowindex);
+        const barcode = btn.dataset.barcode;
+        const currentFw = btn.dataset.version;
+        if (rIdx <= 0) {
+          btn.disabled = true;
+          btn.style.opacity = 0.5;
+          btn.title = "Not individually logged in Master_Status yet.";
+          return;
+        }
+
+        btn.addEventListener("click", async () => {
+          // Get unique production versions from select options
+          const fwFilter = document.getElementById("summaryExplorerFwFilter");
+          const prodVersions = fwFilter 
+            ? Array.from(fwFilter.options)
+                .map(opt => opt.value)
+                .filter(val => val && val !== "ALL" && val !== "QC-Test Fail" && val !== "QC" && val !== "--" && !val.toLowerCase().includes("fail") && !val.toLowerCase().includes("ready") && !val.toLowerCase().includes("not updated")) 
+            : [];
+
+          showUpdateFwModal(barcode, currentFw, prodVersions, async (newFw) => {
+            const cleanedFw = newFw.trim();
+            if (cleanedFw === currentFw) return;
+
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = "⏳ Updating...";
+
+            try {
+              const url = sheetUrlInput.value.trim();
+              await fetchWithTimeout(url, {
+                method: "POST",
+                mode: "no-cors",
+                headers: { "Content-Type": "text/plain" },
+                body: JSON.stringify({
+                  action: "updateFirmwareVersion",
+                  rowIndex: rIdx,
+                  version: cleanedFw
+                })
+              }, 15000);
+
+              logToConsole(`✓ Manually updated Firmware Version for board ${barcode} to ${cleanedFw}`, "info");
+              
+              // Update in local cache
+              const cacheItem = summaryBoardData.find(item => item.barcode === barcode);
+              if (cacheItem) {
+                cacheItem.version = cleanedFw;
+              }
+              
+              // Refresh displays
+              loadInventorySummary();
+            } catch (err) {
+              logToConsole(`❌ Failed to update firmware version: ${err.message}`, "error");
+              alert(`Update failed: ${err.message}`);
+              btn.disabled = false;
+              btn.textContent = originalText;
+            }
+          });
+        });
+      });
     }
 
     async function loadInventorySummary() {
@@ -8338,7 +8643,151 @@ function getManageRecordsHtml() {
         }
 
         // --- Explorer ---
+        // 1. Populate unique versions select filter dropdown
+        const fwFilter = document.getElementById("summaryExplorerFwFilter");
+        if (fwFilter) {
+          const currentSelected = fwFilter.value;
+          fwFilter.innerHTML = `<option value="ALL">All Versions</option>`;
+          const uniqueVersions = [...new Set(summaryBoardData.map(b => b.version).filter(Boolean))].sort();
+          uniqueVersions.forEach(v => {
+            const opt = document.createElement("option");
+            opt.value = v;
+            opt.textContent = v;
+            fwFilter.appendChild(opt);
+          });
+          if (uniqueVersions.includes(currentSelected)) {
+            fwFilter.value = currentSelected;
+          }
+        }
+
         renderSummaryExplorer();
+
+        // Calculate and render ESP32 Firmware Status Details
+        const espBoards = summaryBoardData.filter(b => deriveCategoryFromBarcode(b.barcode, b.type) === "ESP32");
+        let prodFwCount = 0;
+        let qcFwCount = 0;
+        const prodFwMap = {}; 
+        let qcPassCount = 0;
+        let qcFailCount = 0;
+
+        espBoards.forEach(b => {
+          const ver = (b.version || "").trim();
+          const verdict = (b.verdict || "").trim().toUpperCase();
+          const isQcState = ver === "QC-Test Fail" || ver === "QC" || ver === "--" || ver.toLowerCase().includes("fail") || ver.toLowerCase().includes("ready") || ver.toLowerCase().includes("not updated");
+          
+          if (isQcState) {
+            qcFwCount++;
+            if (verdict === "PASS") qcPassCount++;
+            else qcFailCount++;
+          } else {
+            prodFwCount++;
+            prodFwMap[ver] = (prodFwMap[ver] || 0) + 1;
+          }
+        });
+
+        const espFwProdCountEl = document.getElementById("espFwProdCount");
+        const espFwProdListEl = document.getElementById("espFwProdList");
+        const espFwQcCountEl = document.getElementById("espFwQcCount");
+        const espFwQcListEl = document.getElementById("espFwQcList");
+
+        if (espFwProdCountEl) {
+          espFwProdCountEl.textContent = prodFwCount;
+          espFwProdCountEl.style.cursor = "pointer";
+          espFwProdCountEl.title = "Click to filter explorer to all upgraded production ESP32 boards";
+          
+          // Clear old listener and add new
+          const newCountEl = espFwProdCountEl.cloneNode(true);
+          espFwProdCountEl.parentNode.replaceChild(newCountEl, espFwProdCountEl);
+          newCountEl.addEventListener("click", () => {
+            const typeSel = document.getElementById("summaryExplorerTypeFilter");
+            const fwSel = document.getElementById("summaryExplorerFwFilter");
+            const statusSel = document.getElementById("summaryExplorerFilter");
+            if (typeSel) typeSel.value = "ESP32";
+            if (fwSel) fwSel.value = "ALL";
+            if (statusSel) statusSel.value = "PRODUCTION_FW";
+            renderSummaryExplorer();
+            document.getElementById("summaryExplorerFilter")?.scrollIntoView({ behavior: "smooth", block: "center" });
+          });
+        }
+
+        if (espFwProdListEl) {
+          const sortedVersions = Object.keys(prodFwMap).sort();
+          if (sortedVersions.length === 0) {
+            espFwProdListEl.innerHTML = `<span style="opacity:0.6;">No production versions logged.</span>`;
+          } else {
+            espFwProdListEl.innerHTML = sortedVersions.map(ver => {
+              const displayVer = ver || "Unknown Version";
+              return `<div class="esp-fw-item" data-ver="${displayVer}" style="display:flex; justify-content:space-between; border-bottom:1px solid rgba(255,255,255,0.03); padding-bottom:2px; cursor:pointer; padding:2px 4px; border-radius:0.2rem; transition: background 0.15s ease;">
+                <span>⚙️ ${displayVer}</span>
+                <strong style="color:#60a5fa;">${prodFwMap[ver]}</strong>
+              </div>`;
+            }).join("");
+
+            espFwProdListEl.querySelectorAll(".esp-fw-item").forEach(item => {
+              item.addEventListener("mouseenter", () => item.style.background = "rgba(96,165,250,0.12)");
+              item.addEventListener("mouseleave", () => item.style.background = "transparent");
+              item.addEventListener("click", () => {
+                const ver = item.dataset.ver;
+                const typeSel = document.getElementById("summaryExplorerTypeFilter");
+                const fwSel = document.getElementById("summaryExplorerFwFilter");
+                const statusSel = document.getElementById("summaryExplorerFilter");
+                if (typeSel) typeSel.value = "ESP32";
+                if (fwSel) fwSel.value = ver === "Unknown Version" ? "" : ver;
+                if (statusSel) statusSel.value = "PRODUCTION_FW";
+                renderSummaryExplorer();
+                document.getElementById("summaryExplorerFilter")?.scrollIntoView({ behavior: "smooth", block: "center" });
+              });
+            });
+          }
+        }
+
+        if (espFwQcCountEl) {
+          espFwQcCountEl.textContent = qcFwCount;
+          espFwQcCountEl.style.cursor = "pointer";
+          espFwQcCountEl.title = "Click to filter explorer to all ESP32 boards in QC test loop";
+          
+          const newQcCountEl = espFwQcCountEl.cloneNode(true);
+          espFwQcCountEl.parentNode.replaceChild(newQcCountEl, espFwQcCountEl);
+          newQcCountEl.addEventListener("click", () => {
+            const typeSel = document.getElementById("summaryExplorerTypeFilter");
+            const fwSel = document.getElementById("summaryExplorerFwFilter");
+            const statusSel = document.getElementById("summaryExplorerFilter");
+            if (typeSel) typeSel.value = "ESP32";
+            if (fwSel) fwSel.value = "ALL";
+            if (statusSel) statusSel.value = "QC_PASS_UNUPGRADED";
+            renderSummaryExplorer();
+            document.getElementById("summaryExplorerFilter")?.scrollIntoView({ behavior: "smooth", block: "center" });
+          });
+        }
+
+        if (espFwQcListEl) {
+          espFwQcListEl.innerHTML = `
+            <div class="esp-qc-item" data-status="QC_PASS_UNUPGRADED" style="display:flex; justify-content:space-between; border-bottom:1px solid rgba(255,255,255,0.03); padding-bottom:2px; cursor:pointer; padding:2px 4px; border-radius:0.2rem; transition: background 0.15s ease;">
+              <span>✅ QC Passed (Not Upgraded)</span>
+              <strong style="color:#4ade80;">${qcPassCount}</strong>
+            </div>
+            <div class="esp-qc-item" data-status="QC_FAIL_STAGED" style="display:flex; justify-content:space-between; cursor:pointer; padding:2px 4px; border-radius:0.2rem; transition: background 0.15s ease;">
+              <span>❌ QC Failed / Staged</span>
+              <strong style="color:#f87171;">${qcFailCount}</strong>
+            </div>
+          `;
+
+          espFwQcListEl.querySelectorAll(".esp-qc-item").forEach(item => {
+            item.addEventListener("mouseenter", () => item.style.background = "rgba(245,158,11,0.12)");
+            item.addEventListener("mouseleave", () => item.style.background = "transparent");
+            item.addEventListener("click", () => {
+              const status = item.dataset.status;
+              const typeSel = document.getElementById("summaryExplorerTypeFilter");
+              const fwSel = document.getElementById("summaryExplorerFwFilter");
+              const statusSel = document.getElementById("summaryExplorerFilter");
+              if (typeSel) typeSel.value = "ESP32";
+              if (fwSel) fwSel.value = "ALL";
+              if (statusSel) statusSel.value = status;
+              renderSummaryExplorer();
+              document.getElementById("summaryExplorerFilter")?.scrollIntoView({ behavior: "smooth", block: "center" });
+            });
+          });
+        }
 
       } catch (err) {
         if (kpiRow) kpiRow.innerHTML = `<div style="color:#f87171;font-size:0.78rem;">❌ Failed to load summary: ${err.message}</div>`;
@@ -10722,23 +11171,23 @@ function getManageRecordsHtml() {
           if (isFailText(valRtc?.textContent)) failReasons.push("RTC Fail");
           if (isFailText(valWifi?.textContent)) failReasons.push("WiFi Fail");
           if (isFailText(valSensor?.textContent)) failReasons.push("Sensor Fail");
-          if (isFailText(valSleep?.textContent)) failReasons.push("EXT0 Sleep Wake Fail");
+          if (isFailText(valSleep?.textContent)) failReasons.push("EXT0 Fail");
         }
         if (testCfgGprs?.checked) {
           if (isFailText(valGprs?.textContent)) failReasons.push("Cellular Reg Fail");
         }
         if (testCfgNuvoton?.checked) {
           if (isFailText(valNuvoton?.textContent)) failReasons.push("Nuvoton Comms Fail");
-          if (isFailText(valLcd?.textContent)) failReasons.push("LCD Verification Fail");
-          if (isFailText(valKeypad?.textContent)) failReasons.push("Keypad Sweep Fail");
-          if (isFailText(valRf?.textContent)) failReasons.push("Rainfall Test Fail");
+          if (isFailText(valLcd?.textContent)) failReasons.push("LCD Fail");
+          if (isFailText(valKeypad?.textContent)) failReasons.push("Keypad Fail");
+        }
+        if (isFailText(valRf?.textContent)) {
+          failReasons.push("RF Fail");
         }
 
         let finalVerdict = `${verdict} (${profileVal})`;
-        if (verdict && verdict.indexOf("PASS") !== 0 && verdict.indexOf("DISCARDED") !== 0) {
-          if (failReasons.length > 0) {
-            finalVerdict = `FAIL: ${failReasons.join(", ")} (${profileVal})`;
-          }
+        if (failReasons.length > 0) {
+          finalVerdict = `FAIL: ${failReasons.join(", ")} (${profileVal})`;
         }
         if (window._lastUpdateMethod === "LAPTOP" && window._laptopFlashStatus === "FAILED") {
           finalVerdict = `FAIL (Flash Failed)`;
@@ -13786,12 +14235,13 @@ function getManageRecordsHtml() {
       // SYNC_SHEET: CONFIRMING
       if (line.includes("[QC_STEP] SYNC_SHEET: CONFIRMING_")) {
         const isPass = line.includes("CONFIRMING_PASS");
-        const verdict = isPass ? "PASS" : "FAIL";
+        const hasAnyFail = document.querySelectorAll(".check-item.check-item-fail").length > 0;
+        const verdict = (isPass && !hasAnyFail) ? "PASS" : "FAIL";
         window._pendingSyncVerdict = verdict;
         playAlertChime();
         
         let failReasonsList = "";
-        if (!isPass) {
+        if (verdict === "FAIL") {
           const failedItems = document.querySelectorAll(".check-item.check-item-fail");
           if (failedItems.length > 0) {
             failReasonsList = `
@@ -13813,7 +14263,7 @@ function getManageRecordsHtml() {
         
         const html = `
           📊 <b>Sync QC Results to Google Sheet?</b><br>
-          Board QC Verdict: <strong style="color: ${isPass ? "var(--success)" : "var(--danger)"}; font-size:1.1rem;">${verdict}</strong><br>
+          Board QC Verdict: <strong style="color: ${verdict === "PASS" ? "var(--success)" : "var(--danger)"}; font-size:1.1rem;">${verdict}</strong><br>
           ${failReasonsList}
           Do you want to log and sync this test run to the online Google Sheet?<br>
           👉 Press the <b>SET</b> key on the <b>physical keypad</b> to Sync (YES).<br>

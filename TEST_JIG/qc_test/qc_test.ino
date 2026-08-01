@@ -77,6 +77,22 @@ void setExpectingTestWakeup(bool val) {
   prefs.putBool("exp_wakeup", val);
   prefs.end();
 }
+
+bool getPriorTestFailed() {
+  Preferences prefs;
+  prefs.begin("qctest", true);
+  bool val = prefs.getBool("prior_fail", false);
+  prefs.end();
+  return val;
+}
+
+void setPriorTestFailed(bool val) {
+  Preferences prefs;
+  prefs.begin("qctest", false);
+  prefs.putBool("prior_fail", val);
+  prefs.end();
+}
+
 bool syncVerdictPass = false;
 unsigned long last_activity_time = 0;
 bool in_countdown_warning = false;
@@ -830,6 +846,7 @@ void passRfTest() {
 }
 
 void failRfTest() {
+  setPriorTestFailed(true);
   int finalCount = rf_pulse_count;
   Serial.printf("[QC_STEP] RF_CHECK: FAIL (mismatch/fail, got %d)\n", finalCount);
   if (enableNuvoton) {
@@ -1175,6 +1192,9 @@ void setup() {
                 enableESP, enableGPRS, enableNuvoton, 
                 isTRG ? "TRG" : (isTWS ? "TWS" : "TWS-RF"), 
                 isTRG, isTWS, isTWSRF);
+  
+  // Reset prior test failure flag for fresh test session
+  setPriorTestFailed(false);
   
   // v6.09: Delete the loop task from the watchdog first to allow reconfiguration
   esp_task_wdt_delete(NULL);
@@ -1612,36 +1632,32 @@ void setup() {
 
       bool is_registered = false;
 
-      // 1. Fast-track check: If modem already registered, bypass full setup
-      showProgress("DIAG: REG", "FAST CHECK...");
-      String fastCgreg = sendModemAT("AT+CGREG?", 1000);
-      int fastStatus = parseRegStatus(fastCgreg, "+CGREG:");
-      if (fastStatus == 1 || fastStatus == 5) {
-        Serial.println("[QC_JIG] Fast-Track: Modem already registered! Bypassing setup block.");
+      // Configure modem context and refresh operator network registration
+      showProgress("DIAG: REG", "INIT MODEM REG...");
+      sendModemAT("AT+CFUN=1", 1000);
+      sendModemAT("AT+CSCLK=0", 500);
+      sendModemAT("AT+CGDCONT=8,\"IP\",\"\"", 500);
+      sendModemAT("AT+CGDCONT=9,\"IP\",\"\"", 500);
+      
+      // Dynamic APN configuration for CID 1 matching inserted SIM card carrier
+      sendModemAT(("AT+CGDCONT=1,\"" + proto + "\",\"" + expectedApn + "\"").c_str(), 1000);
+      
+      sendModemAT("AT+CNMP=2", 1000);      // Automatic mode selection (GSM/LTE)
+      sendModemAT("AT+COPS=0", 2000);      // Force Automatic PLMN re-scan (clears stale tower lock when swapping SIM cards)
+      sendModemAT("AT+CMNB=3", 1000);
+      sendModemAT("AT+CGATT=1", 3000);     // Trigger packet domain attach
+      sendModemAT("AT+CREG=1", 500);
+      sendModemAT("AT+CEREG=2", 500);
+      sendModemAT("AT+CEMODE=2", 500);
+      sendModemAT("AT+CPSMS=0", 500);
+      delay(500); // Radio settle delay
+
+      // Quick check if modem attached immediately after APN/PLMN refresh
+      int initCgreg = parseRegStatus(sendModemAT("AT+CGREG?", 1000), "+CGREG:");
+      int initCereg = parseRegStatus(sendModemAT("AT+CEREG?", 1000), "+CEREG:");
+      if (initCgreg == 1 || initCgreg == 5 || initCereg == 1 || initCereg == 5) {
         is_registered = true;
         showProgress("DIAG: REG", "FAST PASS");
-      }
-
-      if (!is_registered) {
-        // Run full setup block
-        showProgress("DIAG: REG", "INIT MODEM REG...");
-        sendModemAT("AT+CFUN=1", 1000);
-        sendModemAT("AT+CSCLK=0", 500);
-        sendModemAT("AT+CGDCONT=8,\"IP\",\"\"", 1000);
-        sendModemAT("AT+CGDCONT=9,\"IP\",\"\"", 1000);
-        
-        // Dynamic APN configuration for CID 1 to guarantee attachment
-        sendModemAT(("AT+CGDCONT=1,\"" + proto + "\",\"" + expectedApn + "\"").c_str(), 1000);
-        
-        sendModemAT("AT+CNMP=2", 1000);
-        delay(500); // Radio settle delay
-        sendModemAT("AT+CMNB=3", 1000);
-        sendModemAT("AT+CGATT=1", 5000);
-        sendModemAT("AT+CREG=1", 1000);
-        sendModemAT("AT+CEREG=2", 1000);
-        sendModemAT("AT+CEMODE=2", 1000);
-        sendModemAT("AT+CPSMS=0", 1000);
-        delay(1000); // Let it settle
       }
 
       // Netlight logic (Ensures pulse even if Fast-Tracked)
@@ -1922,7 +1938,8 @@ void processKeypress(char rawKey) {
   else if (currentState == STATE_WAKEUP_CONFIRM) {
     if (rawKey == '6') { // SET key confirms PASS
       Serial.println("[QC_STEP] EXT0_WAKEUP: PASS");
-      enterSyncConfirmState(true);
+      bool overallPass = !getPriorTestFailed();
+      enterSyncConfirmState(overallPass);
     } else if (rawKey == '1') { // CLEAR key confirms FAIL
       Serial.println("[QC_STEP] EXT0_WAKEUP: FAIL");
       enterSyncConfirmState(false);
@@ -1987,6 +2004,7 @@ void loop() {
     } else if (cmd == "CMD:RF_FAIL_PROCEED") {
       if (currentState == STATE_RF_WAIT_JUMPER || currentState == STATE_RF_RUNNING || currentState == STATE_RF_CONFIRM) {
         Serial.println("[QC_JIG] Received CMD:RF_FAIL_PROCEED serial command.");
+        setPriorTestFailed(true);
         int finalCount = rf_pulse_count;
         Serial.printf("[QC_STEP] RF_CHECK: FAIL_PROCEED (got %d)\n", finalCount);
         if (enableNuvoton) {
@@ -2016,6 +2034,7 @@ void loop() {
       if (currentState == STATE_LCD_WAIT) {
         Serial.println("[QC_JIG] Received CMD:LCD_FAIL serial command.");
         Serial.println("[QC_STEP] LCD_TEST: FAIL");
+        setPriorTestFailed(true);
         enterSyncConfirmState(false);
       }
     } else if (cmd == "CMD:KEYPAD_PASS") {
@@ -2025,7 +2044,8 @@ void loop() {
         if (!enableESP) {
           Serial.println("[QC_STEP] RF_CHECK: IGNORED");
           Serial.println("[QC_STEP] EXT0_WAKEUP: IGNORED");
-          enterSyncConfirmState(true);
+          bool overallPass = !getPriorTestFailed();
+          enterSyncConfirmState(overallPass);
         } else if (isTWS) {
           Serial.println("[QC_STEP] RF_CHECK: IGNORED");
           startDeepSleepTest();
@@ -2037,6 +2057,7 @@ void loop() {
       if (currentState >= STATE_KEYPAD_LEFT && currentState <= STATE_KEYPAD_SET) {
         Serial.println("[QC_JIG] Received CMD:KEYPAD_FAIL serial command.");
         Serial.println("[QC_STEP] KEYPAD_TEST: FAIL");
+        setPriorTestFailed(true);
         enterSyncConfirmState(false);
       }
     } else if (cmd == "CMD:RF_PASS") {
@@ -2048,7 +2069,8 @@ void loop() {
     } else if (cmd == "CMD:SLEEP_PASS") {
       Serial.println("[QC_JIG] Received CMD:SLEEP_PASS serial override.");
       Serial.println("[QC_STEP] EXT0_WAKEUP: PASS");
-      enterSyncConfirmState(true);
+      bool overallPass = !getPriorTestFailed();
+      enterSyncConfirmState(overallPass);
     } else if (cmd == "CMD:SLEEP_FAIL") {
       Serial.println("[QC_JIG] Received CMD:SLEEP_FAIL serial command.");
       Serial.println("[QC_STEP] EXT0_WAKEUP: FAIL");
@@ -2057,7 +2079,8 @@ void loop() {
       if (currentState == STATE_WAKEUP_CONFIRM) {
         Serial.println("[QC_JIG] Received CMD:WAKEUP_PASS serial command.");
         Serial.println("[QC_STEP] EXT0_WAKEUP: PASS");
-        enterSyncConfirmState(true);
+        bool overallPass = !getPriorTestFailed();
+        enterSyncConfirmState(overallPass);
       }
     } else if (cmd == "CMD:WAKEUP_FAIL") {
       if (currentState == STATE_WAKEUP_CONFIRM) {
