@@ -1,610 +1,151 @@
 {% extends "base.html" %}
-{% block title %}Help & Legend — Spatika Health{% endblock %}
+{% block title %}System Guide & Help — Spatika Health{% endblock %}
 {% set active = 'help' %}
 
 {% block content %}
 
-<div class="max-w-4xl mx-auto">
+<div class="max-w-5xl mx-auto">
 
-    <h1 class="text-2xl font-black text-purple-400 mb-1">Help & Legend</h1>
-    <p class="text-sm text-slate-500 mb-8">Complete guide to the Spatika Health Monitoring System — how to read every
-        column, use every feature, and traverse the ecosystem.</p>
+    <!-- Header Banner -->
+    <div class="mb-6">
+        <h1 class="text-2xl font-black text-blue-400 mb-1">📡 Spatika System Operations & Technical Guide</h1>
+        <p class="text-xs text-slate-500">Comprehensive reference manual for the Spatika Telemetry & Health Monitoring Platform — station commands, diagnostic codes, SIM auto-detection, and system architecture.</p>
+    </div>
 
-    <!-- ── HEALTH STATUS & ERROR LEGEND (PRIORITY) ─────────────────── -->
-    <div class="card p-5 mb-6 border-l-4 border-purple-500 shadow-lg shadow-purple-900/10">
-        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🔍 Health Status & Error Legend</h2>
+    <!-- ── DUAL THEME & UNIFIED OPERATIONS CENTER ─────────────────── -->
+    <div class="card p-5 mb-6 border-l-4 border-blue-500 shadow-lg">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-3">🌐 System Navigation & User Interface</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+            <div class="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800">
+                <div class="text-blue-400 font-bold mb-1">📡 DASHBOARD (Operations Center)</div>
+                <p class="text-slate-400 leading-relaxed">
+                    Single consolidated workspace. Displays system group filter tabs (<strong class="text-white">KSNDMC-TRG, BIHAR-TRG, SPATIKA</strong>), real-time alarm counters, interactive station table, and bulk fleet action controls.
+                </p>
+            </div>
+            <div class="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800">
+                <div class="text-yellow-400 font-bold mb-1">🚀 OTA MANAGER</div>
+                <p class="text-slate-400 leading-relaxed">
+                    Centralized firmware binary repository. Deploy new compiled <code class="text-yellow-300">.bin</code> images to entire station groups or rollback versions with automated target verification.
+                </p>
+            </div>
+            <div class="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800">
+                <div class="text-amber-400 font-bold mb-1">☀️ / 🌙 DUAL LIGHT & DARK MODE</div>
+                <p class="text-slate-400 leading-relaxed">
+                    Toggle between dark glassmorphism mode and high-contrast light mode via the top navigation bar button. Preferences automatically persist across sessions.
+                </p>
+            </div>
+        </div>
+    </div>
 
-        <!-- ── DATA DAY EXPLANATION ─────────────────────────────── -->
-        <div class="bg-blue-900/20 border border-blue-800 rounded-lg p-3 mb-4">
+    <!-- ── 15-COMMAND SUITE (4 TIERS) ─────────────────────────────── -->
+    <div class="card p-5 mb-6 border-l-4 border-purple-500 shadow-lg">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-2">⚡ 15-Command Remote Management Suite</h2>
+        <p class="text-xs text-slate-500 mb-4">
+            Commands are queued on the server and delivered asynchronously during the station's next 15-minute check-in or fault report.
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <!-- TIER 1 -->
+            <div class="bg-slate-900/60 p-4 rounded-xl border border-blue-500/30">
+                <div class="text-xs font-black text-blue-400 uppercase tracking-wider mb-2 border-b border-blue-500/20 pb-1 flex justify-between">
+                    <span>📊 Tier 1: Telemetry & Status</span>
+                    <span class="text-[9px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded">DIAGNOSTICS</span>
+                </div>
+                <ul class="space-y-2 text-slate-300">
+                    <li><strong class="text-blue-300">📱 Query SIM Number (GET_NUM)</strong>: Triggers 3GPP <code class="text-blue-200">AT+CNUM</code> & carrier USSD (<code class="text-blue-200">*282#</code> Airtel, <code class="text-blue-200">*222#</code> BSNL, <code class="text-blue-200">*199#</code> Jio/Vi) to auto-extract and register SIM phone number.</li>
+                    <li><strong class="text-green-300">📊 Fetch Status Now (GET_STATUS)</strong>: Forces device to send complete diagnostic telemetry snapshot immediately.</li>
+                    <li><strong class="text-blue-300">📍 Refresh GPS Fix (GET_GPS)</strong>: Powers on GNSS receiver, acquires high-precision coordinates, updates local flash, and reports location to server.</li>
+                </ul>
+            </div>
+
+            <!-- TIER 2 -->
+            <div class="bg-slate-900/60 p-4 rounded-xl border border-purple-500/30">
+                <div class="text-xs font-black text-purple-400 uppercase tracking-wider mb-2 border-b border-purple-500/20 pb-1 flex justify-between">
+                    <span>🔄 Tier 2: Data & Reporting</span>
+                    <span class="text-[9px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">DATA & CALIB</span>
+                </div>
+                <ul class="space-y-2 text-slate-300">
+                    <li><strong class="text-purple-300">↑ Sync Backlog (FTP_BACKLOG)</strong>: Transmits all unsent 15-minute data slots stored in internal SPIFFS flash to the FTP server.</li>
+                    <li><strong class="text-purple-300">📅 Fetch Daily Log (FTP_DAILY)</strong>: Prompts for a target date (<code class="text-purple-200">YYYYMMDD</code>) and uploads that day's complete burst log file.</li>
+                    <li><strong class="text-amber-300">⏱ Reporting Interval (INTERVAL)</strong>: Switch device reporting frequency between <strong class="text-white">15-Min Mode</strong> (param=15) and <strong class="text-white">24-Hr Mode</strong> (param=1440).</li>
+                    <li><strong class="text-sky-300">🎛 Tip Resolution (SET_RF_RES)</strong>: Configure tipping bucket rain gauge resolution to <strong class="text-white">0.25 mm</strong> (param=0.25) or <strong class="text-white">0.50 mm</strong> (param=0.50).</li>
+                </ul>
+            </div>
+
+            <!-- TIER 3 -->
+            <div class="bg-slate-900/60 p-4 rounded-xl border border-amber-500/30">
+                <div class="text-xs font-black text-amber-400 uppercase tracking-wider mb-2 border-b border-amber-500/20 pb-1 flex justify-between">
+                    <span>🛠 Tier 3: Maintenance & Queue</span>
+                    <span class="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded">MAINTENANCE</span>
+                </div>
+                <ul class="space-y-2 text-slate-300">
+                    <li><strong class="text-orange-300">🔒 Toggle OTA Lock</strong>: Lock station to prevent automated firmware updates or unlock for group rollouts.</li>
+                    <li><strong class="text-yellow-300">❌ Clear OTA Queue</strong>: Cancels pending firmware update commands for the device while leaving data commands intact.</li>
+                    <li><strong class="text-slate-300">🗑 Clear All Cmds</strong>: Completely purges all pending instruction queues on server.</li>
+                    <li><strong class="text-orange-400">🧹 Wipe Device Backlog (CLEAR_FTP_QUEUE)</strong>: Clears local SPIFFS backlog queue file (<code class="text-orange-200">ftpunsent.txt</code>) to recover from corrupted memory loops.</li>
+                    <li><strong class="text-indigo-300">🔐 Set Wi-Fi Pass (SET_WIFI_PASS)</strong>: Supervisors can remotely update station AP credential settings.</li>
+                </ul>
+            </div>
+
+            <!-- TIER 4 -->
+            <div class="bg-slate-900/60 p-4 rounded-xl border border-red-500/30">
+                <div class="text-xs font-black text-red-400 uppercase tracking-wider mb-2 border-b border-red-500/20 pb-1 flex justify-between">
+                    <span>🚨 Tier 4: Danger Zone</span>
+                    <span class="text-[9px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded">CRITICAL</span>
+                </div>
+                <ul class="space-y-2 text-slate-300">
+                    <li><strong class="text-red-400">↺ Reboot Device (REBOOT)</strong>: Gracefully shuts down modem, saves flash states, and executes hardware restart (<code class="text-red-300">ESP.restart()</code>).</li>
+                    <li><strong class="text-orange-500">⚠ Factory Reset (DELETE_DATA)</strong>: Formats SPIFFS partition, clears non-volatile storage (NVS), and restores factory default parameters.</li>
+                    <li><strong class="text-red-500">🗑 Delete Station</strong>: Permanently purges station record and history from server database.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── HEALTH EVALUATION & DIAGNOSTIC FLAGS ─────────────────────── -->
+    <div class="card p-5 mb-6 border-l-4 border-emerald-500 shadow-lg">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-3">🔍 Diagnostic Flags & Objective Health Evaluation</h2>
+
+        <div class="bg-blue-900/20 border border-blue-800 rounded-lg p-3 mb-4 text-xs">
             <h3 class="text-blue-300 text-[10px] font-bold uppercase mb-1">📅 Meteorological Day Boundary</h3>
-            <p class="text-[11px] text-slate-400 leading-relaxed">
-                The data day runs from <strong class="text-white">8:45 AM (prev day) → 8:30 AM (today)</strong> — 96
-                slots of 15 minutes each.<br>
-                • <strong class="text-orange-400">YDY Sent</strong> = how many of yesterday's 96 records the server
-                actually received via all channels.<br>
-                • <strong class="text-orange-400">YDY Stored</strong> = how many records the device successfully saved
-                to its internal memory.<br>
-                • A station is <strong class="text-green-400">fully healthy</strong> if ≥86 YDY records are on server
-                and the 8:30 AM closing record arrived.
+            <p class="text-slate-400 leading-relaxed">
+                The data day runs from <strong class="text-white">8:45 AM (prev day) → 8:30 AM (today)</strong> — comprising 96 slots of 15 minutes each.
+                A station achieves <strong class="text-emerald-400 font-bold">✓ OK</strong> status when ≥86 records arrive on time and the 8:30 AM closing packet is confirmed.
             </p>
         </div>
 
-        <!-- ── VERDICT FLAG DEFINITIONS ─────────────────────────── -->
-        <h3 class="text-slate-400 text-[10px] font-bold uppercase mb-2 mt-4">Flag Definitions</h3>
-        <table class="w-full text-xs mb-6">
+        <table class="w-full text-xs mb-4">
             <thead>
                 <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
                     <th class="pb-2 pr-4 text-left">Flag</th>
-                    <th class="pb-2 pr-4 text-left">Stands For</th>
-                    <th class="pb-2 pr-4 text-left">Trigger Rule</th>
-                    <th class="pb-2 text-left">What It Means</th>
+                    <th class="pb-2 pr-4 text-left">Condition</th>
+                    <th class="pb-2 text-left">Root Cause & Action</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-slate-800">
                 <tr>
-                    <td class="py-2 pr-4 text-orange-300 font-mono font-bold">PD</td>
-                    <td class="py-2 pr-4 text-slate-300">Partial Data</td>
-
-                    <td class="py-2 pr-4 text-slate-500 font-mono text-[10px]">96 − YDY_sent ≥ 10</td>
-                    <td class="py-2 text-slate-400">≥10 records from yesterday are missing from server. Indicates
-                        intermittent GPRS or local memory issues.
-                        <br><strong class="text-slate-200">Suffix (X/96):</strong> Shows "Arrival Efficiency" — total
-                        records on server vs 96 expected.
-                    </td>
+                    <td class="py-2 pr-4 text-orange-300 font-mono font-bold">PD(X/96)</td>
+                    <td class="py-2 pr-4 text-slate-400 font-mono text-[10px]">96 − Received &gt; 10</td>
+                    <td class="py-2 text-slate-400">Partial Data arrival. Intermittent GPRS coverage. Triggers automatic backlog recovery.</td>
                 </tr>
                 <tr>
                     <td class="py-2 pr-4 text-yellow-400 font-mono font-bold">NDM</td>
-                    <td class="py-2 pr-4 text-slate-300">Night Data Missing</td>
-                    <td class="py-2 pr-4 text-slate-500 font-mono text-[10px]">ndm_cnt &gt; 18 (of 36 night slots)</td>
-                    <td class="py-2 text-slate-400">&gt;50% of night slots (9 PM → 6 AM) were not transmitted <strong
-                            class="text-white">live</strong>. Backlog recovery later does NOT clear this. <strong
-                            class="text-yellow-300">Primary indicator of battery/solar failure at night.</strong></td>
+                    <td class="py-2 pr-4 text-slate-400 font-mono text-[10px]">Night Missed &gt; 18</td>
+                    <td class="py-2 text-slate-400">Night Data Missing (9 PM → 6 AM). <strong class="text-yellow-300">Battery voltage drop at night</strong>. Check solar panel & battery.</td>
                 </tr>
                 <tr>
                     <td class="py-2 pr-4 text-red-400 font-mono font-bold">CDM</td>
-                    <td class="py-2 pr-4 text-slate-300">Closing Data Missing</td>
-                    <td class="py-2 pr-4 text-slate-500 font-mono text-[10px]">cdm_sts = FAIL</td>
-                    <td class="py-2 text-slate-400">The <strong class="text-white">8:30 AM closing record</strong> for
-                        yesterday is missing. Ensures the very last packet of the data day arrived.</td>
+                    <td class="py-2 pr-4 text-slate-400 font-mono text-[10px]">cdm_sts = FAIL</td>
+                    <td class="py-2 text-slate-400">Closing Data Missing. 8:30 AM day-closing report missed. Station was offline during window.</td>
                 </tr>
                 <tr>
-                    <td class="py-2 pr-4 text-red-600 font-mono font-bold">GPRS-Er</td>
-                    <td class="py-2 pr-4 text-slate-300">GPRS Error</td>
-                    <td class="py-2 pr-4 text-slate-500 font-mono text-[10px]">sent=0, stored&gt;0</td>
-                    <td class="py-2 text-slate-400">Device recorded data locally but zero records reached the server.
-                        Total modem or SIM failure.</td>
-                </tr>
-            </tbody>
-        </table>
-
-        <!-- ── SENSOR / HARDWARE FLAGS ───────────────────────────── -->
-        <h3 class="text-slate-400 text-[10px] font-bold uppercase mb-2">Sensor / Hardware Flags (Detection Method)</h3>
-        <p class="text-[11px] text-slate-500 mb-3">These codes are reported directly by the ESP32 firmware during its
-            startup and hourly self-diagnostics. They indicate physical sensor or wiring failures.</p>
-        <table class="w-full text-xs mb-6">
-            <thead>
-                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
-                    <th class="pb-2 pr-4 text-left">Code</th>
-                    <th class="pb-2 pr-4 text-left">Sensor</th>
-                    <th class="pb-2 text-left">Detection Method ("How it's Detected")</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-800">
-                <tr>
-                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">TH-Er</td>
-                    <td class="py-2 pr-4 text-slate-300">Temp / Humidity</td>
-                    <td class="py-2 text-slate-400">
-                        <ul class="list-disc ml-4 space-y-1">
-                            <li><strong class="text-white">I²C Failure:</strong> Bus busy or address not responding (<code class="text-red-300">Temp_E</code>).</li>
-                            <li><strong class="text-white">Stuck Sensor:</strong> Reading hasn't changed by 0.01 for 10 hours (<code class="text-red-300">TEMP_STUCK</code>).</li>
-                            <li><strong class="text-white">Unreal Value:</strong> Reading outside physical limits of 2°C–45°C (<code class="text-red-300">TEMP_UNREAL</code>).</li>
-                        </ul>
-                    </td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">RF-Er</td>
-                    <td class="py-2 pr-4 text-slate-300">Rainfall</td>
-                    <td class="py-2 text-slate-400">
-                        <ul class="list-disc ml-4 space-y-1">
-                            <li><strong class="text-white">Spike:</strong> >10mm jump in a single 15-min slot (<code class="text-red-300">RAIN_SPIKE</code>).</li>
-                            <li><strong class="text-white">Counter Reset:</strong> Cumulative count decreased without a rollover (<code class="text-red-300">RAIN_RESET</code>).</li>
-                            <li><strong class="text-white">Calculation Error:</strong> Internal pulse-to-mm math mismatch (<code class="text-red-300">RAIN_CALC</code>).</li>
-                        </ul>
-                    </td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">WS-Er</td>
-                    <td class="py-2 pr-4 text-slate-300">Wind Speed</td>
-                    <td class="py-2 text-slate-400">
-                        <ul class="list-disc ml-4 space-y-1">
-                            <li><strong class="text-white">Stuck Sensor:</strong> Speed constant at 0.00 while other factors imply wind (<code class="text-red-300">WS_STUCK</code>).</li>
-                            <li><strong class="text-white">Unreal Value:</strong> Speed recorded > 60 m/s (216 km/h) — likely electrical noise (<code class="text-red-300">WS_UNREAL</code>).</li>
-                        </ul>
-                    </td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">WD-Er</td>
-                    <td class="py-2 pr-4 text-slate-300">Wind Direction</td>
-                    <td class="py-2 text-slate-400">Detected via <strong class="text-white">ADC Voltage
-                            Monitoring</strong>. If the potentiometer wiper returns a voltage outside the 0V–3.3V range
-                        (Short or Open circuit).</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">RTC-Er</td>
-                    <td class="py-2 pr-4 text-slate-300">Real-Time Clock</td>
-                    <td class="py-2 text-slate-400">Detected if the <strong class="text-white">DS1307</strong> module
-                        returns an invalid date/time (e.g. Year 1970) or fails to respond to I²C polling.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">MUTEX-Er</td>
-                    <td class="py-2 pr-4 text-slate-300">Modem Contention</td>
-                    <td class="py-2 text-slate-400">Indicates the firmware timed out (15s) waiting for the <strong class="text-white">Modem Mutex</strong>.
-                        Signals internal software contention or a task hanging while holding the modem.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-4 text-red-400 font-mono font-bold">SYS-Er</td>
-                    <td class="py-2 pr-4 text-slate-300">System/Memory</td>
-                    <td class="py-2 text-slate-400">General firmware error, such as <strong class="text-white">SPIFFS
-                            Full</strong>, SD Card Init Failure, or Internal Memory corruption check failure.</td>
-                </tr>
-            </tbody>
-        </table>
-
-        <!-- ── VERDICT COMBINATIONS ──────────────────────────────── -->
-        <h3 class="text-slate-400 text-[10px] font-bold uppercase mb-2">Common Verdicts (Dashboard Examples)</h3>
-        <table class="w-full text-xs">
-            <thead>
-                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
-                    <th class="pb-2 pr-3 text-left">Verdict</th>
-                    <th class="pb-2 text-left">Meaning / Trigger Scenario</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-800">
-                <tr>
-                    <td class="py-2 pr-3"><span class="badge-ok">✓ OK</span></td>
-                    <td class="py-2 text-slate-400">Fully healthy. All data received, no sensor errors.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-3"><span class="badge-fail">✗ PD(X/96) CDM</span></td>
-                    <td class="py-2 text-slate-400">Missing records + 8:30 missing. <strong
-                            class="text-yellow-300">Normal for New Installations</strong> on Day 1.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-3"><span class="badge-fail">✗ NDM(X/36)</span></td>
-                    <td class="py-2 text-slate-400">Data is complete, but night transmissions failed. <strong
-                            class="text-yellow-300">Battery health warning.</strong> Check/replace battery.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-3"><span class="badge-fail">✗ PD(X/96)_TH-Er</span></td>
-                    <td class="py-2 text-slate-400">Incomplete data arrival <strong class="text-white">PLUS</strong> a
-                        temperature sensor failure. Likely a wiring issue affecting both signal and I2C.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-3"><span class="badge-fail">✗ RTC-Er</span></td>
-                    <td class="py-2 text-slate-400">Hardware clock failure. Timestamps will be incorrect. Replace
-                        internal button cell battery.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-3"><span class="badge-fail" style="background:#450a0a; color:#fca5a5; border-color:#7f1d1d;">✗ OFFLINE</span></td>
-                    <td class="py-2 text-slate-400">No health report received for <strong class="text-white">> 24.5 hours</strong>. Station is completely dead or has lost cellular connection.</td>
-                </tr>
-            </tbody>
-        </table>
-
-        <!-- ── SCENARIO NOTE ────────────────────────────────────── -->
-        <div class="mt-4 p-3 bg-slate-900/50 border border-slate-700 rounded-lg">
-            <h4 class="text-white text-[10px] font-bold uppercase mb-1">💡 Note: OFFLINE Detection</h4>
-            <p class="text-[11px] text-slate-400 leading-relaxed">
-                If a station goes completely silent and fails to send a health report for <strong class="text-red-400">> 24.5 hours</strong>, the server will override its historical sensor status and aggressively flag the station as <strong class="text-red-400 font-bold border-b border-red-500/50 pb-0.5">OFFLINE</strong>. 
-                The <strong class="text-white">Last Seen</strong> column provides the exact time since the last successful check-in.
-            </p>
-        </div>
-    </div>
-
-    <!-- ── NAVIGATION ─────────────────────────────────────────── -->
-    <div class="card p-5 mb-6">
-        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🗺️ How to Navigate This System</h2>
-        <div class="grid grid-cols-2 gap-4">
-            <div class="bg-slate-900 rounded-lg p-4">
-                <div class="text-blue-400 font-bold mb-1">📡 DASHBOARD</div>
-                <p class="text-xs text-slate-400">Your main daily-use page. Shows <strong class="text-white">one row per
-                        station</strong> (the latest check-in only). Gives you a quick fleet-wide health snapshot. Click
-                    any station row to see its full history.</p>
-            </div>
-            <div class="bg-slate-900 rounded-lg p-4">
-                <div class="text-green-400 font-bold mb-1">📊 FLEET SUMMARY</div>
-                <p class="text-xs text-slate-400">Group-level view. Shows each firmware group (KSNDMC-TWS, BIHAR-TRG,
-                    etc.) as a card with health stats, firmware conversion progress, and all stations in that group.</p>
-            </div>
-            <div class="bg-slate-900 rounded-lg p-4">
-                <div class="text-yellow-400 font-bold mb-1">🚀 OTA MANAGER</div>
-                <p class="text-xs text-slate-400">Deploy new firmware to a group. Set the target version, upload the
-                    <code class="text-yellow-300">.bin</code> file, and click DEPLOY. All stations in that group will
-                    receive the update on their next check-in.
-                </p>
-            </div>
-            <div class="bg-slate-900 rounded-lg p-4">
-                <div class="text-purple-400 font-bold mb-1">🟣 STATION DETAIL PAGE</div>
-                <p class="text-xs text-slate-400">Click any station row in Dashboard or Fleet Summary to see its full
-                    history (last 100 reports), send commands, upload a custom firmware only for that station, and
-                    download its history as CSV.</p>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── DASHBOARD COLUMNS ──────────────────────────────────── -->
-    <div class="card p-5 mb-6">
-        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">📋 Dashboard Column Definitions</h2>
-        <table class="w-full text-xs">
-            <thead>
-                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
-                    <th class="pb-2 pr-6 text-left">Column</th>
-                    <th class="pb-2 text-left">What It Means</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-800">
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-blue-300">Station</td>
-                    <td class="py-2 text-slate-400">Unique Station ID. Click to open history & commands.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-green-300">Group</td>
-                    <td class="py-2 text-slate-400">Derived from Unit Type + Mode. Used for group-wide OTA deployments.
-                    </td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white">Status</td>
-                    <td class="py-2 text-slate-400">
-                        Hardware/Data health from the <strong class="text-white">last report</strong> received.
-                        <ul class="list-disc ml-4 mt-1 space-y-1">
-                            <li><span class="badge-ok" style="padding:0px 4px;">✓ OK</span> = System healthy.</li>
-                            <li><span class="badge-fail shadow-sm" style="padding:0px 4px;">✗ ERROR</span> =
-                                Hardware/Data issue detected (Sensor fail, PD, NDM, etc).</li>
-                        </ul>
-                    </td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Tdy/Ydy Sent/Stored</td>
-                    <td class="py-2 text-slate-400">
-                        <strong class="text-white">Sent:</strong> Records on server.<br>
-                        <strong class="text-white">Stored:</strong> Records saved to device local memory (SPIFFS).
-                    </td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Tdy/Ydy HTTP/Backlogs</td>
-                    <td class="py-2 text-slate-400">
-                        <strong class="text-white">HTTP:</strong> Live payload delivered on the very first attempt.<br>
-                        <strong class="text-white">Backlogs:</strong> Records safely recovered later via HTTP retries or FTP.
-                    </td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white">Last Seen</td>
-                    <td class="py-2 text-slate-400">Time since last check-in. Indicates <strong
-                            class="text-blue-300">Current Connectivity</strong>. Hover for exact timestamp.</td>
+                    <td class="py-2 pr-4 text-red-500 font-mono font-bold">OFFLINE</td>
+                    <td class="py-2 pr-4 text-slate-400 font-mono text-[10px]">Unseen &gt; 24.5 Hrs</td>
+                    <td class="py-2 text-slate-400">Station silent for over 24 hours. Hardware power failure, SIM deactivation, or antenna disconnect.</td>
                 </tr>
             </tbody>
         </table>
     </div>
 
-    <!-- ── FLEET SUMMARY COLUMNS ──────────────────────────────────── -->
-    <div class="card p-5 mb-6">
-        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">📊 Fleet Summary Column Definitions</h2>
-        <table class="w-full text-xs">
-            <thead>
-                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
-                    <th class="pb-2 pr-6 text-left">Column</th>
-                    <th class="pb-2 text-left">What It Means</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-800">
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Status (Calc)</td>
-                    <td class="py-2 text-slate-400">Server's computed <strong class="text-white">Ground Truth Objective Health</strong> based on missing data slots and server-received payloads. Highly reliable.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">FW Report</td>
-                    <td class="py-2 text-slate-400">Raw diagnostic string reported directly by the firmware itself.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Data T/Y</td>
-                    <td class="py-2 text-slate-400">Records sent <strong class="text-white">Today</strong> vs <strong class="text-white">Yesterday</strong> (out of 96 slots).</td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-
-    <!-- ── STATION DETAIL COLUMNS ──────────────────────────────────── -->
-    <div class="card p-5 mb-6">
-        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🟣 Station Detail Column Definitions</h2>
-        <table class="w-full text-xs">
-            <thead>
-                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
-                    <th class="pb-2 pr-6 text-left">Column</th>
-                    <th class="pb-2 text-left">What It Means</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-800">
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Sig</td>
-                    <td class="py-2 text-slate-400">Cellular Signal Strength (dBm). Yellow if worse than -75 dBm.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Net / SPIFFS</td>
-                    <td class="py-2 text-slate-400">
-                        <strong class="text-white">Net:</strong> Number of data records successfully delivered to the server for that day.<br>
-                        <strong class="text-white">SPIFFS:</strong> Remaining local storage capacity on the device in kilobytes (kB).
-                    </td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Prev / Consec HTTP</td>
-                    <td class="py-2 text-slate-400">
-                        <strong class="text-white">Prev:</strong> Number of records successfully confirmed for the <strong class="text-white">Previous Day</strong>.<br>
-                        <strong class="text-white">Consec:</strong> Count of current continuous HTTP Live submission failures. Indicates network drop.
-                    </td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">HTTP Fails (Pres/Cum)</td>
-                    <td class="py-2 text-slate-400">
-                        <strong class="text-white">Pr (Present):</strong> Failures attempting to send today's live records.<br>
-                        <strong class="text-white">Cum (Cumulative):</strong> Total HTTP failures including backlog retry attempts.
-                    </td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Reg Fail(Rsn)</td>
-                    <td class="py-2 text-slate-400">
-                        Number of times the modem completely failed to register onto a 2G/4G network tower. High count means SIM/Tower issue. Includes failure error code.
-                    </td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white whitespace-nowrap">Mutex / B-Log</td>
-                    <td class="py-2 text-slate-400">
-                        <strong class="text-white">Mutex:</strong> Internal firmware lock contention errors.<br>
-                        <strong class="text-white">B-Log:</strong> Exact count of <strong class="text-white">HTTP unsent backlog</strong> files waiting in the queue.
-                    </td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-
-    <!-- ── COMMAND BUTTONS ────────────────────────────────────── -->
-    <div class="card p-5 mb-6">
-        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">⚡ Command Buttons Explained</h2>
-        <p class="text-xs text-slate-500 mb-4">Commands are queued on the server and delivered to the device on its
-            <strong class="text-white">next health check-in</strong>. The device checks in every 15 minutes, at 11:00 AM daily, 
-            or <strong class="text-yellow-400">immediately when a sensor fault is detected</strong> (one-time report).
-            Commands are never pushed — they wait to be pulled.
-        </p>
-        <div class="space-y-4">
-            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
-                <span class="btn-sm btn-red mt-0.5">↺ REBOOT</span>
-                <div>
-                    <div class="text-sm font-bold text-white mb-1">Remote Reboot</div>
-                    <p class="text-xs text-slate-400">Queues a <code class="text-red-300">REBOOT</code> command. On next
-                        check-in, the device receives this, powers off the GPRS modem (GPIO 26 → LOW), then calls <code
-                            class="text-red-300">ESP.restart()</code>. Use this when a station appears stuck or is
-                        showing repeated errors.</p>
-                </div>
-            </div>
-            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
-                <span class="btn-sm btn-grn mt-0.5">↑ BACKLOG</span>
-                <div>
-                    <div class="text-sm font-bold text-white mb-1">Force Backlog Sync (FTP_BACKLOG)</div>
-                    <p class="text-xs text-slate-400">Immediately triggers upload of the <code
-                            class="text-green-300">unsent.txt</code> file. Use this if a station was offline and you
-                        want to recover missing 15-min data records now.</p>
-                </div>
-            </div>
-            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
-                <span class="btn-sm btn-pur mt-0.5">↑ DAILY</span>
-                <div>
-                    <div class="text-sm font-bold text-white mb-1">Force Daily File (FTP_DAILY)</div>
-                    <p class="text-xs text-slate-400">Prompts for a date (<strong class="text-white">YYYYMMDD</strong>)
-                        and triggers upload of that specific daily log file (e.g. <code
-                            class="text-purple-300">dailyftp_20260228.txt</code>). Ideal for recovering the
-                        burst data for a specific past day.</p>
-                </div>
-            </div>
-            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
-                <span class="btn-sm btn-yel mt-0.5">🚀 Individual OTA</span>
-                <div>
-                    <div class="text-sm font-bold text-white mb-1">Deploy Custom Firmware to ONE Station</div>
-                    <p class="text-xs text-slate-400">Available on the Station Detail page. Upload a <code
-                            class="text-yellow-300">.bin</code> file targeted at that specific station only. The OTA
-                        command is queued immediately. On next check-in, only this station will update — all other
-                        stations in the group are unaffected. Use for testing a new firmware on one device before
-                        rolling out to a whole group.</p>
-                </div>
-            </div>
-            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
-                <span class="btn-sm mt-0.5" style="background:#064e3b; color:#a7f3d0; border-color:#047857;">GPS
-                    FIX</span>
-                <div>
-                    <div class="text-sm font-bold text-white mb-1">Force GPS Re-acquisition (GET_GPS)</div>
-                    <p class="text-xs text-slate-400">Forces the station to turn on its GPS module, acquire a fresh
-                        location fix, save it to persistent memory (SPIFFS), and report the new coordinates on the next
-                        check-in. The server also sends this <strong class="text-blue-300">automatically</strong> if it
-                        detects a missing or invalid GPS location.</p>
-                </div>
-            </div>
-            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
-                <span class="btn-sm mt-0.5" style="background:#7f1d1d; color:#fecaca; border-color:#b91c1c;">CLR
-                    FTP</span>
-                <div>
-                    <div class="text-sm font-bold text-white mb-1">Clear FTP Backlog (CLEAR_FTP_QUEUE)</div>
-                    <p class="text-xs text-slate-400">Safely commands the station to delete its internal <code
-                            class="text-red-300">ftpunsent.txt</code> queue file. Use this if a station has a massive
-                        unrecoverable backlog that is causing HTTP memory/timeout crashes. The server also sends this
-                        <strong class="text-blue-300">automatically</strong> if the unsent queue exceeds 50 records.
-                    </p>
-                </div>
-            </div>
-            <div class="bg-slate-900 rounded-lg p-4 flex items-start space-x-4">
-                <span class="btn-sm btn-red mt-0.5">🗑 DELETE</span>
-                <div>
-                    <div class="text-sm font-bold text-white mb-1">Delete Station Records</div>
-                    <p class="text-xs text-slate-400">Permanently deletes <strong class="text-red-300">ALL historical
-                            records</strong> for that station from the database. The station will appear again on next
-                        check-in. Use this to clean up test stations or decommissioned units.</p>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── OTA WORKFLOW ───────────────────────────────────────── -->
-    <div class="card p-5 mb-6">
-        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🚀 How OTA Update Works (Step by Step)
-        </h2>
-        <div class="space-y-3">
-            <div class="flex items-start space-x-3">
-                <span
-                    class="bg-blue-900 text-blue-300 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">1</span>
-                <p class="text-xs text-slate-400">Go to <strong class="text-white">OTA Manager</strong>. Find the
-                    firmware group you want to update (e.g. SPATIKA-ADDON).</p>
-            </div>
-            <div class="flex items-start space-x-3">
-                <span
-                    class="bg-blue-900 text-blue-300 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">2</span>
-                <p class="text-xs text-slate-400">Enter the new version number (e.g. <code
-                        class="text-white">5.80</code>), choose the compiled <code class="text-white">.bin</code> file,
-                    and click <strong class="text-green-300">DEPLOY</strong>.</p>
-            </div>
-            <div class="flex items-start space-x-3">
-                <span
-                    class="bg-blue-900 text-blue-300 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
-                <p class="text-xs text-slate-400">The server now has <code class="text-white">target = 5.80</code> for
-                    this group. The <code class="text-white">.bin</code> is stored in <code
-                        class="text-white">/app/builds/FW_S1_SPATIKA_GEN.bin</code></p>
-            </div>
-            <div class="flex items-start space-x-3">
-                <span
-                    class="bg-blue-900 text-blue-300 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">4</span>
-                <p class="text-xs text-slate-400">When a station checks in (every 15 min), the server compares its
-                    version to the target. If different → response includes <code
-                        class="text-yellow-300">"cmd":"OTA_CHECK","cmd_param":"FW_S1_SPATIKA_GEN.bin"</code></p>
-            </div>
-            <div class="flex items-start space-x-3">
-                <span
-                    class="bg-blue-900 text-blue-300 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">5</span>
-                <p class="text-xs text-slate-400">The ESP32 downloads the file, flashes it, and reboots. The next
-                    check-in will show the new firmware version and the <span class="badge-ota">OTA↑</span> badge will
-                    disappear.</p>
-            </div>
-            <div class="flex items-start space-x-3">
-                <span
-                    class="bg-blue-900 text-blue-300 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">💡</span>
-                <p class="text-xs text-slate-400"><strong class="text-white">Rollback</strong>: Set the target version
-                    to an older number (e.g. from <code class="text-white">5.80</code> back to <code
-                        class="text-white">5.78</code>) and upload the older <code class="text-white">.bin</code>. Same
-                    process, works in reverse.</p>
-            </div>
-        </div>
-    </div>
-
-
-
-
-    <!-- ── COMMANDS & QUEUE ───────────────────────────────────── -->
-    <div class="card p-5 mb-6">
-        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">❌ Clearing the Command Queue</h2>
-        <div class="grid grid-cols-2 gap-4">
-            <div class="bg-slate-900 rounded-lg p-4">
-                <div class="text-yellow-400 font-bold mb-1">Clear OTA Queue</div>
-                <p class="text-xs text-slate-400">Only removes <strong class="text-white">pending OTA update</strong>
-                    commands. Use this if you want to cancel a firmware update but keep other queued commands like
-                    REBOOT or
-                    BACKLOG sync.</p>
-            </div>
-            <div class="bg-slate-900 rounded-lg p-4">
-                <div class="text-red-400 font-bold mb-1">Clear ALL Queue</div>
-                <p class="text-xs text-slate-400">Wipes <strong class="text-white">every single pending command</strong>
-                    for the station. Resets the device to a clean slate with zero instructions waiting on its next
-                    check-in.
-                </p>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── CSV DOWNLOADS ──────────────────────────────────────── -->
-    <div class="card p-5 mb-6">
-        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">📥 CSV Download Options</h2>
-        <table class="w-full text-xs">
-            <thead>
-                <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-700">
-                    <th class="pb-2 pr-6 text-left">Download</th>
-                    <th class="pb-2 pr-6 text-left">Where to Find</th>
-                    <th class="pb-2 text-left">What It Contains</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-800">
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white">Summary CSV (Export CSV)</td>
-                    <td class="py-2 pr-6 text-slate-500">Nav bar → Export CSV → Summary CSV</td>
-                    <td class="py-2 text-slate-400">One row per station (the <strong class="text-white">latest
-                            snapshot</strong> only). All 33 fields. Perfect for current fleet status reports.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white">Full History CSV (Export All)</td>
-                    <td class="py-2 pr-6 text-slate-500">Nav bar → Export CSV → Export All CSV</td>
-                    <td class="py-2 text-slate-400">Every single health report ever received by the server for all
-                        stations.
-                        Enormous file — use for deep auditing or Excel analysis of trends.</td>
-                </tr>
-                <tr>
-                    <td class="py-2 pr-6 font-bold text-white">Station History CSV</td>
-                    <td class="py-2 pr-6 text-slate-500">Click any station → Download History button</td>
-                    <td class="py-2 text-slate-400">All reports for <strong class="text-white">one particular
-                            station</strong>. Use for debugging a single troublesome unit.</td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-
-    <!-- ── FIELD GUIDE ────────────────────────────────────────── -->
-    <div class="card p-5 mb-6">
-        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">🔧 Field Engineer Quick Guide</h2>
-        <div class="grid grid-cols-2 gap-4">
-            <div class="bg-slate-900 rounded-lg p-4">
-                <div class="text-red-400 font-bold text-xs mb-2">Station shows CDM or NDM status</div>
-                <ol class="text-xs text-slate-400 space-y-1 list-decimal list-inside">
-                    <li>Click station → check last 5 health reports</li>
-                    <li>Look at Signal strength trend</li>
-                    <li>If signal OK → check SD card status</li>
-                    <li>Send FTP_NOW command to force a data push</li>
-                    <li>If no improvement → queue REBOOT</li>
-                    <li>If still failing → field visit required</li>
-                </ol>
-            </div>
-            <div class="bg-slate-900 rounded-lg p-4">
-                <div class="text-orange-400 font-bold text-xs mb-2">Station shows Low Battery</div>
-                <ol class="text-xs text-slate-400 space-y-1 list-decimal list-inside">
-                    <li>Check Solar V — should be &gt;12V in daylight</li>
-                    <li>If Solar V is 0 → panel or cable issue</li>
-                    <li>If Solar V OK but Bat low → charge controller fault</li>
-                    <li>Do NOT reboot — may not wake up</li>
-                    <li>Schedule urgent field visit</li>
-                </ol>
-            </div>
-            <div class="bg-slate-900 rounded-lg p-4">
-                <div class="text-yellow-400 font-bold text-xs mb-2">Station has OTA↑ badge</div>
-                <ol class="text-xs text-slate-400 space-y-1 list-decimal list-inside">
-                    <li>OTA will happen automatically on next check-in</li>
-                    <li>No action needed — wait 15 minutes</li>
-                    <li>After update, badge disappears</li>
-                    <li>Check health status after update</li>
-                </ol>
-            </div>
-            <div class="bg-slate-900 rounded-lg p-4">
-                <div class="text-blue-400 font-bold text-xs mb-2">Station hasn't been seen for &gt;1 hour</div>
-                <ol class="text-xs text-slate-400 space-y-1 list-decimal list-inside">
-                    <li>Check Net Count today vs. yesterday</li>
-                    <li>If Net Cnt = 0 today → no data at all</li>
-                    <li>Check Reg Fails — high count = SIM issue</li>
-                    <li>Check carrier in CSV export</li>
-                    <li>If no cellular coverage → field visit</li>
-                </ol>
-            </div>
-        </div>
-    </div>
-
-</div><!-- end max-w -->
+</div>
 {% endblock %}

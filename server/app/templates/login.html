@@ -4,56 +4,129 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Spatika Health API</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Login — Spatika Telemetry Portal</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <style>
-        body {
-            background-color: #0f172a;
-            color: #f8fafc;
+        :root {
+            --bg-gradient: linear-gradient(135deg, #0c1220 0%, #1e1b4b 40%, #064e3b 80%, #0c1220 100%);
+            --card-bg: rgba(15, 23, 42, 0.85);
+            --card-border: rgba(148, 163, 184, 0.2);
+            --text-main: #f8fafc;
+            --text-sub: #94a3b8;
+            --input-bg: rgba(30, 41, 59, 0.7);
+            --input-border: #334155;
         }
 
-        .card {
-            background-color: #1e293b;
-            border-color: #334155;
+        html.light {
+            --bg-gradient: linear-gradient(135deg, #e0f2fe 0%, #f0fdf4 40%, #fae8ff 75%, #f1f5f9 100%);
+            --card-bg: rgba(255, 255, 255, 0.92);
+            --card-border: rgba(203, 213, 225, 0.8);
+            --text-main: #0f172a;
+            --text-sub: #475569;
+            --input-bg: #ffffff;
+            --input-border: #cbd5e1;
+        }
+
+        body {
+            background: var(--bg-gradient);
+            background-size: 200% 200%;
+            animation: gradientMove 15s ease infinite;
+            color: var(--text-main);
+            font-family: 'Inter', system-ui, sans-serif;
+        }
+
+        @keyframes gradientMove {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        .glass-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+            border-radius: 20px;
+        }
+
+        .input-field {
+            background: var(--input-bg);
+            border: 1.5px solid var(--input-border);
+            color: var(--text-main);
+            transition: all 0.25s ease;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+        }
+
+        .btn-gradient {
+            background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4);
+        }
+
+        .btn-gradient:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 25px rgba(37, 99, 235, 0.5);
         }
     </style>
+    <script>
+        (function() {
+            const saved = localStorage.getItem('theme') || 'dark';
+            if (saved === 'light') document.documentElement.classList.add('light');
+        })();
+    </script>
 </head>
 
-<body class="flex items-center justify-center min-h-screen">
+<body class="flex items-center justify-center min-h-screen p-4">
 
-    <div class="card border rounded-lg p-8 shadow-2xl w-full max-w-sm">
-        <div class="text-center mb-6">
-            <h1 class="text-2xl font-black text-blue-400">Spatika Health</h1>
-            <p class="text-xs text-slate-400 mt-1">Fleet Management Portal</p>
+    <div class="glass-card p-8 md:p-10 w-full max-w-md relative overflow-hidden">
+        <!-- Brand Header -->
+        <div class="text-center mb-8">
+            <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600/20 border border-blue-500/30 mb-4 shadow-lg">
+                <span class="text-3xl">📡</span>
+            </div>
+            <h1 class="text-3xl font-black tracking-tight text-blue-500">SPATIKA</h1>
+            <p class="text-xs text-slate-400 mt-1 uppercase font-bold tracking-widest">AWS & TRG Fleet Management Portal</p>
         </div>
 
         {% if error %}
-        <div class="bg-red-900/50 border border-red-500 text-red-200 p-2 rounded text-xs mb-4 text-center">
-            {{ error }}
+        <div class="bg-red-500/10 border border-red-500/40 text-red-400 p-3 rounded-xl text-xs mb-6 text-center font-bold flex items-center justify-center gap-2">
+            <span>⚠️</span> {{ error }}
         </div>
         {% endif %}
 
-        <form action="/login" method="post" class="space-y-4">
+        <form action="/login" method="post" class="space-y-5">
             <div>
-                <label class="block text-xs font-bold text-slate-400 mb-1" for="username">Username</label>
-                <input type="text" id="username" name="username" required
-                    class="w-full bg-slate-800 border border-slate-600 rounded text-sm px-3 py-2 text-white focus:outline-none focus:border-blue-500 transition">
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2" for="username">
+                    👤 Username
+                </label>
+                <input type="text" id="username" name="username" required placeholder="Enter username"
+                    class="input-field w-full text-sm px-4 py-3 rounded-xl font-medium">
             </div>
 
             <div>
-                <label class="block text-xs font-bold text-slate-400 mb-1" for="password">Password</label>
-                <input type="password" id="password" name="password" required
-                    class="w-full bg-slate-800 border border-slate-600 rounded text-sm px-3 py-2 text-white focus:outline-none focus:border-blue-500 transition">
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2" for="password">
+                    🔑 Password
+                </label>
+                <input type="password" id="password" name="password" required placeholder="Enter password"
+                    class="input-field w-full text-sm px-4 py-3 rounded-xl font-medium">
             </div>
 
             <button type="submit"
-                class="w-full bg-blue-600 hover:bg-blue-500 transition text-white font-bold py-2 rounded shadow-lg mt-2 text-sm">
-                Login to Dashboard
+                class="btn-gradient w-full text-white font-bold py-3.5 px-4 rounded-xl text-sm tracking-wide mt-2">
+                Sign In to Dashboard →
             </button>
         </form>
 
-        <div class="mt-6 border-t border-slate-700 pt-4 text-center">
-            <p class="text-[10px] text-slate-500">Contact admin for credentials if needed.</p>
+        <div class="mt-8 border-t border-slate-700/50 pt-4 text-center">
+            <p class="text-[11px] text-slate-500 font-medium">
+                Protected IoT Gateway System • Spatika Telemetry
+            </p>
         </div>
     </div>
 

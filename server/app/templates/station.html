@@ -6,41 +6,56 @@
 
 <!-- Header -->
 <div class="mb-5">
-    <!-- Top row: back link + Station ID + Download buttons -->
-    <div class="flex justify-between items-start flex-wrap gap-3 mb-3">
-        <div>
-            <a href="/summary{% if category_id %}#tab-{{ category_id }}{% endif %}" class="text-slate-500 text-xs hover:text-white transition">← Back to Fleet</a>
-            <h1 class="text-2xl font-black text-blue-300 mt-1">
-                Station {{ stn_id.lstrip('0') if stn_id.lstrip('0') else stn_id }}
-                <span class="text-sm font-normal text-slate-500 ml-2">— last {{ history|length }} check-ins (max 10)</span>
+    <!-- Single horizontal row: Back to Fleet + Station Title + Crisp/Full CSV buttons -->
+    <div class="flex items-center justify-between flex-wrap gap-3 mb-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+        <div class="flex items-center gap-3 flex-wrap">
+            <a href="/dashboard" class="px-3 py-1.5 rounded-lg bg-blue-950/80 hover:bg-blue-900 text-blue-300 font-bold text-xs border border-blue-700/60 hover:text-white transition shadow-sm inline-flex items-center gap-1">
+                ← Back to Fleet
+            </a>
+            <h1 class="text-xl font-black text-slate-100 flex items-center gap-2">
+                Station <span class="text-blue-300">{{ stn_id.lstrip('0') if stn_id.lstrip('0') else stn_id }}</span>
+                <span class="text-xs font-semibold text-slate-400">— last {{ history|length }} check-ins (max 10)</span>
             </h1>
         </div>
 
-        <!-- Download buttons (public) -->
-        <div class="flex flex-col gap-1 items-end">
-            <div class="flex gap-2">
-                <a href="/station/{{ stn_id }}/concise-csv"
-                   class="btn-sm bg-blue-700 hover:bg-blue-600 text-white border border-blue-500/50 shadow"
-                   title="Compact CSV: Time, Health, Battery, Signal, Firmware">
-                    📥 Crisp CSV
-                </a>
-                <a href="/station/{{ stn_id }}/csv"
-                   class="btn-sm bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600"
-                   title="Full CSV: All raw telemetry fields from every health check-in">
-                    📋 Full CSV
-                </a>
-            </div>
-            <p class="text-[9px] text-slate-600 text-right">Crisp = key fields only · Full = all raw data</p>
+        <!-- Download buttons -->
+        <div class="flex items-center gap-2">
+            <a href="/station/{{ stn_id }}/concise-csv"
+               class="btn-sm bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 border border-blue-400/50 shadow"
+               title="Compact CSV: Time, Health, Battery, Signal, Firmware">
+                📥 Crisp CSV
+            </a>
+            <a href="/station/{{ stn_id }}/csv"
+               class="btn-sm bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 border border-slate-700 shadow"
+               title="Full CSV: All raw telemetry fields from every health check-in">
+                📋 Full CSV
+            </a>
         </div>
     </div>
 
     <!-- Info badges row -->
     {% if history and history|length > 0 %}
     <div class="flex flex-wrap gap-2 items-stretch mb-3">
-        <!-- Carrier -->
+        <!-- Carrier & SIM -->
+        {% set ns = namespace(sim_num=None) %}
+        {% for c in commands %}
+            {% if not ns.sim_num and c.cmd == 'GET_NUM' and c.result and 'Num:' in c.result %}
+                {% set ns.sim_num = c.result.replace('Num: ', '').replace('+1991', '').replace('1991', '') %}
+            {% endif %}
+        {% endfor %}
+        {% if not ns.sim_num %}
+            {% for r in history %}
+                {% if not ns.sim_num and r.last_cmd_res and 'Num:' in r.last_cmd_res %}
+                    {% set ns.sim_num = r.last_cmd_res.replace('Num: ', '').replace('+1991', '').replace('1991', '') %}
+                {% endif %}
+            {% endfor %}
+        {% endif %}
         <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-blue-900/30 border border-blue-800/50 min-w-[70px]">
             <span class="text-[11px] font-bold text-blue-300">🛰 {{ history[0].carrier or '?' }}</span>
-            <span class="text-[8px] text-blue-600 mt-0.5">Network</span>
+            {% if ns.sim_num %}
+            <span class="text-[9px] font-mono text-green-300 font-bold mt-0.5">📱 {{ ns.sim_num }}</span>
+            {% endif %}
+            <span class="text-[8px] text-blue-600 mt-0.5">Network & SIM</span>
         </div>
         <!-- Rain (only for TRG) -->
         {% if (history[0].system == 0 or history[0].system == 2) and history[0].cum_rf is not none %}
@@ -49,10 +64,15 @@
             <span class="text-[8px] text-sky-600 mt-0.5">Today's Rain</span>
         </div>
         {% endif %}
-        <!-- Battery -->
+        <!-- GPRS Battery -->
         <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-orange-900/30 border border-orange-800/50 min-w-[70px]">
             <span class="text-[11px] font-bold text-orange-300">🔋 {{ "%.2f"|format(history[0].bat_v) if history[0].bat_v else 'N/A' }}V</span>
-            <span class="text-[8px] text-orange-600 mt-0.5">ಬ್ಯಾಟರಿ (Battery)</span>
+            <span class="text-[8px] text-orange-600 mt-0.5">GPRS Bat (ಬ್ಯಾಟರಿ)</span>
+        </div>
+        <!-- MCU Battery -->
+        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-cyan-900/30 border border-cyan-800/50 min-w-[70px]">
+            <span class="text-[11px] font-bold text-cyan-300">⚡ {{ "%.2f"|format(history[0].mcu_bat) if history[0].mcu_bat else 'N/A' }}V</span>
+            <span class="text-[8px] text-cyan-600 mt-0.5">MCU Bat (MCU)</span>
         </div>
         <!-- Solar -->
         <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-yellow-900/30 border border-yellow-800/50 min-w-[70px]">
@@ -61,9 +81,13 @@
         </div>
         <!-- GPS -->
         <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-emerald-900/30 border border-emerald-800/50 min-w-[130px]">
-            {% if settings and settings.last_gps and settings.last_gps not in ('0.000000,0.000000', '0,0', 'NA', 'None', '') %}
+            {% if settings and settings.last_gps and ',' in settings.last_gps and settings.last_gps not in ('0.000000,0.000000', '0,0', 'NA', 'None', '', 'NO_GPS') %}
                 {% set gps_parts = settings.last_gps.split(',') %}
-                <span class="text-[11px] font-bold text-emerald-300 font-mono">📍 {{ "%.4f"|format(gps_parts[0]|strip|float) }}, {{ "%.4f"|format(gps_parts[1]|strip|float) }}</span>
+                {% if gps_parts|length >= 2 %}
+                    <span class="text-[11px] font-bold text-emerald-300 font-mono">📍 {{ settings.last_gps }}</span>
+                {% else %}
+                    <span class="text-[11px] font-bold text-emerald-400/60 animate-pulse">📡 Searching...</span>
+                {% endif %}
             {% else %}
                 <span class="text-[11px] font-bold text-emerald-400/60 animate-pulse">📡 Searching...</span>
             {% endif %}
@@ -71,48 +95,87 @@
         </div>
         <!-- Wi-Fi Pass (supervisor only) -->
         {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
-        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-purple-900/30 border border-purple-800/50 min-w-[100px]" title="Last Wi-Fi password set via portal">
-            <span class="text-[11px] font-bold text-purple-300">🔐 {{ last_wifi_pass if last_wifi_pass else 'Spatika123' }}</span>
-            <span class="text-[8px] text-purple-600 mt-0.5">Wi-Fi Password</span>
+        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-purple-900/30 border border-purple-800/50 min-w-[100px]" title="Confirmed active Wi-Fi AP password for field engineers">
+            <span class="text-[11px] font-bold text-purple-300 font-mono">🔐 {{ settings.wifi_pass if (settings and settings.wifi_pass) else (last_wifi_pass if last_wifi_pass else 'Spatika123') }}</span>
+            <span class="text-[8px] text-purple-400 mt-0.5 font-bold">Wi-Fi AP Password</span>
         </div>
         {% endif %}
+        <!-- Signal Strength Quality Meter -->
+        {% set sig = history[0].signal or -141 %}
+        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-emerald-900/30 border border-emerald-800/50 min-w-[70px]">
+            <span class="text-[11px] font-bold text-emerald-300">
+                {% if sig >= -85 %}📶 🟢 {{ sig }} dBm
+                {% elif sig >= -100 %}📶 🟡 {{ sig }} dBm
+                {% else %}📶 🔴 {{ sig }} dBm{% endif %}
+            </span>
+            <span class="text-[8px] text-emerald-600 mt-0.5">Signal Quality</span>
+        </div>
     </div>
     {% endif %}
 
-    <!-- Maintenance & Management actions -->
-    <div class="flex flex-wrap gap-2 items-center p-3 rounded-lg bg-slate-800/40 border border-slate-700/50">
-        <span class="text-[9px] text-slate-500 uppercase tracking-widest font-bold mr-1">Management:</span>
-        <a href="/toggle-ota-lock/{{ stn_id }}"
-            class="btn-sm bg-orange-900/50 hover:bg-orange-800 text-orange-300 border border-orange-700/50"
-            onclick="return confirm('Toggle OTA Lock for {{ stn_id }}?')">
-            {% if is_exempt %}🔓 OTA Locked{% else %}🔒 Lock OTA{% endif %}
-        </a>
-        <a href="/clear-ota-queue/{{ stn_id }}"
-            class="btn-sm bg-yellow-900/50 hover:bg-yellow-800 text-yellow-300 border border-yellow-700/50"
-            onclick="return confirm('Clear only pending OTA commands for {{ stn_id }}?')">
-            ❌ Clear OTA Queue
-        </a>
-        <a href="/clear-queue/{{ stn_id }}"
-            class="btn-sm bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600"
-            onclick="return confirm('Clear ALL pending commands for {{ stn_id }}?')">
-            🗑 Clear All Cmds
-        </a>
-        {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
-        <button onclick="openWifiPassModal('{{ stn_id }}')"
-            class="btn-sm bg-purple-900/50 hover:bg-purple-800 text-purple-300 border border-purple-700/50">
-            🔐 Set Wi-Fi Pass
-        </button>
-        {% endif %}
-        <a href="/cmd/{{ stn_id }}/DELETE_DATA"
-            class="btn-sm bg-orange-950/70 hover:bg-orange-800 text-orange-400 border border-orange-700/50"
-            onclick="return confirm('CRITICAL: Remote factory reset on {{ stn_id }}. All SPIFFS data deleted. Proceed?')">
-            ⚠ Factory Reset
-        </a>
-        <a href="/delete/{{ stn_id }}"
-            class="btn-sm bg-red-900/80 hover:bg-red-700 text-red-200 border border-red-600/50 shadow-lg"
-            onclick="return confirm('WARNING: Permanently destroy ALL records for {{ stn_id }}? Cannot be undone.')">
-            🗑 Delete Station
-        </a>
+    <!-- Consolidated 4-Tier Command Suite -->
+    <div class="p-4 rounded-xl bg-slate-800/40 border border-slate-700/50 mb-4">
+        <div class="flex items-center justify-between mb-3 border-b border-slate-700/50 pb-2">
+            <span class="text-xs text-slate-400 uppercase tracking-widest font-black">Station Command Suite & Maintenance</span>
+            <span class="text-[10px] text-slate-500 font-mono">STN ID: {{ stn_id }}</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+            <!-- TIER 1: TELEMETRY (Blue Family Shades) -->
+            <div class="card-tier-telemetry p-3.5 rounded-xl flex flex-col space-y-2">
+                <div class="text-[11px] font-black text-blue-400 uppercase tracking-wider flex items-center justify-between border-b border-blue-500/20 pb-1.5 mb-1">
+                    <span>📊 Telemetry & Status</span>
+                    <span class="text-[9px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded font-bold">TIER 1</span>
+                </div>
+                <a href="/cmd/{{ stn_id }}/GET_NUM" class="btn-sm btn-t1-primary text-center" onclick="return confirm('Queue GET_NUM command for {{ stn_id }}?')">📱 Query SIM Number</a>
+                <a href="/cmd/{{ stn_id }}/GET_STATUS" class="btn-sm btn-t1-secondary text-center" onclick="return confirm('Queue GET_STATUS command for {{ stn_id }}?')">📊 Fetch Status Now</a>
+                <a href="/cmd/{{ stn_id }}/GET_GPS" class="btn-sm btn-t1-tertiary text-center" onclick="return confirm('Force {{ stn_id }} to acquire new GPS fix?')">📍 Refresh GPS Fix</a>
+            </div>
+
+            <!-- TIER 2: DATA & REPORTING (Purple Family Shades) -->
+            <div class="card-tier-data p-3.5 rounded-xl flex flex-col space-y-2">
+                <div class="text-[11px] font-black text-purple-400 uppercase tracking-wider flex items-center justify-between border-b border-purple-500/20 pb-1.5 mb-1">
+                    <span>🔄 Data & Reporting</span>
+                    <span class="text-[9px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded font-bold">TIER 2</span>
+                </div>
+                <a href="/cmd/{{ stn_id }}/FTP_BACKLOG" class="btn-sm btn-t2-primary text-center" onclick="return confirm('Force immediate backlog upload for {{ stn_id }}?')">↑ Sync Backlog (FTP)</a>
+                <button onclick="promptFtpDaily('{{ stn_id }}')" class="btn-sm btn-t2-secondary text-center">📅 Fetch Daily Log</button>
+                <div class="flex gap-1">
+                    <a href="/cmd/{{ stn_id }}/INTERVAL?param=15" class="btn-sm btn-t2-sub flex-1 text-center" onclick="return confirm('Set 15-min interval?')">⏱ 15m Mode</a>
+                    <a href="/cmd/{{ stn_id }}/INTERVAL?param=1440" class="btn-sm btn-t2-sub flex-1 text-center" onclick="return confirm('Set 24-hr interval?')">⏱ 24h Mode</a>
+                </div>
+                <div class="flex gap-1">
+                    <a href="/cmd/{{ stn_id }}/SET_RF_RES?param=0.25" class="btn-sm btn-t2-sub flex-1 text-center" onclick="return confirm('Set tip resolution to 0.25mm?')">🎛 0.25 mm</a>
+                    <a href="/cmd/{{ stn_id }}/SET_RF_RES?param=0.50" class="btn-sm btn-t2-sub flex-1 text-center" onclick="return confirm('Set tip resolution to 0.50mm?')">🎛 0.50 mm</a>
+                </div>
+            </div>
+
+            <!-- TIER 3: MAINTENANCE (Amber Family Shades) -->
+            <div class="card-tier-maint p-3.5 rounded-xl flex flex-col space-y-2">
+                <div class="text-[11px] font-black text-amber-400 uppercase tracking-wider flex items-center justify-between border-b border-amber-500/20 pb-1.5 mb-1">
+                    <span>🛠 Maintenance & Queue</span>
+                    <span class="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-bold">TIER 3</span>
+                </div>
+                <a href="/toggle-ota-lock/{{ stn_id }}" class="btn-sm btn-t3-primary text-center" onclick="return confirm('Toggle OTA Lock for {{ stn_id }}?')">{% if is_exempt %}🔓 OTA Locked{% else %}🔒 Lock OTA{% endif %}</a>
+                <a href="/clear-ota-queue/{{ stn_id }}" class="btn-sm btn-t3-secondary text-center" onclick="return confirm('Clear pending OTA commands for {{ stn_id }}?')">❌ Clear OTA Queue</a>
+                <a href="/clear-queue/{{ stn_id }}" class="btn-sm btn-t3-tertiary text-center" onclick="return confirm('Clear ALL pending commands for {{ stn_id }}?')">🗑 Clear All Cmds</a>
+                <a href="/cmd/{{ stn_id }}/CLEAR_FTP_QUEUE" class="btn-sm btn-t3-quaternary text-center" onclick="return confirm('Wipe device backlog on SPIFFS?')">🧹 Wipe Device Backlog</a>
+                {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
+                <button onclick="openWifiPassModal('{{ stn_id }}')" class="btn-sm btn-t3-quaternary text-center">🔐 Set Wi-Fi Pass</button>
+                {% endif %}
+            </div>
+
+            <!-- TIER 4: DANGER ZONE (Red Family Shades) -->
+            <div class="card-tier-danger p-3.5 rounded-xl flex flex-col space-y-2">
+                <div class="text-[11px] font-black text-red-400 uppercase tracking-wider flex items-center justify-between border-b border-red-500/20 pb-1.5 mb-1">
+                    <span>🚨 Danger Zone</span>
+                    <span class="text-[9px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded font-bold">TIER 4</span>
+                </div>
+                <a href="/cmd/{{ stn_id }}/REBOOT" class="btn-sm btn-t4-primary text-center" onclick="return confirm('Reboot {{ stn_id }}?')">↺ Reboot Device</a>
+                <a href="/cmd/{{ stn_id }}/DELETE_DATA" class="btn-sm btn-t4-secondary text-center" onclick="return confirm('CRITICAL: Remote factory reset on {{ stn_id }}. Proceed?')">⚠ Factory Reset</a>
+                <a href="/delete/{{ stn_id }}" class="btn-sm btn-t4-danger text-center" onclick="return confirm('WARNING: Permanently delete station {{ stn_id }} from server?')">🗑 Delete Station</a>
+            </div>
+        </div>
     </div>
 
     <!-- Legend -->
@@ -129,7 +192,6 @@
             <div><span class="text-red-400 font-bold">🗑 Delete Station</span> — Permanently removes ALL historical records from the server database. Device is unaffected</div>
         </div>
     </details>
-    {% endif %}
 </div>
 
 <!-- History Table -->
@@ -187,10 +249,17 @@
                     <td class="p-3"><span class="badge-ver">{{ r.ver or '?' }}</span></td>
                     <!-- Battery / Solar -->
                     <td class="p-3 leading-tight">
-                        <span class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}">
-                            {{ '%.2f'|format(r.bat_v or 0) }}V
-                        </span>
-                        <span class="text-[9px] text-slate-500 ml-1">/ {{ '%.1f'|format(r.sol_v or 0) }}V</span>
+                        <div class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}" title="GPRS Battery">
+                            GPRS: {{ '%.2f'|format(r.bat_v or 0) }}V
+                        </div>
+                        {% if r.mcu_bat %}
+                        <div class="text-[10px] text-cyan-300 font-bold" title="MCU Battery">
+                            MCU: {{ '%.2f'|format(r.mcu_bat) }}V
+                        </div>
+                        {% endif %}
+                        <div class="text-[9px] text-slate-500">
+                            Sol: {{ '%.1f'|format(r.sol_v or 0) }}V
+                        </div>
                     </td>
                     <!-- Signal -->
                     <td class="p-3 {% if r.signal and r.signal > -75 %}text-green-400{% else %}text-yellow-400{% endif %}">
@@ -255,7 +324,7 @@
                     </td>
                     <td class="p-2">
                         {% if c.executed_at %}
-                        <span class="text-green-500">✓ Sent ({{ c.executed_at.strftime('%H:%M') }})</span>
+                        <span class="text-green-500">✓ Sent ({{ c.executed_at|ist }})</span>
                         {% else %}
                         <span class="text-yellow-500 animate-pulse">⏳ Pending...</span>
                         {% endif %}
@@ -263,7 +332,7 @@
                     <td class="p-2 text-right">
                         {% if c.completed_at %}
                         <div class="font-bold text-blue-300 text-[10px]">{{ c.result }}</div>
-                        <div class="text-[8px] text-slate-600">{{ c.completed_at.strftime('%H:%M') }} Feedback</div>
+                        <div class="text-[8px] text-slate-600">{{ c.completed_at|ist }} Feedback</div>
                         {% else %}
                         <span class="text-slate-700 italic">-</span>
                         {% endif %}
@@ -275,7 +344,7 @@
     </div>
 </div>
 
-{% if request.state.user and request.state.user.role == 'supervisor' %}
+{% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
 <!-- Individual OTA Upload Panel -->
 <div class="card p-4 mb-5 border-yellow-900/40 relative overflow-hidden">
     <div class="flex justify-between items-start">

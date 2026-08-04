@@ -188,8 +188,8 @@ void IRAM_ATTR lcdTimer() {
 
 
 // v5.60: Central drawing function - differential to eliminate flicker
-void draw_current_page() {
-  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+bool draw_current_page() {
+  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
     if (cur_mode == eEditOff) {
       lcd.noBlink();
       char line0[17], line1[17];
@@ -319,7 +319,9 @@ void draw_current_page() {
       present_topRow[0] = 0; present_bottomRow[0] = 0;
     }
     xSemaphoreGive(i2cMutex);
+    return true;
   }
+  return false;
 }
 
 // v5.60: Background data refresh - exact original formatting

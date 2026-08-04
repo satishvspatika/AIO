@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, case
 from app.database import SessionLocal
 from app.models import HealthReport, FirmwareRegistry, CommandQueue, StationSettings
 from app.services.health_eval import evaluate, ist_filter
@@ -120,10 +120,25 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
     try:
         reports = get_latest_per_station(db)
         
-        # Phase 2 Optimization: Bulk Fetch everything before the loop
+        # Fetch & Sort Firmware Groups: KSNDMC first, Bihar second, Spatika third
+        fws = db.query(FirmwareRegistry).all()
+        def get_priority(fw):
+            ut = (fw.unit_type or "").upper()
+            sys = fw.system_mode
+            if "DMC" in ut and sys == 0: return 1  # KSNDMC-TRG
+            if "DMC" in ut and sys == 1: return 2  # KSNDMC-TWS
+            if "DMC" in ut and sys == 2: return 3  # KSNDMC-ADDON
+            if "BIH" in ut: return 4               # BIHAR-TRG
+            if "GEN" in ut and sys == 0: return 5  # SPATIKA-TRG
+            if "GEN" in ut and sys == 2: return 6  # SPATIKA-ADDON
+            return 99 + fw.category_id
+
+        fws.sort(key=get_priority)
+        
+        # Build lookup map
         fw_map = {
             (str(fw.unit_type or "") + str(fw.system_mode or 0)): fw
-            for fw in db.query(FirmwareRegistry).all()
+            for fw in fws
         }
         
         # Bulk fetch all settings (GPS cache, OTA exempt)
@@ -136,12 +151,91 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         
         now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
-        # v5.89: NUCLEAR DEDUPLICATION & COLLAPSE
-        # Logic: Strip ALL non-alphanumeric chars, then remove leading zeros.
+        # ── MET Day Boundaries (IST-based) ──────────────────────────────────────
+        # MET day closes at 08:30 IST, new MET day starts at 08:45 IST
+        IST_OFFSET  = datetime.timedelta(hours=5, minutes=30)
+        now_ist     = now + IST_OFFSET
+        today_ist   = now_ist.date()
+
+        # MET-today window: 08:45 IST today → now  (if current IST time >= 08:45)
+        met_today_start_ist = datetime.datetime.combine(today_ist, datetime.time(8, 45))
+        met_today_start_utc = met_today_start_ist - IST_OFFSET   # 03:15 UTC
+
+        # MET-yesterday window: 08:45 IST yesterday → 08:30 IST today
+        met_ydy_start_ist   = met_today_start_ist - datetime.timedelta(days=1)
+        met_ydy_end_ist     = datetime.datetime.combine(today_ist, datetime.time(8, 30))
+        met_ydy_start_utc   = met_ydy_start_ist - IST_OFFSET
+        met_ydy_end_utc     = met_ydy_end_ist   - IST_OFFSET     # 03:00 UTC
+
+        # MET-today is valid only after 08:45 IST
+        met_today_active = (now_ist >= met_today_start_ist)
+
+        # Bulk DB count & Direct/Backlog stats for MET Today
+        met_today_map = {}
+        if met_today_active:
+            _today_rows = db.query(
+                HealthReport.stn_id,
+                func.count(HealthReport.id).label("tot"),
+                func.sum(
+                    case(
+                        (
+                            (func.coalesce(HealthReport.http_fails, 0) == 0) &
+                            (func.coalesce(HealthReport.http_ret_cnt, 0) == 0) &
+                            (func.coalesce(HealthReport.http_backlog_cnt, 0) == 0),
+                            1
+                        ),
+                        else_=0
+                    )
+                ).label("dir")
+            ).filter(HealthReport.reported_at >= met_today_start_utc
+            ).group_by(HealthReport.stn_id).all()
+            
+            for row in _today_rows:
+                tot = row.tot or 0
+                dir_cnt = row.dir or 0
+                backlog_cnt = max(0, tot - dir_cnt)
+                met_today_map[row.stn_id] = {
+                    "total": tot,
+                    "direct": dir_cnt,
+                    "backlog": backlog_cnt,
+                    "display": f"{dir_cnt} / {backlog_cnt}"
+                }
+
+        # Bulk DB count & Direct/Backlog stats for MET Yesterday
+        _ydy_rows = db.query(
+            HealthReport.stn_id,
+            func.count(HealthReport.id).label("tot"),
+            func.sum(
+                case(
+                    (
+                        (func.coalesce(HealthReport.http_fails, 0) == 0) &
+                        (func.coalesce(HealthReport.http_ret_cnt, 0) == 0) &
+                        (func.coalesce(HealthReport.http_backlog_cnt, 0) == 0),
+                        1
+                    ),
+                    else_=0
+                )
+            ).label("dir")
+        ).filter(
+            HealthReport.reported_at >= met_ydy_start_utc,
+            HealthReport.reported_at <  met_ydy_end_utc
+        ).group_by(HealthReport.stn_id).all()
+
+        met_ydy_map = {}
+        for row in _ydy_rows:
+            tot = row.tot or 0
+            dir_cnt = row.dir or 0
+            backlog_cnt = max(0, tot - dir_cnt)
+            met_ydy_map[row.stn_id] = {
+                "total": tot,
+                "direct": dir_cnt,
+                "backlog": backlog_cnt,
+                "display": f"{dir_cnt} / {backlog_cnt}"
+            }
+
         import re
         deduped = {}
         for r in reports:
-            # Strip everything except A-Z, 0-9
             s_clean = re.sub(r'[^A-Z0-9]', '', str(r.stn_id or "").upper())
             if not s_clean: continue
             
@@ -151,7 +245,6 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             if norm_id not in deduped:
                 deduped[norm_id] = r
             else:
-                # Conflict: Keep the one with the more recent reported_at
                 existing = deduped[norm_id]
                 if r.reported_at and existing.reported_at:
                     if r.reported_at > existing.reported_at:
@@ -161,7 +254,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         
         reports = list(deduped.values())
 
-        # Summary card counts (calculated on deduplicated set)
+        # Summary card counts
         total       = len(reports)
         alarms      = 0
         low_bat     = 0
@@ -170,10 +263,34 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         for r in reports:
             key        = (r.unit_type or "") + str(r.system or 0)
             r.fw_group = fw_map.get(key)
+            r.group_code = r.fw_group.display_name if r.fw_group else (r.unit_type or 'UNKNOWN')
             
-            # Use cached settings (Phase 2)
+            # Use cached settings & GPS fallback
             s_cache    = settings_map.get(r.stn_id)
             r.is_exempt = (s_cache.ota_exempt == 1) if s_cache else False
+            if s_cache and s_cache.last_gps and str(s_cache.last_gps).strip() not in ("NA", "0,0", "0.000000,0.000000", "None", ""):
+                if not r.gps or str(r.gps).strip() in ("NA", "0,0", "0.000000,0.000000", "None", ""):
+                    r.gps = s_cache.last_gps
+
+            # Deep DB historical GPS scan if still missing
+            if not r.gps or str(r.gps).strip() in ("NA", "0,0", "0.000000,0.000000", "None", ""):
+                target_stn_ids = [r.stn_id]
+                s_raw = str(r.stn_id).strip()
+                if s_raw.isdigit():
+                    target_stn_ids.extend([s_raw.lstrip('0'), s_raw.zfill(6)])
+                hist_gps_rec = db.query(HealthReport.gps).filter(
+                    HealthReport.stn_id.in_(target_stn_ids),
+                    HealthReport.gps.isnot(None),
+                    HealthReport.gps != "",
+                    HealthReport.gps != "NA",
+                    HealthReport.gps != "0,0",
+                    HealthReport.gps != "0.000000,0.000000",
+                    HealthReport.gps != "None"
+                ).order_by(HealthReport.reported_at.desc()).first()
+                if hist_gps_rec and hist_gps_rec[0]:
+                    r.gps = hist_gps_rec[0]
+                    if s_cache:
+                        s_cache.last_gps = r.gps
 
             # OTA badge
             r.ota_needed = False
@@ -182,22 +299,45 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                     r.ota_needed = True
                     ota_pending += 1
 
-            # Objective Health Evaluation
+            # MET-day counts & Direct/Backlog HTTP breakdown (Supports 15-min and 24-hr modes)
+            t_info = met_today_map.get(r.stn_id)
+            if t_info and t_info["total"] > 1:
+                r.met_today      = t_info["total"]
+                r.met_today_http = t_info["display"]
+            else:
+                dir_c = r.http_suc_cnt or 0
+                ret_c = (r.http_ret_cnt or 0) + (r.ftp_suc_cnt or 0)
+                tot_c = t_info["total"] if (t_info and t_info["total"] > 0) else (dir_c + ret_c)
+                r.met_today      = tot_c if tot_c > 0 else (r.net_cnt or 0)
+                r.met_today_http = f"{dir_c} / {ret_c}"
+
+            y_info = met_ydy_map.get(r.stn_id)
+            if y_info and y_info["total"] > 1:
+                r.met_ydy      = y_info["total"]
+                r.met_ydy_http = y_info["display"]
+            else:
+                dir_p = r.http_suc_cnt_prev or (r.http_suc_cnt if (y_info and y_info["total"] == 1) else 0)
+                ret_p = (r.http_ret_cnt_prev or 0) + (r.ftp_suc_cnt_prev or 0)
+                tot_p = y_info["total"] if (y_info and y_info["total"] > 0) else (r.net_cnt_prev or (dir_p + ret_p))
+                r.met_ydy      = tot_p if tot_p > 0 else (r.net_cnt_prev or 0)
+                r.met_ydy_http = f"{dir_p} / {ret_p}"
+
+            # Objective Health Evaluation (Using computed MET day totals)
             r.eval = evaluate(r, now)
             if r.eval["verdict"] in ("CRITICAL", "WARN", "OFFLINE"):
                 alarms += 1
             if any("BATT" in str(reason) for reason in r.eval["reasons"]):
                 low_bat += 1
 
-            # v5.49 & v7.90: Sort Priority Arrangement
+            # Sort Priority Arrangement
             ut = (r.unit_type or r.ver or "").upper()
             sys = r.system
             r.sort_priority = 99
             
-            if "BIH" in ut and sys == 0: r.sort_priority = 1
-            elif "DMC" in ut and sys == 0: r.sort_priority = 2
-            elif "DMC" in ut and sys == 1: r.sort_priority = 3
-            elif "DMC" in ut and sys == 2: r.sort_priority = 4
+            if "DMC" in ut and sys == 0: r.sort_priority = 1
+            elif "DMC" in ut and sys == 1: r.sort_priority = 2
+            elif "DMC" in ut and sys == 2: r.sort_priority = 3
+            elif "BIH" in ut: r.sort_priority = 4
             elif "GEN" in ut and sys == 0: r.sort_priority = 5
             elif "GEN" in ut and sys == 2: r.sort_priority = 6
 
@@ -209,21 +349,120 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             else:
                 r.time_ago = "?"
 
-            # Pending command badge (O(1) Map Lookup)
+            # Pending command badge
             r.pending = pending_map.get(r.stn_id)
 
-            # GPS Cache (Phase 2): Use the cached GPS if the current report has "NA"
-            if not r.gps or str(r.gps).strip() in ("NA", "0.000000,0.000000", "", "0,0", "None"):
-                if s_cache and s_cache.last_gps:
-                    r.gps = s_cache.last_gps
+        # Helper function for version comparison
+        def get_numeric_ver(v_str):
+            if not v_str: return 0.0
+            m = re.search(r'(\d+\.\d+)', str(v_str))
+            return float(m.group(1)) if m else 0.0
 
-        # Final Sort: priority, then station ID
+        # Build Group Health & Fleet Stats Map (Pre-populated for all firmware groups)
+        group_stats = {
+            "all": {
+                "total_seen": 0, "converted": 0, "latest_ver": "N/A", "latest_num": 0.0,
+                "target_ver": "N/A",
+                "ok_count": 0, "fail_count": 0, "ota_pending": 0, "low_bat": 0,
+                "healthy_gprs_bat": 0, "marginal_gprs_bat": 0, "critical_gprs_bat": 0,
+                "healthy_mcu_bat": 0, "marginal_mcu_bat": 0, "critical_mcu_bat": 0,
+                "solar_active": 0, "solar_optimal": 0, "weak_signal": 0, "carriers": {}
+            }
+        }
+        for fw in fws:
+            gname = fw.display_name or fw.name
+            group_stats[gname] = {
+                "total_seen": 0, "converted": 0, "latest_ver": "N/A", "latest_num": 0.0,
+                "target_ver": fw.current_ver or "N/A",
+                "ok_count": 0, "fail_count": 0, "ota_pending": 0, "low_bat": 0,
+                "healthy_gprs_bat": 0, "marginal_gprs_bat": 0, "critical_gprs_bat": 0,
+                "healthy_mcu_bat": 0, "marginal_mcu_bat": 0, "critical_mcu_bat": 0,
+                "solar_active": 0, "solar_optimal": 0, "weak_signal": 0, "carriers": {}
+            }
+
+        for r in reports:
+            grp = r.group_code or 'UNKNOWN'
+            for key in (grp, 'all'):
+                if key not in group_stats:
+                    group_stats[key] = {
+                        "total_seen": 0, "converted": 0, "latest_ver": "N/A", "latest_num": 0.0,
+                        "target_ver": "N/A",
+                        "ok_count": 0, "fail_count": 0, "ota_pending": 0, "low_bat": 0,
+                        "healthy_gprs_bat": 0, "marginal_gprs_bat": 0, "critical_gprs_bat": 0,
+                        "healthy_mcu_bat": 0, "marginal_mcu_bat": 0, "critical_mcu_bat": 0,
+                        "solar_active": 0, "solar_optimal": 0, "weak_signal": 0, "carriers": {}
+                    }
+                st = group_stats[key]
+                st["total_seen"] += 1
+                
+                # Dynamic Latest Firmware Version Actually Seen in Field
+                if r.ver and str(r.ver).strip() not in ("", "N/A", "None"):
+                    v_num = get_numeric_ver(r.ver)
+                    if v_num >= st["latest_num"]:
+                        st["latest_ver"] = str(r.ver).strip()
+                        st["latest_num"] = v_num
+
+                # Target Ver & Conversion
+                if r.fw_group and r.fw_group.current_ver:
+                    st["target_ver"] = r.fw_group.current_ver
+                    if r.ver and get_numeric_ver(r.ver) >= get_numeric_ver(r.fw_group.current_ver):
+                        st["converted"] += 1
+                
+                # Health
+                if r.eval["verdict"] in ("OK", "INFO"):
+                    st["ok_count"] += 1
+                else:
+                    st["fail_count"] += 1
+
+                # OTA & Low Bat per group
+                if r.ota_needed:
+                    st["ota_pending"] += 1
+                if any("BATT" in str(reason) for reason in r.eval["reasons"]):
+                    st["low_bat"] += 1
+                
+                # 1. GPRS Main Battery Evaluation (Li-Ion / SLA 3.7V - 4.2V / 12V)
+                if r.bat_v and r.bat_v > 0:
+                    if r.bat_v >= 3.8: st["healthy_gprs_bat"] += 1
+                    elif 3.6 <= r.bat_v < 3.8: st["marginal_gprs_bat"] += 1
+                    else: st["critical_gprs_bat"] += 1
+
+                # 2. MCU Logic Battery Evaluation (3.3V Logic Rail)
+                if r.mcu_bat and r.mcu_bat > 0:
+                    if r.mcu_bat >= 3.2: st["healthy_mcu_bat"] += 1
+                    elif 3.0 <= r.mcu_bat < 3.2: st["marginal_mcu_bat"] += 1
+                    else: st["critical_mcu_bat"] += 1
+
+                # 3. Solar Panel Active & Optimal Charging (>= 10.0V is Daylight Optimal, >= 1.2V is Active Charging)
+                if r.sol_v:
+                    if r.sol_v >= 1.2:
+                        st["solar_active"] += 1
+                    if r.sol_v >= 10.0:
+                        st["solar_optimal"] += 1
+                
+                # Network
+                if r.signal and r.signal < -100:
+                    st["weak_signal"] += 1
+                
+                c = (r.carrier or "UNKNOWN").upper()
+                if "AIRTEL" in c: c = "AIRTEL"
+                elif "BSNL" in c: c = "BSNL"
+                elif "JIO" in c: c = "JIO"
+                elif "VI" in c or "VODA" in c: c = "VI"
+                st["carriers"][c] = st["carriers"].get(c, 0) + 1
+
+        # Calculate percentages
+        for key, st in group_stats.items():
+            st["pct"] = int((st["converted"] / st["total_seen"] * 100)) if st["total_seen"] > 0 else 0
+
+        # Final Sort
         reports.sort(key=lambda x: (x.sort_priority, x.stn_id))
 
         return templates.TemplateResponse(request=request, name="dashboard.html", context={
-            "request": request, "reports": reports,
+            "request": request, "reports": reports, "fws": fws,
             "total": total, "alarms": alarms,
             "ota_pending": ota_pending, "low_bat": low_bat,
+            "group_stats": group_stats,
+            "met_today_active": met_today_active,
         })
     except Exception as e:
         print(f"CRITICAL 500 DASHBOARD ERROR: {e}")
@@ -236,9 +475,16 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
 async def station_detail(stn_id: str, request: Request, db: Session = Depends(get_db)):
     """Full history page with de-cluttered daily trends."""
     try:
+        s_raw = str(stn_id).strip()
+        target_ids = {s_raw}
+        if s_raw.isdigit():
+            target_ids.add(s_raw.lstrip('0'))
+            target_ids.add(s_raw.zfill(6))
+        target_list = list(target_ids)
+
         raw_history = (
             db.query(HealthReport)
-            .filter_by(stn_id=stn_id)
+            .filter(HealthReport.stn_id.in_(target_list))
             .order_by(HealthReport.reported_at.desc())
             .limit(400)
             .all()
@@ -264,13 +510,13 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
 
         commands = (
             db.query(CommandQueue)
-            .filter_by(stn_id=stn_id)
+            .filter(CommandQueue.stn_id.in_(target_list))
             .order_by(CommandQueue.created_at.desc())
             .limit(10)
             .all()
         )
         
-        setting = db.query(StationSettings).filter_by(stn_id=stn_id).first()
+        setting = db.query(StationSettings).filter(StationSettings.stn_id.in_(target_list)).first()
         is_exempt = (setting.ota_exempt == 1) if setting else False
 
         
@@ -298,7 +544,7 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
                 category_id = fw.category_id
 
         # Phase 2: Fetch last known GPS/Settings
-        settings = db.query(StationSettings).filter_by(stn_id=stn_id).first()
+        settings = db.query(StationSettings).filter(StationSettings.stn_id.in_(target_list)).first()
 
         # v5.86 FIX: UI Resilience. If the primary GPS cache is empty/invalid, 
         # scan historical records to find the last known "Good" coordinate.
@@ -312,7 +558,7 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
         # v5.90: Fetch last SET_WIFI_PASS command for supervisor display
         last_wifi_cmd = (
             db.query(CommandQueue)
-            .filter_by(stn_id=stn_id, cmd="SET_WIFI_PASS")
+            .filter(CommandQueue.stn_id.in_(target_list), CommandQueue.cmd=="SET_WIFI_PASS")
             .order_by(CommandQueue.created_at.desc())
             .first()
         )
@@ -391,9 +637,11 @@ def station_csv(stn_id: str, db: Session = Depends(get_db)):
     """
     Station CSV: Full history for ONE station, all fields.
     """
+    s_raw = str(stn_id).strip()
+    target_ids = {s_raw, s_raw.lstrip('0'), s_raw.zfill(6)} if s_raw.isdigit() else {s_raw}
     history = (
         db.query(HealthReport)
-        .filter_by(stn_id=stn_id)
+        .filter(HealthReport.stn_id.in_(list(target_ids)))
         .order_by(HealthReport.reported_at.desc())
         .all()
     )
@@ -420,9 +668,11 @@ def station_concise_csv(stn_id: str, db: Session = Depends(get_db)):
     """
     Concise CSV: Streamlined report for non-technical audits.
     """
+    s_raw = str(stn_id).strip()
+    target_ids = {s_raw, s_raw.lstrip('0'), s_raw.zfill(6)} if s_raw.isdigit() else {s_raw}
     history = (
         db.query(HealthReport)
-        .filter_by(stn_id=stn_id)
+        .filter(HealthReport.stn_id.in_(list(target_ids)))
         .order_by(HealthReport.reported_at.desc())
         .all()
     )

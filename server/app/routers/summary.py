@@ -32,17 +32,16 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
     try:
         fws = db.query(FirmwareRegistry).all()
         
-        # v5.49 & v7.90: Custom Group Sorting
-        # Order: BIHAR-TRG, KSNDMC-TRG, KSNDMC-TWS, KSNDMC-ADDON, SPATIKA-TRG, SPATIKA-ADDON
+        # Custom Group Sorting: KSNDMC first, Bihar second, Spatika third
         def get_priority(fw):
             ut = (fw.unit_type or "").upper()
             sys = fw.system_mode
-            if "BIH" in ut and sys == 0: return 1
-            if "DMC" in ut and sys == 0: return 2
-            if "DMC" in ut and sys == 1: return 3
-            if "DMC" in ut and sys == 2: return 4
-            if "GEN" in ut and sys == 0: return 5
-            if "GEN" in ut and sys == 2: return 6
+            if "DMC" in ut and sys == 0: return 1  # KSNDMC-TRG
+            if "DMC" in ut and sys == 1: return 2  # KSNDMC-TWS
+            if "DMC" in ut and sys == 2: return 3  # KSNDMC-ADDON
+            if "BIH" in ut: return 4               # BIHAR-TRG
+            if "GEN" in ut and sys == 0: return 5  # SPATIKA-TRG
+            if "GEN" in ut and sys == 2: return 6  # SPATIKA-ADDON
             return 99 + fw.category_id
 
         fws.sort(key=get_priority)
@@ -115,7 +114,21 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
             # v7.90: Base health status on SERVER evaluation - essence same
             ok_count   = sum(1 for r in latest_reports if r.eval["verdict"] == "OK")
             fail_count = total_seen - ok_count
-            low_bat    = sum(1 for r in latest_reports if "BATT" in str(r.eval["reasons"]))
+            healthy_bat = sum(1 for r in latest_reports if r.bat_v and r.bat_v >= 3.8)
+            marginal_bat = sum(1 for r in latest_reports if r.bat_v and 3.6 <= r.bat_v < 3.8)
+            critical_bat = sum(1 for r in latest_reports if r.bat_v and r.bat_v < 3.6)
+            low_bat      = critical_bat
+            solar_active = sum(1 for r in latest_reports if r.sol_v and r.sol_v >= 1.2)
+            weak_signal  = sum(1 for r in latest_reports if r.signal and r.signal < -100)
+
+            carriers = {}
+            for r in latest_reports:
+                c = (r.carrier or "UNKNOWN").upper()
+                if "AIRTEL" in c: c = "AIRTEL"
+                elif "BSNL" in c: c = "BSNL"
+                elif "JIO" in c: c = "JIO"
+                elif "VI" in c or "VODA" in c: c = "VI"
+                carriers[c] = carriers.get(c, 0) + 1
 
             groups.append({
                 "fw":            fw,
@@ -125,6 +138,12 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
                 "ok_count":      ok_count,
                 "fail_count":    fail_count,
                 "low_bat":       low_bat,
+                "healthy_bat":   healthy_bat,
+                "marginal_bat":  marginal_bat,
+                "critical_bat":  critical_bat,
+                "solar_active":  solar_active,
+                "weak_signal":   weak_signal,
+                "carriers":      carriers,
                 "pct":           int((converted / total_seen * 100)) if total_seen > 0 else 0,
             })
 

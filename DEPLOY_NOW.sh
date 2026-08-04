@@ -9,7 +9,9 @@ echo "📦 Bundling files..."
 # Move scripts into app/ temporarily to ensure they are inside the Docker mount
 cp server/migrate.py server/app/migrate_internal.py
 cp server/seed_db.py server/app/seed_db_internal.py
-tar -cvz -C server app requirements.txt > deploy.tar.gz
+find server/app -name "*.pyc" -delete || true
+find server/app -name "__pycache__" -exec rm -rf {} + || true
+tar -cvz -C server app requirements.txt docker-compose.yml > deploy.tar.gz
 
 echo "🚀 Sending and Deploying (Single Connection)..."
 if ! cat deploy.tar.gz | ssh root@$HOST "
@@ -19,6 +21,8 @@ if ! cat deploy.tar.gz | ssh root@$HOST "
     cp -a app/SpatikaHealth.db* /tmp/ 2>/dev/null || true && \
     rm -rf app requirements.txt && \
     tar -xz && \
+    find app -name '*.pyc' -delete || true && \
+    find app -name '__pycache__' -exec rm -rf {} + || true && \
     mv /tmp/SpatikaHealth.db* app/ 2>/dev/null || true && \
     echo '▶ Restarting Spatika Service...' && \
     docker compose restart && \
@@ -38,7 +42,6 @@ fi
 # Cleanup local tar
 rm deploy.tar.gz
 
-echo ""
 echo "✅ DEPLOYMENT SUCCESSFUL!"
-echo "Visit: http://$HOST/dashboard"
+echo "Visit: https://devhlt.spatika.net/dashboard"
 echo "TIP: If changes don't appear, press Cmd+Shift+R or Ctrl+F5 in your browser."

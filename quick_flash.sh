@@ -50,6 +50,8 @@ else
     fuser -k "$PORT" 2>/dev/null || true
 fi
 
+BAUD="${BAUD:-460800}"
+
 if [ $DO_FULL -eq 1 ]; then
     BOOTLOADER="$BUILD_PATH/AIO9_5.0.ino.bootloader.bin"
     PARTITIONS="$BUILD_PATH/AIO9_5.0.ino.partitions.bin"
@@ -59,7 +61,7 @@ if [ $DO_FULL -eq 1 ]; then
         BOOT_APP="./flash_files/${FLASH_SIZE}/boot_app0.bin"
     fi
     
-    echo "--- FULL FLASH (Bootloader, Partitions, App) | ${FLASH_SIZE} | Port: $PORT ---"
+    echo "--- FULL FLASH (Bootloader, Partitions, App) | ${FLASH_SIZE} | Port: $PORT | Baud: $BAUD ---"
     
     case "$FLASH_SIZE" in
       4mb) FLASH_MB="4MB" ;;
@@ -67,8 +69,11 @@ if [ $DO_FULL -eq 1 ]; then
       16mb) FLASH_MB="16MB" ;;
       *) FLASH_MB="detect" ;;
     esac
+
+    # Erase otadata partition so bootloader defaults to app0 at 0x10000
+    esptool.py --chip esp32 --port "$PORT" erase_region 0xe000 0x2000
     
-    esptool.py --chip esp32 --port "$PORT" --baud 921600 \
+    esptool.py --chip esp32 --port "$PORT" --baud $BAUD \
         --before default_reset --after hard_reset \
         write_flash \
         --flash_mode dio \
@@ -77,10 +82,12 @@ if [ $DO_FULL -eq 1 ]; then
         0x1000  "$BOOTLOADER" \
         0x8000  "$PARTITIONS" \
         0xe000  "$BOOT_APP" \
-        0x10000 "$APP_BIN"
+        0x10000 "$APP_BIN" \
+        0x210000 "$APP_BIN"
 else
-    echo "--- QUICK FLASH (App Only at 0x10000) | ${FLASH_SIZE} | Port: $PORT ---"
-    esptool.py --chip esp32 --port "$PORT" --baud 921600 write_flash 0x10000 "$APP_BIN"
+    echo "--- QUICK FLASH (App0 & App1) | ${FLASH_SIZE} | Port: $PORT | Baud: $BAUD ---"
+    esptool.py --chip esp32 --port "$PORT" erase_region 0xe000 0x2000
+    esptool.py --chip esp32 --port "$PORT" --baud $BAUD write_flash 0x10000 "$APP_BIN" 0x210000 "$APP_BIN"
 fi
 
 echo "--- Flash Complete ---"

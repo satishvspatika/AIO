@@ -23,7 +23,7 @@ _SKIP_FIELDS = {"id", "reported_at"}
 
 # Phase 6 Fix: Strict whitelist outlaws Database Schema Poisoning
 _ALLOWED_FIELDS = {
-    "stn_id", "unit_type", "system", "ver", "ota_fails", "bat_v", "sol_v", 
+    "stn_id", "unit_type", "system", "ver", "ota_fails", "bat_v", "mcu_bat", "sol_v", "sd_ok",
     "rtc_ok", "reset_reason", "signal", "reg_fails", "http_fails", "net_cnt", 
     "net_cnt_prev", "prev_stored", "http_suc_cnt", "http_suc_cnt_prev", 
     "http_ret_cnt", "http_ret_cnt_prev", "ftp_suc_cnt", "ftp_suc_cnt_prev", 
@@ -37,7 +37,7 @@ _ALLOWED_FIELDS = {
 
 # Known type hints — anything not listed defaults to TEXT
 _INT_FIELDS  = {
-    "system","reset_reason","rtc_ok","signal","reg_fails",
+    "system","reset_reason","rtc_ok","sd_ok","signal","reg_fails",
     "http_fails","net_cnt","net_cnt_prev","prev_stored",
     "http_suc_cnt","http_suc_cnt_prev","http_ret_cnt","http_ret_cnt_prev",
     "ftp_suc_cnt","ftp_suc_cnt_prev","ndm_cnt","pd_cnt","first_http",
@@ -48,7 +48,7 @@ _INT_FIELDS  = {
     "last_cmd_id",                                      # v7.92
     "mutex_fail"                                        # v5.55
 }
-_FLOAT_FIELDS = {"bat_v","sol_v"}
+_FLOAT_FIELDS = {"bat_v","mcu_bat","sol_v"}
 
 
 def get_db():
@@ -204,14 +204,33 @@ async def _process_health_data(data: dict, request: Request, db: Session):
     if gps_val and gps_val not in ("NA", "None", "") and not is_zero:
         setting.last_gps = gps_val
 
-    # OTA Auto-Lock logic
-    if ota_fails >= 3:
-        setting.ota_exempt = 1
-        print(f"[OTA LOCK] {stn_id} locked after {ota_fails} failures")
+    # Record Command Feedback from device if present
+    last_cmd_id = int(data.get("last_cmd_id", 0) or 0)
+    last_cmd_res = str(data.get("last_cmd_res", "") or "").strip()
+    if last_cmd_id > 0 and last_cmd_res and last_cmd_res != "N/A":
+        cmd_rec = db.query(CommandQueue).filter_by(id=last_cmd_id).first()
+        if cmd_rec:
+            cmd_rec.result = last_cmd_res
+            cmd_rec.completed_at = now_utc
+            if cmd_rec.cmd == "SET_WIFI_PASS" and ("Success" in last_cmd_res or "Updated" in last_cmd_res):
+                st_setting = db.query(StationSettings).filter_by(stn_id=stn_id).first()
+                if not st_setting:
+                    st_setting = StationSettings(stn_id=stn_id)
+                    db.add(st_setting)
+                st_setting.wifi_pass = cmd_rec.cmd_param
 
     # ── Step 4: Command Feedback & OTA ────────────────────────────────────
     cmd, cmd_param, cmd_id = "", "", 0
-    pending = db.query(CommandQueue).filter_by(stn_id=stn_id, executed_at=None).first()
+    target_ids = {stn_id}
+    s_raw = str(stn_id).strip()
+    if s_raw.isdigit():
+        target_ids.add(s_raw.lstrip('0'))
+        target_ids.add(s_raw.zfill(6))
+
+    pending = db.query(CommandQueue).filter(
+        CommandQueue.stn_id.in_(list(target_ids)),
+        CommandQueue.executed_at == None
+    ).first()
     if pending:
         cmd, cmd_param, cmd_id = pending.cmd, pending.cmd_param, pending.id
         pending.executed_at = now_utc

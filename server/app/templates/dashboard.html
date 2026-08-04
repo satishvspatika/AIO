@@ -1,101 +1,224 @@
 {% extends "base.html" %}
-{% block title %}Fleet Dashboard — Spatika Health{% endblock %}
+{% block title %}Fleet Operations Center — Spatika Health{% endblock %}
 {% set active = 'dashboard' %}
 
 {% block content %}
 
-<!-- Summary Cards -->
-<div class="grid grid-cols-4 gap-4 mb-6">
-    <div onclick="applyFilter('all')"
-        class="card p-5 cursor-pointer hover:bg-slate-800 transition active-card border-blue-500/50" id="card-all">
-        <div class="text-3xl font-black text-blue-400">{{ total }}</div>
-        <div class="text-xs text-slate-400 uppercase tracking-wider mt-1">Total Stations</div>
-    </div>
-    <div onclick="applyFilter('alarm')" class="card p-5 cursor-pointer hover:bg-slate-800 transition" id="card-alarm">
-        <div class="text-3xl font-black text-red-400">{{ alarms }}</div>
-        <div class="text-xs text-slate-400 uppercase tracking-wider mt-1">⚠️ Alarms</div>
-    </div>
-    <div onclick="applyFilter('ota')" class="card p-5 cursor-pointer hover:bg-slate-800 transition" id="card-ota">
-        <div class="text-3xl font-black text-yellow-400">{{ ota_pending }}</div>
-        <div class="text-xs text-slate-400 uppercase tracking-wider mt-1">🚀 OTA Pending</div>
-    </div>
-    <div onclick="applyFilter('lowbat')" class="card p-5 cursor-pointer hover:bg-slate-800 transition" id="card-lowbat">
-        <div class="text-3xl font-black text-orange-400">{{ low_bat }}</div>
-        <div class="text-xs text-slate-400 uppercase tracking-wider mt-1">🔋 Low Battery</div>
+<!-- ══ ROW 1: System Group Filter Tabs (Connected Executive Folder Tabs) ══ -->
+<div class="mb-0 border-b border-slate-700/80">
+    <div class="flex items-center gap-1 overflow-x-auto nav-tab-strip px-1 pt-1" style="scrollbar-width:none; margin-bottom:-1px;">
+        <button onclick="applyGroupFilter('all')" id="group-tab-all" data-tab-group="all" data-fw-ver="—"
+            class="group-tab sys-tab sys-tab-active">
+            <span class="tab-dot-glow bg-blue-400"></span>🌐 All Systems ({{ total }})
+        </button>
+        {% for fw in fws %}
+        {% set name = fw.display_name or fw.name %}
+        <button onclick="applyGroupFilter('{{ name }}')" id="group-tab-{{ fw.category_id }}" data-tab-group="{{ name }}" data-fw-ver="{{ fw.current_ver or 'N/A' }}"
+            class="group-tab sys-tab">
+            <span class="tab-dot-glow bg-emerald-400"></span>{{ name }}
+        </button>
+        {% endfor %}
     </div>
 </div>
 
-<!-- Toolbar -->
-<div class="flex items-center justify-between mb-4">
-    <div class="flex items-center space-x-3">
-        <h2 class="text-xs font-bold text-slate-500 uppercase tracking-widest" id="table-title">
+<!-- ══ ROW 2: Low-Profile Executive Telemetry Summary Bar (Connected directly under tabs) ══ -->
+{% for grp_key, st in group_stats.items() %}
+<div id="exec-banner-{{ grp_key }}" class="exec-group-banner flex items-center justify-between gap-2.5 mb-3 p-2 rounded-b-xl rounded-tr-xl bg-slate-900/90 border border-slate-700/80 shadow-md overflow-x-auto whitespace-nowrap {% if grp_key != 'all' %}hidden{% endif %}">
+    <div class="flex items-center gap-2 flex-wrap text-xs font-semibold">
+        <!-- 1. Total (Clickable) -->
+        <button onclick="applyFilter('all')" id="card-all-{{ grp_key }}" title="Click to view all stations in this group"
+            class="stat-card-pill group-stat-all px-2.5 py-1 rounded-lg bg-blue-950/70 hover:bg-blue-900 border border-blue-700/60 text-blue-300 font-bold transition cursor-pointer shadow-sm flex items-center gap-1">
+            <span>📡 Total:</span>
+            <span id="pill-total-{{ grp_key }}">{{ st.total_seen }}</span>
+        </button>
+
+        <!-- 2. Alarms (Clickable) -->
+        <button onclick="applyFilter('alarm')" id="card-alarm-{{ grp_key }}" title="Click to filter stations with alarms/faults"
+            class="stat-card-pill px-2.5 py-1 rounded-lg bg-red-950/70 hover:bg-red-900 border border-red-800/60 text-red-300 font-bold transition cursor-pointer shadow-sm flex items-center gap-1">
+            <span>⚠️ Alarms:</span>
+            <span>{{ st.fail_count }}</span>
+        </button>
+
+        <!-- 3. OTA Pending (Clickable) -->
+        <button onclick="applyFilter('ota')" id="card-ota-{{ grp_key }}" title="Click to filter stations with pending firmware OTA"
+            class="stat-card-pill px-2.5 py-1 rounded-lg bg-yellow-950/70 hover:bg-yellow-900 border border-yellow-800/60 text-yellow-300 font-bold transition cursor-pointer shadow-sm flex items-center gap-1">
+            <span>🚀 OTA:</span>
+            <span>{{ st.ota_pending }}</span>
+        </button>
+
+        <!-- 4. GPRS Main Battery (Interactive Pill) -->
+        <div id="card-lowbat-{{ grp_key }}" class="stat-card-pill px-2.5 py-1 rounded-lg bg-orange-950/70 border border-orange-800/60 text-orange-300 font-bold transition shadow-sm flex items-center gap-1.5">
+            <button onclick="applyFilter('lowbat')" title="Filter all GPRS battery issues (<3.8V)" class="hover:underline flex items-center gap-1 cursor-pointer">
+                <span>🔋 GPRS Bat:</span>
+            </button>
+            <button onclick="applyFilter('gprs_healthy')" title="Click to filter Healthy GPRS (>3.8V)" class="hover:scale-110 transition cursor-pointer text-emerald-400">🟢 {{ st.healthy_gprs_bat }}</button>
+            <button onclick="applyFilter('gprs_marginal')" title="Click to filter Marginal GPRS (3.6V - 3.8V)" class="hover:scale-110 transition cursor-pointer text-amber-400">🟡 {{ st.marginal_gprs_bat }}</button>
+            <button onclick="applyFilter('gprs_critical')" title="Click to filter Critical GPRS (<3.6V)" class="hover:scale-110 transition cursor-pointer text-red-400">🔴 {{ st.critical_gprs_bat }}</button>
+        </div>
+
+        <!-- 5. MCU Logic Battery (Interactive Pill) -->
+        <div id="card-mcubat-{{ grp_key }}" class="stat-card-pill px-2.5 py-1 rounded-lg bg-cyan-950/70 border border-cyan-800/60 text-cyan-300 font-bold transition shadow-sm flex items-center gap-1.5" title="MCU Processor Logic & RTC Battery Rail (3.3V System)">
+            <button onclick="applyFilter('mcubat')" title="Filter all MCU battery issues (<3.2V)" class="hover:underline flex items-center gap-1 cursor-pointer">
+                <span class="text-[10px] text-cyan-400 font-bold uppercase">⚡ MCU Bat:</span>
+            </button>
+            <button onclick="applyFilter('mcu_healthy')" title="Click to filter Healthy MCU (>3.2V)" class="hover:scale-110 transition cursor-pointer text-emerald-400">🟢 {{ st.healthy_mcu_bat }}</button>
+            <button onclick="applyFilter('mcu_marginal')" title="Click to filter Marginal MCU (3.0V - 3.2V)" class="hover:scale-110 transition cursor-pointer text-amber-400">🟡 {{ st.marginal_mcu_bat }}</button>
+            <button onclick="applyFilter('mcu_critical')" title="Click to filter Critical MCU (<3.0V)" class="hover:scale-110 transition cursor-pointer text-red-400">🔴 {{ st.critical_mcu_bat }}</button>
+        </div>
+
+        <!-- 6. Solar Panel Charging (Dedicated Separate Interactive Pill) -->
+        <div id="card-solar-{{ grp_key }}" class="stat-card-pill px-2.5 py-1 rounded-lg bg-amber-950/70 border border-amber-800/60 text-amber-300 font-bold transition shadow-sm flex items-center gap-1.5" title="Solar Panel Daylight & Active Charging Voltage">
+            <button onclick="applyFilter('solar_active')" title="Filter all stations with active solar charging (≥1.2V)" class="hover:underline flex items-center gap-1 cursor-pointer">
+                <span>☀️ Solar:</span>
+            </button>
+            <button onclick="applyFilter('solar_optimal')" title="Click to filter Daylight Optimal Solar (≥10.0V)" class="hover:scale-110 transition cursor-pointer text-amber-300">
+                🟢 {{ st.solar_optimal }} Opt
+            </button>
+            <button onclick="applyFilter('solar_active')" title="Click to filter Active Charging Solar (≥1.2V)" class="hover:scale-110 transition cursor-pointer text-amber-400">
+                ⚡ {{ st.solar_active }} Act
+            </button>
+        </div>
+
+        <!-- 5. Firmware Version & Conversion Status -->
+        <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/50 border border-emerald-800/60 text-emerald-300 shadow-sm" title="Live field firmware version and conversion percentage">
+            <span class="text-[10px] text-emerald-500 font-bold uppercase">FW</span>
+            <span class="font-mono font-bold text-emerald-300">{% if st.total_seen > 0 %}{{ st.pct if st.pct is defined else 0 }}%{% else %}-{% endif %}</span>
+            <span class="text-[10px] text-emerald-400/80 font-mono">({% if st.total_seen > 0 and st.latest_ver != 'N/A' %}{{ st.latest_ver }}{% else %}N/A{% endif %})</span>
+        </div>
+
+        <!-- 6. Network Carrier Breakdown -->
+        <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-950/50 border border-purple-800/60 text-purple-300 shadow-sm" title="Active SIM cellular carriers and coverage">
+            <span class="text-[10px] text-purple-500 font-bold uppercase">Network</span>
+            {% for c_name, count in st.carriers.items() %}
+            <span class="font-bold">{{ c_name }}: {{ count }}</span>
+            {% else %}
+            <span class="text-[10px] text-purple-400 font-mono">None</span>
+            {% endfor %}
+            {% if st.weak_signal > 0 %}
+            <span class="text-amber-400 font-bold border-l border-purple-800/60 pl-1.5">⚠️ {{ st.weak_signal }} Weak</span>
+            {% else %}
+            <span class="text-emerald-400 font-bold border-l border-purple-800/60 pl-1.5">📶 Optimal</span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+<!-- Hidden legacy elements for JS selector safety -->
+<div style="display:none">
+    {% for grp_key, st in group_stats.items() %}
+    <div id="stat-pills-{{ grp_key }}" class="exec-stat-pills"></div>
+    {% endfor %}
+    <span id="card-all"></span><span id="card-alarm"></span><span id="card-ota"></span><span id="card-lowbat"></span>
+</div>
+
+<!-- ══ ROW 3: Common Toolbar (Search + Live Badge + Action Buttons) ══ -->
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4 bg-slate-900/60 p-3 rounded-xl border border-slate-800 shadow-sm">
+    <div class="flex items-center gap-3 flex-wrap">
+        <h2 class="text-xs font-black text-slate-300 uppercase tracking-wider" id="table-title">
             Fleet: All Stations
         </h2>
-        <span id="filter-badge"
-            class="hidden px-2 py-0.5 rounded bg-blue-900/50 text-blue-300 text-[10px] uppercase font-bold border border-blue-700/50">Filtered</span>
+        <!-- Real-Time Search Bar -->
+        <div class="relative">
+            <input type="text" id="stn-search-input" onkeyup="onSearchInput()" placeholder="Search station ID or SIM carrier..." 
+                class="bg-slate-950 text-xs text-slate-200 placeholder-slate-500 px-3 py-1.5 pl-8 rounded-lg border border-slate-700 focus:outline-none focus:border-blue-500 w-48 md:w-64 transition" />
+            <span class="absolute left-2.5 top-1.5 text-slate-400 text-xs">🔍</span>
+        </div>
+        <span id="filter-badge" class="hidden px-2 py-0.5 rounded bg-blue-900/60 text-blue-300 text-[10px] uppercase font-bold border border-blue-700/60">Filtered</span>
     </div>
-    <div class="flex space-x-2">
+
+    <div class="flex items-center gap-2 flex-wrap">
+        <span class="inline-flex items-center text-[10px] text-emerald-400 font-bold bg-emerald-950/60 border border-emerald-800/80 px-2.5 py-1 rounded-lg">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse mr-1.5"></span>LIVE
+        </span>
         <button onclick="toggleMap()" class="btn-sm btn-blu" id="map-btn">🗺️ Show Map</button>
-        <a href="/csv/summary" class="btn-sm btn-grn">📊 Export All CSV</a>
+        <a href="/csv/summary" class="btn-sm btn-grn">📊 Export CSV</a>
         {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
-        <button onclick="openFleetWifiModal()"
-            class="btn-sm bg-purple-900/50 hover:bg-purple-800 text-purple-300 border border-purple-700/50">
-            🔐 Set Wi-Fi Pass (All)
+        <button onclick="openFleetWifiModal()" class="btn-sm bg-purple-900/50 hover:bg-purple-800 text-purple-300 border border-purple-700/50">
+            🔐 Set Wi-Fi Pass (Fleet)
         </button>
         {% endif %}
-        <button onclick="deleteSelectedStations()"
-            class="btn-sm bg-red-900/80 hover:bg-red-700 text-red-200 border border-red-600/50 shadow-lg hidden"
-            id="bulk-del-btn">🗑 Delete Selected</button>
+        <button onclick="deleteSelectedStations()" class="btn-sm bg-red-900/80 hover:bg-red-700 text-red-200 border border-red-600/50 shadow-lg hidden" id="bulk-del-btn">🗑 Delete Selected</button>
     </div>
 </div>
 
-<!-- Map (hidden by default) -->
-<div id="map-wrap" class="map-container hidden">
-    <div id="map" style="height:100%;"></div>
+<!-- Map Container -->
+<div id="map-wrap" class="card p-0 mb-4 overflow-hidden hidden shadow-lg border border-slate-700">
+    <!-- Map Control Bar Header -->
+    <div class="flex items-center justify-between px-3.5 py-2 bg-slate-900/90 border-b border-slate-800 text-xs">
+        <div class="flex items-center gap-2 font-bold text-slate-200">
+            <span>🗺️ Fleet Map View</span>
+            <span class="text-[10px] text-slate-400 font-normal hidden sm:inline">(Click any pin or row to inspect station)</span>
+        </div>
+        <div class="flex items-center gap-2">
+            <button onclick="resetMapView()" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold border border-slate-700 transition shadow-sm cursor-pointer" title="Reset zoom to show all fleet stations">
+                🎯 Fit All Stations
+            </button>
+            <button onclick="toggleMap()" class="px-2.5 py-1 rounded-lg bg-red-950/70 hover:bg-red-900 text-red-300 text-[11px] font-bold border border-red-800/60 transition shadow-sm cursor-pointer" title="Close map and return to full table view">
+                ✖ Close Map
+            </button>
+        </div>
+    </div>
+    <div id="map" style="height:380px;"></div>
 </div>
 
-<!-- Main Fleet Table -->
+<!-- Unified Station Table -->
 <div class="card tbl-wrap">
     <table class="w-full text-left text-xs">
         <thead>
-            <tr class="text-slate-500 uppercase text-[10px] tracking-widest">
+            <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-800">
                 <th class="p-3 w-8"><input type="checkbox" onclick="toggleAllStations(this)"></th>
                 <th class="p-3 text-left whitespace-nowrap">Station</th>
                 <th class="p-3 text-left whitespace-nowrap">Group</th>
                 <th class="p-3 text-left whitespace-nowrap">Carrier</th>
                 <th class="p-3 text-left whitespace-nowrap">Status</th>
-                <th class="p-3 text-center whitespace-nowrap">Tdy Sent (Live)</th>
-                <th class="p-3 text-center whitespace-nowrap">Ydy Sent/Stored</th>
+                <th class="p-3 text-center whitespace-nowrap" title="Records received in DB for current MET day (from 08:45 IST today)">MET Today</th>
+                <th class="p-3 text-center whitespace-nowrap" title="Records received in DB for previous MET day (08:45 IST yesterday to 08:30 IST today)">MET Ydy</th>
                 <th class="p-3 text-center whitespace-nowrap"
-                    title="Today: On-time HTTP pushes / HTTP+FTP Backlog Recovered">Tdy Live HTTP/Backlogs</th>
+                    title="Today: Direct HTTP successes / Backlog recovered via retry+FTP">Tdy HTTP / Backlog</th>
                 <th class="p-3 text-center whitespace-nowrap"
-                    title="Yesterday: On-time HTTP pushes / HTTP+FTP Backlog Recovered">Ydy Live HTTP/Backlogs</th>
+                    title="Yesterday: Direct HTTP successes / Backlog recovered via retry+FTP">Ydy HTTP / Backlog</th>
                 <th class="p-3 text-left whitespace-nowrap">Last Seen</th>
-                <th class="p-3 text-right whitespace-nowrap">Delete</th>
+                <th class="p-3 text-right whitespace-nowrap">Actions</th>
             </tr>
         </thead>
         <tbody class="divide-y divide-slate-800">
             {% set rendered_ids = [] %}
             {% for r in reports %}
-            {# v5.89: Visual Shield - Standard Jinja2 (No Extensions) #}
             {% set norm_id = (r.stn_id|string).strip().lstrip('0') or '0' %}
             {% if norm_id not in rendered_ids %}
             {{ rendered_ids.append(norm_id) or "" }}
             
             <tr class="transition cursor-pointer row-item" data-stn="{{ r.stn_id }}"
-                data-status="{% if r.eval.verdict in ('CRITICAL', 'WARN', 'OFFLINE') %}alarm{% else %}ok{% endif %}"
+                data-group="{{ r.group_code }}"
+                data-status="{% if r.eval.verdict not in ('OK', 'INFO') %}alarm{% else %}ok{% endif %}"
                 data-ota="{{ 'true' if r.ota_needed else 'false' }}"
                 data-lowbat="{{ 'true' if r.bat_v and r.bat_v < 3.6 else 'false' }}"
+                data-gprs-bat="{% if not r.bat_v or r.bat_v == 0 %}none{% elif r.bat_v >= 3.8 %}healthy{% elif r.bat_v >= 3.6 %}marginal{% else %}critical{% endif %}"
+                data-mcu-bat="{% if not r.mcu_bat or r.mcu_bat == 0 %}none{% elif r.mcu_bat >= 3.2 %}healthy{% elif r.mcu_bat >= 3.0 %}marginal{% else %}critical{% endif %}"
+                data-sol-v="{{ r.sol_v or 0 }}"
                 onclick="window.location='/station/{{ r.stn_id }}'">
                 <td class="p-3" onclick="event.stopPropagation()">
                     <input type="checkbox" class="stn-checkbox" value="{{ r.stn_id }}" onchange="updateBulkDeleteBtn()">
                 </td>
-                <td class="p-3 font-bold text-blue-300 whitespace-nowrap">
-                    {{ r.stn_id.lstrip('0') if r.stn_id.lstrip('0') else r.stn_id }}
+                <td class="p-3 font-bold text-blue-400 whitespace-nowrap">
+                    <div class="inline-flex items-center gap-1.5">
+                        <span>{{ r.stn_id.lstrip('0') if r.stn_id.lstrip('0') else r.stn_id }}</span>
+                        {% if r.gps and r.gps not in ('NA', '0,0', '0.000000,0.000000', 'None', '') %}
+                        {% set gps_p = r.gps.split(',') %}
+                        {% if gps_p|length >= 2 %}
+                        <button onclick="event.stopPropagation(); zoomToStation('{{ r.stn_id }}', {{ gps_p[0]|trim }}, {{ gps_p[1]|trim }})"
+                            class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/70 border border-emerald-700/60 text-emerald-300 hover:bg-emerald-800 transition shadow-sm"
+                            title="Zoom map to Station {{ r.stn_id }}">
+                            📍 Map
+                        </button>
+                        {% endif %}
+                        {% endif %}
+                    </div>
                 </td>
 
-                <td class="p-3 text-slate-400 text-[10px] leading-tight">
-                    {{ r.fw_group.display_name if r.fw_group else (r.unit_type or '?')|truncate(15) }}
+                <td class="p-3 text-slate-400 text-[10px] leading-tight font-bold">
+                    {{ r.group_code }}
                 </td>
                 <td class="p-3 text-slate-300 font-bold text-[10px]">
                     {{ r.carrier or '?' }}
@@ -106,42 +229,84 @@
                     {% else %}
                     <div class="flex flex-wrap gap-1">
                         {% for reason in r.eval.reasons %}
-                        <span class="badge-fail shadow-sm py-0.5 px-1.5 text-[9px]"
-                            title="Score: {{ r.eval.score }} | FW: {{ r.eval.fw_sts }}">
+                        <span class="badge-fail shadow-sm py-0.5 px-1.5 text-[9px]">
                             ✗ {{ reason }}
                         </span>
                         {% endfor %}
                     </div>
                     {% endif %}
                 </td>
-                <td class="p-3 font-mono text-center text-slate-300 whitespace-nowrap">
-                    {{ r.net_cnt or 0 }}
+                <td class="p-3 font-mono text-center whitespace-nowrap" title="MET Today: records received in DB since 08:45 IST">
+                    {% if met_today_active %}
+                    <span class="{% if r.met_today == 0 %}text-red-400{% elif r.met_today < 10 %}text-amber-400{% else %}text-emerald-400{% endif %} font-bold">{{ r.met_today }}</span>
+                    {% else %}
+                    <span class="text-slate-600" title="MET day starts at 08:45 IST">—</span>
+                    {% endif %}
                 </td>
-                <td class="p-3 font-mono text-center text-slate-300 whitespace-nowrap">
-                    {{ r.net_cnt_prev or 0 }} / {{ r.prev_stored or 0 }}
+                <td class="p-3 font-mono text-center whitespace-nowrap" title="MET Yesterday: records received in DB (08:45 IST prev day → 08:30 IST today)">
+                    <span class="{% if r.met_ydy == 0 %}text-red-400{% elif r.met_ydy < 80 %}text-amber-400{% else %}text-slate-300{% endif %} font-bold">{{ r.met_ydy }}</span>
                 </td>
-                <td class="p-3 font-mono text-center text-blue-300" title="Today: Direct HTTP / HTTP+FTP Recovered">
-                    {% set http = r.http_suc_cnt or 0 %}
-                    {% set ret = r.http_ret_cnt or 0 %}
-                    {% set ftp = r.ftp_suc_cnt or 0 %}
-                    {{ http }} / {{ ftp + ret }}
+                <td class="p-3 font-mono text-center text-blue-400 whitespace-nowrap" title="MET Today: Direct HTTP Successes / Backlog Recovered (since 08:45 IST)">
+                    {% if met_today_active %}
+                    {{ r.met_today_http }}
+                    {% else %}
+                    <span class="text-slate-600" title="MET day starts at 08:45 IST">— / —</span>
+                    {% endif %}
                 </td>
-                <td class="p-3 font-mono text-center text-blue-300" title="Yesterday: Direct HTTP / HTTP+FTP Recovered">
-                    {% set http_p = r.http_suc_cnt_prev or 0 %}
-                    {% set ret_p = r.http_ret_cnt_prev or 0 %}
-                    {% set ftp_p = r.ftp_suc_cnt_prev or 0 %}
-                    {{ http_p }} / {{ ftp_p + ret_p }}
+                <td class="p-3 font-mono text-center text-blue-400 whitespace-nowrap" title="MET Yesterday: Direct HTTP Successes / Backlog Recovered (08:45 IST prev day → 08:30 IST today)">
+                    {{ r.met_ydy_http }}
                 </td>
                 <td class="p-3 text-slate-500 text-[11px] whitespace-nowrap" title="{{ r.reported_at }}">
-                    {{ r.reported_at|ist }}
+                    {{ r.time_ago or '?' }}
                 </td>
-                <td class="p-3 text-right" onclick="event.stopPropagation()">
-                    <a href="/delete/{{ r.stn_id }}"
-                        class="btn-sm text-slate-600 hover:text-red-500 transition hover:bg-red-900/30 px-2 py-1"
-                        title="Delete Station"
-                        onclick="return confirm('WARNING: Permanently destroy ALL records and clear the command queue for {{ r.stn_id }}?')">
-                        🗑
-                    </a>
+                <td class="p-3 text-right whitespace-nowrap" onclick="event.stopPropagation()">
+                    <div class="relative inline-block text-left dropdown">
+                        <button onclick="toggleDropdown(event, 'drop-dash-{{ r.stn_id }}')"
+                            class="btn-sm bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-2.5 py-1"
+                            title="Station Quick Actions">
+                            ⚡ Actions ▾
+                        </button>
+                        <div id="drop-dash-{{ r.stn_id }}"
+                            class="dropdown-content absolute right-0 mt-2 w-52 rounded-lg shadow-2xl bg-slate-900 border border-slate-700 z-[999] py-1 text-left">
+                            
+                            <!-- TIER 1: TELEMETRY -->
+                            <div class="px-3 py-1 text-[9px] font-bold text-blue-400 uppercase tracking-wider">📊 Telemetry & Status</div>
+                            <a href="/cmd/{{ r.stn_id }}/GET_NUM" class="block px-3 py-1.5 text-xs text-blue-300 hover:bg-slate-800">📱 Query SIM Number</a>
+                            <a href="/cmd/{{ r.stn_id }}/GET_STATUS" class="block px-3 py-1.5 text-xs text-green-300 hover:bg-slate-800">📊 Fetch Status Now</a>
+                            <a href="/cmd/{{ r.stn_id }}/GET_GPS" class="block px-3 py-1.5 text-xs text-blue-400 hover:bg-slate-800">📍 Refresh GPS Fix</a>
+                            {% if r.gps and r.gps not in ('NA', '0,0', '0.000000,0.000000', 'None', '') %}
+                            {% set gps_p = r.gps.split(',') %}
+                            {% if gps_p|length >= 2 %}
+                            <button onclick="zoomToStation('{{ r.stn_id }}', {{ gps_p[0]|trim }}, {{ gps_p[1]|trim }})" class="w-full text-left block px-3 py-1.5 text-xs text-emerald-300 hover:bg-slate-800">🗺️ Zoom on Map</button>
+                            {% endif %}
+                            {% endif %}
+
+                            <!-- TIER 2: DATA & REPORTING -->
+                            <div class="border-t border-slate-800 my-1"></div>
+                            <div class="px-3 py-1 text-[9px] font-bold text-purple-400 uppercase tracking-wider">🔄 Data & Reporting</div>
+                            <a href="/cmd/{{ r.stn_id }}/FTP_BACKLOG" class="block px-3 py-1.5 text-xs text-purple-300 hover:bg-slate-800">↑ Sync Backlog (FTP)</a>
+                            <button onclick="promptFtpDaily('{{ r.stn_id }}')" class="w-full text-left block px-3 py-1.5 text-xs text-purple-400 hover:bg-slate-800">📅 Fetch Daily Log</button>
+                            <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=15" class="block px-3 py-1.5 text-xs text-amber-300 hover:bg-slate-800">⏱ 15-Min Reporting</a>
+                            <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=1440" class="block px-3 py-1.5 text-xs text-amber-400 hover:bg-slate-800">⏱ 24-Hour Reporting</a>
+                            <a href="/cmd/{{ r.stn_id }}/SET_RF_RES?param=0.25" class="block px-3 py-1.5 text-xs text-sky-300 hover:bg-slate-800">🎛 Tip Res: 0.25 mm</a>
+                            <a href="/cmd/{{ r.stn_id }}/SET_RF_RES?param=0.50" class="block px-3 py-1.5 text-xs text-sky-400 hover:bg-slate-800">🎛 Tip Res: 0.50 mm</a>
+
+                            <!-- TIER 3: MAINTENANCE -->
+                            <div class="border-t border-slate-800 my-1"></div>
+                            <div class="px-3 py-1 text-[9px] font-bold text-amber-400 uppercase tracking-wider">🛠 Maintenance & Queue</div>
+                            <a href="/toggle-ota-lock/{{ r.stn_id }}" class="block px-3 py-1.5 text-xs text-orange-300 hover:bg-slate-800">🔒 Toggle OTA Lock</a>
+                            <a href="/clear-ota-queue/{{ r.stn_id }}" class="block px-3 py-1.5 text-xs text-yellow-300 hover:bg-slate-800">❌ Clear OTA Queue</a>
+                            <a href="/clear-queue/{{ r.stn_id }}" class="block px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800">🗑 Clear All Cmds</a>
+                            <a href="/cmd/{{ r.stn_id }}/CLEAR_FTP_QUEUE" class="block px-3 py-1.5 text-xs text-orange-400 hover:bg-slate-800">🧹 Wipe Device Backlog</a>
+
+                            <!-- TIER 4: DANGER ZONE -->
+                            <div class="border-t border-slate-800 my-1"></div>
+                            <div class="px-3 py-1 text-[9px] font-bold text-red-400 uppercase tracking-wider">🚨 Danger Zone</div>
+                            <a href="/cmd/{{ r.stn_id }}/REBOOT" class="block px-3 py-1.5 text-xs text-red-400 hover:bg-red-950/60" onclick="return confirm('Reboot {{ r.stn_id }}?')">↺ Reboot Device</a>
+                            <a href="/cmd/{{ r.stn_id }}/DELETE_DATA" class="block px-3 py-1.5 text-xs text-orange-500 font-bold hover:bg-orange-950/60" onclick="return confirm('CRITICAL: Factory reset on {{ r.stn_id }}? Proceed?')">⚠ Factory Reset</a>
+                            <a href="/delete/{{ r.stn_id }}" class="block px-3 py-1.5 text-xs text-red-500 font-bold hover:bg-red-950/80" onclick="return confirm('WARNING: Permanently delete station {{ r.stn_id }}?')">🗑 Delete Station</a>
+                        </div>
+                    </div>
                 </td>
             </tr>
             {% endif %}
@@ -150,9 +315,7 @@
     </table>
 </div>
 
-<div class="mt-8 text-center text-slate-600 text-[10px] uppercase tracking-widest pb-8">
-    Spatika Health Portal — System Version: <span class="text-blue-400">Hardened v5.89 Final Build 3 (2026-04-24)</span>
-</div>
+
 
 {% endblock %}
 
@@ -180,51 +343,190 @@
 <!-- Data for Map (Safely passed via JSON) -->
 <script id="map-data-json" type="application/json">
 [
-    {% for r in reports if r.gps and r.gps.strip() %}
+    {% set ns = namespace(first=true) %}
+    {% for r in reports %}
+    {% set gval = r.gps if (r.gps and r.gps not in ('NA', '0,0', '0.000000,0.000000', 'None', '')) else '' %}
+    {% if gval %}
+    {{ "," if not ns.first }}
     { 
         "id": "{{ r.stn_id }}", 
-        "gps": "{{ r.gps }}", 
+        "gps": "{{ gval }}", 
         "ok": {{ 'true' if r.eval.verdict in ('OK', 'INFO') else 'false' }}, 
-        "ver": "{{ r.ver or '' }}" 
-    }{{ "," if not loop.last }}
+        "ver": "{{ r.ver or '' }}",
+        "group": "{{ r.group_code or '' }}"
+    }
+    {% set ns.first = false %}
+    {% endif %}
     {% endfor %}
 ]
 </script>
 
 <script>
-    // 1. Force Global Accessibility for Filters
-    window.applyFilter = function (type) {
-        console.log("!!! Global Filter Called:", type);
-        // alert("Filter Clicked: " + type); // Uncomment for extreme debugging
+    // 1. Global Filter State
+    window.currentGroup = 'all';
+    window.currentFilter = 'all';
+    window.searchQuery = '';
 
+    window.onSearchInput = function() {
+        const input = document.getElementById('stn-search-input');
+        window.searchQuery = (input ? input.value : '').trim().toLowerCase();
+        window.applyFilter(window.currentFilter || 'all');
+    };
+
+    window.applyGroupFilter = function(groupCode) {
+        window.currentGroup = groupCode;
+
+        // Highlight active group tab
+        document.querySelectorAll('.group-tab').forEach(t => {
+            t.classList.remove('sys-tab-active', 'tab-active');
+        });
+        const tabs = Array.from(document.querySelectorAll('.group-tab'));
+        const activeTab = tabs.find(t => t.dataset.tabGroup === groupCode || (groupCode === 'all' && t.id === 'group-tab-all'));
+        if (activeTab) {
+            activeTab.classList.add('sys-tab-active', 'tab-active');
+        }
+
+        // Update navbar firmware version chip
+        const fwChip = document.getElementById('navbar-fw-chip');
+        const fwVer  = document.getElementById('navbar-fw-ver');
+        if (activeTab && fwVer) {
+            const ver = activeTab.dataset.fwVer;
+            if (ver && ver !== '—' && ver !== 'N/A') {
+                fwVer.textContent = 'v' + ver;
+                if (fwChip) fwChip.classList.remove('hidden');
+            } else {
+                if (fwChip) fwChip.classList.add('hidden');
+            }
+        }
+
+        // Ambient background tint per group
+        const bgMap = {
+            'all':           'group-bg-all',
+            'KSNDMC-TRG':   'group-bg-ksndmc-trg',
+            'KSNDMC-TWS':   'group-bg-ksndmc-tws',
+            'KSNDMC-ADDON': 'group-bg-ksndmc-addon',
+            'BIHAR-TRG':    'group-bg-bihar-trg',
+            'SPATIKA-TRG':  'group-bg-spatika-trg',
+            'SPATIKA-ADDON':'group-bg-spatika-addon',
+        };
+        Object.values(bgMap).forEach(cls => document.body.classList.remove(cls));
+        const bgClass = bgMap[groupCode] || 'group-bg-all';
+        document.body.classList.add(bgClass);
+
+        // Toggle Executive Fleet Banner for Active Group
+        document.querySelectorAll('.exec-group-banner').forEach(b => b.classList.add('hidden'));
+        const targetBanner = document.getElementById('exec-banner-' + groupCode);
+        if (targetBanner) {
+            targetBanner.classList.remove('hidden');
+        } else {
+            const allBanner = document.getElementById('exec-banner-all');
+            if (allBanner) allBanner.classList.remove('hidden');
+        }
+
+        // Toggle stat pills for active group
+        document.querySelectorAll('.exec-stat-pills').forEach(p => p.classList.add('hidden'));
+        const targetPills = document.getElementById('stat-pills-' + groupCode);
+        if (targetPills) {
+            targetPills.classList.remove('hidden');
+        } else {
+            const allPills = document.getElementById('stat-pills-all');
+            if (allPills) allPills.classList.remove('hidden');
+        }
+
+        window.applyFilter(window.currentFilter || 'all');
+    };
+
+    window.applyFilter = function (type) {
+        window.currentFilter = type;
         try {
             const body = document.body;
-            body.classList.remove('filter-all', 'filter-alarm', 'filter-ota', 'filter-lowbat');
+            body.className = body.className.replace(/\bfilter-\S+/g, '');
             body.classList.add('filter-' + type);
 
-            // Highlight cards - target the summary cards by ID or class to be safe
-            document.querySelectorAll('#card-all, #card-alarm, #card-ota, #card-lowbat').forEach(c => {
-                c.classList.remove('active-card', 'ring-4', 'ring-blue-500/50', 'border-white');
+            document.querySelectorAll('.stat-card-pill').forEach(c => {
+                c.classList.remove('ring-2', 'ring-blue-500/80', 'border-blue-400');
             });
 
-            const card = document.getElementById('card-' + type);
+            const cardMap = {
+                'all': 'card-all',
+                'alarm': 'card-alarm',
+                'ota': 'card-ota',
+                'lowbat': 'card-lowbat',
+                'gprs_healthy': 'card-lowbat',
+                'gprs_marginal': 'card-lowbat',
+                'gprs_critical': 'card-lowbat',
+                'mcubat': 'card-mcubat',
+                'mcu_healthy': 'card-mcubat',
+                'mcu_marginal': 'card-mcubat',
+                'mcu_critical': 'card-mcubat',
+                'solar_active': 'card-solar',
+                'solar_optimal': 'card-solar'
+            };
+
+            const activeCardId = cardMap[type] || ('card-' + type);
+            const grp = window.currentGroup || 'all';
+            const card = document.getElementById(activeCardId + '-' + grp) || document.getElementById(activeCardId);
             if (card) {
-                card.classList.add('active-card', 'ring-4', 'ring-blue-500/50', 'border-white');
+                card.classList.add('ring-2', 'ring-blue-500/80', 'border-blue-400');
             }
 
-            // Filter table rows
             const rows = document.querySelectorAll('.row-item');
             let count = 0;
-            rows.forEach(row => {
-                let show = false;
-                if (type === 'all') show = true;
-                else if (type === 'alarm') show = (row.dataset.status === 'alarm');
-                else if (type === 'ota') show = (row.dataset.ota === 'true');
-                else if (type === 'lowbat') show = (row.dataset.lowbat === 'true');
+            let groupAlarms = 0;
+            let groupOta = 0;
+            let groupLowBat = 0;
+            let groupTotal = 0;
 
+            rows.forEach(row => {
+                const rowGroup = row.dataset.group;
+                let groupMatches = (window.currentGroup === 'all' || !window.currentGroup || rowGroup === window.currentGroup);
+                
+                if (groupMatches) {
+                    groupTotal++;
+                    if (row.dataset.status === 'alarm') groupAlarms++;
+                    if (row.dataset.ota === 'true') groupOta++;
+                    if (row.dataset.lowbat === 'true') groupLowBat++;
+                }
+
+                let filterMatches = false;
+                const gprsBat = row.dataset.gprsBat || 'none';
+                const mcuBat = row.dataset.mcuBat || 'none';
+                const solV = parseFloat(row.dataset.solV || 0);
+
+                if (type === 'all') filterMatches = true;
+                else if (type === 'alarm') filterMatches = (row.dataset.status === 'alarm');
+                else if (type === 'ota') filterMatches = (row.dataset.ota === 'true');
+                else if (type === 'lowbat') filterMatches = (gprsBat === 'critical' || gprsBat === 'marginal' || row.dataset.lowbat === 'true');
+                else if (type === 'gprs_healthy') filterMatches = (gprsBat === 'healthy');
+                else if (type === 'gprs_marginal') filterMatches = (gprsBat === 'marginal');
+                else if (type === 'gprs_critical') filterMatches = (gprsBat === 'critical');
+                else if (type === 'mcubat') filterMatches = (mcuBat === 'critical' || mcuBat === 'marginal');
+                else if (type === 'mcu_healthy') filterMatches = (mcuBat === 'healthy');
+                else if (type === 'mcu_marginal') filterMatches = (mcuBat === 'marginal');
+                else if (type === 'mcu_critical') filterMatches = (mcuBat === 'critical');
+                else if (type === 'solar_active') filterMatches = (solV >= 1.2);
+                else if (type === 'solar_optimal') filterMatches = (solV >= 10.0);
+
+                // Search Match (Stn ID or Carrier)
+                const stnId = (row.dataset.stn || '').toLowerCase();
+                const carrier = (row.children[3]?.textContent || '').toLowerCase();
+                let searchMatches = !window.searchQuery || stnId.includes(window.searchQuery) || carrier.includes(window.searchQuery);
+
+                const show = groupMatches && filterMatches && searchMatches;
                 row.style.display = show ? '' : 'none';
                 if (show) count++;
             });
+
+            // Update Stat Cards dynamically per group!
+            const cAll = document.getElementById('card-all-count');
+            const cAlarm = document.getElementById('card-alarm-count');
+            const cOta = document.getElementById('card-ota-count');
+            const cLowBat = document.getElementById('card-lowbat-count');
+
+            if (cAll) cAll.textContent = groupTotal;
+            if (cAlarm) cAlarm.textContent = groupAlarms;
+            if (cOta) cOta.textContent = groupOta;
+            if (cLowBat) cLowBat.textContent = groupLowBat;
 
             // Update Title
             const title = document.getElementById('table-title');
@@ -233,15 +535,24 @@
                     'all': 'ALL STATIONS',
                     'alarm': 'ALARM STATIONS',
                     'ota': 'OTA PENDING',
-                    'lowbat': 'LOW BATTERY'
+                    'lowbat': 'GPRS BATTERY ISSUES (<3.8V)',
+                    'gprs_healthy': 'HEALTHY GPRS BATTERY (>3.8V)',
+                    'gprs_marginal': 'MARGINAL GPRS BATTERY (3.6V - 3.8V)',
+                    'gprs_critical': 'CRITICAL GPRS BATTERY (<3.6V)',
+                    'mcubat': 'MCU BATTERY ISSUES (<3.2V)',
+                    'mcu_healthy': 'HEALTHY MCU BATTERY (>3.2V)',
+                    'mcu_marginal': 'MARGINAL MCU BATTERY (3.0V - 3.2V)',
+                    'mcu_critical': 'CRITICAL MCU BATTERY (<3.0V)',
+                    'solar_active': 'ACTIVE SOLAR CHARGING (≥1.2V)',
+                    'solar_optimal': 'OPTIMAL SOLAR CHARGING (≥10.0V)'
                 };
-                title.innerHTML = `Fleet: ${labels[type]} <span class="bg-blue-500/20 text-blue-400 px-2 rounded ml-2">${count}</span>`;
+                const grpLabel = window.currentGroup === 'all' ? 'Fleet' : window.currentGroup;
+                title.innerHTML = `${grpLabel}: ${labels[type] || type.toUpperCase()} <span class="bg-blue-500/20 text-blue-400 px-2 rounded ml-2">${count}</span>`;
             }
 
-            // Update Filter Badge
             const badge = document.getElementById('filter-badge');
             if (badge) {
-                if (type === 'all') badge.classList.add('hidden');
+                if (type === 'all' && window.currentGroup === 'all' && !window.searchQuery) badge.classList.add('hidden');
                 else badge.classList.remove('hidden');
             }
         } catch (e) {
@@ -249,8 +560,49 @@
         }
     };
 
+    // Helper: Parse coordinates (supports both Decimal Degrees and NMEA DDMM.MMMM format)
+    window.parseLatLng = function (gpsStr) {
+        if (!gpsStr) return null;
+        const matches = String(gpsStr).match(/-?\d+\.\d+/g);
+        if (!matches || matches.length < 2) return null;
+        let lat = parseFloat(matches[0]);
+        let lon = parseFloat(matches[1]);
+        if (isNaN(lat) || isNaN(lon)) return null;
+
+        // Convert NMEA DDMM.MMMM format to Decimal Degrees if needed
+        if (Math.abs(lat) > 90) {
+            const deg = Math.floor(Math.abs(lat) / 100);
+            const min = Math.abs(lat) - (deg * 100);
+            lat = (deg + (min / 60.0)) * (lat < 0 ? -1 : 1);
+        }
+        if (Math.abs(lon) > 180) {
+            const deg = Math.floor(Math.abs(lon) / 100);
+            const min = Math.abs(lon) - (deg * 100);
+            lon = (deg + (min / 60.0)) * (lon < 0 ? -1 : 1);
+        }
+
+        if (Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && (Math.abs(lat) > 0.001 || Math.abs(lon) > 0.001)) {
+            return { lat, lon };
+        }
+        return null;
+    };
+
     // 2. Map & Utils
     window.mapInit = false;
+    window.mapInstance = null;
+    window.stationMarkers = {};
+    window.fleetBounds = [];
+
+    window.resetMapView = function () {
+        if (window.mapInstance) {
+            if (window.fleetBounds && window.fleetBounds.length > 0) {
+                window.mapInstance.fitBounds(window.fleetBounds, { padding: [40, 40], maxZoom: 13 });
+            } else {
+                window.mapInstance.setView([20.5937, 78.9629], 5);
+            }
+        }
+    };
+
     window.toggleMap = function () {
         const wrap = document.getElementById('map-wrap');
         const btn = document.getElementById('map-btn');
@@ -258,46 +610,107 @@
 
         if (wrap.classList.contains('hidden')) {
             wrap.classList.remove('hidden');
-            btn.textContent = '🗺️ Hide Map';
+            if (btn) btn.textContent = '🗺️ Hide Map';
+            
             if (!window.mapInit) {
                 window.mapInit = true;
                 const map = L.map('map').setView([20.5937, 78.9629], 5);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
+                    maxZoom: 19,
+                    attribution: '© OpenStreetMap'
+                }).addTo(map);
+                window.mapInstance = map;
 
-                // Load station data from the JSON script tag
+                const boundsGroup = [];
                 try {
-                    const stations = JSON.parse(document.getElementById('map-data-json').textContent);
+                    const jsonElem = document.getElementById('map-data-json');
+                    const stations = jsonElem ? JSON.parse(jsonElem.textContent) : [];
                     console.log("Loaded " + stations.length + " stations for Map.");
+                    
                     stations.forEach(s => {
-                        // Extract all floating point numbers safely from the gps string
-                        const matches = s.gps.match(/-?\d+\.\d+/g);
-                        if (matches && matches.length >= 2) {
-                            const lat = parseFloat(matches[0]);
-                            const lon = parseFloat(matches[1]);
-                            if (!isNaN(lat) && !isNaN(lon) && lat !== 0) {
-                                const color = s.ok ? '#22c55e' : '#ef4444';
-                                const icon = L.divIcon({
-                                    className: '',
-                                    html: `<div style="width:12px;height:12px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.5);"></div>`
-                                });
-                                L.marker([lat, lon], { icon }).addTo(map)
-                                    .bindPopup(`<b>Station: ${s.id}</b><br>${s.ok ? '✅ OK' : '❌ ALARM'}<br>Ver: ${s.ver}`);
-                            }
+                        const pt = window.parseLatLng(s.gps);
+                        if (pt) {
+                            const color = s.ok ? '#22c55e' : '#ef4444';
+                            const icon = L.divIcon({
+                                className: 'custom-map-pin',
+                                html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 8px rgba(0,0,0,0.6);cursor:pointer;" title="Station ${s.id}"></div>`
+                            });
+                            const marker = L.marker([pt.lat, pt.lon], { icon }).addTo(map)
+                                .bindPopup(`
+                                    <div style="font-family:sans-serif;padding:4px;min-width:140px;">
+                                        <div style="font-weight:bold;font-size:13px;color:#0f172a;">Station ${s.id}</div>
+                                        <div style="font-size:11px;color:${s.ok ? '#059669' : '#dc2626'};font-weight:bold;margin-top:2px;">
+                                            ${s.ok ? '🟢 OK / ONLINE' : '🔴 ALARM / FAULT'}
+                                        </div>
+                                        <div style="font-size:10px;color:#64748b;margin-top:2px;">Group: ${s.group || 'N/A'}<br>Ver: ${s.ver || 'N/A'}</div>
+                                        <div style="margin-top:6px;">
+                                            <a href="/station/${s.id}" style="display:inline-block;padding:3px 8px;background:#2563eb;color:white;font-size:10px;font-weight:bold;border-radius:4px;text-decoration:none;">View Station →</a>
+                                        </div>
+                                    </div>
+                                `);
+                            marker.on('click', () => {
+                                map.flyTo([pt.lat, pt.lon], 14, { animate: true, duration: 1.2 });
+                            });
+                            const normId = String(s.id).replace(/^0+/, '') || '0';
+                            window.stationMarkers[s.id] = { marker, lat: pt.lat, lon: pt.lon };
+                            window.stationMarkers[normId] = { marker, lat: pt.lat, lon: pt.lon };
+                            boundsGroup.push([pt.lat, pt.lon]);
                         }
                     });
+
+                    window.fleetBounds = boundsGroup;
+                    if (boundsGroup.length > 0) {
+                        map.fitBounds(boundsGroup, { padding: [40, 40], maxZoom: 13 });
+                    }
                 } catch (err) {
                     console.error("Map Data Error:", err);
                 }
+            } else if (window.mapInstance) {
+                setTimeout(() => { window.mapInstance.invalidateSize(); }, 100);
             }
         } else {
             wrap.classList.add('hidden');
-            btn.textContent = '🗺️ Show Map';
+            if (btn) btn.textContent = '🗺️ Show Map';
         }
     };
 
-    // 3. Page Initialization
+    window.zoomToStation = function (stnId, rawLat, rawLon) {
+        const wrap = document.getElementById('map-wrap');
+        if (wrap && wrap.classList.contains('hidden')) {
+            window.toggleMap();
+        }
+        
+        setTimeout(() => {
+            if (window.mapInstance) {
+                window.mapInstance.invalidateSize();
+                const normId = String(stnId).replace(/^0+/, '') || '0';
+                const entry = window.stationMarkers[stnId] || window.stationMarkers[normId];
+                let pt = null;
+                if (entry) {
+                    pt = { lat: entry.lat, lon: entry.lon };
+                } else if (rawLat && rawLon) {
+                    pt = window.parseLatLng(`${rawLat}, ${rawLon}`);
+                }
+                
+                if (pt) {
+                    window.mapInstance.flyTo([pt.lat, pt.lon], 15, { animate: true, duration: 1.5 });
+                    if (entry && entry.marker) {
+                        entry.marker.openPopup();
+                    }
+                }
+            }
+        }, 150);
+    };
+
+    // 3. Page Initialization & 30s Auto-Refresh
     document.addEventListener('DOMContentLoaded', () => {
-        console.log("Dashboard Script Active - v3.1");
+        console.log("Dashboard Enterprise Script Active - v5.89");
+        
+        // Auto-refresh every 30 seconds to keep telemetry fresh
+        setInterval(() => {
+            console.log("Refreshing live telemetry...");
+            window.location.reload();
+        }, 30000);
         const dbg = document.getElementById('js-debug-indicator');
         if (dbg) dbg.style.display = 'block';
 

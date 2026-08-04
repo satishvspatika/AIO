@@ -79,6 +79,8 @@ def migrate():
 
     # ── v7.59: Columns present in models.py but previously missing from migrate.py ──
     for col, dtype, default in [
+        ("mcu_bat",          "REAL",    "0.0"),
+        ("sd_ok",            "INTEGER", "0"),
         ("http_fails",       "INTEGER", "0"),
         ("http_fail_reason", "TEXT",    "'NONE'"),
         ("net_cnt",          "INTEGER", "0"),
@@ -116,6 +118,7 @@ def migrate():
     for col, dtype, default in [
         ("last_gps",     "TEXT",     "NULL"),
         ("last_seen",    "DATETIME", "NULL"),
+        ("wifi_pass",    "TEXT",     "'Spatika123'"),
     ]:
         try:
             cursor.execute(f"ALTER TABLE station_settings ADD COLUMN {col} {dtype} DEFAULT {default};")

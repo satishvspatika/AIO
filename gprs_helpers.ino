@@ -1141,4 +1141,119 @@ void power_cut_modem_shutdown() {
 
 // Payload is
 // stn_no=99999&rec_time=2025-07-15,17:00&key=rfclimate5p13&rainfall=009.5&temp=23.87&humid=77.16&w_speed=00.12&w_dir=324&signal=-073&bat_volt=04.2&bat_volt2=04.2
+void retrieveOwnNumber(char* outBuf, size_t outSize) {
+  strncpy(outBuf, "Not Found", outSize - 1);
+  outBuf[outSize - 1] = '\0';
+
+  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
+    debugln("[SIM] Failed to acquire modemMutex for retrieveOwnNumber");
+    return;
+  }
+
+  bool found = false;
+
+  // 1. Try standard AT+CNUM query (Works on Airtel IoT/M2M SIMs)
+  SerialSIT.println("AT+CNUM");
+  if (waitForResponse("OK", 3000)) {
+    // Expected format: +CNUM: "","+19915754309405999",145
+    const char* p = strstr(modem_response_buf, "+CNUM:");
+    if (p) {
+      const char* q1 = strchr(p, '"');
+      if (q1) {
+        const char* q2 = strchr(q1 + 1, '"');
+        if (q2) {
+          const char* q3 = strchr(q2 + 1, '"');
+          if (q3) {
+            const char* q4 = strchr(q3 + 1, '"');
+            if (q4 && (q4 - q3 - 1) < (int)outSize && (q4 - q3 - 1) > 3) {
+              int len = q4 - q3 - 1;
+              strncpy(outBuf, q3 + 1, len);
+              outBuf[len] = '\0';
+              debugf("[SIM] Own number found via CNUM: %s\n", outBuf);
+              found = true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Try reading the Own Numbers directory (CPBR)
+  if (!found) {
+    SerialSIT.println("AT+CPBS=\"ON\"");
+    waitForResponse("OK", 2000);
+    SerialSIT.println("AT+CPBR=1");
+    if (waitForResponse("OK", 3000)) {
+      // Expected format: +CPBR: 1,"+919876543210",145,"My Name"
+      const char* p = strstr(modem_response_buf, "+CPBR:");
+      if (p) {
+        const char* q1 = strchr(p, '"');
+        if (q1) {
+          const char* q2 = strchr(q1 + 1, '"');
+          if (q2 && (q2 - q1 - 1) < (int)outSize) {
+            int len = q2 - q1 - 1;
+            strncpy(outBuf, q1 + 1, len);
+            outBuf[len] = '\0';
+            debugf("[SIM] Own number found via CPBR: %s\n", outBuf);
+            found = true;
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Try USSD query (*282# for Airtel, *222# for BSNL, *199# for Vi)
+  if (!found) {
+    const char* ussd_code = "*282#"; // Default Airtel
+    if (strncmp(cached_iccid, "89917", 5) == 0 || strncmp(cached_iccid, "89913", 5) == 0 || 
+        strncmp(cached_iccid, "89915", 5) == 0 || strncmp(cached_iccid, "899100", 6) == 0 ||
+        strstr(carrier, "BSNL") || strstr(carrier, "bsnl")) {
+      ussd_code = "*222#"; // BSNL USSD
+    } else if (strncmp(cached_iccid, "899111", 6) == 0 || strstr(carrier, "VI") || strstr(carrier, "VODA")) {
+      ussd_code = "*199#"; // Vi USSD
+    }
+
+    char sendCmd[32];
+    snprintf(sendCmd, sizeof(sendCmd), "AT+CUSD=1,\"%s\"", ussd_code);
+    SerialSIT.println(sendCmd);
+    if (waitForResponse("+CUSD:", 10000)) {
+      // Expected format: +CUSD: 0,"Your Mobile Number is: 9481234567",15
+      const char* p = strstr(modem_response_buf, "+CUSD:");
+      if (p) {
+        const char* quote = strchr(p, '"');
+        if (quote) {
+          // Find the digits inside the quote
+          char digits[32] = "";
+          int dIdx = 0;
+          for (int i = 1; quote[i] != '"' && quote[i] != '\0' && dIdx < 15; i++) {
+            if (isdigit(quote[i])) {
+              digits[dIdx++] = quote[i];
+            }
+          }
+          digits[dIdx] = '\0';
+          if (dIdx >= 10) {
+            strncpy(outBuf, digits, outSize - 1);
+            outBuf[outSize - 1] = '\0';
+            debugf("[USSD] Own number found via USSD (%s): %s\n", ussd_code, outBuf);
+            found = true;
+          }
+        }
+      }
+    }
+  }
+
+  if (found) {
+    // Clean up Airtel M2M network gateway routing prefix "+1991" / "1991" / "+199" to extract clean 13-digit M2M MSISDN
+    if (strncmp(outBuf, "+1991", 5) == 0) {
+      memmove(outBuf, outBuf + 5, strlen(outBuf + 5) + 1);
+    } else if (strncmp(outBuf, "1991", 4) == 0) {
+      memmove(outBuf, outBuf + 4, strlen(outBuf + 4) + 1);
+    } else if (strncmp(outBuf, "+199", 4) == 0) {
+      memmove(outBuf, outBuf + 4, strlen(outBuf + 4) + 1);
+    }
+  }
+
+  xSemaphoreGive(modemMutex);
+}
 #endif
+

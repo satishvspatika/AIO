@@ -8,6 +8,9 @@
     <div class="bg-black/50 p-4 rounded text-left font-mono text-xs text-slate-500 overflow-x-auto border border-slate-800">
         Error Code: 500<br>
         Transaction: {{ request.url.path }}
+        {% if error_msg %}
+        <br><span class="text-red-400 font-bold">Details: {{ error_msg }}</span>
+        {% endif %}
     </div>
     <div class="mt-8">
         <a href="/dashboard" class="btn-sm btn-blu px-6 py-2">Return to Dashboard</a>

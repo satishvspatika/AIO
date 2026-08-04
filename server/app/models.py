@@ -26,7 +26,9 @@ class HealthReport(Base):
     reset_reason     = Column(Integer, default=0)
     rtc_ok           = Column(Integer, default=1)
     bat_v            = Column(Float)
+    mcu_bat          = Column(Float, default=0.0)
     sol_v            = Column(Float)
+    sd_ok            = Column(Integer, default=0)
     signal           = Column(Integer, default=0)
     reg_fails        = Column(Integer, default=0)
     reg_fail_reason  = Column(String, default="NONE")
@@ -88,4 +90,5 @@ class StationSettings(Base):
     # Phase 2 Cache: Keep last known state here for $O(1)$ dashboard lookups
     last_gps    = Column(String, nullable=True) 
     last_seen   = Column(DateTime, nullable=True)
+    wifi_pass   = Column(String, default="Spatika123") # Track confirmed active AP password
     updated_at  = Column(DateTime, server_default=func.now(), onupdate=func.now())

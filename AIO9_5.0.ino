@@ -41,6 +41,8 @@ RTC_DATA_ATTR volatile bool skip_primary_http = false; // v5.50: Survive warm re
 volatile bool force_ftp = false;
 volatile bool sleep_sequence_active = false; // v5.77: Sleep Gate signal
 volatile bool force_ftp_daily = false;
+volatile bool force_health_upload = false;
+volatile bool force_get_num = false;
 RTC_DATA_ATTR int rtc_daily_sync_count = 0; // v5.77: Daily sync retry cap
 char ftp_daily_date[12] = "";
 volatile bool force_reboot = false;
@@ -51,7 +53,6 @@ volatile bool force_clear_ftp_queue = false;
 volatile bool force_delete_data = false;
 
 // --- v5.81 DEFINITIVE SYMBOL SEAL ---
-bool send_health_report();
 int send_at_cmd_data(char *payload, bool robust);
 
 // v5.83 Fix: Consensus System State (Standardized sizes & proper init)
@@ -470,6 +471,33 @@ char pres_str[20] = "NA";
 
 void setup() {
   set_sys_status("BOOTING");
+
+  // Re-configure Watchdog early with a safe 120-second timeout for boot tasks
+  esp_task_wdt_config_t wdt_config = {.timeout_ms = 120000,
+                                      .idle_core_mask =
+                                          (1 << portNUM_PROCESSORS) - 1,
+                                      .trigger_panic = true};
+  esp_task_wdt_reconfigure(&wdt_config);
+  esp_task_wdt_add(NULL);
+  esp_task_wdt_reset();
+
+  // Initialize Mutexes first to prevent NULL pointer dereference in early tasks
+  i2cMutex = xSemaphoreCreateMutex();
+  if (i2cMutex != NULL)
+    xSemaphoreGive(i2cMutex);
+
+  serialMutex = xSemaphoreCreateMutex();
+  if (serialMutex != NULL)
+    xSemaphoreGive(serialMutex);
+
+  fsMutex = xSemaphoreCreateMutex();
+  if (fsMutex != NULL)
+    xSemaphoreGive(fsMutex);
+
+  modemMutex = xSemaphoreCreateMutex();
+  if (modemMutex != NULL)
+    xSemaphoreGive(modemMutex);
+
   // v5.77 Hardened [UI-WAKE]: Instant LCD Activation
   // Unconditionally power on LCD at cold boot/key wakeup, but keep OFF on timer wakeup
   if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER) {
@@ -514,23 +542,6 @@ void setup() {
 #if DEBUG == 1
   delay(1000);
 #endif
-
-  // Initialize Mutexes first
-  i2cMutex = xSemaphoreCreateMutex();
-  if (i2cMutex != NULL)
-    xSemaphoreGive(i2cMutex);
-
-  serialMutex = xSemaphoreCreateMutex();
-  if (serialMutex != NULL)
-    xSemaphoreGive(serialMutex);
-
-  fsMutex = xSemaphoreCreateMutex();
-  if (fsMutex != NULL)
-    xSemaphoreGive(fsMutex);
-
-  modemMutex = xSemaphoreCreateMutex();
-  if (modemMutex != NULL)
-    xSemaphoreGive(modemMutex);
 
   initialize_hw(); // sets CPU to 80MHz internally
 
@@ -1570,6 +1581,9 @@ void setup() {
   if (healer_reboot_in_progress) {
       healer_reboot_in_progress = false;
   }
+
+  // Pet the watchdog one last time during setup
+  esp_task_wdt_reset();
 }
 
 void progressCallBack(size_t currSize, size_t totalSize) {
@@ -1618,6 +1632,10 @@ void initialize_hw() {
   }
 #endif
 
+  setCpuFrequencyMhz(80); // Step down early to save power during boot init
+  WiFi.mode(WIFI_OFF);    // Ensure WiFi radio is OFF
+  btStop();               // Ensure Bluetooth is OFF
+
 #if DEBUG == 1
   Serial.begin(115200);
 #endif
@@ -1626,10 +1644,6 @@ void initialize_hw() {
   // erase operations.
   SerialSIT.setRxBufferSize(16384);
   SerialSIT.begin(115200, SERIAL_8N1, 16, 17, false);
-
-  setCpuFrequencyMhz(80); // Step down early to save power during boot init
-  WiFi.mode(WIFI_OFF);    // Ensure WiFi radio is OFF
-  btStop();               // Ensure Bluetooth is OFF
 
   Wire.begin(21, 22, 100000); // Increased to 100kHz for efficiency
   Wire.setTimeOut(I2C_TIMEOUT_MS);
@@ -1644,8 +1658,8 @@ void initialize_hw() {
   initHDC();
 #endif
 
-  // DISABLE Watchdog during long mount/format operations
-  esp_task_wdt_delete(NULL);
+  // Keep Watchdog clear during mount operations
+  esp_task_wdt_reset();
 
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
     if (!rtc.begin()) {
@@ -1669,25 +1683,23 @@ void initialize_hw() {
 
   bool spiffs_mounted = false;
   uint32_t chip_size = ESP.getFlashChipSize();
-  // v5.88 Fix: Do NOT re-declare hw_tag here — that shadows the global and leaves
-  // the LCD's hw_tag stuck at ' ' (shown as '.' on display) when SPIFFS fails.
-  // Write directly to the global declared in AIO9_5.0.ino line 339.
   hw_tag = (chip_size == 16*1024*1024) ? 'X' : ((chip_size == 8*1024*1024) ? 'H' : 'L');
 
-  for (int i = 0; i < 3; i++) {
-    // v5.75: Hardened Label-Based Mount (Dynamic VFS)
-    // By using the label "spiffs", the ESP32 internally finds the partition segment 
-    // even if it moved from 2.5MB (4MB chips) to 6MB (8MB chips).
-    if (SPIFFS.begin(false, "/spiffs", 10, "spiffs")) { 
+  // Try normal mount first; if unformatted (-10025), end VFS handle and format automatically
+  if (SPIFFS.begin(false, "/spiffs", 10, "spiffs")) {
+    spiffs_mounted = true;
+  } else {
+    debugln("[BOOT] SPIFFS mount failed (-10025). Formatting filesystem...");
+    SPIFFS.end();
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    if (SPIFFS.begin(true, "/spiffs", 10, "spiffs")) {
       spiffs_mounted = true;
-      break;
+      debugln("[BOOT] SPIFFS Formatted and Mounted Successfully!");
     }
-    debugln("[BOOT] SPIFFS mount failed. Retrying in 1s...");
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 
   if (!spiffs_mounted) {
-    debugln("[BOOT] CRITICAL: SPIFFS failed 3x. Safe-mode enabled (NO REFORMAT).");
+    debugln("[BOOT] CRITICAL: SPIFFS failed to format/mount. Safe-mode enabled.");
     hw_tag = '!';
   } else {
     debugln("[BOOT] SPIFFS: OK");
@@ -1792,14 +1804,7 @@ void initialize_hw() {
     sd_card_ok = 0;
   }
 
-  // RE-INITIALIZE Watchdog with a safe 30-second timeout for first-boot tasks
-  // v5.52: Increased Watchdog to 120s for slow 2G OTA stability
-  esp_task_wdt_config_t wdt_config = {.timeout_ms = 120000,
-                                      .idle_core_mask =
-                                          (1 << portNUM_PROCESSORS) - 1,
-                                      .trigger_panic = true};
-  esp_task_wdt_reconfigure(&wdt_config);
-  esp_task_wdt_add(NULL);
+  // Watchdog is already configured at the start of setup() with a safe 120s timeout
   esp_task_wdt_reset();
 
   if (SYSTEM != 2) {

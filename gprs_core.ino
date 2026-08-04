@@ -177,7 +177,7 @@ void gprs(void *pvParameters) {
           }
           strcpy(ui_data[target_fld].bottomRow, "GETTING GPS...  ");
           show_now = 1;
-          get_gps_coordinates();
+          get_gps_coordinates(true);
 
           // If fresh fix failed, try loading from SPIFFS before showing FAILED
           if (lati == 0 || longi == 0)
@@ -391,7 +391,7 @@ void gprs(void *pvParameters) {
             diag_fw_just_updated = false; // Reset persistent flag
             strcpy(diag_cdm_status, "Firmware Updated");
             // Refresh Location via Fresh CLBS
-            get_gps_coordinates();
+            get_gps_coordinates(true);
           }
 
           // v5.55: One-time sensor fault trigger (Non-11:00 AM)
@@ -457,7 +457,7 @@ void gprs(void *pvParameters) {
             // termination.
             vTaskDelay(3000 / portTICK_PERIOD_MS);
 
-            bool health_ok = send_health_report(true);
+            bool health_ok = send_health_report(true, true, false); // useJitter=true, alreadyLocked=true, cmdPollOnly=false
 
             if (health_ok) {
               // v7.67: Only flag as completed if SUCCESSFUL so it retries
@@ -498,6 +498,17 @@ void gprs(void *pvParameters) {
             portEXIT_CRITICAL(&syncMux);
 #endif
             debugln("[GPRS] Automations finished. Checking for Piggybacked Commands...");
+          } else {
+#if ENABLE_HEALTH_REPORT == 1
+            // If full health is not scheduled, do a lightweight command poll
+            debugln("[Health] Checking for remote commands...");
+            send_health_report(false, true, true); // useJitter=false, alreadyLocked=true, cmdPollOnly=true
+            if (force_health_upload) {
+              debugln("[Health] Command GET_STATUS received! Uploading full health report...");
+              force_health_upload = false;
+              send_health_report(false, true, false); // Upload full report!
+            }
+#endif
           }
         } else if (gprs_mode == eGprsSignalForStoringOnly) {
           if (skip_primary_http) {
@@ -540,8 +551,24 @@ void gprs(void *pvParameters) {
       } else {
         debugln("[CMD] Error: Invalid FTP date format. Skipping FTP_DAILY.");
       }
+#else
+      if (strlen(ftp_daily_date) >= 8) {
+        copyFromSPIFFSToFS(ftp_daily_date, false);
+      } else {
+        debugln("[CMD] Error: Invalid FTP date format. Skipping FTP_DAILY.");
+      }
 #endif
       force_ftp_daily = false;
+    }
+
+    if (force_get_num) {
+      debugln("[CMD] Remote GET_NUM triggered...");
+      char numBuf[32];
+      retrieveOwnNumber(numBuf, sizeof(numBuf));
+      snprintf(last_cmd_res, sizeof(last_cmd_res), "Num: %s", numBuf);
+      debugf("[CMD] GET_NUM Result: %s\n", last_cmd_res);
+      force_get_num = false;
+      force_health_upload = true;
     }
 
     if (force_ota) {
@@ -656,6 +683,12 @@ void gprs(void *pvParameters) {
     // v7.90: Final Cycle Reset - Move here to ensure COMMANDS (OTA/FTP/GPS)
     // finish before loopTask triggers deep sleep.
     if (httpInitiated) {
+      if (force_health_upload) {
+        debugln("[GPRS] 💡 Command feedback pending. Transmitting result to server...");
+        force_health_upload = false;
+        send_health_report(false, true, false);
+      }
+
       debugln("[GPRS] Cycle fully complete (including Commands).");
       
       // v5.50: Sequential Handling — Check if a manual LCD command was queued

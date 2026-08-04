@@ -4,13 +4,7 @@
 
 {% block content %}
 
-<div class="mb-5">
-    <h2 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Fleet Summary — By Firmware Group</h2>
-    <p class="text-xs text-slate-600">Each card represents one deployment group. Click a station name to view its full
-        history.</p>
-</div>
-
-<div class="mb-6">
+<div class="mb-4">
     <div class="flex border-b border-slate-700 overflow-x-auto no-scrollbar">
         {% for g in groups %}
         <button onclick="showTab('tab-{{ g.fw.category_id }}')" id="btn-tab-{{ g.fw.category_id }}"
@@ -28,36 +22,56 @@
 
 <div id="tab-{{ fw.category_id }}" class="fleet-content {% if not loop.first %}hidden{% endif %}">
     <div class="card p-6 mb-6">
-        <!-- Group Header Stats -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
-                <div class="text-[10px] text-slate-500 uppercase font-black mb-1">Status</div>
-                <div class="text-xl font-black text-green-400">{{ g.converted }} / {{ g.total_seen }}</div>
-                <div class="text-[10px] text-slate-400">Converted to {{ fw.current_ver }}</div>
+        <!-- Compact Sleek Group Banners -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-xs">
+            <div class="bg-slate-800/40 p-2.5 rounded-lg border border-slate-700/50 flex flex-col justify-between">
+                <div class="flex items-center justify-between text-[10px] text-slate-500 font-bold uppercase">
+                    <span>Firmware Status</span>
+                    <span class="text-green-400 font-black">{{ pct }}%</span>
+                </div>
+                <div class="text-base font-black text-green-400 my-0.5">{{ g.converted }} / {{ g.total_seen }} <span class="text-[10px] text-slate-400 font-normal">Target: {{ fw.current_ver }}</span></div>
+                <div class="w-full bg-slate-700 h-1 rounded-full overflow-hidden">
+                    <div class="h-1 rounded-full bg-green-500" style="width: {{ pct }}%"></div>
+                </div>
             </div>
-            <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
-                <div class="text-[10px] text-slate-500 uppercase font-black mb-1">Health</div>
-                <div class="text-xl font-black text-blue-400">{{ g.ok_count }} OK</div>
-                <div class="text-[10px] text-slate-400">{{ g.fail_count }} Alarms Active</div>
+            <div class="bg-slate-800/40 p-2.5 rounded-lg border border-slate-700/50 flex flex-col justify-between">
+                <div class="text-[10px] text-slate-500 font-bold uppercase">Health & Faults</div>
+                <div class="text-base font-black text-blue-400 my-0.5">{{ g.ok_count }} OK</div>
+                <div class="text-[10px] text-slate-400">
+                    <span class="{% if g.fail_count > 0 %}text-red-400 font-bold{% else %}text-slate-400{% endif %}">
+                        {{ g.fail_count }} Active Alarms
+                    </span>
+                </div>
             </div>
-            <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
-                <div class="text-[10px] text-slate-500 uppercase font-black mb-1">Battery / Solar</div>
-                <div class="text-xl font-black text-orange-400">{{ g.low_bat }} Low</div>
-                <div class="text-[10px] text-slate-400">Bat threshold: 3.6V</div>
+            <div class="bg-slate-800/40 p-2.5 rounded-lg border border-slate-700/50 flex flex-col justify-between">
+                <div class="text-[10px] text-slate-500 font-bold uppercase">Power & Solar</div>
+                <div class="flex items-center space-x-1.5 text-xs font-bold my-0.5">
+                    <span class="text-green-400">🟢 {{ g.healthy_bat }}</span>
+                    <span class="text-amber-400">🟡 {{ g.marginal_bat }}</span>
+                    <span class="text-red-400">🔴 {{ g.critical_bat }}</span>
+                </div>
+                <div class="text-[10px] text-slate-400">☀️ {{ g.solar_active }} Solar Active</div>
             </div>
-            <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50 text-right">
-                <div class="text-[10px] text-slate-500 uppercase font-black mb-1">Group Progress</div>
-                <div class="text-2xl font-black text-slate-200">{{ pct }}%</div>
-                <div class="w-full bg-slate-700 h-1.5 rounded-full mt-2">
-                    <div class="h-1.5 rounded-full bg-green-500" style="width: {{ pct }}%"></div>
+            <div class="bg-slate-800/40 p-2.5 rounded-lg border border-slate-700/50 flex flex-col justify-between">
+                <div class="text-[10px] text-slate-500 font-bold uppercase">Network & Signal</div>
+                <div class="text-[10px] font-bold text-blue-300 flex flex-wrap gap-1 my-0.5">
+                    {% for carrier_name, count in g.carriers.items() %}
+                    <span class="bg-blue-950/70 border border-blue-800 px-1 py-0.2 rounded text-[9px]">{{ carrier_name }}: {{ count }}</span>
+                    {% endfor %}
+                </div>
+                <div class="text-[10px]">
+                    {% if g.weak_signal > 0 %}<span class="text-amber-400 font-bold">⚠️ {{ g.weak_signal }} Weak</span>
+                    {% else %}<span class="text-emerald-400 font-bold">📶 Optimal</span>{% endif %}
                 </div>
             </div>
         </div>
 
         <!-- Export & Group Label -->
-        <div class="flex items-center justify-between mb-3 px-1">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3 px-1">
             <h3 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{{ fw.display_name or fw.name }} Station List</h3>
-            <button onclick="exportTabCSV('tab-{{ fw.category_id }}', '{{ (fw.display_name or fw.unit_type or 'Fleet')|replace(' ', '_') }}')" class="btn-sm btn-pur shadow-lg">📥 Export {{ fw.display_name }} CSV</button>
+            <div class="flex items-center space-x-2">
+                <button onclick="exportTabCSV('tab-{{ fw.category_id }}', '{{ (fw.display_name or fw.unit_type or 'Fleet')|replace(' ', '_') }}')" class="btn-sm btn-pur shadow-lg">📥 Export {{ fw.display_name }} CSV</button>
+            </div>
         </div>
 
         <!-- Group Sub-Table -->
@@ -74,7 +88,6 @@
                         <th class="p-3">Firmware</th>
                         <th class="p-3 whitespace-nowrap">Batt / Sol</th>
                         <th class="p-3 text-center">Data T/Y</th>
-                        <th class="p-3 text-left whitespace-nowrap" title="Calculated objective health based on data arrival and sensor diagnostics">Status</th>
                         <th class="p-3 whitespace-nowrap">GPS</th>
                         <th class="p-3">Last Seen</th>
                         <th class="p-3 text-right">Actions</th>
@@ -116,8 +129,13 @@
                             <td class="p-3">
                                 <div
                                     class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}">
-                                    {{ '%.2f'|format(r.bat_v or 0) }}V
+                                    GPRS: {{ '%.2f'|format(r.bat_v or 0) }}V
                                 </div>
+                                {% if r.mcu_bat %}
+                                <div class="text-[10px] text-blue-300 font-bold">
+                                    MCU: {{ '%.2f'|format(r.mcu_bat) }}V
+                                </div>
+                                {% endif %}
                                 <div class="text-[10px] text-slate-500">
                                     S: {{ '%.1f'|format(r.sol_v or 0) }}V
                                 </div>
@@ -132,53 +150,45 @@
                                 <div class="relative inline-block text-left dropdown">
                                     <button onclick="toggleDropdown(event, 'drop-{{ fw.category_id }}-{{ r.stn_id }}')"
                                         class="btn-sm bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center space-x-1">
-                                        <span>⚡ Actions</span>
+                                        <span>⚡ Actions ▾</span>
                                     </button>
                                     <div id="drop-{{ fw.category_id }}-{{ r.stn_id }}"
-                                        class="dropdown-content absolute right-0 mt-2 w-48 rounded-md shadow-2xl bg-slate-900 border border-slate-600 z-[999] py-1">
-                                        <a href="/cmd/{{ r.stn_id }}/REBOOT"
-                                            class="block px-4 py-2 text-xs text-red-400 hover:bg-slate-800"
-                                            onclick="return confirm('Reboot {{ r.stn_id }}?')">↺ Reboot</a>
+                                        class="dropdown-content absolute right-0 mt-2 w-52 rounded-lg shadow-2xl bg-slate-900 border border-slate-700 z-[999] py-1 text-left">
                                         
-                                        <a href="/cmd/{{ r.stn_id }}/FTP_BACKLOG"
-                                            class="block px-4 py-2 text-xs text-green-400 hover:bg-slate-800">↑ Sync Backlog</a>
-                                        
-                                        <button onclick="promptFtpDaily('{{ r.stn_id }}')"
-                                            class="w-full text-left block px-4 py-2 text-xs text-purple-400 hover:bg-slate-800">↑ Daily Log</button>
+                                        <!-- TIER 1: TELEMETRY -->
+                                        <div class="px-3 py-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider">📊 Telemetry & Status</div>
+                                        <a href="/cmd/{{ r.stn_id }}/GET_NUM" class="block px-3 py-1.5 text-xs text-blue-300 hover:bg-slate-800">📱 Query SIM Number</a>
+                                        <a href="/cmd/{{ r.stn_id }}/GET_STATUS" class="block px-3 py-1.5 text-xs text-green-300 hover:bg-slate-800">📊 Fetch Status Now</a>
+                                        <a href="/cmd/{{ r.stn_id }}/GET_GPS" class="block px-3 py-1.5 text-xs text-blue-400 hover:bg-slate-800">📍 Refresh GPS Fix</a>
 
-                                        <div class="border-t border-slate-700/50 my-1"></div>
-                                        
-                                        <a href="/cmd/{{ r.stn_id }}/GET_GPS"
-                                            class="block px-4 py-2 text-xs text-blue-400 hover:bg-slate-800"
-                                            onclick="return confirm('Force {{ r.stn_id }} to acquire new GPS fix?')">📍 Refresh GPS</a>
-                                        
-                                        <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=15"
-                                            class="block px-4 py-2 text-xs text-amber-400 hover:bg-slate-800"
-                                            onclick="return confirm('Set {{ r.stn_id }} to 15-min reporting?')">⏱ 15 Min Mode</a>
-                                        
-                                        <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=1440"
-                                            class="block px-4 py-2 text-xs text-amber-500 hover:bg-slate-800"
-                                            onclick="return confirm('Set {{ r.stn_id }} to 24-hr reporting?')">⏱ 24 Hr Mode</a>
+                                        <!-- TIER 2: DATA & REPORTING -->
+                                        <div class="border-t border-slate-800 my-1"></div>
+                                        <div class="px-3 py-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider">🔄 Data & Reporting</div>
+                                        <a href="/cmd/{{ r.stn_id }}/FTP_BACKLOG" class="block px-3 py-1.5 text-xs text-purple-300 hover:bg-slate-800">↑ Sync Backlog (FTP)</a>
+                                        <button onclick="promptFtpDaily('{{ r.stn_id }}')" class="w-full text-left block px-3 py-1.5 text-xs text-purple-400 hover:bg-slate-800">📅 Fetch Daily Log</button>
+                                        <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=15" class="block px-3 py-1.5 text-xs text-amber-300 hover:bg-slate-800">⏱ 15-Min Reporting</a>
+                                        <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=1440" class="block px-3 py-1.5 text-xs text-amber-400 hover:bg-slate-800">⏱ 24-Hour Reporting</a>
+                                        <a href="/cmd/{{ r.stn_id }}/SET_RF_RES?param=0.25" class="block px-3 py-1.5 text-xs text-sky-300 hover:bg-slate-800">🎛 Tip Res: 0.25 mm</a>
+                                        <a href="/cmd/{{ r.stn_id }}/SET_RF_RES?param=0.50" class="block px-3 py-1.5 text-xs text-sky-400 hover:bg-slate-800">🎛 Tip Res: 0.50 mm</a>
 
-                                        <div class="border-t border-slate-700/50 my-1"></div>
+                                        <!-- TIER 3: MAINTENANCE -->
+                                        <div class="border-t border-slate-800 my-1"></div>
+                                        <div class="px-3 py-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider">🛠 Maintenance & Queue</div>
+                                        <a href="/toggle-ota-lock/{{ r.stn_id }}" class="block px-3 py-1.5 text-xs text-orange-300 hover:bg-slate-800">🔒 Toggle OTA Lock</a>
+                                        <a href="/clear-ota-queue/{{ r.stn_id }}" class="block px-3 py-1.5 text-xs text-yellow-300 hover:bg-slate-800">❌ Clear OTA Queue</a>
+                                        <a href="/clear-queue/{{ r.stn_id }}" class="block px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800">🗑 Clear All Cmds</a>
+                                        <a href="/cmd/{{ r.stn_id }}/CLEAR_FTP_QUEUE" class="block px-3 py-1.5 text-xs text-orange-400 hover:bg-slate-800">🧹 Wipe Device Backlog</a>
+                                        {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
+                                        <button onclick="openWifiPassModal('{{ r.stn_id }}')" class="w-full text-left block px-3 py-1.5 text-xs text-indigo-300 hover:bg-slate-800">🔐 Set Wi-Fi Pass</button>
+                                        {% endif %}
 
-                                        <a href="/cmd/{{ r.stn_id }}/CLEAR_FTP_QUEUE"
-                                            class="block px-4 py-2 text-xs text-orange-500 hover:bg-slate-800"
-                                            onclick="return confirm('Clear ALL unsent data on {{ r.stn_id }}?')">🗑 Wipe Backlog</a>
-                                        <div class="border-t border-slate-700/50 my-1"></div>
-                                        <a href="/cmd/{{ r.stn_id }}/DELETE_DATA"
-                                             class="block px-4 py-2 text-xs text-orange-600 font-bold hover:bg-orange-900/40"
-                                             onclick="return confirm('CRITICAL: This will trigger a REMOTE FACTORY RESET on {{ r.stn_id }}. All historical data on the device SPIFFS will be deleted. Configuration will be preserved. Proceed?')">⚠ Delete Device Data</a>
-                                         
-                                        <div class="border-t border-slate-700 my-1"></div>
-                                         <a href="/delete/{{ r.stn_id }}"
-                                            class="block px-4 py-2 text-xs text-red-500 hover:bg-red-900/50"
-                                            onclick="return confirm('WARNING: Permanently delete ALL records for {{ r.stn_id }} everywhere?')">🗑
-                                            Delete Station (Global)</a>
-
-                                        <a href="/delete-category/{{ r.stn_id }}/{{ fw.unit_type }}/{{ fw.system_mode }}"
-                                            class="block px-4 py-2 text-xs text-orange-400 hover:bg-orange-900/40"
-                                            onclick="return confirm('Surgical Delete: Remove {{ r.stn_id }} ONLY from the {{ fw.display_name }} group? This will fix phantom entries if the device has moved to another category.')">✂ Remove from Group</a>
+                                        <!-- TIER 4: DANGER ZONE -->
+                                        <div class="border-t border-slate-800 my-1"></div>
+                                        <div class="px-3 py-1 text-[9px] font-bold text-red-400 uppercase tracking-wider">🚨 Danger Zone</div>
+                                        <a href="/cmd/{{ r.stn_id }}/REBOOT" class="block px-3 py-1.5 text-xs text-red-400 hover:bg-red-950/60" onclick="return confirm('Reboot {{ r.stn_id }}?')">↺ Reboot Device</a>
+                                        <a href="/cmd/{{ r.stn_id }}/DELETE_DATA" class="block px-3 py-1.5 text-xs text-orange-500 font-bold hover:bg-orange-950/60" onclick="return confirm('CRITICAL: Factory reset on {{ r.stn_id }}? Proceed?')">⚠ Factory Reset</a>
+                                        <a href="/delete-category/{{ r.stn_id }}/{{ fw.unit_type }}/{{ fw.system_mode }}" class="block px-3 py-1.5 text-xs text-orange-400 hover:bg-slate-800" onclick="return confirm('Surgical Delete: Remove {{ r.stn_id }} ONLY from the {{ fw.display_name }} group?')">✂ Remove from Group</a>
+                                        <a href="/delete/{{ r.stn_id }}" class="block px-3 py-1.5 text-xs text-red-500 font-bold hover:bg-red-950/80" onclick="return confirm('WARNING: Permanently delete station {{ r.stn_id }} everywhere?')">🗑 Delete Station</a>
                                     </div>
                                 </div>
                             </td>

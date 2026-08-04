@@ -47,9 +47,8 @@
                     <div class="flex items-center space-x-3 flex-wrap gap-y-2">
                         <form action="/ota/upload/{{ fw.category_id }}" method="post" enctype="multipart/form-data"
                             class="flex items-center space-x-2">
-                            <input type="text" name="ver" placeholder="e.g. 5.80"
-                                class="bg-slate-800 border-slate-500 px-2 py-1.5 rounded text-white text-xs w-16"
-                                style="color: white !important; background-color: #1e293b !important" required>
+                            <input type="text" name="ver" placeholder="5.80"
+                                class="bg-slate-800 border border-slate-700 px-2.5 py-1.5 rounded text-xs w-20 font-mono font-bold" required>
                             <div class="flex flex-col min-w-[120px]">
                                 <input type="file" name="file" accept=".bin" class="text-[10px] text-slate-400">
                                 {% if fw.file_exists %}

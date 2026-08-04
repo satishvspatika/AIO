@@ -1,0 +1,20 @@
+services:
+  health-api:
+    build: .
+    container_name: spatika-health
+    ports:
+      # Port 8001: Used by Nginx (spatika-health.conf) to route /health /dashboard /ota etc.
+      # Port 80 is owned by Nginx — do NOT bind 80 here (causes container startup failure).
+      - "8001:8000"
+      # Port 8085: Legacy/direct access fallback (ESP32 old URLs, debugging)
+      - "8085:8000"
+    volumes:
+      - ./data:/app/data
+      - ./app:/app/app
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=sqlite:////app/data/health.db
+      - ADMIN_USER=satishv
+      - ADMIN_PASS=friend
+      - GUEST_USER=spatika
+      - GUEST_PASS=sit#2001

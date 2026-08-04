@@ -106,8 +106,8 @@ def evaluate(r, now: datetime.datetime = None) -> dict:
         demerits += 10
 
     # ── 4. Previous day completeness & Labels ────────────────────────────────
-    prev_sent   = r.net_cnt_prev or 0
-    prev_stored = r.prev_stored  or 0
+    prev_sent   = max(int(getattr(r, "net_cnt_prev", 0) or 0), int(getattr(r, "met_ydy", 0) or 0))
+    prev_stored = int(getattr(r, "prev_stored", 0) or 0)
 
     # ── PD: Partial Data (Previous Day records missing) ──
     # net_cnt_prev = confirmed records (Live + Backlog)

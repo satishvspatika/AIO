@@ -320,6 +320,8 @@ extern volatile RTC_DATA_ATTR bool skip_primary_http;
 extern volatile bool sleep_sequence_active;    // v5.77: Sleep Gate signal
 extern volatile bool force_ftp;               // v5.77: RESTORED
 extern volatile bool force_ftp_daily;
+extern volatile bool force_health_upload;
+extern volatile bool force_get_num;
 extern RTC_DATA_ATTR int rtc_daily_sync_count; // v5.77: Daily sync retry cap
 extern char ftp_daily_date[12];
 extern volatile bool force_reboot;
@@ -651,12 +653,13 @@ void get_c_file_info(char *cfn, int *cdd, int *cmm, int *cyy);
 void getTimeSnapshot(struct tm *timeinfo); // v5.79: Hardened Time Sync
 int send_at_cmd_data(char *payload, bool robust);
 void send_http_data();
-bool send_health_report(bool useJitter = true, bool alreadyLocked = false);
+bool send_health_report(bool useJitter = true, bool alreadyLocked = false, bool cmdPollOnly = false);
 void send_unsent_data();
 void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked = false);
 void start_gprs();
 void send_sms();
 void process_sms(char msg_no);
+void retrieveOwnNumber(char* outBuf, size_t outSize);
 int setup_ftp(int transMode = 0);
 void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked = false);
 void copyFromSPIFFSToFS(char *dateFile, bool alreadyLocked = false);
@@ -694,7 +697,7 @@ void get_a7672s();
 void prepare_and_send_status(char *number, bool alreadyLocked = false);
 void get_lat_long_date_time(char *number, bool alreadyLocked = false);
 void store_current_unsent_data();
-void get_gps_coordinates();
+void get_gps_coordinates(bool alreadyLocked = true);
 void prepare_data_and_send();
 void power_cut_modem_shutdown();
 // (prototype above at line 90)

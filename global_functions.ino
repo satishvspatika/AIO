@@ -233,6 +233,7 @@ void start_deep_sleep() {
       return; 
   }
 
+  esp_task_wdt_reset();
   Serial.flush();
   flushSerialSIT(); // Drain modem UART before entering deep sleep
   debugln("[PWR] Entering Deep Sleep");
@@ -662,7 +663,30 @@ void checkRainfallIntegrity() {
   if (SYSTEM == 1)
     return; // No rainfall for TWS
 
-  if (!SPIFFS.exists(cur_file)) {
+  // If cur_file is not initialized, try to construct it using the current RTC time
+  if (cur_file[0] == '\0') {
+    int cur_dd, cur_mm, cur_yy, curr_h, curr_m;
+    portENTER_CRITICAL(&rtcTimeMux);
+    cur_dd = current_day;
+    cur_mm = current_month;
+    cur_yy = current_year;
+    curr_h = (current_hour < 24) ? current_hour : 0;
+    curr_m = (current_min < 60) ? current_min : 0;
+    portEXIT_CRITICAL(&rtcTimeMux);
+
+    if (cur_yy >= 2025) {
+      int curr_sNum = (curr_h * 4 + curr_m / 15 + 61) % 96;
+      if (curr_sNum <= 60) {
+        next_date(&cur_dd, &cur_mm, &cur_yy);
+      }
+      snprintf(cur_file, sizeof(cur_file), "/%s_%04d%02d%02d.txt", station_name, cur_yy, cur_mm, cur_dd);
+#if DEBUG == 1
+      debugf("[RainCheck] cur_file was empty, dynamically initialized to %s\n", cur_file);
+#endif
+    }
+  }
+
+  if (cur_file[0] == '\0' || !SPIFFS.exists(cur_file)) {
     debugf1("[RainCheck] File %s not found. Skipping integrity check.\n",
             cur_file);
     return;

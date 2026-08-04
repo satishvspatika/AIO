@@ -110,8 +110,7 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
         resp.set_cookie(key="session_id", value=session_id, max_age=86400 * 7, httponly=True, samesite="strict")
         return resp
     
-    return templates.TemplateResponse(name="login.html", context={
-        "request": request, 
+    return templates.TemplateResponse(request=request, name="login.html", context={
         "error": "Invalid username or password"
     })
 
