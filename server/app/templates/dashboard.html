@@ -24,30 +24,37 @@
 <!-- ══ ROW 2: Low-Profile Executive Telemetry Summary Bar (Connected directly under tabs) ══ -->
 {% for grp_key, st in group_stats.items() %}
 <div id="exec-banner-{{ grp_key }}" class="exec-group-banner flex items-center justify-between gap-2.5 mb-3 p-2 rounded-b-xl rounded-tr-xl bg-slate-900/90 border border-slate-700/80 shadow-md overflow-x-auto whitespace-nowrap {% if grp_key != 'all' %}hidden{% endif %}">
-    <div class="flex items-center gap-2 flex-wrap text-xs font-semibold">
+    <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 text-xs font-semibold">
         <!-- 1. Total (Clickable) -->
         <button onclick="applyFilter('all')" id="card-all-{{ grp_key }}" title="Click to view all stations in this group"
-            class="stat-card-pill group-stat-all px-2.5 py-1 rounded-lg bg-blue-950/70 hover:bg-blue-900 border border-blue-700/60 text-blue-300 font-bold transition cursor-pointer shadow-sm flex items-center gap-1">
+            class="stat-card-pill group-stat-all px-2.5 py-1 rounded-lg bg-blue-950/70 hover:bg-blue-900 border border-blue-700/60 text-blue-300 font-bold transition cursor-pointer shadow-sm flex items-center gap-1 shrink-0">
             <span>📡 Total:</span>
             <span id="pill-total-{{ grp_key }}">{{ st.total_seen }}</span>
         </button>
 
         <!-- 2. Alarms (Clickable) -->
         <button onclick="applyFilter('alarm')" id="card-alarm-{{ grp_key }}" title="Click to filter stations with alarms/faults"
-            class="stat-card-pill px-2.5 py-1 rounded-lg bg-red-950/70 hover:bg-red-900 border border-red-800/60 text-red-300 font-bold transition cursor-pointer shadow-sm flex items-center gap-1">
+            class="stat-card-pill px-2.5 py-1 rounded-lg bg-red-950/70 hover:bg-red-900 border border-red-800/60 text-red-300 font-bold transition cursor-pointer shadow-sm flex items-center gap-1 shrink-0">
             <span>⚠️ Alarms:</span>
             <span>{{ st.fail_count }}</span>
         </button>
 
         <!-- 3. OTA Pending (Clickable) -->
         <button onclick="applyFilter('ota')" id="card-ota-{{ grp_key }}" title="Click to filter stations with pending firmware OTA"
-            class="stat-card-pill px-2.5 py-1 rounded-lg bg-yellow-950/70 hover:bg-yellow-900 border border-yellow-800/60 text-yellow-300 font-bold transition cursor-pointer shadow-sm flex items-center gap-1">
+            class="stat-card-pill px-2.5 py-1 rounded-lg bg-yellow-950/70 hover:bg-yellow-900 border border-yellow-800/60 text-yellow-300 font-bold transition cursor-pointer shadow-sm flex items-center gap-1 shrink-0">
             <span>🚀 OTA:</span>
             <span>{{ st.ota_pending }}</span>
         </button>
 
+        <!-- 3b. Muted Live Transmissions (Clickable) -->
+        <button onclick="applyFilter('muted')" id="card-muted-{{ grp_key }}" title="Click to filter stations with live transmission muted"
+            class="stat-card-pill px-2.5 py-1 rounded-lg bg-rose-950/70 hover:bg-rose-900 border border-rose-800/60 text-rose-300 font-bold transition cursor-pointer shadow-sm flex items-center gap-1 shrink-0">
+            <span>⏸️ Muted:</span>
+            <span>{{ st.muted_count or 0 }}</span>
+        </button>
+
         <!-- 4. GPRS Main Battery (Interactive Pill) -->
-        <div id="card-lowbat-{{ grp_key }}" class="stat-card-pill px-2.5 py-1 rounded-lg bg-orange-950/70 border border-orange-800/60 text-orange-300 font-bold transition shadow-sm flex items-center gap-1.5">
+        <div id="card-lowbat-{{ grp_key }}" class="stat-card-pill px-2.5 py-1 rounded-lg bg-orange-950/70 border border-orange-800/60 text-orange-300 font-bold transition shadow-sm flex items-center gap-1.5 shrink-0">
             <button onclick="applyFilter('lowbat')" title="Filter all GPRS battery issues (<3.8V)" class="hover:underline flex items-center gap-1 cursor-pointer">
                 <span>🔋 GPRS Bat:</span>
             </button>
@@ -57,7 +64,7 @@
         </div>
 
         <!-- 5. MCU Logic Battery (Interactive Pill) -->
-        <div id="card-mcubat-{{ grp_key }}" class="stat-card-pill px-2.5 py-1 rounded-lg bg-cyan-950/70 border border-cyan-800/60 text-cyan-300 font-bold transition shadow-sm flex items-center gap-1.5" title="MCU Processor Logic & RTC Battery Rail (3.3V System)">
+        <div id="card-mcubat-{{ grp_key }}" class="stat-card-pill px-2.5 py-1 rounded-lg bg-cyan-950/70 border border-cyan-800/60 text-cyan-300 font-bold transition shadow-sm flex items-center gap-1.5 shrink-0" title="MCU Processor Logic & RTC Battery Rail (3.3V System)">
             <button onclick="applyFilter('mcubat')" title="Filter all MCU battery issues (<3.2V)" class="hover:underline flex items-center gap-1 cursor-pointer">
                 <span class="text-[10px] text-cyan-400 font-bold uppercase">⚡ MCU Bat:</span>
             </button>
@@ -67,7 +74,7 @@
         </div>
 
         <!-- 6. Solar Panel Charging (Dedicated Separate Interactive Pill) -->
-        <div id="card-solar-{{ grp_key }}" class="stat-card-pill px-2.5 py-1 rounded-lg bg-amber-950/70 border border-amber-800/60 text-amber-300 font-bold transition shadow-sm flex items-center gap-1.5" title="Solar Panel Daylight & Active Charging Voltage">
+        <div id="card-solar-{{ grp_key }}" class="stat-card-pill px-2.5 py-1 rounded-lg bg-amber-950/70 border border-amber-800/60 text-amber-300 font-bold transition shadow-sm flex items-center gap-1.5 shrink-0" title="Solar Panel Daylight & Active Charging Voltage">
             <button onclick="applyFilter('solar_active')" title="Filter all stations with active solar charging (≥1.2V)" class="hover:underline flex items-center gap-1 cursor-pointer">
                 <span>☀️ Solar:</span>
             </button>
@@ -80,14 +87,14 @@
         </div>
 
         <!-- 5. Firmware Version & Conversion Status -->
-        <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/50 border border-emerald-800/60 text-emerald-300 shadow-sm" title="Live field firmware version and conversion percentage">
+        <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/50 border border-emerald-800/60 text-emerald-300 shadow-sm shrink-0" title="Live field firmware version and conversion percentage">
             <span class="text-[10px] text-emerald-500 font-bold uppercase">FW</span>
             <span class="font-mono font-bold text-emerald-300">{% if st.total_seen > 0 %}{{ st.pct if st.pct is defined else 0 }}%{% else %}-{% endif %}</span>
             <span class="text-[10px] text-emerald-400/80 font-mono">({% if st.total_seen > 0 and st.latest_ver != 'N/A' %}{{ st.latest_ver }}{% else %}N/A{% endif %})</span>
         </div>
 
         <!-- 6. Network Carrier Breakdown -->
-        <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-950/50 border border-purple-800/60 text-purple-300 shadow-sm" title="Active SIM cellular carriers and coverage">
+        <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-950/50 border border-purple-800/60 text-purple-300 shadow-sm shrink-0" title="Active SIM cellular carriers and coverage">
             <span class="text-[10px] text-purple-500 font-bold uppercase">Network</span>
             {% for c_name, count in st.carriers.items() %}
             <span class="font-bold">{{ c_name }}: {{ count }}</span>
@@ -128,6 +135,9 @@
     </div>
 
     <div class="flex items-center gap-2 flex-wrap">
+        <button onclick="window.location.reload()" class="btn-sm btn-blu flex items-center gap-1 cursor-pointer" title="Refresh Dashboard Data Now">
+            🔄 Refresh
+        </button>
         <span class="inline-flex items-center text-[10px] text-emerald-400 font-bold bg-emerald-950/60 border border-emerald-800/80 px-2.5 py-1 rounded-lg">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse mr-1.5"></span>LIVE
         </span>
@@ -164,22 +174,19 @@
 
 <!-- Unified Station Table -->
 <div class="card tbl-wrap">
-    <table class="w-full text-left text-xs">
+    <table class="w-full text-left text-xs" id="fleet-table">
         <thead>
             <tr class="text-slate-500 uppercase text-[10px] tracking-widest border-b border-slate-800">
-                <th class="p-3 w-8"><input type="checkbox" onclick="toggleAllStations(this)"></th>
-                <th class="p-3 text-left whitespace-nowrap">Station</th>
-                <th class="p-3 text-left whitespace-nowrap">Group</th>
-                <th class="p-3 text-left whitespace-nowrap">Carrier</th>
-                <th class="p-3 text-left whitespace-nowrap">Status</th>
-                <th class="p-3 text-center whitespace-nowrap" title="Records received in DB for current MET day (from 08:45 IST today)">MET Today</th>
-                <th class="p-3 text-center whitespace-nowrap" title="Records received in DB for previous MET day (08:45 IST yesterday to 08:30 IST today)">MET Ydy</th>
-                <th class="p-3 text-center whitespace-nowrap"
-                    title="Today: Direct HTTP successes / Backlog recovered via retry+FTP">Tdy HTTP / Backlog</th>
-                <th class="p-3 text-center whitespace-nowrap"
-                    title="Yesterday: Direct HTTP successes / Backlog recovered via retry+FTP">Ydy HTTP / Backlog</th>
-                <th class="p-3 text-left whitespace-nowrap">Last Seen</th>
-                <th class="p-3 text-right whitespace-nowrap">Actions</th>
+                <th class="p-2.5 w-8"><input type="checkbox" onclick="toggleAllStations(this)"></th>
+                <th class="p-2.5 text-left whitespace-nowrap">Station / SIM#</th>
+                <th class="p-2.5 text-left whitespace-nowrap" id="col-head-group">Group / HW</th>
+                <th class="p-2.5 text-left whitespace-nowrap">Network / Carrier</th>
+                <th class="p-2.5 text-left whitespace-nowrap">Sts</th>
+                <th class="p-2.5 text-center whitespace-nowrap" title="Today MET Records (Direct HTTP / Backlog) + CDM status">TDY (H/B)</th>
+                <th class="p-2.5 text-center whitespace-nowrap" title="Yesterday MET Records (Direct HTTP / Backlog) + PD/CDM/NDM quality flags">YDY (H/B)</th>
+                <th class="p-2.5 text-center whitespace-nowrap" title="State (based on close date & last report time)">State</th>
+                <th class="p-2.5 text-left whitespace-nowrap">Last Seen</th>
+                <th class="p-2.5 text-right whitespace-nowrap">Actions</th>
             </tr>
         </thead>
         <tbody class="divide-y divide-slate-800">
@@ -193,38 +200,72 @@
                 data-group="{{ r.group_code }}"
                 data-status="{% if r.eval.verdict not in ('OK', 'INFO') %}alarm{% else %}ok{% endif %}"
                 data-ota="{{ 'true' if r.ota_needed else 'false' }}"
+                data-muted="{{ 'true' if r.is_muted or r.muted == 1 else 'false' }}"
                 data-lowbat="{{ 'true' if r.bat_v and r.bat_v < 3.6 else 'false' }}"
                 data-gprs-bat="{% if not r.bat_v or r.bat_v == 0 %}none{% elif r.bat_v >= 3.8 %}healthy{% elif r.bat_v >= 3.6 %}marginal{% else %}critical{% endif %}"
                 data-mcu-bat="{% if not r.mcu_bat or r.mcu_bat == 0 %}none{% elif r.mcu_bat >= 3.2 %}healthy{% elif r.mcu_bat >= 3.0 %}marginal{% else %}critical{% endif %}"
                 data-sol-v="{{ r.sol_v or 0 }}"
                 onclick="window.location='/station/{{ r.stn_id }}'">
-                <td class="p-3" onclick="event.stopPropagation()">
+                <td class="p-2.5" onclick="event.stopPropagation()">
                     <input type="checkbox" class="stn-checkbox" value="{{ r.stn_id }}" onchange="updateBulkDeleteBtn()">
                 </td>
-                <td class="p-3 font-bold text-blue-400 whitespace-nowrap">
-                    <div class="inline-flex items-center gap-1.5">
-                        <span>{{ r.stn_id.lstrip('0') if r.stn_id.lstrip('0') else r.stn_id }}</span>
-                        {% if r.gps and r.gps not in ('NA', '0,0', '0.000000,0.000000', 'None', '') %}
-                        {% set gps_p = r.gps.split(',') %}
-                        {% if gps_p|length >= 2 %}
-                        <button onclick="event.stopPropagation(); zoomToStation('{{ r.stn_id }}', {{ gps_p[0]|trim }}, {{ gps_p[1]|trim }})"
-                            class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/70 border border-emerald-700/60 text-emerald-300 hover:bg-emerald-800 transition shadow-sm"
-                            title="Zoom map to Station {{ r.stn_id }}">
-                            📍 Map
-                        </button>
-                        {% endif %}
+                <td class="p-2.5 font-bold text-blue-400 whitespace-nowrap">
+                    <div class="flex flex-col gap-0.5">
+                        <div class="inline-flex items-center gap-1.5">
+                            <span class="text-xs font-mono font-bold text-blue-300">{{ r.stn_id.lstrip('0') if r.stn_id.lstrip('0') else r.stn_id }}</span>
+                            {% if r.gps and r.gps not in ('NA', '0,0', '0.000000,0.000000', 'None', '') %}
+                            {% set gps_p = r.gps.split(',') %}
+                            {% if gps_p|length >= 2 %}
+                            <button onclick="event.stopPropagation(); zoomToStation('{{ r.stn_id }}', {{ gps_p[0]|trim }}, {{ gps_p[1]|trim }})"
+                                class="text-[9px] px-1 py-0.2 rounded bg-emerald-950/70 border border-emerald-700/60 text-emerald-300 hover:bg-emerald-800 transition shadow-sm"
+                                title="Zoom map to Station {{ r.stn_id }}">
+                                📍 Map
+                            </button>
+                            {% endif %}
+                            {% endif %}
+                        </div>
+                        {# iccid holds MSISDN (phone#) when firmware has sim_msisdn; length < 18 = phone, >= 18 = real ICCID #}
+                        {% if r.iccid and r.iccid|length < 18 %}
+                        <span class="text-[9px] text-slate-400 font-mono font-normal" title="SIM Mobile Number">📱 {{ r.iccid }}</span>
                         {% endif %}
                     </div>
                 </td>
 
-                <td class="p-3 text-slate-400 text-[10px] leading-tight font-bold">
-                    {{ r.group_code }}
+                <td class="p-2.5 text-[10px] leading-tight">
+                    <div class="group-cell-all text-slate-400 font-bold">
+                        {{ r.group_code }}
+                    </div>
+                    <div class="group-cell-hw hidden flex flex-col gap-0.5 text-[9px] font-mono">
+                        <span class="text-cyan-400">⚡ MCU: {{ "%.2f"|format(r.mcu_bat) if r.mcu_bat else "--" }}V</span>
+                        <span class="text-emerald-400">🔋 GPRS: {{ "%.2f"|format(r.bat_v) if r.bat_v else "--" }}V</span>
+                        <span class="text-amber-400">☀️ Sol: {{ "%.1f"|format(r.sol_v) if r.sol_v else "--" }}V</span>
+                    </div>
                 </td>
-                <td class="p-3 text-slate-300 font-bold text-[10px]">
-                    {{ r.carrier or '?' }}
+                <td class="p-2.5 text-slate-300 text-[10px] whitespace-nowrap">
+                    <div class="flex flex-col gap-0.5">
+                        <span class="font-bold text-slate-200">{{ r.carrier or '?' }}</span>
+                        <div class="flex items-center gap-1.5 text-[9px] font-mono">
+                            {% if r.signal %}
+                            <span class="{% if r.signal < -100 %}text-amber-400 font-bold{% else %}text-emerald-400{% endif %}" title="Signal Strength">
+                                📶 {{ r.signal }}dBm
+                            </span>
+                            {% endif %}
+                            {% if r.iccid and r.iccid|length >= 18 %}
+                            <span class="text-slate-400 text-[9px]" title="SIM ICCID: {{ r.iccid }}">#{{ r.iccid[-6:] }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
                 </td>
-                <td class="p-3">
-                    {% if r.eval.verdict == 'OK' %}
+                {# ── Status: sensor/battery verdict (TDY scope) ── #}
+                <td class="p-2.5">
+                    {% if r.is_muted or r.muted == 1 or 'MUTED' in (r.health_sts or '') %}
+                    {% set show_r = r.pause_reason and r.pause_reason not in ('Live Transmission Muted', 'Live Transmissions Muted', 'Device Muted', 'Manual Pause', 'Muted') %}
+                    <span class="badge badge-muted text-[10px] px-2 py-0.5 rounded font-bold shadow-sm inline-flex flex-col items-start leading-tight" title="Live Muted{% if r.pause_reason %}: {{ r.pause_reason }}{% endif %} (Since {{ r.paused_at_ist or 'N/A' }})">
+                        <span class="flex items-center gap-1 font-extrabold text-[10px]">⏸️ Live Muted</span>
+                        {% if show_r %}<span class="text-[8px] opacity-90 font-semibold mt-0.5">{{ r.pause_reason }}</span>{% endif %}
+                        {% if r.paused_duration %}<span class="text-[8px] opacity-80 font-mono font-medium">For {{ r.paused_duration }}</span>{% endif %}
+                    </span>
+                    {% elif r.eval.verdict == 'OK' %}
                     <span class="badge-ok" title="Score: {{ r.eval.score }}">✓ OK</span>
                     {% else %}
                     <div class="flex flex-wrap gap-1">
@@ -236,30 +277,79 @@
                     </div>
                     {% endif %}
                 </td>
-                <td class="p-3 font-mono text-center whitespace-nowrap" title="MET Today: records received in DB since 08:45 IST">
-                    {% if met_today_active %}
-                    <span class="{% if r.met_today == 0 %}text-red-400{% elif r.met_today < 10 %}text-amber-400{% else %}text-emerald-400{% endif %} font-bold">{{ r.met_today }}</span>
+
+                {# ── TDY: live in-progress count + CDM badge + Muted differentiation ── #}
+                <td class="p-2.5 font-mono text-center whitespace-nowrap" title="Today MET: Net records delivered to server (Direct HTTP / Backlog)">
+                    <div class="flex flex-col items-center gap-0.5">
+                        <div>
+                            <span class="{% if r.met_today == 0 %}text-red-400{% elif r.met_today < 10 %}text-amber-400{% else %}text-emerald-400{% endif %} font-bold">
+                                {{ r.met_today }}
+                            </span>
+                            <span class="text-blue-400 text-[10px] ml-1">({{ r.met_today_http or '0/0' }})</span>
+                        </div>
+                        {% if r.muted_today_slots and r.muted_today_slots > 0 %}
+                        <span class="badge-muted text-[8px] px-1 py-0.2 rounded font-bold" title="{{ r.net_cnt or 0 }} slots logged on SD, {{ r.muted_today_slots }} slots muted from live post">
+                            ⏸️ {{ r.muted_today_slots }} Muted
+                        </span>
+                        {% endif %}
+                        {# CDM badge: only show if PENDING or FAIL #}
+                        {% set cdm = r.cdm_sts or '' %}
+                        {% if cdm == 'PENDING' %}
+                        <span class="text-[8px] px-1 rounded bg-amber-950/60 border border-amber-600/50 text-amber-300" title="Closing Data Missing: Pending (08:30 record not yet due)">CDM⏳</span>
+                        {% elif cdm == 'FAIL' %}
+                        <span class="text-[8px] px-1 rounded bg-red-950/60 border border-red-600/50 text-red-300" title="Closing Data Missing: FAIL (08:30 record not received)">CDM✗</span>
+                        {% endif %}
+                    </div>
+                </td>
+
+                {# ── YDY: closed-day count + PD / NDM quality flags ── #}
+                <td class="p-2.5 font-mono text-center whitespace-nowrap" title="Yesterday MET: Net records delivered. PD/NDM flags are for the CLOSED previous day.">
+                    <div class="flex flex-col items-center gap-0.5">
+                        <div>
+                            <span class="{% if r.met_ydy == 0 %}text-red-400{% elif r.met_ydy < 80 %}text-amber-400{% else %}text-slate-300{% endif %} font-bold">
+                                {{ r.met_ydy }}
+                            </span>
+                            <span class="text-blue-400 text-[10px] ml-1">({{ r.met_ydy_http or '0/0' }})</span>
+                        </div>
+                        {% if r.muted_ydy_slots and r.muted_ydy_slots > 0 %}
+                        <span class="badge-muted text-[8px] px-1 py-0.2 rounded font-bold" title="{{ r.net_cnt_prev or 0 }} slots logged on SD yesterday, {{ r.muted_ydy_slots }} slots muted from live post">
+                            ⏸️ {{ r.muted_ydy_slots }} Muted
+                        </span>
+                        {% endif %}
+                        {# PD / NDM issue badges only #}
+                        <div class="flex gap-0.5 flex-wrap justify-center">
+                            {% set ydy_nc = r.net_cnt_prev or 0 %}
+                            {% if ydy_nc > 0 and ydy_nc < 86 %}
+                            <span class="text-[8px] px-1 rounded bg-amber-950/60 border border-amber-600/50 text-amber-300" title="Partial Data: {{ ydy_nc }}/96 records received">PD({{ ydy_nc }})</span>
+                            {% elif ydy_nc == 0 %}
+                            <span class="text-[8px] px-1 rounded bg-red-950/60 border border-red-600/50 text-red-400" title="Previous day: No data received">PD✗</span>
+                            {% endif %}
+                            {% set ndm = r.ndm_cnt or 0 %}
+                            {% if ndm > 18 %}
+                            <span class="text-[8px] px-1 rounded bg-red-950/60 border border-red-600/50 text-red-300" title="Night Data Missing: {{ ndm }}/36 night slots missed live">NDM✗</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </td>
+
+                {# ── State: live/stale/offline ── #}
+                <td class="p-2.5 text-center whitespace-nowrap">
+                    {% set mins_ago = 9999 %}
+                    {% if r.time_ago and 'm ago' in r.time_ago %}
+                        {% set mins_ago = r.time_ago.replace('m ago', '')|int %}
+                    {% endif %}
+                    {% if mins_ago <= 30 %}
+                    <span class="px-2 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-700/80 text-emerald-300 text-[9px] font-bold shadow-sm" title="Live station (<30m active)">🟢 LIVE</span>
+                    {% elif mins_ago <= 120 %}
+                    <span class="px-2 py-0.5 rounded-full bg-amber-950/80 border border-amber-700/80 text-amber-300 text-[9px] font-bold shadow-sm" title="Stale station (30m-2h delay)">🟡 STALE</span>
                     {% else %}
-                    <span class="text-slate-600" title="MET day starts at 08:45 IST">—</span>
+                    <span class="px-2 py-0.5 rounded-full bg-red-950/80 border border-red-700/80 text-red-300 text-[9px] font-bold shadow-sm" title="Offline station (>2h lag)">🔴 OFFLINE</span>
                     {% endif %}
                 </td>
-                <td class="p-3 font-mono text-center whitespace-nowrap" title="MET Yesterday: records received in DB (08:45 IST prev day → 08:30 IST today)">
-                    <span class="{% if r.met_ydy == 0 %}text-red-400{% elif r.met_ydy < 80 %}text-amber-400{% else %}text-slate-300{% endif %} font-bold">{{ r.met_ydy }}</span>
-                </td>
-                <td class="p-3 font-mono text-center text-blue-400 whitespace-nowrap" title="MET Today: Direct HTTP Successes / Backlog Recovered (since 08:45 IST)">
-                    {% if met_today_active %}
-                    {{ r.met_today_http }}
-                    {% else %}
-                    <span class="text-slate-600" title="MET day starts at 08:45 IST">— / —</span>
-                    {% endif %}
-                </td>
-                <td class="p-3 font-mono text-center text-blue-400 whitespace-nowrap" title="MET Yesterday: Direct HTTP Successes / Backlog Recovered (08:45 IST prev day → 08:30 IST today)">
-                    {{ r.met_ydy_http }}
-                </td>
-                <td class="p-3 text-slate-500 text-[11px] whitespace-nowrap" title="{{ r.reported_at }}">
+                <td class="p-2.5 text-slate-500 text-[11px] whitespace-nowrap" title="{{ r.reported_at }}">
                     {{ r.time_ago or '?' }}
                 </td>
-                <td class="p-3 text-right whitespace-nowrap" onclick="event.stopPropagation()">
+                <td class="p-2.5 text-right whitespace-nowrap" onclick="event.stopPropagation()">
                     <div class="relative inline-block text-left dropdown">
                         <button onclick="toggleDropdown(event, 'drop-dash-{{ r.stn_id }}')"
                             class="btn-sm bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-2.5 py-1"
@@ -290,6 +380,13 @@
                             <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=1440" class="block px-3 py-1.5 text-xs text-amber-400 hover:bg-slate-800">⏱ 24-Hour Reporting</a>
                             <a href="/cmd/{{ r.stn_id }}/SET_RF_RES?param=0.25" class="block px-3 py-1.5 text-xs text-sky-300 hover:bg-slate-800">🎛 Tip Res: 0.25 mm</a>
                             <a href="/cmd/{{ r.stn_id }}/SET_RF_RES?param=0.50" class="block px-3 py-1.5 text-xs text-sky-400 hover:bg-slate-800">🎛 Tip Res: 0.50 mm</a>
+                            {% if r.is_muted or r.muted == 1 %}
+                            <a href="/cmd/{{ r.stn_id }}/RESUME_LIVE_POST" class="block px-3 py-1.5 text-xs text-emerald-400 font-bold hover:bg-slate-800" onclick="return confirm('Resume live primary posts for {{ r.stn_id }}?')">▶️ Resume Live Posts</a>
+                            <button onclick="promptPauseReason('{{ r.stn_id }}')" class="w-full text-left block px-3 py-1.5 text-xs text-rose-400 hover:bg-slate-800">⏸️ Change Pause Reason</button>
+                            {% else %}
+                            <button onclick="promptPauseReason('{{ r.stn_id }}')" class="w-full text-left block px-3 py-1.5 text-xs text-rose-400 hover:bg-slate-800">⏸️ Pause Live Posts</button>
+                            <a href="/cmd/{{ r.stn_id }}/RESUME_LIVE_POST" class="block px-3 py-1.5 text-xs text-emerald-400 hover:bg-slate-800" onclick="return confirm('Resume live primary posts for {{ r.stn_id }}?')">▶️ Resume Live Posts</a>
+                            {% endif %}
 
                             <!-- TIER 3: MAINTENANCE -->
                             <div class="border-t border-slate-800 my-1"></div>
@@ -413,6 +510,18 @@
         const bgClass = bgMap[groupCode] || 'group-bg-all';
         document.body.classList.add(bgClass);
 
+        // Dynamic Column Toggle: Group vs Hardware Voltages
+        const colHead = document.getElementById('col-head-group');
+        if (groupCode === 'all') {
+            if (colHead) colHead.textContent = 'Group';
+            document.querySelectorAll('.group-cell-all').forEach(el => el.classList.remove('hidden'));
+            document.querySelectorAll('.group-cell-hw').forEach(el => el.classList.add('hidden'));
+        } else {
+            if (colHead) colHead.textContent = 'HW';
+            document.querySelectorAll('.group-cell-all').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.group-cell-hw').forEach(el => el.classList.remove('hidden'));
+        }
+
         // Toggle Executive Fleet Banner for Active Group
         document.querySelectorAll('.exec-group-banner').forEach(b => b.classList.add('hidden'));
         const targetBanner = document.getElementById('exec-banner-' + groupCode);
@@ -451,6 +560,7 @@
                 'all': 'card-all',
                 'alarm': 'card-alarm',
                 'ota': 'card-ota',
+                'muted': 'card-muted',
                 'lowbat': 'card-lowbat',
                 'gprs_healthy': 'card-lowbat',
                 'gprs_marginal': 'card-lowbat',
@@ -496,6 +606,7 @@
                 if (type === 'all') filterMatches = true;
                 else if (type === 'alarm') filterMatches = (row.dataset.status === 'alarm');
                 else if (type === 'ota') filterMatches = (row.dataset.ota === 'true');
+                else if (type === 'muted') filterMatches = (row.dataset.muted === 'true');
                 else if (type === 'lowbat') filterMatches = (gprsBat === 'critical' || gprsBat === 'marginal' || row.dataset.lowbat === 'true');
                 else if (type === 'gprs_healthy') filterMatches = (gprsBat === 'healthy');
                 else if (type === 'gprs_marginal') filterMatches = (gprsBat === 'marginal');
@@ -535,6 +646,7 @@
                     'all': 'ALL STATIONS',
                     'alarm': 'ALARM STATIONS',
                     'ota': 'OTA PENDING',
+                    'muted': 'LIVE TRANSMISSION MUTED STATIONS',
                     'lowbat': 'GPRS BATTERY ISSUES (<3.8V)',
                     'gprs_healthy': 'HEALTHY GPRS BATTERY (>3.8V)',
                     'gprs_marginal': 'MARGINAL GPRS BATTERY (3.6V - 3.8V)',
@@ -813,6 +925,31 @@
             setTimeout(() => closeFleetWifiModal(), 3000);
         })
         .catch(() => { alert('Server error. Please try again.'); btn.disabled = false; btn.textContent = 'Broadcast to Fleet'; });
+    };
+
+    window.promptFtpDaily = function (stnId) {
+        const date = prompt("Enter Date in YYYYMMDD format (e.g. 20260228):");
+        if (date && /^\d{8}$/.test(date)) {
+            fetch(`/cmd/${stnId}/FTP_DAILY?param=${date}`, { method: "POST" })
+            .then(res => {
+                if(res.ok) window.location.reload();
+                else alert("Failed to queue FTP_DAILY");
+            });
+        } else if (date) {
+            alert("Invalid date format. Please use YYYYMMDD.");
+        }
+    };
+
+    window.promptPauseReason = function (stnId) {
+        const reason = prompt("Enter reason for pausing live posts (e.g. Maintenance, Testing, Sensor Work):", "Manual Pause");
+        if (reason !== null) {
+            const encoded = encodeURIComponent(reason);
+            fetch(`/cmd/${stnId}/PAUSE_LIVE_POST?param=${encoded}`, { method: "POST" })
+            .then(res => {
+                if(res.ok) window.location.reload();
+                else alert("Failed to queue PAUSE_LIVE_POST");
+            });
+        }
     };
 </script>
 

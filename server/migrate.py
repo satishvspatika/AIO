@@ -105,6 +105,12 @@ def migrate():
         ("mutex_fail",       "INTEGER", "0"),
         ("last_cmd_id",      "INTEGER", "0"),    # v7.92
         ("last_cmd_res",     "TEXT",    "'N/A'"), # v7.92
+        ("rf_res",           "REAL",    "0.25"),
+        ("unsent_cnt",       "INTEGER", "0"),
+        ("zombie_cnt",       "INTEGER", "0"),
+        ("net_mode",         "TEXT",    "'4G'"),
+        ("surv_mode",        "INTEGER", "0"),
+        ("muted",            "INTEGER", "0"),
     ]:
         try:
             cursor.execute(f"ALTER TABLE health_reports ADD COLUMN {col} {dtype} DEFAULT {default};")
@@ -119,6 +125,9 @@ def migrate():
         ("last_gps",     "TEXT",     "NULL"),
         ("last_seen",    "DATETIME", "NULL"),
         ("wifi_pass",    "TEXT",     "'Spatika123'"),
+        ("muted",        "INTEGER",  "0"),
+        ("paused_at",    "DATETIME", "NULL"),
+        ("pause_reason", "TEXT",     "NULL"),
     ]:
         try:
             cursor.execute(f"ALTER TABLE station_settings ADD COLUMN {col} {dtype} DEFAULT {default};")

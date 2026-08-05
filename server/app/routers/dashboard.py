@@ -141,14 +141,36 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             for fw in fws
         }
         
-        # Bulk fetch all settings (GPS cache, OTA exempt)
-        settings_map = {s.stn_id: s for s in db.query(StationSettings).all()}
+        # Bulk fetch all settings (GPS cache, OTA exempt, Mute state) with normalized keys
+        settings_raw = db.query(StationSettings).all()
+        settings_map = {}
+        for s in settings_raw:
+            if s.stn_id:
+                settings_map[s.stn_id] = s
+                s_norm = s.stn_id.lstrip('0') if s.stn_id.isdigit() else s.stn_id
+                if s_norm: settings_map[s_norm] = s
+                if s.stn_id.isdigit(): settings_map[s.stn_id.zfill(6)] = s
         
         # Bulk fetch all pending commands
         pending_map = {
             c.stn_id: c for c in db.query(CommandQueue).filter(CommandQueue.executed_at == None).all()
         }
         
+        # Bulk fetch latest PAUSE / RESUME commands to guarantee bulletproof mute state
+        latest_pause_cmds = db.query(CommandQueue).filter(
+            CommandQueue.cmd.in_(["PAUSE_LIVE_POST", "PAUSE_TX", "PAUSE_KSNDMC", "RESUME_LIVE_POST", "RESUME_TX", "RESUME_KSNDMC"])
+        ).order_by(CommandQueue.id.asc()).all()
+
+        cmd_muted_stns = {}
+        for c in latest_pause_cmds:
+            norm = c.stn_id.lstrip('0') if c.stn_id and c.stn_id.isdigit() else c.stn_id
+            if c.cmd in ("PAUSE_LIVE_POST", "PAUSE_TX", "PAUSE_KSNDMC"):
+                cmd_muted_stns[norm] = c.cmd_param if c.cmd_param else None
+                cmd_muted_stns[c.stn_id] = c.cmd_param if c.cmd_param else None
+            else:
+                cmd_muted_stns.pop(norm, None)
+                cmd_muted_stns.pop(c.stn_id, None)
+
         now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
         # ── MET Day Boundaries (IST-based) ──────────────────────────────────────
@@ -157,8 +179,10 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         now_ist     = now + IST_OFFSET
         today_ist   = now_ist.date()
 
-        # MET-today window: 08:45 IST today → now  (if current IST time >= 08:45)
+        # MET-today window: 08:45 IST today → now (if current IST time is before 08:45 IST, query from yesterday 08:45 IST)
         met_today_start_ist = datetime.datetime.combine(today_ist, datetime.time(8, 45))
+        if now_ist < met_today_start_ist:
+            met_today_start_ist = met_today_start_ist - datetime.timedelta(days=1)
         met_today_start_utc = met_today_start_ist - IST_OFFSET   # 03:15 UTC
 
         # MET-yesterday window: 08:45 IST yesterday → 08:30 IST today
@@ -167,8 +191,8 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         met_ydy_start_utc   = met_ydy_start_ist - IST_OFFSET
         met_ydy_end_utc     = met_ydy_end_ist   - IST_OFFSET     # 03:00 UTC
 
-        # MET-today is valid only after 08:45 IST
-        met_today_active = (now_ist >= met_today_start_ist)
+        # Always keep met_today_active True so figures are never hidden with '—'
+        met_today_active = True
 
         # Bulk DB count & Direct/Backlog stats for MET Today
         met_today_map = {}
@@ -266,11 +290,29 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             r.group_code = r.fw_group.display_name if r.fw_group else (r.unit_type or 'UNKNOWN')
             
             # Use cached settings & GPS fallback
-            s_cache    = settings_map.get(r.stn_id)
+            s_raw = str(r.stn_id or "").strip()
+            s_norm = s_raw.lstrip('0') if s_raw.isdigit() else s_raw
+            s_cache = settings_map.get(r.stn_id) or settings_map.get(s_norm)
             r.is_exempt = (s_cache.ota_exempt == 1) if s_cache else False
             if s_cache and s_cache.last_gps and str(s_cache.last_gps).strip() not in ("NA", "0,0", "0.000000,0.000000", "None", ""):
                 if not r.gps or str(r.gps).strip() in ("NA", "0,0", "0.000000,0.000000", "None", ""):
                     r.gps = s_cache.last_gps
+
+            # Pause & Mute Metadata
+            r.is_muted = False
+            r.pause_reason = None
+            r.paused_at_ist = None
+            r.paused_duration = None
+            is_cmd_muted = s_norm in cmd_muted_stns or r.stn_id in cmd_muted_stns
+            if (s_cache and s_cache.muted == 1) or r.muted == 1 or 'MUTED' in (r.health_sts or '') or is_cmd_muted:
+                r.is_muted = True
+                r.pause_reason = (s_cache.pause_reason if (s_cache and s_cache.pause_reason) else cmd_muted_stns.get(s_norm) or cmd_muted_stns.get(r.stn_id))
+                if s_cache and s_cache.paused_at:
+                    p_ist = s_cache.paused_at + datetime.timedelta(hours=5, minutes=30)
+                    r.paused_at_ist = p_ist.strftime("%d-%m %H:%M IST")
+                    delta = now - s_cache.paused_at
+                    p_mins = max(0, int(delta.total_seconds() / 60))
+                    r.paused_duration = f"{p_mins}m" if p_mins < 60 else f"{p_mins // 60}h {p_mins % 60}m"
 
             # Deep DB historical GPS scan if still missing
             if not r.gps or str(r.gps).strip() in ("NA", "0,0", "0.000000,0.000000", "None", ""):
@@ -299,28 +341,48 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                     r.ota_needed = True
                     ota_pending += 1
 
-            # MET-day counts & Direct/Backlog HTTP breakdown (Supports 15-min and 24-hr modes)
+            # MET-day counts: prefer firmware net_cnt (ground truth), fall back to DB health-report row count.
+            # DB row count can exceed 96 in 15-min pulse mode (one health report per slot).
+            # net_cnt / net_cnt_prev are already the verified delivered data-record counts.
+            SLOTS_CAP = 96
+
             t_info = met_today_map.get(r.stn_id)
-            if t_info and t_info["total"] > 1:
-                r.met_today      = t_info["total"]
-                r.met_today_http = t_info["display"]
+            fw_today = r.net_cnt or 0
+            dir_c = r.http_suc_cnt if (r.http_suc_cnt is not None and r.http_suc_cnt >= 0) else 0
+            ret_c = (r.http_ret_cnt or 0) + (r.ftp_suc_cnt or 0)
+            deliv_today = dir_c + ret_c
+
+            r.muted_today_slots = max(0, fw_today - deliv_today) if (r.is_muted or (dir_c > 0 and dir_c < fw_today)) else 0
+
+            if r.is_muted or (r.http_suc_cnt is not None and deliv_today < fw_today):
+                r.met_today = min(deliv_today, SLOTS_CAP)
+            elif fw_today > 0:
+                r.met_today = min(fw_today, SLOTS_CAP)
+            elif t_info and t_info["total"] > 0:
+                r.met_today = min(t_info["total"], SLOTS_CAP)
             else:
-                dir_c = r.http_suc_cnt or 0
-                ret_c = (r.http_ret_cnt or 0) + (r.ftp_suc_cnt or 0)
-                tot_c = t_info["total"] if (t_info and t_info["total"] > 0) else (dir_c + ret_c)
-                r.met_today      = tot_c if tot_c > 0 else (r.net_cnt or 0)
-                r.met_today_http = f"{dir_c} / {ret_c}"
+                r.met_today = min(deliv_today, SLOTS_CAP)
+
+            r.met_today_http = f"{min(dir_c, SLOTS_CAP)} / {min(ret_c, SLOTS_CAP)}"
 
             y_info = met_ydy_map.get(r.stn_id)
-            if y_info and y_info["total"] > 1:
-                r.met_ydy      = y_info["total"]
-                r.met_ydy_http = y_info["display"]
+            fw_ydy = r.net_cnt_prev or 0
+            dir_p = r.http_suc_cnt_prev if (r.http_suc_cnt_prev is not None and r.http_suc_cnt_prev >= 0) else 0
+            ret_p = (r.http_ret_cnt_prev or 0) + (r.ftp_suc_cnt_prev or 0)
+            deliv_ydy = dir_p + ret_p
+
+            r.muted_ydy_slots = max(0, fw_ydy - deliv_ydy) if (r.is_muted or (dir_p > 0 and dir_p < fw_ydy)) else 0
+
+            if r.is_muted or (r.http_suc_cnt_prev is not None and deliv_ydy < fw_ydy):
+                r.met_ydy = min(deliv_ydy, SLOTS_CAP)
+            elif fw_ydy > 0:
+                r.met_ydy = min(fw_ydy, SLOTS_CAP)
+            elif y_info and y_info["total"] > 0:
+                r.met_ydy = min(y_info["total"], SLOTS_CAP)
             else:
-                dir_p = r.http_suc_cnt_prev or (r.http_suc_cnt if (y_info and y_info["total"] == 1) else 0)
-                ret_p = (r.http_ret_cnt_prev or 0) + (r.ftp_suc_cnt_prev or 0)
-                tot_p = y_info["total"] if (y_info and y_info["total"] > 0) else (r.net_cnt_prev or (dir_p + ret_p))
-                r.met_ydy      = tot_p if tot_p > 0 else (r.net_cnt_prev or 0)
-                r.met_ydy_http = f"{dir_p} / {ret_p}"
+                r.met_ydy = min(deliv_ydy, SLOTS_CAP)
+
+            r.met_ydy_http = f"{min(dir_p, SLOTS_CAP)} / {min(ret_p, SLOTS_CAP)}"
 
             # Objective Health Evaluation (Using computed MET day totals)
             r.eval = evaluate(r, now)
@@ -363,7 +425,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             "all": {
                 "total_seen": 0, "converted": 0, "latest_ver": "N/A", "latest_num": 0.0,
                 "target_ver": "N/A",
-                "ok_count": 0, "fail_count": 0, "ota_pending": 0, "low_bat": 0,
+                "ok_count": 0, "fail_count": 0, "ota_pending": 0, "low_bat": 0, "muted_count": 0,
                 "healthy_gprs_bat": 0, "marginal_gprs_bat": 0, "critical_gprs_bat": 0,
                 "healthy_mcu_bat": 0, "marginal_mcu_bat": 0, "critical_mcu_bat": 0,
                 "solar_active": 0, "solar_optimal": 0, "weak_signal": 0, "carriers": {}
@@ -374,7 +436,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             group_stats[gname] = {
                 "total_seen": 0, "converted": 0, "latest_ver": "N/A", "latest_num": 0.0,
                 "target_ver": fw.current_ver or "N/A",
-                "ok_count": 0, "fail_count": 0, "ota_pending": 0, "low_bat": 0,
+                "ok_count": 0, "fail_count": 0, "ota_pending": 0, "low_bat": 0, "muted_count": 0,
                 "healthy_gprs_bat": 0, "marginal_gprs_bat": 0, "critical_gprs_bat": 0,
                 "healthy_mcu_bat": 0, "marginal_mcu_bat": 0, "critical_mcu_bat": 0,
                 "solar_active": 0, "solar_optimal": 0, "weak_signal": 0, "carriers": {}
@@ -387,13 +449,15 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                     group_stats[key] = {
                         "total_seen": 0, "converted": 0, "latest_ver": "N/A", "latest_num": 0.0,
                         "target_ver": "N/A",
-                        "ok_count": 0, "fail_count": 0, "ota_pending": 0, "low_bat": 0,
+                        "ok_count": 0, "fail_count": 0, "ota_pending": 0, "low_bat": 0, "muted_count": 0,
                         "healthy_gprs_bat": 0, "marginal_gprs_bat": 0, "critical_gprs_bat": 0,
                         "healthy_mcu_bat": 0, "marginal_mcu_bat": 0, "critical_mcu_bat": 0,
                         "solar_active": 0, "solar_optimal": 0, "weak_signal": 0, "carriers": {}
                     }
                 st = group_stats[key]
                 st["total_seen"] += 1
+                if getattr(r, 'is_muted', False):
+                    st["muted_count"] += 1
                 
                 # Dynamic Latest Firmware Version Actually Seen in Field
                 if r.ver and str(r.ver).strip() not in ("", "N/A", "None"):
@@ -564,6 +628,38 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
         )
         last_wifi_pass = last_wifi_cmd.cmd_param if last_wifi_cmd else None
 
+        # Pause Info Calculation with CommandQueue fallback
+        latest_pause_resume = db.query(CommandQueue).filter(
+            CommandQueue.stn_id.in_(target_list),
+            CommandQueue.cmd.in_(["PAUSE_LIVE_POST", "PAUSE_TX", "PAUSE_KSNDMC", "RESUME_LIVE_POST", "RESUME_TX", "RESUME_KSNDMC"])
+        ).order_by(CommandQueue.id.desc()).first()
+
+        is_stn_muted = False
+        pause_reason = None
+        if latest_pause_resume and latest_pause_resume.cmd in ("PAUSE_LIVE_POST", "PAUSE_TX", "PAUSE_KSNDMC"):
+            is_stn_muted = True
+            pause_reason = latest_pause_resume.cmd_param if latest_pause_resume.cmd_param else None
+        elif (settings and settings.muted == 1) or (history and (history[0].muted == 1 or 'MUTED' in (history[0].health_sts or ''))):
+            is_stn_muted = True
+            pause_reason = settings.pause_reason if settings else None
+
+        paused_info = None
+        if is_stn_muted:
+            p_at_str = "N/A"
+            p_dur_str = ""
+            if settings and settings.paused_at:
+                p_ist = settings.paused_at + datetime.timedelta(hours=5, minutes=30)
+                p_at_str = p_ist.strftime("%Y-%m-%d %H:%M IST")
+                delta = now - settings.paused_at
+                p_mins = max(0, int(delta.total_seconds() / 60))
+                p_dur_str = f"{p_mins}m ago" if p_mins < 60 else f"{p_mins // 60}h {p_mins % 60}m ago"
+            paused_info = {
+                "muted": True,
+                "reason": pause_reason,
+                "paused_at": p_at_str,
+                "duration": p_dur_str
+            }
+
         return templates.TemplateResponse(
             request=request, name="station.html", context={
                 "request": request,
@@ -574,6 +670,7 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
                 "category_id": category_id,
                 "settings": settings,
                 "last_wifi_pass": last_wifi_pass,
+                "paused_info": paused_info,
             }
         )
     except Exception as e:

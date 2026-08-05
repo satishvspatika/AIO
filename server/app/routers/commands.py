@@ -29,10 +29,37 @@ def queue_command(
     Queue a remote command for a station.
     It will be piggybacked on the station's next health check-in response.
     """
+    import datetime
+    now_utc = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     s_raw = str(stn_id).strip()
     norm_stn = s_raw.lstrip('0') if s_raw.isdigit() else s_raw
     if not norm_stn: norm_stn = "0"
+    
+    # Check if reason was passed in query params
+    q_reason = request.query_params.get("reason", "").strip()
+    if q_reason and not param:
+        param = q_reason
+
     db.add(CommandQueue(stn_id=norm_stn, cmd=command, cmd_param=param))
+
+    # Instant UI state reflection in StationSettings across all ID variants
+    target_ids = {s_raw, norm_stn, s_raw.zfill(6)} if s_raw.isdigit() else {s_raw}
+    settings_list = db.query(StationSettings).filter(StationSettings.stn_id.in_(list(target_ids))).all()
+    if not settings_list:
+        s_new = StationSettings(stn_id=norm_stn)
+        db.add(s_new)
+        settings_list = [s_new]
+
+    for setting in settings_list:
+        if command in ("PAUSE_LIVE_POST", "PAUSE_TX", "PAUSE_KSNDMC"):
+            setting.muted = 1
+            setting.paused_at = now_utc
+            setting.pause_reason = param if param else "Manual Pause"
+        elif command in ("RESUME_LIVE_POST", "RESUME_TX", "RESUME_KSNDMC"):
+            setting.muted = 0
+            setting.paused_at = None
+            setting.pause_reason = None
+
     db.commit()
 
     referer = request.headers.get("referer", "")

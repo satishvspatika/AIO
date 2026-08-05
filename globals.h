@@ -405,8 +405,11 @@ extern char rssi_resp[10];
 extern uint8_t rssi_val;
 extern RTC_DATA_ATTR char carrier[32]; // v5.75: Expanded from 20 to 32 (M-03 fix)
 extern RTC_DATA_ATTR char sim_number[20];
+extern RTC_DATA_ATTR char sim_msisdn[25];
 extern RTC_DATA_ATTR char cached_iccid[25];
 extern RTC_DATA_ATTR bool isLTE;
+extern RTC_DATA_ATTR bool live_post_muted;
+void sanitizePhoneNumber(char* numBuf);
 
 // Persistent Sensor Diagnostics (survive deep sleep) // RTC RAM variables now
 // at globals.h
@@ -659,7 +662,7 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked = false);
 void start_gprs();
 void send_sms();
 void process_sms(char msg_no);
-void retrieveOwnNumber(char* outBuf, size_t outSize);
+void retrieveOwnNumber(char* outBuf, size_t outSize, bool alreadyLocked = false);
 int setup_ftp(int transMode = 0);
 void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked = false);
 void copyFromSPIFFSToFS(char *dateFile, bool alreadyLocked = false);

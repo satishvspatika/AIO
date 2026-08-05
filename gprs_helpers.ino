@@ -922,6 +922,7 @@ void graceful_modem_shutdown() {
             "Reset.");
   }
 
+  flushSerialSIT();
   debugln("[GPRS] Cutting physical VCC power (GPIO 26 -> LOW).");
   digitalWrite(26, LOW);
   
@@ -1141,13 +1142,31 @@ void power_cut_modem_shutdown() {
 
 // Payload is
 // stn_no=99999&rec_time=2025-07-15,17:00&key=rfclimate5p13&rainfall=009.5&temp=23.87&humid=77.16&w_speed=00.12&w_dir=324&signal=-073&bat_volt=04.2&bat_volt2=04.2
-void retrieveOwnNumber(char* outBuf, size_t outSize) {
+void sanitizePhoneNumber(char* numBuf) {
+  if (!numBuf || numBuf[0] == '\0') return;
+  if (strncmp(numBuf, "+1991", 5) == 0) {
+    memmove(numBuf, numBuf + 5, strlen(numBuf + 5) + 1);
+  } else if (strncmp(numBuf, "+199", 4) == 0) {
+    memmove(numBuf, numBuf + 4, strlen(numBuf + 4) + 1);
+  } else if (strncmp(numBuf, "+91", 3) == 0) {
+    memmove(numBuf, numBuf + 3, strlen(numBuf + 3) + 1);
+  } else if (numBuf[0] == '+') {
+    memmove(numBuf, numBuf + 1, strlen(numBuf + 1) + 1);
+  }
+}
+
+void retrieveOwnNumber(char* outBuf, size_t outSize, bool alreadyLocked) {
   strncpy(outBuf, "Not Found", outSize - 1);
   outBuf[outSize - 1] = '\0';
 
-  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
-    debugln("[SIM] Failed to acquire modemMutex for retrieveOwnNumber");
-    return;
+  bool lockAcquired = false;
+  if (!alreadyLocked) {
+    if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+      lockAcquired = true;
+    } else {
+      debugln("[SIM] Failed to acquire modemMutex for retrieveOwnNumber");
+      return;
+    }
   }
 
   bool found = false;
@@ -1169,6 +1188,7 @@ void retrieveOwnNumber(char* outBuf, size_t outSize) {
               int len = q4 - q3 - 1;
               strncpy(outBuf, q3 + 1, len);
               outBuf[len] = '\0';
+              sanitizePhoneNumber(outBuf);
               debugf("[SIM] Own number found via CNUM: %s\n", outBuf);
               found = true;
             }
@@ -1253,7 +1273,9 @@ void retrieveOwnNumber(char* outBuf, size_t outSize) {
     }
   }
 
-  xSemaphoreGive(modemMutex);
+  if (lockAcquired) {
+    xSemaphoreGive(modemMutex);
+  }
 }
 #endif
 

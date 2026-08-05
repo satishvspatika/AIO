@@ -33,9 +33,9 @@
         </div>
     </div>
 
-    <!-- Info badges row -->
+    <!-- Info badges row (Single Sleek Horizontal Row) -->
     {% if history and history|length > 0 %}
-    <div class="flex flex-wrap gap-2 items-stretch mb-3">
+    <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 mb-3">
         <!-- Carrier & SIM -->
         {% set ns = namespace(sim_num=None) %}
         {% for c in commands %}
@@ -50,66 +50,93 @@
                 {% endif %}
             {% endfor %}
         {% endif %}
-        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-blue-900/30 border border-blue-800/50 min-w-[70px]">
-            <span class="text-[11px] font-bold text-blue-300">🛰 {{ history[0].carrier or '?' }}</span>
+        <div class="flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-blue-900/30 border border-blue-800/50 whitespace-nowrap shrink-0">
+            <span class="text-[9.5px] font-bold text-blue-300">🛰 {{ history[0].carrier or '?' }}</span>
             {% if ns.sim_num %}
-            <span class="text-[9px] font-mono text-green-300 font-bold mt-0.5">📱 {{ ns.sim_num }}</span>
+            <span class="text-[7.5px] font-mono text-green-300 font-bold mt-0.5">📱 {{ ns.sim_num }}</span>
             {% endif %}
-            <span class="text-[8px] text-blue-600 mt-0.5">Network & SIM</span>
         </div>
         <!-- Rain (only for TRG) -->
         {% if (history[0].system == 0 or history[0].system == 2) and history[0].cum_rf is not none %}
-        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-sky-900/30 border border-sky-800/50 min-w-[70px]">
-            <span class="text-[11px] font-bold text-sky-300">🌧 {{ "%.2f"|format(history[0].cum_rf) }} mm</span>
-            <span class="text-[8px] text-sky-600 mt-0.5">Today's Rain</span>
+        <div class="flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-sky-900/30 border border-sky-800/50 whitespace-nowrap shrink-0">
+            <span class="text-[9.5px] font-bold text-sky-300">🌧 {{ "%.2f"|format(history[0].cum_rf) }} mm</span>
+            <span class="text-[7.5px] text-sky-400/80 mt-0.5">Today's Rain</span>
         </div>
         {% endif %}
-        <!-- GPRS Battery -->
-        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-orange-900/30 border border-orange-800/50 min-w-[70px]">
-            <span class="text-[11px] font-bold text-orange-300">🔋 {{ "%.2f"|format(history[0].bat_v) if history[0].bat_v else 'N/A' }}V</span>
-            <span class="text-[8px] text-orange-600 mt-0.5">GPRS Bat (ಬ್ಯಾಟರಿ)</span>
-        </div>
         <!-- MCU Battery -->
-        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-cyan-900/30 border border-cyan-800/50 min-w-[70px]">
-            <span class="text-[11px] font-bold text-cyan-300">⚡ {{ "%.2f"|format(history[0].mcu_bat) if history[0].mcu_bat else 'N/A' }}V</span>
-            <span class="text-[8px] text-cyan-600 mt-0.5">MCU Bat (MCU)</span>
+        <div class="flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-cyan-900/30 border border-cyan-800/50 whitespace-nowrap shrink-0">
+            <span class="text-[9.5px] font-bold text-cyan-300">⚡ {{ "%.2f"|format(history[0].mcu_bat) if history[0].mcu_bat else 'N/A' }}V</span>
+            <span class="text-[7.5px] text-cyan-400/80 mt-0.5">MCU Battery</span>
+        </div>
+        <!-- GPRS Battery -->
+        <div class="flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-orange-900/30 border border-orange-800/50 whitespace-nowrap shrink-0">
+            <span class="text-[9.5px] font-bold text-orange-300">🔋 {{ "%.2f"|format(history[0].bat_v) if history[0].bat_v else 'N/A' }}V</span>
+            <span class="text-[7.5px] text-orange-400/80 mt-0.5">GPRS Battery</span>
         </div>
         <!-- Solar -->
-        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-yellow-900/30 border border-yellow-800/50 min-w-[70px]">
-            <span class="text-[11px] font-bold text-yellow-300">☀️ {{ "%.2f"|format(history[0].sol_v) if history[0].sol_v else 'N/A' }}V</span>
-            <span class="text-[8px] text-yellow-600 mt-0.5">ಸೌರ (Solar)</span>
+        <div class="flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-yellow-900/30 border border-yellow-800/50 whitespace-nowrap shrink-0">
+            <span class="text-[9.5px] font-bold text-yellow-300">☀️ {{ "%.2f"|format(history[0].sol_v) if history[0].sol_v else 'N/A' }}V</span>
+            <span class="text-[7.5px] text-yellow-400/80 mt-0.5">Solar Power</span>
         </div>
         <!-- GPS -->
-        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-emerald-900/30 border border-emerald-800/50 min-w-[130px]">
+        <div class="flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-emerald-900/30 border border-emerald-800/50 whitespace-nowrap shrink-0">
             {% if settings and settings.last_gps and ',' in settings.last_gps and settings.last_gps not in ('0.000000,0.000000', '0,0', 'NA', 'None', '', 'NO_GPS') %}
                 {% set gps_parts = settings.last_gps.split(',') %}
                 {% if gps_parts|length >= 2 %}
-                    <span class="text-[11px] font-bold text-emerald-300 font-mono">📍 {{ settings.last_gps }}</span>
+                    <span class="text-[9.5px] font-bold text-emerald-300 font-mono">📍 {{ settings.last_gps }}</span>
                 {% else %}
-                    <span class="text-[11px] font-bold text-emerald-400/60 animate-pulse">📡 Searching...</span>
+                    <span class="text-[9.5px] font-bold text-emerald-400/60 animate-pulse">📡 Searching...</span>
                 {% endif %}
             {% else %}
-                <span class="text-[11px] font-bold text-emerald-400/60 animate-pulse">📡 Searching...</span>
+                <span class="text-[9.5px] font-bold text-emerald-400/60 animate-pulse">📡 Searching...</span>
             {% endif %}
-            <span class="text-[8px] text-emerald-600 mt-0.5">ಸ್ಥಳ (GPS - Lat/Long)</span>
+            <span class="text-[7.5px] text-emerald-400/80 mt-0.5">GPS (Lat/Long)</span>
         </div>
         <!-- Wi-Fi Pass (supervisor only) -->
         {% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
-        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-purple-900/30 border border-purple-800/50 min-w-[100px]" title="Confirmed active Wi-Fi AP password for field engineers">
-            <span class="text-[11px] font-bold text-purple-300 font-mono">🔐 {{ settings.wifi_pass if (settings and settings.wifi_pass) else (last_wifi_pass if last_wifi_pass else 'Spatika123') }}</span>
-            <span class="text-[8px] text-purple-400 mt-0.5 font-bold">Wi-Fi AP Password</span>
+        <div class="flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-purple-900/30 border border-purple-800/50 whitespace-nowrap shrink-0" title="Confirmed active Wi-Fi AP password for field engineers">
+            <span class="text-[9.5px] font-bold text-purple-300 font-mono">🔐 {{ settings.wifi_pass if (settings and settings.wifi_pass) else (last_wifi_pass if last_wifi_pass else 'Spatika123') }}</span>
+            <span class="text-[7.5px] text-purple-400 mt-0.5 font-bold">Wi-Fi AP Pass</span>
         </div>
         {% endif %}
         <!-- Signal Strength Quality Meter -->
         {% set sig = history[0].signal or -141 %}
-        <div class="flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-emerald-900/30 border border-emerald-800/50 min-w-[70px]">
-            <span class="text-[11px] font-bold text-emerald-300">
-                {% if sig >= -85 %}📶 🟢 {{ sig }} dBm
-                {% elif sig >= -100 %}📶 🟡 {{ sig }} dBm
-                {% else %}📶 🔴 {{ sig }} dBm{% endif %}
+        <div class="flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-emerald-900/30 border border-emerald-800/50 whitespace-nowrap shrink-0">
+            <span class="text-[9.5px] font-bold text-emerald-300">
+                {% if sig >= -85 %}📶 🟢 {{ sig }} dBm ({{ history[0].net_mode or '4G' }})
+                {% elif sig >= -100 %}📶 🟡 {{ sig }} dBm ({{ history[0].net_mode or '4G' }})
+                {% else %}📶 🔴 {{ sig }} dBm ({{ history[0].net_mode or '4G' }}){% endif %}
             </span>
-            <span class="text-[8px] text-emerald-600 mt-0.5">Signal Quality</span>
+            <span class="text-[7.5px] text-emerald-400/80 mt-0.5">Signal Quality</span>
         </div>
+        <!-- Tip Resolution -->
+        {% if history[0].system == 0 or history[0].system == 2 %}
+        <div class="flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-sky-900/30 border border-sky-800/50 whitespace-nowrap shrink-0">
+            <span class="text-[9.5px] font-bold text-sky-300">🎛️ {{ history[0].rf_res or 0.25 }} mm</span>
+            <span class="text-[7.5px] text-sky-400/80 mt-0.5">Tip Resolution</span>
+        </div>
+        {% endif %}
+        <!-- Survival Mode -->
+        {% if history[0].surv_mode == 1 %}
+        <div class="flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-amber-900/40 border border-amber-600/50 whitespace-nowrap shrink-0">
+            <span class="text-[9.5px] font-bold text-amber-300">⚡ ACTIVE</span>
+            <span class="text-[7.5px] text-amber-400 mt-0.5 font-bold">Survival Mode</span>
+        </div>
+        {% endif %}
+        <!-- Transmission Muted Badge -->
+        {% if paused_info or (history and (history[0].muted == 1 or 'MUTED' in (history[0].health_sts or ''))) %}
+        {% set r_text = paused_info.reason if (paused_info and paused_info.reason) else None %}
+        {% set show_custom_reason = r_text and r_text not in ('Live Transmission Muted', 'Live Transmissions Muted', 'Device Muted', 'Manual Pause', 'Muted') %}
+        <div class="badge-muted flex flex-col items-center justify-center px-2 py-1 rounded-lg font-bold shadow-md whitespace-nowrap shrink-0" title="{% if paused_info %}Muted Since: {{ paused_info.paused_at }}{% if r_text %} | Reason: {{ r_text }}{% endif %}{% endif %}">
+            <span class="text-[9.5px] font-extrabold flex items-center gap-1">⏸️ Live Muted</span>
+            {% if show_custom_reason %}
+            <span class="text-[7.5px] font-semibold opacity-90">Reason: {{ r_text }}</span>
+            {% endif %}
+            {% if paused_info and paused_info.duration %}
+            <span class="text-[7.5px] opacity-80 font-mono font-medium">For {{ paused_info.duration }}</span>
+            {% endif %}
+        </div>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -147,6 +174,10 @@
                 <div class="flex gap-1">
                     <a href="/cmd/{{ stn_id }}/SET_RF_RES?param=0.25" class="btn-sm btn-t2-sub flex-1 text-center" onclick="return confirm('Set tip resolution to 0.25mm?')">🎛 0.25 mm</a>
                     <a href="/cmd/{{ stn_id }}/SET_RF_RES?param=0.50" class="btn-sm btn-t2-sub flex-1 text-center" onclick="return confirm('Set tip resolution to 0.50mm?')">🎛 0.50 mm</a>
+                </div>
+                <div class="flex gap-1">
+                    <button onclick="promptPauseReason('{{ stn_id }}')" class="btn-sm btn-t2-pause flex-1 text-center font-bold text-[10px]">⏸️ Pause Live Posts</button>
+                    <a href="/cmd/{{ stn_id }}/RESUME_LIVE_POST" class="btn-sm btn-t2-resume flex-1 text-center font-bold text-[10px]" onclick="return confirm('Resume live primary posts for {{ stn_id }}?')">▶️ Resume Live Posts</a>
                 </div>
             </div>
 
@@ -249,14 +280,14 @@
                     <td class="p-3"><span class="badge-ver">{{ r.ver or '?' }}</span></td>
                     <!-- Battery / Solar -->
                     <td class="p-3 leading-tight">
-                        <div class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}" title="GPRS Battery">
-                            GPRS: {{ '%.2f'|format(r.bat_v or 0) }}V
-                        </div>
                         {% if r.mcu_bat %}
                         <div class="text-[10px] text-cyan-300 font-bold" title="MCU Battery">
                             MCU: {{ '%.2f'|format(r.mcu_bat) }}V
                         </div>
                         {% endif %}
+                        <div class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}" title="GPRS Battery">
+                            GPRS: {{ '%.2f'|format(r.bat_v or 0) }}V
+                        </div>
                         <div class="text-[9px] text-slate-500">
                             Sol: {{ '%.1f'|format(r.sol_v or 0) }}V
                         </div>
@@ -453,6 +484,18 @@
             });
         } else if (date) {
             alert("Invalid date format. Please use YYYYMMDD.");
+        }
+    }
+
+    function promptPauseReason(stnId) {
+        const reason = prompt("Enter reason for pausing live posts (e.g. Maintenance, Testing, Sensor Work):", "Manual Pause");
+        if (reason !== null) {
+            const encoded = encodeURIComponent(reason);
+            fetch(`/cmd/${stnId}/PAUSE_LIVE_POST?param=${encoded}`, { method: "POST" })
+            .then(res => {
+                if(res.ok) window.location.reload();
+                else alert("Failed to queue PAUSE_LIVE_POST");
+            });
         }
     }
 

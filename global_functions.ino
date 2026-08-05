@@ -787,8 +787,8 @@ void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
       // (Server Side)
       bool isPast = (mask == diag_sent_mask_prev) ? true : (i < current_s_idx);
       if (isPast) {
-        // Night Data Tracking: 9 PM (Sample 49) to 6 AM (Sample 85)
-        if (i >= 49 && i <= 85) {
+        // Night Data Tracking: 9:15 PM (Sample 50) to 6:00 AM (Sample 85) = 36 slots
+        if (i >= 50 && i <= 85) {
           *hasUnresolvedNDM = true;
         }
       }
@@ -871,14 +871,11 @@ void scanFileToMask(const char *fName, uint32_t *mask) {
       
       if (token) sigVal = atoi(token);
 
-      // v5.51: Skip markers that indicate placeholders, not real data delivery.
-      // -111 to -114: Safe Zone for Gaps/Placeholder markers.
+      // v6.21: Count all stored sample records in the daily file.
+      // Unsent records are accurately subtracted by subtractUnsentFromMask() below.
+      // This prevents delivered backlog items (which have signal=-111 in SPIFFS) from falsely causing NDM FAIL / low NetCount after a reboot.
       if (sNum >= 0 && sNum <= 95) {
-        // v5.52: Explicitly exclude our internal safe-zone markers
-        if (sigVal != -111 && sigVal != -112 && sigVal != -113 && sigVal != -114) { 
-          // Signal is a real GSM value (e.g. -69, -85, -101)
-          mask[sNum / 32] |= (1UL << (sNum % 32));
-        }
+        mask[sNum / 32] |= (1UL << (sNum % 32));
       }
     }
   }
@@ -1002,7 +999,7 @@ int countNightStored(const char *fName) {
       char *commaPtr = strchr(line_buf, ',');
       if (commaPtr != NULL) {
         int sNum = atoi(line_buf);
-        if (sNum >= 49 && sNum <= 85) {
+        if (sNum >= 50 && sNum <= 85) {
           count++;
         }
       }

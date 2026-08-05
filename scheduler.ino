@@ -1815,8 +1815,8 @@ void scheduler(void *pvParameters) {
 
             if (diag_pd_count < 96)
               diag_pd_count++;
-            if (q >= 49 && q <= 85)
-              diag_ndm_count++; // 9 PM to 6 AM
+            if (q >= 50 && q <= 85)
+              diag_ndm_count++; // 9:15 PM to 6:00 AM (36 slots)
           }                     // End of q loop
 
           // Re-acquire lock for the logic downstream
@@ -1877,9 +1877,8 @@ void scheduler(void *pvParameters) {
 
           if (diag_pd_count < 96)
             diag_pd_count++;
-          if (sampleNo >= 49 &&
-              sampleNo <= 85) // v5.57 Fix: sample 49 = 21:00 (9 PM)
-            diag_ndm_count++; // 9 PM to 6 AM
+          if (sampleNo >= 50 && sampleNo <= 85)
+            diag_ndm_count++; // 9:15 PM to 6:00 AM (36 slots)
 
           debugln();
           debug("Current data inserted is ");
@@ -2248,8 +2247,8 @@ void scheduler(void *pvParameters) {
             debug(append_text);
             if (diag_pd_count < 96)
               diag_pd_count++;
-            if (i >= 49 && i <= 85) // v5.57 Fix: sample 49 = 21:00 (9 PM)
-              diag_ndm_count++;     // 9 PM to 6 AM
+            if (i >= 50 && i <= 85)
+              diag_ndm_count++;     // 9:15 PM to 6:00 AM (36 slots)
           }
         SKIP_START_GAPS:
           // Write the current record ONLY if not a fresh boot/skipping data
@@ -2362,8 +2361,8 @@ void scheduler(void *pvParameters) {
           }
           if (diag_pd_count < 96)
             diag_pd_count++;
-          if (sampleNo >= 49 && sampleNo <= 85)
-            diag_ndm_count++; // 9 PM to 6 AM
+          if (sampleNo >= 50 && sampleNo <= 85)
+            diag_ndm_count++; // 9:15 PM to 6:00 AM (36 slots)
 
           // End of writing block
 

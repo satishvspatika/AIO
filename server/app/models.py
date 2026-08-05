@@ -46,6 +46,12 @@ class HealthReport(Base):
     ndm_cnt          = Column(Integer, default=0)
     pd_cnt           = Column(Integer, default=0)
     cdm_sts          = Column(String, default="OK")
+    rf_res           = Column(Float, default=0.25)
+    unsent_cnt       = Column(Integer, default=0)
+    zombie_cnt       = Column(Integer, default=0)
+    net_mode         = Column(String, default="4G")
+    surv_mode        = Column(Integer, default=0)
+    muted            = Column(Integer, default=0)
     first_http       = Column(Integer, default=0)
     spiffs_kb        = Column(Integer, default=0)
     spiffs_total_kb  = Column(Integer, default=4640)
@@ -85,10 +91,14 @@ class CommandQueue(Base):
 
 class StationSettings(Base):
     __tablename__ = "station_settings"
-    stn_id      = Column(String, primary_key=True, index=True)
-    ota_exempt  = Column(Integer, default=0) # 1 means OTA is disabled for this station
+    stn_id       = Column(String, primary_key=True, index=True)
+    ota_exempt   = Column(Integer, default=0) # 1 means OTA is disabled for this station
     # Phase 2 Cache: Keep last known state here for $O(1)$ dashboard lookups
-    last_gps    = Column(String, nullable=True) 
-    last_seen   = Column(DateTime, nullable=True)
-    wifi_pass   = Column(String, default="Spatika123") # Track confirmed active AP password
-    updated_at  = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    last_gps     = Column(String, nullable=True) 
+    last_seen    = Column(DateTime, nullable=True)
+    wifi_pass    = Column(String, default="Spatika123") # Track confirmed active AP password
+    muted        = Column(Integer, default=0) # 1 means live primary posts are muted/paused
+    paused_at    = Column(DateTime, nullable=True) # Timestamp when live post was paused
+    pause_reason = Column(String, nullable=True, default=None) # Reason for live post pause
+    updated_at   = Column(DateTime, server_default=func.now(), onupdate=func.now())
+

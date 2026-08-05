@@ -90,6 +90,29 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
             # Sort by ID
             latest_reports.sort(key=lambda x: x.stn_id)
 
+            settings_raw = db.query(StationSettings).all()
+            settings_map = {}
+            for s in settings_raw:
+                if s.stn_id:
+                    settings_map[s.stn_id] = s
+                    s_norm = s.stn_id.lstrip('0') if s.stn_id.isdigit() else s.stn_id
+                    if s_norm: settings_map[s_norm] = s
+                    if s.stn_id.isdigit(): settings_map[s.stn_id.zfill(6)] = s
+
+            latest_pause_cmds = db.query(CommandQueue).filter(
+                CommandQueue.cmd.in_(["PAUSE_LIVE_POST", "PAUSE_TX", "PAUSE_KSNDMC", "RESUME_LIVE_POST", "RESUME_TX", "RESUME_KSNDMC"])
+            ).order_by(CommandQueue.id.asc()).all()
+
+            cmd_muted_stns = {}
+            for c in latest_pause_cmds:
+                norm = c.stn_id.lstrip('0') if c.stn_id and c.stn_id.isdigit() else c.stn_id
+                if c.cmd in ("PAUSE_LIVE_POST", "PAUSE_TX", "PAUSE_KSNDMC"):
+                    cmd_muted_stns[norm] = c.cmd_param if c.cmd_param else None
+                    cmd_muted_stns[c.stn_id] = c.cmd_param if c.cmd_param else None
+                else:
+                    cmd_muted_stns.pop(norm, None)
+                    cmd_muted_stns.pop(c.stn_id, None)
+
             now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             for r in latest_reports:
                 r.eval = evaluate(r, now) # Populate server evaluation
@@ -100,6 +123,17 @@ async def fleet_summary(request: Request, db: Session = Depends(get_db)):
                 else:
                     r.time_ago = "?"
                 
+                # Mute state & pause reason
+                s_raw = str(r.stn_id or "").strip()
+                s_norm = s_raw.lstrip('0') if s_raw.isdigit() else s_raw
+                s_cache = settings_map.get(r.stn_id) or settings_map.get(s_norm)
+                is_cmd_muted = s_norm in cmd_muted_stns or r.stn_id in cmd_muted_stns
+                r.is_muted = False
+                r.pause_reason = None
+                if (s_cache and s_cache.muted == 1) or r.muted == 1 or 'MUTED' in (r.health_sts or '') or is_cmd_muted:
+                    r.is_muted = True
+                    r.pause_reason = (s_cache.pause_reason if (s_cache and s_cache.pause_reason) else cmd_muted_stns.get(s_norm) or cmd_muted_stns.get(r.stn_id))
+
                 # Assign ota_needed for the template
                 r.ota_needed = False
                 if r.ver and fw.current_ver and fw.file_exists:

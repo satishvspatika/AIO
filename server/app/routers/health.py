@@ -32,7 +32,7 @@ _ALLOWED_FIELDS = {
     "http_present_fails", "http_cum_fails", "http_backlog_cnt", "last_cmd_id", 
     "mutex_fail", "calib", "gps", "carrier", "iccid", "last_cmd_res", "net_nuke",
     "dbg_tsk", "last_rst", "health_sts", "sensor_sts", "reg_fail_reason", 
-    "cdm_sts", "ota_fail_reason"
+    "cdm_sts", "ota_fail_reason", "rf_res", "unsent_cnt", "zombie_cnt", "net_mode", "surv_mode", "muted"
 }
 
 # Known type hints — anything not listed defaults to TEXT
@@ -43,12 +43,12 @@ _INT_FIELDS  = {
     "ftp_suc_cnt","ftp_suc_cnt_prev","ndm_cnt","pd_cnt","first_http",
     "spiffs_kb","spiffs_total_kb","ota_fails",
     "consec_reg_fails","consec_http_fails","consec_sim_fails",
-    "unsent_count",
+    "unsent_count","unsent_cnt","zombie_cnt","surv_mode","muted",
     "http_present_fails","http_cum_fails","http_backlog_cnt", # v7.70
     "last_cmd_id",                                      # v7.92
     "mutex_fail"                                        # v5.55
 }
-_FLOAT_FIELDS = {"bat_v","mcu_bat","sol_v"}
+_FLOAT_FIELDS = {"bat_v","mcu_bat","sol_v","rf_res"}
 
 
 def get_db():
@@ -117,8 +117,20 @@ def _auto_migrate(db: Session, data: dict, table: str = "health_reports"):
             existing_cols.add(key)   # treat as existing to avoid retry loops
     return existing_cols
 
+def _auto_migrate_settings(db: Session):
+    """Ensure station_settings table has required pause tracking columns."""
+    try:
+        existing_cols = _get_db_columns(db, "station_settings")
+        for col, col_type in [("muted", "INTEGER DEFAULT 0"), ("paused_at", "DATETIME DEFAULT NULL"), ("pause_reason", "TEXT DEFAULT NULL")]:
+            if col not in existing_cols:
+                db.execute(text(f"ALTER TABLE station_settings ADD COLUMN {col} {col_type}"))
+                db.commit()
+    except Exception:
+        pass
+
 async def _process_health_data(data: dict, request: Request, db: Session):
     """Internal helper to process health data for any endpoint."""
+    _auto_migrate_settings(db)
     # v5.87: Clean Stn ID (Strip leading zeros for database consistency)
     stn_id = str(data.get("stn_id", "UNKNOWN")).strip()
     if stn_id.isdigit():
@@ -204,6 +216,18 @@ async def _process_health_data(data: dict, request: Request, db: Session):
     if gps_val and gps_val not in ("NA", "None", "") and not is_zero:
         setting.last_gps = gps_val
 
+    # Sync muted / pause state from report (Server is authoritative for mute = 1)
+    if "muted" in data:
+        try:
+            m_val = int(data.get("muted", 0) or 0)
+            if m_val == 1:
+                setting.muted = 1
+                if not setting.paused_at:
+                    setting.paused_at = now_utc
+                if not setting.pause_reason:
+                    setting.pause_reason = "Device Muted"
+        except (ValueError, TypeError): pass
+
     # Record Command Feedback from device if present
     last_cmd_id = int(data.get("last_cmd_id", 0) or 0)
     last_cmd_res = str(data.get("last_cmd_res", "") or "").strip()
@@ -212,12 +236,17 @@ async def _process_health_data(data: dict, request: Request, db: Session):
         if cmd_rec:
             cmd_rec.result = last_cmd_res
             cmd_rec.completed_at = now_utc
-            if cmd_rec.cmd == "SET_WIFI_PASS" and ("Success" in last_cmd_res or "Updated" in last_cmd_res):
-                st_setting = db.query(StationSettings).filter_by(stn_id=stn_id).first()
-                if not st_setting:
-                    st_setting = StationSettings(stn_id=stn_id)
-                    db.add(st_setting)
-                st_setting.wifi_pass = cmd_rec.cmd_param
+            if cmd_rec.cmd in ("PAUSE_LIVE_POST", "PAUSE_TX", "PAUSE_KSNDMC"):
+                setting.muted = 1
+                if not setting.paused_at:
+                    setting.paused_at = now_utc
+                setting.pause_reason = cmd_rec.cmd_param if cmd_rec.cmd_param else "Manual Pause"
+            elif cmd_rec.cmd in ("RESUME_LIVE_POST", "RESUME_TX", "RESUME_KSNDMC"):
+                setting.muted = 0
+                setting.paused_at = None
+                setting.pause_reason = None
+            elif cmd_rec.cmd == "SET_WIFI_PASS" and ("Success" in last_cmd_res or "Updated" in last_cmd_res):
+                setting.wifi_pass = cmd_rec.cmd_param
 
     # ── Step 4: Command Feedback & OTA ────────────────────────────────────
     cmd, cmd_param, cmd_id = "", "", 0
@@ -244,14 +273,27 @@ async def _process_health_data(data: dict, request: Request, db: Session):
 
         # Priority commands if no OTA
         if not cmd:
-            three_hrs_ago = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
-            timed_out = db.query(CommandQueue).filter(
-                CommandQueue.stn_id == stn_id, CommandQueue.result == "SENT",
-                CommandQueue.executed_at < three_hrs_ago
-            ).first()
-            if timed_out:
-                cmd, cmd_param, cmd_id = timed_out.cmd, timed_out.cmd_param, timed_out.id
-                timed_out.executed_at = now_utc
+            latest_pause = db.query(CommandQueue).filter(
+                CommandQueue.stn_id.in_(list(target_ids)),
+                CommandQueue.cmd.in_(["PAUSE_LIVE_POST", "PAUSE_TX", "PAUSE_KSNDMC", "RESUME_LIVE_POST", "RESUME_TX", "RESUME_KSNDMC"])
+            ).order_by(CommandQueue.id.desc()).first()
+
+            is_server_muted = (setting and setting.muted == 1) or (latest_pause and latest_pause.cmd in ("PAUSE_LIVE_POST", "PAUSE_TX", "PAUSE_KSNDMC"))
+            dev_muted = int(data.get("muted", 0) or 0)
+
+            if is_server_muted and dev_muted == 0:
+                cmd, cmd_param = "PAUSE_LIVE_POST", "Server Mute Sync"
+            elif not is_server_muted and dev_muted == 1:
+                cmd, cmd_param = "RESUME_LIVE_POST", "Server Resume Sync"
+            else:
+                three_hrs_ago = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
+                timed_out = db.query(CommandQueue).filter(
+                    CommandQueue.stn_id == stn_id, CommandQueue.result == "SENT",
+                    CommandQueue.executed_at < three_hrs_ago
+                ).first()
+                if timed_out:
+                    cmd, cmd_param, cmd_id = timed_out.cmd, timed_out.cmd_param, timed_out.id
+                    timed_out.executed_at = now_utc
 
     db.commit()
     return {

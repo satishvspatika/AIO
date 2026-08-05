@@ -83,6 +83,14 @@ void get_network() {
   if (current_iccid[0] != '\0' && strcmp(cached_iccid, current_iccid) == 0 &&
       strcmp(sim_number, "NA") != 0) {
     debugln("[CACHE] Using cached carrier/number to save power.");
+    if (strcmp(sim_msisdn, "NA") == 0 || sim_msisdn[0] == '\0') {
+      retrieveOwnNumber(sim_msisdn, sizeof(sim_msisdn), true);
+      if (strlen(sim_msisdn) > 3 && strcmp(sim_msisdn, "Not Found") != 0) {
+        debugf("[SIM] MSISDN retrieved on cache hit: %s\n", sim_msisdn);
+      } else {
+        strcpy(sim_msisdn, "NONE");
+      }
+    }
     if (strstr(carrier, "Airtel")) {
       strcpy(apn_str, "airtelgprs.com"); 
       if (strlen(current_iccid) >= 6) {
@@ -117,6 +125,7 @@ full_discovery:
   strncpy(cached_iccid, current_iccid, sizeof(cached_iccid) - 1);
   cached_iccid[sizeof(cached_iccid) - 1] = '\0';
   strcpy(sim_number, "NA");
+  strcpy(sim_msisdn, "NA");
   strcpy(carrier, "NA");
   apn_saved_this_sim = false; 
 
@@ -151,10 +160,11 @@ full_discovery:
   }
 
   // Query MSISDN (Phone Number) if programmed on the SIM card
-  SerialSIT.println("AT+CNUM");
-  if (waitForResponse("OK", 3000)) {
-    debugln("[SIM] AT+CNUM Response:");
-    debugln(modem_response_buf);
+  retrieveOwnNumber(sim_msisdn, sizeof(sim_msisdn), true);
+  if (strlen(sim_msisdn) > 3 && strcmp(sim_msisdn, "Not Found") != 0) {
+    debugf("[SIM] MSISDN parsed: %s\n", sim_msisdn);
+  } else {
+    strcpy(sim_msisdn, "NA");
   }
 
   // [BSNL-FIX] Step 1: ICCID prefix detection (fast, no network needed)
@@ -1405,8 +1415,9 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
     if (!diag_rtc_battery_ok || current_year < 2025) H_FAULT("RTC_FAIL");
     if (unresolvedPD) H_FAULT("PD");
     if (strcmp(diag_cdm_status, "OK") != 0 && current_hour >= 9 && diag_last_rollover_day > 0) H_FAULT("CDM");
-    if (unresolvedNDM) H_FAULT("NDM");
+    if (unresolvedNDM || (dummyNDM && current_hour >= 6)) H_FAULT("NDM");
     if (lati == 0.0 && longi == 0.0) H_FAULT("NO_GPS");
+    if (live_post_muted) H_FAULT("MUTED");
 
     if (diag_temp_cv) H_FAULT("TEMP_STUCK");
     if (diag_hum_cv) H_FAULT("HUM_STUCK");
@@ -1428,9 +1439,24 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
 
     char sensor_info[48];
 #if SYSTEM == 0
-    snprintf(sensor_info, sizeof(sensor_info), "RF-OK");
+    if (diag_rain_jump) snprintf(sensor_info, sizeof(sensor_info), "RF-ERJ");
+    else if (diag_rain_reset) snprintf(sensor_info, sizeof(sensor_info), "RF-RESET");
+    else if (diag_rain_calc_invalid) snprintf(sensor_info, sizeof(sensor_info), "RF-CALC");
+    else snprintf(sensor_info, sizeof(sensor_info), "RF-OK");
 #else
-    snprintf(sensor_info, sizeof(sensor_info), "TH-%s,WS-%s,WD-%s", (hdcType == HDC_UNKNOWN ? "FAIL" : "OK"), (ws_ok ? "OK" : "FAIL"), (wd_ok ? "OK" : "FAIL"));
+    char th_st[16] = "TH-OK", ws_st[16] = "WS-OK", wd_st[16] = "WD-OK";
+    if (hdcType == HDC_UNKNOWN) strcpy(th_st, "TH-FAIL");
+    else if (diag_temp_cv || diag_hum_cv) strcpy(th_st, "TH-CV");
+    else if (diag_temp_erz || diag_hum_erz) strcpy(th_st, "TH-ERZ");
+    else if (diag_temp_erv || diag_hum_erv) strcpy(th_st, "TH-ERV");
+
+    if (!ws_ok) strcpy(ws_st, "WS-FAIL");
+    else if (diag_ws_cv) strcpy(ws_st, "WS-CV");
+    else if (diag_ws_erv) strcpy(ws_st, "WS-ERV");
+
+    if (!wd_ok || diag_wd_fail) strcpy(wd_st, "WD-FAIL");
+
+    snprintf(sensor_info, sizeof(sensor_info), "%s,%s,%s", th_st, ws_st, wd_st);
 #endif
 
     char gps_str[32];
@@ -1441,9 +1467,41 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
     int spiffs_total = SPIFFS.totalBytes() / 1024;
     int unsent_count = countStored("/unsent.txt") + countStored("/ftpunsent.txt");
 
+    char rf_cls_date_str[16];
+    if (rf_cls_yy >= 2025 && rf_cls_mm >= 1 && rf_cls_mm <= 12 && rf_cls_dd >= 1 && rf_cls_dd <= 31) {
+      snprintf(rf_cls_date_str, sizeof(rf_cls_date_str), "%04d-%02d-%02d", rf_cls_yy, rf_cls_mm, rf_cls_dd);
+    } else {
+      struct tm snapshot;
+      getTimeSnapshot(&snapshot);
+      int cur_dd = snapshot.tm_mday, cur_mm = snapshot.tm_mon + 1, cur_yy = snapshot.tm_year + 1900;
+      int calcSlot = (snapshot.tm_hour * 4 + snapshot.tm_min / 15 + 61) % 96;
+      if (calcSlot <= 60) next_date(&cur_dd, &cur_mm, &cur_yy);
+      snprintf(rf_cls_date_str, sizeof(rf_cls_date_str), "%04d-%02d-%02d", cur_yy, cur_mm, cur_dd);
+    }
+
+    char sim_or_iccid[32];
+    if (strlen(sim_msisdn) >= 5 && strcmp(sim_msisdn, "NA") != 0 && strcmp(sim_msisdn, "Not Found") != 0) {
+      strncpy(sim_or_iccid, sim_msisdn, sizeof(sim_or_iccid) - 1);
+    } else {
+      strncpy(sim_or_iccid, cached_iccid, sizeof(sim_or_iccid) - 1);
+    }
+    sim_or_iccid[sizeof(sim_or_iccid) - 1] = '\0';
+
     snprintf(gprs_payload, sizeof(gprs_payload),
-        "{\"stn_id\":\"%s\",\"unit_type\":\"%s\",\"system\":%d,\"health_sts\":\"%s\",\"sensor_sts\":\"%s\",\"rtc_ok\":%d,\"bat_v\":%.2f,\"mcu_bat\":%.2f,\"sol_v\":%.2f,\"sd_ok\":%d,\"signal\":%d,\"net_cnt\":%d,\"net_cnt_prev\":%d,\"http_suc_cnt\":%d,\"http_suc_cnt_prev\":%d,\"http_ret_cnt\":%d,\"http_ret_cnt_prev\":%d,\"ftp_suc_cnt\":%d,\"ftp_suc_cnt_prev\":%d,\"reg_fails\":%d,\"reset_reason\":%d,\"spiffs_kb\":%d,\"ver\":\"%s\",\"iccid\":\"%s\",\"carrier\":\"%s\",\"gps\":\"%s\",\"token\":\"%s\"%s}", 
-        cleanStn, UNIT, SYSTEM, h_status, sensor_info, (diag_rtc_battery_ok ? 1 : 0), li_bat_val, bat_3v3_val, solar_val, (sd_card_ok ? 1 : 0), signal_lvl, diag_net_data_count, diag_net_data_count_prev, diag_http_success_count, diag_http_success_count_prev, diag_http_retry_count, diag_http_retry_count_prev, diag_ftp_success_count, diag_ftp_success_count_prev, diag_gprs_fails, diag_last_reset_reason, spiffs_used, UNIT_VER, cached_iccid, carrier, gps_str, TELEMETRY_TOKEN, feedback);
+        "{\"stn_id\":\"%s\",\"unit_type\":\"%s\",\"system\":%d,\"health_sts\":\"%s\",\"sensor_sts\":\"%s\",\"rtc_ok\":%d,\"bat_v\":%.2f,\"mcu_bat\":%.2f,\"sol_v\":%.2f,\"sd_ok\":%d,\"signal\":%d,\"rf_cls_date\":\"%s\",\"net_cnt\":%d,\"net_cnt_prev\":%d,\"pd_cnt\":%d,\"ndm_cnt\":%d,\"cdm_sts\":\"%s\",\"rf_res\":%.2f,\"unsent_cnt\":%d,\"zombie_cnt\":%d,\"net_mode\":\"%s\",\"surv_mode\":%d,\"muted\":%d,\"http_suc_cnt\":%d,\"http_suc_cnt_prev\":%d,\"http_ret_cnt\":%d,\"http_ret_cnt_prev\":%d,\"ftp_suc_cnt\":%d,\"ftp_suc_cnt_prev\":%d,\"reg_fails\":%d,\"reset_reason\":%d,\"spiffs_kb\":%d,\"ver\":\"%s\",\"iccid\":\"%s\",\"carrier\":\"%s\",\"gps\":\"%s\",\"token\":\"%s\"%s}", 
+        cleanStn, UNIT, SYSTEM, h_status, sensor_info, (diag_rtc_battery_ok ? 1 : 0), li_bat_val, bat_3v3_val, solar_val, (sd_card_ok ? 1 : 0), signal_lvl, rf_cls_date_str,
+        diag_net_data_count,           // net_cnt      = TDY delivered records
+        diag_net_data_count_prev,      // net_cnt_prev = YDY delivered records
+        (unresolvedPD ? 1 : 0),        // pd_cnt       = YDY partial data flag (1=PD, 0=OK)
+        diag_ndm_count_prev,           // ndm_cnt      = YDY night slots missed count
+        diag_cdm_status,               // cdm_sts      = Explicit Closing Data status
+        RF_RESOLUTION,                 // rf_res       = Tip resolution (0.25 / 0.50)
+        unsent_count,                  // unsent_cnt   = Pending unsent records queue size
+        diag_http_zombie_count,        // zombie_cnt   = Socket 706 resets count
+        (isLTE ? "4G" : "2G"),         // net_mode     = Cellular network mode
+        (low_bat_mode_active ? 1 : 0), // surv_mode    = Low battery survival mode flag
+        (live_post_muted ? 1 : 0),     // muted        = Primary server live transmissions muted flag
+        diag_http_success_count, diag_http_success_count_prev, diag_http_retry_count, diag_http_retry_count_prev, diag_ftp_success_count, diag_ftp_success_count_prev, diag_gprs_fails, diag_last_reset_reason, spiffs_used, UNIT_VER, sim_or_iccid, carrier, gps_str, TELEMETRY_TOKEN, feedback);
 
     xSemaphoreGive(fsMutex); 
   } 
@@ -1458,6 +1516,12 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
 
     // [H-02] Session tracking Restoration
     bool session_terminated = false;
+
+    // Proactive IP stack cleanup for A7672S reliability when live post was muted
+    flushSerialSIT();
+    SerialSIT.println("AT+CIPSHUT");
+    waitForResponse("SHUT OK", 3000);
+    vTaskDelay(200 / portTICK_PERIOD_MS);
 
     // Simplified sequence for A7672S stability: Flush UART buffer before initialization
     flushSerialSIT();
@@ -1510,12 +1574,13 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
 
     int actualLen = strlen(gprs_payload);
     char ht_data_cmd[64];
-    snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,5000", actualLen); 
+    snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,15000", actualLen); 
     flushSerialSIT();
+    vTaskDelay(300 / portTICK_PERIOD_MS);
     SerialSIT.println(ht_data_cmd);
     vTaskDelay(100 / portTICK_PERIOD_MS);
 
-    if (waitForResponse("DOWNLOAD", 5000)) {
+    if (waitForResponse("DOWNLOAD", 15000)) {
       vTaskDelay(100 / portTICK_PERIOD_MS);
       SerialSIT.print(gprs_payload);
       if (waitForResponse("OK", 5000)) {
@@ -1553,6 +1618,18 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
             if (strstr(body, "\"REBOOT\"")) {
                 force_reboot = true;
                 strcpy(last_cmd_res, "Success: Rebooting Device");
+            }
+            if (strstr(body, "\"PAUSE_LIVE_POST\"") || strstr(body, "\"PAUSE_TX\"") || strstr(body, "\"PAUSE_KSNDMC\"")) {
+                live_post_muted = true;
+                Preferences pMute; pMute.begin("sys-config", false); pMute.putBool("muted", true); pMute.end();
+                strcpy(last_cmd_res, "Success: Primary Transmissions Muted");
+                debugln("[CMD] Primary server live transmissions MUTED.");
+            }
+            if (strstr(body, "\"RESUME_LIVE_POST\"") || strstr(body, "\"RESUME_TX\"") || strstr(body, "\"RESUME_KSNDMC\"")) {
+                live_post_muted = false;
+                Preferences pMute; pMute.begin("sys-config", false); pMute.putBool("muted", false); pMute.end();
+                strcpy(last_cmd_res, "Success: Primary Transmissions Resumed");
+                debugln("[CMD] Primary server live transmissions RESUMED.");
             }
             if (strstr(body, "\"OTA_CHECK\"")) {
                 force_ota = true;
@@ -1644,6 +1721,7 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
     } else {
       debugln("[Health] DOWNLOAD Fail. Nuking Bearer Context...");
       SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 1000);
+      SerialSIT.println("AT+CIPSHUT"); waitForResponse("SHUT OK", 3000);
       SerialSIT.println("AT+CGACT=0,1"); waitForResponse("OK", 5000);
       vTaskDelay(1000 / portTICK_PERIOD_MS);
       session_terminated = true;

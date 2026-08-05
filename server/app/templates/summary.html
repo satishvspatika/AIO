@@ -112,7 +112,13 @@
                             </td>
                             {% endif %}
                             <td class="p-3 text-xs">
-                                {% if r.eval.verdict == 'OK' %}<span class="badge-ok" title="Server Evaluation: OK">✓ OK</span>
+                                {% if r.is_muted or r.muted == 1 or 'MUTED' in (r.health_sts or '') %}
+                                {% set show_r = r.pause_reason and r.pause_reason not in ('Live Transmission Muted', 'Live Transmissions Muted', 'Device Muted', 'Manual Pause', 'Muted') %}
+                                <span class="badge badge-muted text-[10px] px-2 py-0.5 rounded font-bold shadow-sm inline-flex flex-col items-start leading-tight" title="Live Muted{% if r.pause_reason %}: {{ r.pause_reason }}{% endif %}">
+                                    <span class="flex items-center gap-1 font-extrabold text-[10px]">⏸️ Live Muted</span>
+                                    {% if show_r %}<span class="text-[8px] opacity-90 font-semibold mt-0.5">{{ r.pause_reason }}</span>{% endif %}
+                                </span>
+                                {% elif r.eval.verdict == 'OK' %}<span class="badge-ok" title="Server Evaluation: OK">✓ OK</span>
                                 {% else %}
                                 <span class="badge-fail font-bold" title="Reasons: {{ r.eval.reasons|join(', ') }}">✗ {{ r.eval.verdict }}</span>
                                 {% endif %}
@@ -127,15 +133,15 @@
                                 {% endif %}
                             </td>
                             <td class="p-3">
-                                <div
-                                    class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}">
-                                    GPRS: {{ '%.2f'|format(r.bat_v or 0) }}V
-                                </div>
                                 {% if r.mcu_bat %}
                                 <div class="text-[10px] text-blue-300 font-bold">
                                     MCU: {{ '%.2f'|format(r.mcu_bat) }}V
                                 </div>
                                 {% endif %}
+                                <div
+                                    class="{% if r.bat_v and r.bat_v < 3.6 %}text-red-400 font-bold{% else %}text-green-400{% endif %}">
+                                    GPRS: {{ '%.2f'|format(r.bat_v or 0) }}V
+                                </div>
                                 <div class="text-[10px] text-slate-500">
                                     S: {{ '%.1f'|format(r.sol_v or 0) }}V
                                 </div>
@@ -170,6 +176,8 @@
                                         <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=1440" class="block px-3 py-1.5 text-xs text-amber-400 hover:bg-slate-800">⏱ 24-Hour Reporting</a>
                                         <a href="/cmd/{{ r.stn_id }}/SET_RF_RES?param=0.25" class="block px-3 py-1.5 text-xs text-sky-300 hover:bg-slate-800">🎛 Tip Res: 0.25 mm</a>
                                         <a href="/cmd/{{ r.stn_id }}/SET_RF_RES?param=0.50" class="block px-3 py-1.5 text-xs text-sky-400 hover:bg-slate-800">🎛 Tip Res: 0.50 mm</a>
+                                        <button onclick="promptPauseReason('{{ r.stn_id }}')" class="w-full text-left block px-3 py-1.5 text-xs text-rose-400 hover:bg-slate-800">⏸️ Pause Live Posts</button>
+                                        <a href="/cmd/{{ r.stn_id }}/RESUME_LIVE_POST" class="block px-3 py-1.5 text-xs text-emerald-400 hover:bg-slate-800" onclick="return confirm('Resume live primary posts for {{ r.stn_id }}?')">▶️ Resume Live Posts</a>
 
                                         <!-- TIER 3: MAINTENANCE -->
                                         <div class="border-t border-slate-800 my-1"></div>
@@ -235,6 +243,18 @@
                 else alert("Failed to queue FTP_DAILY");
             });
         } else if (date) alert("Invalid date format.");
+    }
+
+    function promptPauseReason(stnId) {
+        const reason = prompt("Enter reason for pausing live posts (e.g. Maintenance, Testing, Sensor Work):", "Manual Pause");
+        if (reason !== null) {
+            const encoded = encodeURIComponent(reason);
+            fetch(`/cmd/${stnId}/PAUSE_LIVE_POST?param=${encoded}`, { method: "POST" })
+            .then(res => {
+                if(res.ok) window.location.reload();
+                else alert("Failed to queue PAUSE_LIVE_POST");
+            });
+        }
     }
 
     function toggleDropdown(event, id) {

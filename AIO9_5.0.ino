@@ -246,8 +246,10 @@ RTC_DATA_ATTR int gps_fix_dd = 0, gps_fix_mm = 0, gps_fix_yy = 0;
 RTC_DATA_ATTR char apn_str[32] = ""; // v5.75: Expanded from 20 to 32 (M-03 fix)
 RTC_DATA_ATTR char carrier[32] = ""; // v5.75: Expanded from 20 to 32 (M-03 fix)
 RTC_DATA_ATTR char sim_number[20] = "NA";
+RTC_DATA_ATTR char sim_msisdn[25] = "NA";
 RTC_DATA_ATTR char cached_iccid[25] = "";
 RTC_DATA_ATTR bool isLTE = false;
+RTC_DATA_ATTR bool live_post_muted = false;
 RTC_DATA_ATTR float prev_15min_temp = INITIAL_PREV_TEMP;
 RTC_DATA_ATTR float prev_15min_hum = INITIAL_PREV_HUM;
 RTC_DATA_ATTR float prev_15min_ws = 0.0;
@@ -653,8 +655,12 @@ void setup() {
       strcpy(station_name, temp);
     }
     test_health_every_slot = prefs.getInt("test_health", TEST_HEALTH_DEFAULT);
+    live_post_muted = prefs.getBool("muted", false);
     debug("Health Mode: ");
     debugln(test_health_every_slot == 1 ? "PULSE (15m)" : "DAILY (11am)");
+    if (live_post_muted) {
+      debugln("[BOOT] ⏸️ Primary Server Live Transmissions MUTED (Loaded from NVS).");
+    }
     
     strcpy(ftp_station, station_name);
   } else {

@@ -564,7 +564,7 @@ void gprs(void *pvParameters) {
     if (force_get_num) {
       debugln("[CMD] Remote GET_NUM triggered...");
       char numBuf[32];
-      retrieveOwnNumber(numBuf, sizeof(numBuf));
+      retrieveOwnNumber(numBuf, sizeof(numBuf), true);
       snprintf(last_cmd_res, sizeof(last_cmd_res), "Num: %s", numBuf);
       debugf("[CMD] GET_NUM Result: %s\n", last_cmd_res);
       force_get_num = false;

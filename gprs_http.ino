@@ -794,6 +794,10 @@ void prepare_data_and_send() {
 } // closes prepare_data_and_send()
 
 void send_http_data() {
+  if (live_post_muted) {
+    debugln("[GPRS] ⏸️ Primary Server Live Transmissions MUTED by server request. Skipping HTTP send.");
+    return;
+  }
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
     debugln("[GPRS] Error: Modem Mutex Timeout - deferring HTTP send");
     diag_modem_mutex_fails++;
@@ -1413,6 +1417,10 @@ void send_http_data() {
 } // end of send_http_data
 
 void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
+  if (live_post_muted) {
+    debugln("[Backlog] ⏸️ Muted: Skipping backlog send to primary server.");
+    return;
+  }
   // v7.70+: Decoupled lock. Function now takes locks locally for I/O only.
   const char
       // *charArray;
