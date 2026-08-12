@@ -31,13 +31,28 @@ fi
 
 
 BUILD_PATH="/tmp/aio_build_${FLASH_SIZE}"
-APP_BIN="$BUILD_PATH/AIO9_5.0.ino.bin"
 
-if [ ! -f "$APP_BIN" ]; then
-    echo "Error: Binary not found at $APP_BIN"
+# Find APP_BIN
+APP_BIN=""
+for candidate in \
+    "$BUILD_PATH/AIO9_5.0.ino.bin" \
+    "./build/esp32.esp32.esp32/AIO9_5.0.ino.bin" \
+    "$BUILD_PATH/sketch/AIO9_5.0.ino.bin" \
+    "./builds/KSNDMC_TRG_MAT_${FLASH_SIZE}/firmware.bin" \
+    "./build/config_KSNDMC_TRG_MAT_${FLASH_SIZE}/AIO9_5.0.ino.bin"
+do
+    if [ -f "$candidate" ]; then
+        APP_BIN="$candidate"
+        break
+    fi
+done
+
+if [ -z "$APP_BIN" ]; then
+    echo "Error: Binary not found for ${FLASH_SIZE}"
     echo "Run: ./compile.sh $FLASH_SIZE  first"
     exit 1
 fi
+echo "📦 Using Firmware Binary: $APP_BIN"
 
 # Release port if busy
 echo "🔍 Checking if $PORT is busy..."
@@ -51,8 +66,29 @@ else
 fi
 
 if [ $DO_FULL -eq 1 ]; then
-    BOOTLOADER="$BUILD_PATH/AIO9_5.0.ino.bootloader.bin"
-    PARTITIONS="$BUILD_PATH/AIO9_5.0.ino.partitions.bin"
+    BOOTLOADER=""
+    for candidate in \
+        "$BUILD_PATH/AIO9_5.0.ino.bootloader.bin" \
+        "$BUILD_PATH/sketch/AIO9_5.0.ino.bootloader.bin" \
+        "./build/config_KSNDMC_TRG_MAT_${FLASH_SIZE}/AIO9_5.0.ino.bootloader.bin" \
+        "./build/config_KSNDMC_TRG_NUV_${FLASH_SIZE}/AIO9_5.0.ino.bootloader.bin" \
+        "./flash_files/${FLASH_SIZE}/bootloader.bin" \
+        "./flash_files/bootloader.bin"
+    do
+        if [ -f "$candidate" ]; then BOOTLOADER="$candidate"; break; fi
+    done
+
+    PARTITIONS=""
+    for candidate in \
+        "$BUILD_PATH/AIO9_5.0.ino.partitions.bin" \
+        "$BUILD_PATH/sketch/AIO9_5.0.ino.partitions.bin" \
+        "./build/config_KSNDMC_TRG_MAT_${FLASH_SIZE}/AIO9_5.0.ino.partitions.bin" \
+        "./build/config_KSNDMC_TRG_NUV_${FLASH_SIZE}/AIO9_5.0.ino.partitions.bin" \
+        "./flash_files/${FLASH_SIZE}/partitions.bin" \
+        "./flash_files/partitions.bin"
+    do
+        if [ -f "$candidate" ]; then PARTITIONS="$candidate"; break; fi
+    done
     BOOT_APP="./flash_files/boot_app0.bin"
     
     if [ ! -f "$BOOT_APP" ]; then

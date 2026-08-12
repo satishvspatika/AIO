@@ -182,7 +182,10 @@ HardwareSerial SerialSIT(2);
 #if USE_NUVOTON_UI == 1
 NuvotonLCD lcd;
 #else
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+#ifndef LCD_I2C_ADDR
+#define LCD_I2C_ADDR 0x27
+#endif
+LiquidCrystal_I2C lcd(LCD_I2C_ADDR, 16, 2);
 #endif
 SemaphoreHandle_t i2cMutex = NULL;
 SemaphoreHandle_t serialMutex = NULL;

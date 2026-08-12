@@ -21,9 +21,10 @@
   0 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)
 
 // --- 2. COMPILE OPTIONS ---
-#define USE_NUVOTON_UI 1 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
-#define DEBUG 0 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
-#define ENABLE_WEBSERVER 1 // 0: Disable, 1: Enable (requires 8MB flash partition)
+#define USE_NUVOTON_UI 0 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
+#define LCD_I2C_ADDR   0x27 // 0x27 (Default PCF8574T) or 0x3F (PCF8574AT)
+#define DEBUG 1 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
+#define ENABLE_WEBSERVER 0 // 0: Disable, 1: Enable (requires 8MB flash partition)
 
 // --- 3. HARDWARE CAPABILITIES ---
 #define ENABLE_PRESSURE_SENSOR 0 // 0: Disable BMP/BME routines, 1: Enable

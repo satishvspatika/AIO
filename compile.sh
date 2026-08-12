@@ -63,6 +63,17 @@ if [ $PATCHED -eq 1 ]; then
 fi
 
 if [ $BUILD_RESULT -eq 0 ]; then
+    # Ensure binary is in $BUILD_PATH/AIO9_5.0.ino.bin
+    if [ ! -f "$BUILD_PATH/AIO9_5.0.ino.bin" ]; then
+        if [ -f "./build/esp32.esp32.esp32/AIO9_5.0.ino.bin" ]; then
+            cp "./build/esp32.esp32.esp32/AIO9_5.0.ino.bin" "$BUILD_PATH/AIO9_5.0.ino.bin"
+            cp "./build/esp32.esp32.esp32/AIO9_5.0.ino.bootloader.bin" "$BUILD_PATH/AIO9_5.0.ino.bootloader.bin" 2>/dev/null || true
+            cp "./build/esp32.esp32.esp32/AIO9_5.0.ino.partitions.bin" "$BUILD_PATH/AIO9_5.0.ino.partitions.bin" 2>/dev/null || true
+        elif [ -f "$BUILD_PATH/sketch/AIO9_5.0.ino.bin" ]; then
+            cp "$BUILD_PATH/sketch/AIO9_5.0.ino.bin" "$BUILD_PATH/AIO9_5.0.ino.bin"
+        fi
+    fi
+
     echo ""
     echo "--- Compilation Successful (v${FW_VER} / ${FLASH_SIZE}) ---"
     echo "Binary: $BUILD_PATH/AIO9_5.0.ino.bin"
