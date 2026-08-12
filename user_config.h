@@ -13,7 +13,7 @@
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 
-#define FIRMWARE_VERSION "6.21"
+#define FIRMWARE_VERSION "6.22-WIP"
 
 #define ENABLE_HEALTH_REPORT                                                   \
   1 // Master Switch: Enable automated device health reporting
@@ -44,7 +44,7 @@
 
 // --- 5. SERVER ENDPOINTS & SECURITY ---
 // Spatika Health Server (Contabo VPS - Plain HTTP API)
-#define HEALTH_SERVER_DOMAIN "devhlt.spatika.net"
+//#define HEALTH_SERVER_DOMAIN "devhlt.spatika.net"
 #define HEALTH_SERVER_IP "75.119.148.192"
 #define HEALTH_SERVER_PORT "80"
 #define OTA_SERVER_PORT "80"

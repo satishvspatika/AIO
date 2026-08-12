@@ -660,6 +660,25 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
                 "duration": p_dur_str
             }
 
+        # Scan BUILDS_DIR for existing server binaries
+        import os
+        BUILDS_DIR = "/app/builds"
+        available_builds = []
+        if os.path.exists(BUILDS_DIR):
+            for fname in os.listdir(BUILDS_DIR):
+                if fname.endswith(".bin") and not fname.endswith(".tmp"):
+                    fpath = os.path.join(BUILDS_DIR, fname)
+                    fsize = os.path.getsize(fpath) / (1024 * 1024)
+                    available_builds.append({"filename": fname, "size_mb": f"{fsize:.2f}"})
+        available_builds.sort(key=lambda x: x["filename"])
+
+        group_fw = None
+        if latest_report:
+            group_fw = db.query(FirmwareRegistry).filter_by(
+                unit_type=latest_report.unit_type,
+                system_mode=latest_report.system
+            ).first()
+
         return templates.TemplateResponse(
             request=request, name="station.html", context={
                 "request": request,
@@ -671,6 +690,8 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
                 "settings": settings,
                 "last_wifi_pass": last_wifi_pass,
                 "paused_info": paused_info,
+                "available_builds": available_builds,
+                "group_fw": group_fw,
             }
         )
     except Exception as e:

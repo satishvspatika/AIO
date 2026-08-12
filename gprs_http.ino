@@ -789,8 +789,9 @@ void prepare_data_and_send() {
       } // closes if(data_mode == eCurrentData)
     }   // closes if(success_count == 0 - second try)
   }     // closes if(success_count == 0 - first try)
-  // v5.70: fsMutex is no longer held here.
-  // GPRS task now follows granular lock pattern.
+  // Always terminate HTTP session when data upload finishes so next task (Health/OTA) gets a fresh HTTP context
+  SerialSIT.println("AT+HTTPTERM");
+  waitForResponse("OK", 2000);
 } // closes prepare_data_and_send()
 
 void send_http_data() {

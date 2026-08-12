@@ -616,18 +616,19 @@ bool isBufferSanityOK(uint8_t *buf, int len, int offset) {
     }
   }
 
-  // 4. Large block of repeating bytes (often a sign of UART/Flash sync
-  // issues)
-  int repeatCount = 0;
-  for (int i = 1; i < len; i++) {
-    if (buf[i] == buf[0])
-      repeatCount++;
-  }
-  if (repeatCount > (len - 16)) { // 99.9% identical
-    Serial.printf("[OTA] [ERR] Suspicious data (99%% repeating 0x%02X). Aborting "
-                  "chunk.\n",
-                  buf[0]);
-    return false;
+  // 4. Large block of repeating bytes (often a sign of UART/Flash sync issues).
+  // Exclude 0x00 and 0xFF as compiled ESP32 binaries naturally contain large
+  // zero-fill (.bss) or flash padding blocks of 0x00 or 0xFF.
+  if (buf[0] != 0x00 && buf[0] != 0xFF) {
+    int repeatCount = 0;
+    for (int i = 1; i < len; i++) {
+      if (buf[i] == buf[0])
+        repeatCount++;
+    }
+    if (repeatCount > (len - 16)) { // 99.9% identical
+      Serial.printf("[OTA] [ERR] Suspicious data (99%% repeating 0x%02X). Aborting chunk.\n", buf[0]);
+      return false;
+    }
   }
 
   return true;
@@ -764,36 +765,35 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
 void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked) {
   if (!alreadyLocked) {
     if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(30000)) != pdTRUE) {
-      debugln("[OTA] Error: Modem Mutex Timeout - deferring download");
+      Serial.println("[OTA] Error: Modem Mutex Timeout - deferring download");
       diag_modem_mutex_fails++;
       return;
     }
   }
-  ota_silent_mode = true; // Rule 50: Silence sensor tasks before modem reconfiguration
-  int handle_no;
+  
+  Serial.printf("[OTA] Initiating Firmware Download for: %s (Port %s)...\n", fileName, OTA_SERVER_PORT);
+
+  // Verify cellular data bearer is active before OTA initialization
+  if (!verify_bearer_or_recover()) {
+    Serial.println("[OTA] [ERR] Cellular bearer inactive. Cannot start OTA download.");
+    if (!alreadyLocked) xSemaphoreGive(modemMutex);
+    return;
+  }
+
+  ota_silent_mode = true; // Silence sensor background tasks during binary flashing
   char gprs_xmit_buf[300];
   int total_no_of_bytes = 0;
   int actual_downloaded = 0;
-  (void)handle_no; // suppress unused warning
 
-  debugf1("[OTA] Starting Range-GET download for: %s\n", fileName);
+  // Rule 27: Suppress modem network registration URCs during binary transfer
+  SerialSIT.println("AT+CREG=0"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CEREG=0"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CGEREP=0"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CGEV=0"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CNMI=0,0,0,0,0"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CIURC=0"); waitForResponse("OK", 1000);
 
-  // v7.16: Rule 27 (Total Silence Protocol)
-  // Completely silence the modem BEFORE any binary transfers occur.
-  SerialSIT.println("AT+CREG=0");
-  waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CEREG=0");  // suppress LTE/EPS registration URCs
-  waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CGEREP=0");
-  waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CGEV=0");   // suppress PDP context events
-  waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CNMI=0,0,0,0,0");
-  waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CIURC=0");
-  waitForResponse("OK", 1000);
-
-  // === STEP 1: HEAD request ===
+  // === STEP 1: Query Binary Content-Length via HTTP GET ===
   SerialSIT.println("AT+HTTPTERM");
   waitForResponse("OK", 2000);
   vTaskDelay(500 / portTICK_PERIOD_MS);
@@ -801,7 +801,8 @@ void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked) {
 
   SerialSIT.println("AT+HTTPINIT");
   if (!waitForResponse("OK", 5000)) {
-    debugln("[OTA] HTTPINIT failed (HEAD). Aborting.");
+    Serial.println("[OTA] [ERR] AT+HTTPINIT Failed. Aborting.");
+    ota_silent_mode = false;
     if (!alreadyLocked) xSemaphoreGive(modemMutex);
     Preferences p;
     p.begin("ota-track", false);
@@ -810,43 +811,46 @@ void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked) {
     p.end();
     return;
   }
-  // v5.46 (Rule 1): Bind to CID 1 — MANDATORY for Airtel/BSNL reliability
+  
   SerialSIT.println("AT+HTTPPARA=\"CID\",1");
-  if (!waitForResponse("OK", 2000)) {
-    debugln(
-        "[OTA] CID binding warning: No OK received, but continuing anyway.");
-  }
+  waitForResponse("OK", 2000);
+
   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
            "AT+HTTPPARA=\"URL\",\"http://%s:%s/builds/%s\"", HEALTH_SERVER_IP,
            OTA_SERVER_PORT, fileName);
+  Serial.printf("[OTA] Requesting URL: %s\n", gprs_xmit_buf);
   SerialSIT.println(gprs_xmit_buf);
   if (!waitForResponse("OK", 2000)) {
-    debugln("[OTA] URL setup failed. Aborting.");
+    Serial.println("[OTA] [ERR] URL setup failed. Aborting.");
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 2000);
+    ota_silent_mode = false;
     if (!alreadyLocked) xSemaphoreGive(modemMutex);
     return;
   }
-  flushSerialSIT();  // HTTP HEAD to determine Content-Length
-  SerialSIT.println("AT+HTTPACTION=2");
+
+  flushSerialSIT();  // HTTP GET to determine total binary Content-Length
+  SerialSIT.println("AT+HTTPACTION=0");
   if (!waitForResponse("+HTTPACTION:", 25000)) {
-    debugln("[OTA] No response to HTTPACTION=2 (HEAD). Aborting.");
+    Serial.println("[OTA] [ERR] No response to AT+HTTPACTION=0 (GET). Aborting.");
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 2000);
+    ota_silent_mode = false;
     if (!alreadyLocked) xSemaphoreGive(modemMutex);
     return;
   }
   
   if (strstr(modem_response_buf, "200") == NULL) {
-    debugf("[OTA] HEAD failed. Status: %s\n", modem_response_buf);
+    Serial.printf("[OTA] [ERR] GET action failed. Modem Response: %s\n", modem_response_buf);
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 2000);
-    if (!alreadyLocked)
-       xSemaphoreGive(modemMutex);
+    ota_silent_mode = false;
+    if (!alreadyLocked) xSemaphoreGive(modemMutex);
     return;
   }
 
-  // Parse content-length from the +HTTPACTION URC already in modem_response_buf
+  char expected_md5[33] = {0};
+  // Parse total_no_of_bytes directly from +HTTPACTION: 0,200,<size>
   {
       const char *ha = strstr(modem_response_buf, "+HTTPACTION:");
       if (ha) {
@@ -854,21 +858,8 @@ void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked) {
           if (c1) { 
               const char *c2 = strchr(c1+1, ',');
               if (c2) {
-                  int header_buf_len = atoi(c2+1);
-                  // Read stored response headers to get real Content-Length
-                  char rcmd[32]; 
-                  snprintf(rcmd, sizeof(rcmd), "AT+HTTPREAD=0,%d", header_buf_len);
-                  flushSerialSIT(); 
-                  SerialSIT.println(rcmd);
-                  if (waitForResponse("OK", 5000)) {
-                      const char *cl = strstr(modem_response_buf, "content-length:");
-                      if (!cl) cl = strstr(modem_response_buf, "Content-Length:");
-                      if (cl) { 
-                          const char *v = cl+15; 
-                          while(*v==' ') v++;
-                          total_no_of_bytes = atoi(v); 
-                      }
-                  }
+                  total_no_of_bytes = atoi(c2+1);
+                  debugf1("[OTA] Parsed Total Size: %d bytes\n", total_no_of_bytes);
               }
           }
       }
@@ -908,16 +899,24 @@ void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked) {
     ota_silent_mode = false; // Release silence on early-exit failure
     return;
   }
-  // BUG-9 Fix: Duplicate URC silence commands removed — already silenced
-  // at function entry (lines 3569-3578). No re-silencing needed here.
+
+  // Enforce MD5 hash validation if provided by server
+  if (strlen(expected_md5) == 32) {
+    if (Update.setMD5(expected_md5)) {
+      Serial.printf("[OTA] MD5 Digest Enforced: %s\n", expected_md5);
+    } else {
+      Serial.println("[OTA] Warning: Could not set MD5 digest");
+    }
+  } else {
+    Serial.println("[OTA] Note: Server did not provide MD5 digest header");
+  }
 
   Update.onProgress(progressCallBack);
   ota_writing_active = true;
-  Serial.println("[OTA] OTA begun. Downloading in 64KB Range chunks...");
+  Serial.println("[OTA] OTA begun. Downloading in 16KB Range chunks...");
 
-  const int RANGE_SIZE =
-      32768; // Phase 8 Fix: Shrink to 32KB to avoid fragmentation failures
-  const int READ_SIZE = 32768;
+  const int RANGE_SIZE = 16384; // 16KB matches HardwareSerial 16KB RX buffer
+  const int READ_SIZE  = 16384;
   uint8_t *buf = (uint8_t *)malloc(READ_SIZE);
   if (!buf) {
     debugln("[OTA] malloc failed!");
@@ -1000,7 +999,7 @@ void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked) {
     int r_start = actual_downloaded;
     int r_end = min(actual_downloaded + RANGE_SIZE - 1, total_no_of_bytes - 1);
     snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-             "AT+HTTPPARA=\"USERDATA\",\"Range: bytes=%d-%d\"", r_start, r_end);
+             "AT+HTTPPARA=\"USERDATA\",\"Range: bytes=%d-%d\r\n\"", r_start, r_end);
     SerialSIT.println(gprs_xmit_buf);
     waitForResponse("OK", 2000);
 
@@ -1187,8 +1186,8 @@ void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked) {
       Preferences p;
       p.begin("ota-track", false);
       p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
-      char res_buf[32];
-      snprintf(res_buf, sizeof(res_buf), "End fail code: %d", errCode);
+      char res_buf[48];
+      snprintf(res_buf, sizeof(res_buf), "End fail: %s", Update.errorString());
       p.putString("fail_res", res_buf);
       p.end();
     }

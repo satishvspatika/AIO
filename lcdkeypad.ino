@@ -761,22 +761,19 @@ void lcdkeypad(void *pvParameters) {
 #if USE_NUVOTON_UI == 1
         Serial1.begin(9600, SERIAL_8N1, 14, 4);
 
-        vTaskDelay(600 / portTICK_PERIOD_MS); // Allow Nuvoton MCU boot & internal splash stabilization
+        vTaskDelay(400 / portTICK_PERIOD_MS); // Allow Nuvoton MCU boot
         while (Serial1.available()) Serial1.read(); // Clear boot noise
-        lcd.backlight();
-        lcd.clear();
+
+        // Double-send clear and display ON command to ensure Nuvoton wipes its hardware splash screen
+        Serial1.write(0x0C); // Display ON / Backlight ON
+        Serial1.write(0x01); // Clear Screen
         vTaskDelay(50 / portTICK_PERIOD_MS);
-        lcd.print("INITIALIZING.");
-        lcd.setCursor(0, 1);
-        lcd.print("PLEASE WAIT...  ");
-        for (int dot = 0; dot < 3; dot++) {
-          vTaskDelay(300 / portTICK_PERIOD_MS);
-          esp_task_wdt_reset();
-          lcd.setCursor(12 + dot, 0);
-          lcd.print(".");
-        }
-        while (Serial1.available()) Serial1.read(); // Drain any key taps during splash
+        Serial1.write(0x01); // Retry clear command for 100% Nuvoton receipt
+        vTaskDelay(30 / portTICK_PERIOD_MS);
+
         present_topRow[0] = 0; present_bottomRow[0] = 0; // Invalidate display cache for next redraw
+        refresh_sensor_data();
+        draw_current_page();
         show_now = 1;
 #else
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {

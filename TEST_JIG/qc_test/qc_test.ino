@@ -932,6 +932,18 @@ void enterSyncConfirmState(bool pass) {
 
   if (pass && !sdOtaDecisionMade) {
     sdOtaDecisionMade = true;
+
+    // Skip SD OTA prompt entirely when ESP32 is not being tested (GPRS-only mode).
+    // Production firmware only applies to the full ESP32 board, not a GPRS sub-board test.
+    if (!enableESP) {
+      Serial.println("[QC_STEP] SD_OTA_PROMPT: SKIPPED (GPRS-only test)");
+      currentState = STATE_SYNC_CONFIRM;
+      lastStateChangeTime = millis();
+      syncVerdictPass = true;
+      Serial.println("[QC_STEP] SYNC_SHEET: CONFIRMING_PASS");
+      return;
+    }
+
     currentState = STATE_SD_OTA_CONFIRM;
     lastStateChangeTime = millis();
     syncVerdictPass = true;
@@ -1737,6 +1749,45 @@ void setup() {
       if (is_registered) {
         Serial.println("[PASS] MODEM_INIT: REG_OK");
         showProgress("DIAG: MODEM_INIT", "PASS");
+
+        // ── POST-REG VERIFICATION: re-read CSQ + CREG/CGREG for operator confirmation ──
+        delay(1000); // brief settle after registration
+        esp_task_wdt_reset();
+
+        // Re-read CSQ (signal should now be valid after registration)
+        showProgress("DIAG: VERIFY REG", "READING CSQ...");
+        String csqRes2 = sendModemAT("AT+CSQ", 1000);
+        int csqVal2 = -99; int dbmVal2 = -111;
+        int csqIdx2 = csqRes2.indexOf("+CSQ:");
+        if (csqIdx2 >= 0) {
+          csqVal2 = csqRes2.substring(csqIdx2 + 5, csqRes2.indexOf(",", csqIdx2)).toInt();
+          if (csqVal2 != 99 && csqVal2 >= 0 && csqVal2 <= 31) dbmVal2 = -113 + 2 * csqVal2;
+        }
+
+        // Re-read registration status for verification
+        int vCreg  = parseRegStatus(sendModemAT("AT+CREG?",  1000), "+CREG:");
+        int vCereg = parseRegStatus(sendModemAT("AT+CEREG?", 1000), "+CEREG:");
+        int vCgreg = parseRegStatus(sendModemAT("AT+CGREG?", 1000), "+CGREG:");
+        const char* regTypeStr = "UNKNOWN";
+        if      (vCereg == 1 || vCereg == 5) regTypeStr = "4G/LTE";
+        else if (vCgreg == 1 || vCgreg == 5) regTypeStr = "3G/GPRS";
+        else if (vCreg  == 1 || vCreg  == 5) regTypeStr = "2G/GSM";
+
+        // Emit verification log line for dashboard parsing
+        if (csqVal2 != 99 && csqVal2 >= 0) {
+          Serial.printf("[QC_JIG] MODEM_REG_VERIFY: %s | CSQ=%d (%ddBm) | CREG=%d CEREG=%d CGREG=%d\n",
+                        regTypeStr, csqVal2, dbmVal2, vCreg, vCereg, vCgreg);
+          char verBuf[32];
+          snprintf(verBuf, sizeof(verBuf), "%s CSQ:%d(%ddBm)", regTypeStr, csqVal2, dbmVal2);
+          showProgress("DIAG: VERIFY REG", verBuf);
+        } else {
+          Serial.printf("[QC_JIG] MODEM_REG_VERIFY: %s | CSQ=99 (no signal reading) | CREG=%d CEREG=%d CGREG=%d\n",
+                        regTypeStr, vCreg, vCereg, vCgreg);
+          char verBuf[32];
+          snprintf(verBuf, sizeof(verBuf), "%s CSQ:NO SIGNAL", regTypeStr);
+          showProgress("DIAG: VERIFY REG", verBuf);
+        }
+        delay(3000); // Hold on verification screen for 3 seconds so operator can see it
       } else {
         Serial.println("[FAIL] MODEM_INIT: REG_FAIL");
         showProgress("DIAG: MODEM_INIT", "REG FAIL");

@@ -31,11 +31,13 @@ for g in GROUPS:
     existing = db.query(FirmwareRegistry).filter_by(category_id=g["category_id"]).first()
     if not existing:
         db.add(FirmwareRegistry(**g))
-        print(f"  ✓ Seeded : {g['display_name']} -> target v{g['current_ver']}")
+        print(f"  ✓ Seeded (new)    : {g['display_name']} -> target v{g['current_ver']}")
     else:
-        existing.current_ver = g["current_ver"]
-        print(f"  ✓ Updated target : {g['display_name']} -> v{g['current_ver']}")
+        # NEVER overwrite existing current_ver — firmware versions are managed
+        # exclusively via build_all_configs.py --upload or the OTA web page.
+        print(f"  ✓ Preserved       : {g['display_name']} -> current target v{existing.current_ver}  [no change]")
 
 db.commit()
 db.close()
 print("\nDone. All firmware groups are ready.")
+

@@ -232,14 +232,12 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
         # Explicit binary file selection (matches v5.74 style resilience)
         binary = config_build_dir / f"{SKETCH_DIR.name}.ino.bin"
         if not binary.exists():
-            binary = SKETCH_DIR / f"{SKETCH_DIR.name}.ino.bin"
-        if not binary.exists():
-            cached_bins = list(config_build_dir.glob("**/*.bin")) + list(SKETCH_DIR.glob("**/*.bin"))
+            cached_bins = list(config_build_dir.glob("**/*.bin"))
             for cb in cached_bins:
                 if "bootloader" not in cb.name and "partitions" not in cb.name and "qc" not in cb.name and cb.stat().st_size > 500000:
                     binary = cb
                     break
-        if binary.exists():
+        if binary and binary.exists():
             firmware_path = output_dir / "firmware.bin"
             shutil.copy(binary, firmware_path)
             
@@ -373,6 +371,14 @@ def main():
         "--ui", nargs="+", default=["both"],
         choices=["nuvoton", "matrix", "both", "n", "m"],
         help="UI display variant to compile: 'nuvoton' (or 'n'), 'matrix' (or 'm'), or 'both'. Default: both"
+    )
+    parser.add_argument(
+        "--upload", type=str, default=None,
+        help="Server URL to upload compiled binary to. Use 'https://devhlt.spatika.net' for production."
+    )
+    parser.add_argument(
+        "--login", type=str, default="satishv:friend",
+        help="Username:password for server login before upload (default: satishv:friend)."
     )
     args = parser.parse_args()
 
@@ -545,6 +551,117 @@ def main():
         except Exception as e:
             print_error(f"Failed to copy to external release directory: {e}")
     
+    # Upload binaries to Contabo server if --upload flag is passed
+    if args.upload and success_count > 0:
+        import urllib.request, urllib.parse, uuid, ssl, http.cookiejar
+
+        # Auto-upgrade plain IP/HTTP to HTTPS production domain
+        raw_url = args.upload.rstrip('/')
+        if raw_url in ("http://75.119.148.192", "http://75.119.148.192:8000"):
+            server_url = "https://devhlt.spatika.net"
+            print_info("Auto-upgraded upload URL to https://devhlt.spatika.net (nginx HTTPS block has 50M limit)")
+        else:
+            server_url = raw_url
+
+        print_header(f"Uploading Binary/Binaries to Server: {server_url}")
+
+        # SSL context (accepts self-signed certs for the Contabo server)
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
+        # Cookie jar for session auth
+        cookie_jar = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ssl_ctx),
+            urllib.request.HTTPCookieProcessor(cookie_jar)
+        )
+
+        # Login first to get a session cookie
+        login_parts = getattr(args, 'login', 'satishv:friend').split(':', 1)
+        login_user = login_parts[0] if len(login_parts) > 0 else 'satishv'
+        login_pass = login_parts[1] if len(login_parts) > 1 else 'friend'
+        login_url = f"{server_url}/login"
+        login_data = urllib.parse.urlencode({"username": login_user, "password": login_pass}).encode()
+        try:
+            login_req = urllib.request.Request(login_url, data=login_data, method='POST')
+            opener.open(login_req, timeout=15)
+            print_success(f"Authenticated as '{login_user}' on {server_url}")
+        except Exception as e:
+            print_error(f"Login failed: {e}. Upload may fail if OTA requires auth.")
+
+        # Category ID mapping (matches seed_db.py / FirmwareRegistry DB table)
+        cat_map = {
+            "KSNDMC_TRG": 5,
+            "BIHAR_TRG": 6,
+            "SPATIKA_GEN": 4,
+            "KSNDMC_TWS": 3,
+            "KSNDMC_ADDON": 2,
+        }
+
+        # Parse FIRMWARE_VERSION
+        with open(USER_CONFIG_H, 'r') as f:
+            config_content = f.read()
+        version_match = re.search(r'#define FIRMWARE_VERSION "([^"]+)"', config_content)
+        firmware_version = version_match.group(1) if version_match else "UNKNOWN"
+
+        for config_dir in sorted(OUTPUT_BASE.iterdir()):
+            if config_dir.is_dir():
+                firmware = config_dir / "firmware.bin"
+                if not firmware.exists():
+                    print_info(f"Skipping upload for {config_dir.name} (no firmware.bin — build may have failed)")
+                    continue
+
+                # Only upload NUV variants for OTA (MAT is for factory flash only)
+                if "_MAT_" in config_dir.name:
+                    print_info(f"Skipping {config_dir.name} (MATRIX variant — not used for OTA)")
+                    continue
+
+                # Match config name to Category ID
+                cat_id = None
+                for name, cid in cat_map.items():
+                    if name.lower() in config_dir.name.lower():
+                        cat_id = cid
+                        break
+
+                if not cat_id:
+                    print_info(f"Skipping upload for {config_dir.name} (No matching category ID)")
+                    continue
+
+                # Read full version from fw_version.txt if present
+                ver_file = config_dir / "fw_version.txt"
+                upload_ver = ver_file.read_text().strip() if ver_file.exists() else firmware_version
+
+                upload_endpoint = f"{server_url}/ota/upload/{cat_id}"
+                bin_size_mb = firmware.stat().st_size / (1024 * 1024)
+                print_info(f"Uploading {config_dir.name} ({bin_size_mb:.2f} MB, Cat {cat_id}) v{upload_ver} → {upload_endpoint}")
+
+                try:
+                    boundary = f"----WebKitFormBoundary{uuid.uuid4().hex}"
+                    body = bytearray()
+                    body.extend(f"--{boundary}\r\n".encode())
+                    body.extend(f'Content-Disposition: form-data; name="ver"\r\n\r\n{upload_ver}\r\n'.encode())
+                    body.extend(f"--{boundary}\r\n".encode())
+                    body.extend(f'Content-Disposition: form-data; name="file"; filename="{config_dir.name}.bin"\r\n'.encode())
+                    body.extend(b'Content-Type: application/octet-stream\r\n\r\n')
+                    with open(firmware, 'rb') as f:
+                        body.extend(f.read())
+                    body.extend(f"\r\n--{boundary}--\r\n".encode())
+
+                    req = urllib.request.Request(
+                        upload_endpoint,
+                        data=bytes(body),
+                        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                        method='POST'
+                    )
+                    with opener.open(req, timeout=120) as resp:
+                        if resp.status in (200, 303):
+                            print_success(f"✓ Uploaded {config_dir.name} — target set to {upload_ver}")
+                        else:
+                            print_error(f"Upload {config_dir.name} failed: HTTP {resp.status}")
+                except Exception as e:
+                    print_error(f"Failed to upload {config_dir.name}: {e}")
+
     # List all builds
     print("\nBuilt configurations:")
     for config_dir in sorted(OUTPUT_BASE.iterdir()):

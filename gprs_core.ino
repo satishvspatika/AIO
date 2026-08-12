@@ -572,30 +572,36 @@ void gprs(void *pvParameters) {
     }
 
     if (force_ota) {
-      snprintf(ui_data[FLD_SEND_STATUS].bottomRow, sizeof(ui_data[FLD_SEND_STATUS].bottomRow), "OTA UPDATING...");
-      portENTER_CRITICAL(&syncMux);
-      health_in_progress = true; // Ensure sleep is blocked
-      portEXIT_CRITICAL(&syncMux);
-      debugln("[CMD] Remote OTA_CHECK triggered. Checking for updates...");
-      // v7.03: Ensure HTTP is closed from health report before OTA begins
-      SerialSIT.println("AT+HTTPTERM");
-      waitForResponse("OK", 2000);
-      http_ready = false;
-      vTaskDelay(2000 / portTICK_PERIOD_MS); // Stabilize modem stack
-      if (strlen(ota_cmd_param) > 0) {
-        fetchFromHttpAndUpdate(ota_cmd_param);
+      if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
+        snprintf(ui_data[FLD_SEND_STATUS].bottomRow, sizeof(ui_data[FLD_SEND_STATUS].bottomRow), "OTA UPDATING...");
+        portENTER_CRITICAL(&syncMux);
+        health_in_progress = true; // Ensure sleep is blocked
+        portEXIT_CRITICAL(&syncMux);
+        debugln("[CMD] Remote OTA_CHECK triggered. Checking for updates...");
+        // v7.03: Ensure HTTP is closed from health report before OTA begins
+        SerialSIT.println("AT+HTTPTERM");
+        waitForResponse("OK", 2000);
+        http_ready = false;
+        vTaskDelay(2000 / portTICK_PERIOD_MS); // Stabilize modem stack
+        if (strlen(ota_cmd_param) > 0) {
+          fetchFromHttpAndUpdate(ota_cmd_param, true);
+        } else {
+          char defaultUpdate[] = "firmware.bin";
+          fetchFromHttpAndUpdate(defaultUpdate, true);
+        }
+        force_ota = false;
+        if (!force_reboot) {
+          health_in_progress =
+              false; // Allow sleep now (only if download failed/skipped)
+        } else {
+          debugln("[GPRS] Reboot pending. Holding health_in_progress=TRUE.");
+        }
+        snprintf(ui_data[FLD_SEND_STATUS].bottomRow, sizeof(ui_data[FLD_SEND_STATUS].bottomRow), "OTA FINISHED");
+        xSemaphoreGive(modemMutex);
       } else {
-        char defaultUpdate[] = "firmware.bin";
-        fetchFromHttpAndUpdate(defaultUpdate);
+        debugln("[CMD] Error: modemMutex Timeout during force_ota!");
+        force_ota = false;
       }
-      force_ota = false;
-      if (!force_reboot) {
-        health_in_progress =
-            false; // Allow sleep now (only if download failed/skipped)
-      } else {
-        debugln("[GPRS] Reboot pending. Holding health_in_progress=TRUE.");
-      }
-      snprintf(ui_data[FLD_SEND_STATUS].bottomRow, sizeof(ui_data[FLD_SEND_STATUS].bottomRow), "OTA FINISHED");
     }
 
     // v7.59: GET_GPS — Re-acquire GPS coordinates on server request

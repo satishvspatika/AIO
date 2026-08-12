@@ -375,35 +375,106 @@
     </div>
 </div>
 
-{% if request.state.user and (request.state.user.role == 'supervisor' or request.state.user.get('role') == 'supervisor') %}
-<!-- Individual OTA Upload Panel -->
-<div class="card p-4 mb-5 border-yellow-900/40 relative overflow-hidden">
-    <div class="flex justify-between items-start">
-        <div class="flex-1">
-            <h3 class="text-xs font-bold text-yellow-400 uppercase tracking-wider mb-3">
-                🚀 Deploy Custom Firmware to {{ stn_id }} Only
+{% if request.state.user %}
+<!-- Station Specific Firmware Deployment Panel -->
+<div class="card p-5 mb-6 card-tier-maint shadow-sm">
+    <div class="flex items-center justify-between pb-3 mb-4 border-b border-slate-700/50">
+        <div class="flex items-center gap-2">
+            <span class="text-base">🚀</span>
+            <h3 class="text-xs font-bold text-amber-400 uppercase tracking-wider">
+                Targeted OTA Deployment — Station {{ stn_id }}
             </h3>
-            <form action="/station/{{ stn_id }}/ota" method="post" enctype="multipart/form-data"
-                class="flex items-center space-x-3 flex-wrap gap-2">
-                <input type="text" name="ver" placeholder="Target ver e.g. 5.80"
-                    class="bg-slate-900 border border-slate-700 px-3 py-1.5 rounded text-white text-xs w-44" required>
-                <input type="file" name="file" accept=".bin" class="text-xs text-slate-400" required>
-                <button type="submit" class="btn-sm btn-yel">🚀 Deploy to {{ stn_id }}</button>
+        </div>
+        <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 uppercase tracking-widest">
+            Individual Override
+        </span>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- Option 1: Fleet Group Target -->
+        <div class="p-3.5 rounded-lg bg-slate-900/80 border border-slate-700/80 flex flex-col justify-between space-y-3">
+            <div>
+                <div class="flex items-center justify-between mb-1.5">
+                    <span class="text-[11px] font-extrabold text-amber-400 uppercase tracking-wider">Group Target</span>
+                    <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">Option 1</span>
+                </div>
+                {% if group_fw and group_fw.filename and group_fw.current_ver %}
+                <div class="text-xs font-mono font-bold text-slate-100 truncate" title="{{ group_fw.filename }}">
+                    {{ group_fw.filename }}
+                </div>
+                <div class="text-[11px] font-mono text-amber-300 font-semibold mt-0.5">
+                    v{{ group_fw.current_ver }}
+                </div>
+                {% else %}
+                <div class="text-xs text-slate-400 italic">No fleet target set</div>
+                {% endif %}
+            </div>
+            {% if group_fw and group_fw.filename and group_fw.current_ver %}
+            <form action="/station/{{ stn_id }}/ota" method="post">
+                <input type="hidden" name="existing_filename" value="{{ group_fw.filename }}">
+                <button type="submit" class="w-full btn-sm bg-amber-600 hover:bg-amber-500 text-slate-950 font-black text-xs py-2 rounded-md shadow-sm transition" onclick="return confirm('Deploy {{ group_fw.filename }} (v{{ group_fw.current_ver }}) to station {{ stn_id }}?')">
+                    ⚡ Deploy Group Target
+                </button>
             </form>
+            {% else %}
+            <button disabled class="w-full btn-sm bg-slate-800 text-slate-500 font-bold text-xs py-2 rounded-md cursor-not-allowed">
+                Unavailable
+            </button>
+            {% endif %}
         </div>
 
-        {% if history and history|length > 0 %}
-        {% set latest = history[0] %}
-        {% if (latest.system == 0 or latest.system == 2) and latest.calib and latest.calib != 'NA' %}
-        <div class="ml-4 p-3 bg-slate-800/50 rounded-lg border border-green-500/20 text-right">
-            <div class="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Last Calibration</div>
-            <div class="text-xs font-mono text-green-400 font-bold">{{ latest.calib }}</div>
+        <!-- Option 2: Existing Server Binary -->
+        <div class="p-3.5 rounded-lg bg-slate-900/80 border border-slate-700/80 flex flex-col justify-between space-y-3">
+            <div>
+                <div class="flex items-center justify-between mb-1.5">
+                    <span class="text-[11px] font-extrabold text-blue-400 uppercase tracking-wider">Server Builds</span>
+                    <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">Option 2</span>
+                </div>
+                {% if available_builds and available_builds|length > 0 %}
+                <form id="select-build-form-{{ stn_id }}" action="/station/{{ stn_id }}/ota" method="post">
+                    <select name="existing_filename" class="w-full bg-slate-950 border border-slate-700 text-slate-100 text-xs font-mono p-2 rounded-md focus:outline-none focus:border-blue-500">
+                        {% for b in available_builds %}
+                        <option value="{{ b.filename }}">{{ b.filename }} ({{ b.size_mb }}MB)</option>
+                        {% endfor %}
+                    </select>
+                </form>
+                {% else %}
+                <div class="text-xs text-slate-400 italic">No builds available</div>
+                {% endif %}
+            </div>
+            {% if available_builds and available_builds|length > 0 %}
+            <button type="submit" form="select-build-form-{{ stn_id }}" class="w-full btn-sm bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs py-2 rounded-md shadow-sm transition" onclick="return confirm('Deploy selected build to station {{ stn_id }}?')">
+                🎯 Deploy Selected Build
+            </button>
+            {% else %}
+            <button disabled class="w-full btn-sm bg-slate-800 text-slate-500 font-bold text-xs py-2 rounded-md cursor-not-allowed">
+                No Builds Available
+            </button>
+            {% endif %}
         </div>
-        {% endif %}
-        {% endif %}
+
+        <!-- Option 3: Custom Binary Upload -->
+        <div class="p-3.5 rounded-lg bg-slate-900/80 border border-slate-700/80 flex flex-col justify-between space-y-3">
+            <form action="/station/{{ stn_id }}/ota" method="post" enctype="multipart/form-data" class="flex flex-col h-full justify-between space-y-3">
+                <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                        <span class="text-[11px] font-extrabold text-purple-400 uppercase tracking-wider">Custom Upload</span>
+                        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">Option 3</span>
+                    </div>
+                    <input type="file" name="file" accept=".bin" required
+                        class="block w-full text-xs text-slate-300
+                        file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0
+                        file:text-[11px] file:font-bold file:bg-purple-900/80 file:text-purple-200
+                        hover:file:bg-purple-800 border border-slate-700 rounded-md bg-slate-950 p-1">
+                </div>
+                <button type="submit" class="w-full btn-sm bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs py-2 rounded-md shadow-sm transition">
+                    📤 Upload & Deploy .bin
+                </button>
+            </form>
+        </div>
     </div>
 </div>
-{% elif history and history|length > 0 %}
+{% endif %}
 {% set latest = history[0] %}
 {% if (latest.system == 0 or latest.system == 2) and latest.calib and latest.calib != 'NA' %}
 <div class="card p-4 mb-5 border-green-900/40 flex justify-between items-center">
@@ -413,7 +484,6 @@
         <div class="text-xs font-mono text-green-400 font-bold">{{ latest.calib }}</div>
     </div>
 </div>
-{% endif %}
 {% endif %}
 
 <!-- Wi-Fi Password Modal -->

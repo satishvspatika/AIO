@@ -37,8 +37,8 @@ def main():
     web_html_path = os.path.join(base_dir, 'WEB_FLASH_FILES', 'factory_tool.html')
     jig_html_path = os.path.join(base_dir, 'factory_tool.html')
 
-    # Use the WEB_FLASH_FILES version as primary source if newer or present
-    html_path = web_html_path if os.path.exists(web_html_path) else jig_html_path
+    # Use TEST_JIG/factory_tool.html as primary source
+    html_path = jig_html_path if os.path.exists(jig_html_path) else web_html_path
 
     with open(html_path, 'r', encoding='utf-8') as f:
         html_content = f.read()
@@ -63,13 +63,8 @@ def main():
 
     print("\n✅ HTML is structurally valid!")
     
-    # Sync bidirectionally so both files are 100% identical
-    if html_path != jig_html_path:
-        shutil.copy2(html_path, jig_html_path)
-    if html_path != web_html_path:
-        shutil.copy2(html_path, web_html_path)
-    # Also explicitly sync web_html_path to jig_html_path and Downloads folder
-    shutil.copy2(web_html_path, jig_html_path)
+    # Sync from jig_html_path to web_html_path and Downloads
+    shutil.copy2(jig_html_path, web_html_path)
     
     # Sync Windows & Mac launcher scripts
     web_dir = os.path.join(base_dir, 'WEB_FLASH_FILES')

@@ -11542,14 +11542,21 @@ function getManageRecordsHtml() {
     function getVaultStatus() {
       const hasBoot = fileVault["bootloader.bin"] || fileVault["bootloader_8mb.bin"] || fileVault["bootloader_16mb.bin"];
       const hasCore = hasBoot && fileVault["boot_app0.bin"];
-      const has4 = fileVault["partitions_4mb.bin"] && fileVault["qc_test_4mb.bin"] && fileVault["production_4mb.bin"];
-      const has8 = fileVault["partitions_8mb.bin"] && fileVault["qc_test_8mb.bin"] && fileVault["production_8mb.bin"];
-      const has16 = fileVault["partitions_16mb.bin"] && fileVault["qc_test_16mb.bin"] && fileVault["production_16mb.bin"];
+      // QC-only check: just needs QC binaries (no production required)
+      const hasQc4 = fileVault["partitions_4mb.bin"] && fileVault["qc_test_4mb.bin"];
+      const hasQc8 = fileVault["partitions_8mb.bin"] && fileVault["qc_test_8mb.bin"];
+      const hasQc16 = fileVault["partitions_16mb.bin"] && fileVault["qc_test_16mb.bin"];
+      // Full check: QC + production binaries
+      const has4 = hasQc4 && fileVault["production_4mb.bin"];
+      const has8 = hasQc8 && fileVault["production_8mb.bin"];
+      const has16 = hasQc16 && fileVault["production_16mb.bin"];
+      const hasQcOnly = hasCore && (hasQc4 || hasQc8 || hasQc16);
       return {
         hasCore,
         has4,
         has8,
         has16,
+        hasQcOnly,  // true when only QC files are loaded (no production needed)
         ready: hasCore && (has4 || has8 || has16)
       };
     }
@@ -11730,8 +11737,14 @@ function getManageRecordsHtml() {
               }
             }
           } else {
-            // ESP32 is unchecked. No flashing needed; just run diagnostics if QC firmware is already on board.
-            canStart = qcFirmwareAlreadyOnBoard;
+            // ESP32 is unchecked. Flash QC firmware if not already on board, or if force/erase flash is selected
+            const requiresFlash = !qcFirmwareAlreadyOnBoard || (chkForceFlash && chkForceFlash.checked) || (chkEraseFlash && chkEraseFlash.checked);
+            if (requiresFlash) {
+              // Only need QC binaries, not production
+              canStart = vault.hasQcOnly;
+            } else {
+              canStart = true;
+            }
           }
         }
         
@@ -11770,9 +11783,13 @@ function getManageRecordsHtml() {
             btnStart.disabled = true;
             btnStart.textContent = "⚠️ Load Firmware in Step 1";
             btnStart.classList.remove("pulse-green-button");
-          } else if (!espEnabled && !qcFirmwareAlreadyOnBoard) {
+          } else if (!espEnabled && !qcFirmwareAlreadyOnBoard && !vault.hasQcOnly) {
             btnStart.disabled = true;
-            btnStart.textContent = "⚠️ QC Test FW Required";
+            btnStart.textContent = "⚠️ Load Firmware in Step 1";
+            btnStart.classList.remove("pulse-green-button");
+          } else if (!espEnabled && (chkForceFlash?.checked || chkEraseFlash?.checked) && !vault.hasQcOnly) {
+            btnStart.disabled = true;
+            btnStart.textContent = "⚠️ Load Firmware in Step 1";
             btnStart.classList.remove("pulse-green-button");
           } else {
             // All conditions met
@@ -11791,7 +11808,12 @@ function getManageRecordsHtml() {
                 btnStart.textContent = "🚀 Flash Production Firmware";
               }
             } else {
-              btnStart.textContent = "▶ Start Diagnostics";
+              if (!qcFirmwareAlreadyOnBoard || (chkForceFlash && chkForceFlash.checked) || (chkEraseFlash && chkEraseFlash.checked)) {
+                const subStr = [testCfgGprs.checked ? "GPRS" : "", testCfgNuvoton.checked ? "Nuvoton" : ""].filter(Boolean).join("+") || "Subsystem";
+                btnStart.textContent = `🚀 Flash QC FW & Test ${subStr}`;
+              } else {
+                btnStart.textContent = "▶ Start Diagnostics";
+              }
             }
           }
         }
@@ -11807,28 +11829,27 @@ function getManageRecordsHtml() {
           if (cancelReadLoop) btnStart.className = "btn btn-success";
         } else {
           if (flowSel)  flowSel.style.display  = "none";
-          if (eraseBox) eraseBox.style.display = "none";
+          if (eraseBox) eraseBox.style.display = ""; // Keep forceFlashContainer visible!
           if (stHint) {
             stHint.style.display = "block";
             if (!qcFirmwareAlreadyOnBoard) {
-              stHint.style.background = "rgba(239, 68, 68, 0.08)";
-              stHint.style.borderColor = "rgba(239, 68, 68, 0.3)";
-              stHint.style.color = "#fca5a5";
+              const subStr = [testCfgGprs.checked ? "GPRS" : "", testCfgNuvoton.checked ? "Nuvoton" : ""].filter(Boolean).join("+") || "Subsystem";
+              stHint.style.background = "rgba(59, 130, 246, 0.08)";
+              stHint.style.borderColor = "rgba(59, 130, 246, 0.3)";
+              stHint.style.color = "#93c5fd";
               stHint.innerHTML = `
-                ❌ <b>QC Test Firmware Required</b><br>
-                Diagnostics cannot run because QC Test firmware is not detected on the ESP32.<br>
-                <b>Options to proceed:</b><br>
-                1. Check the <b>ESP32 Board</b> checkbox above to flash QC Test Firmware first.<br>
-                2. Or, if you just connected, perform a firmware check again (click Connect Board).
+                🚀 <b>Flash QC FW & Test ${subStr} Only</b><br>
+                QC Test Firmware will be flashed to the ESP32 chip.<br>
+                <span style="color:#fbbf24;">⚠ ESP32 peripheral checks (SD, SPIFFS, RTC, ADCs) will be SKIPPED.</span> Only <b>${subStr}</b> will be tested.
               `;
             } else {
               stHint.style.background = "rgba(16, 185, 129, 0.08)";
               stHint.style.borderColor = "rgba(16, 185, 129, 0.25)";
               stHint.style.color = "#6ee7b7";
               stHint.innerHTML = `
-                ✅ <b>Standalone re-test mode</b> — No firmware flashing needed.<br>
+                ✅ <b>Standalone Subsystem Mode</b> — ESP32 tests skipped.<br>
                 <span style="color:#fbbf24;">⚠ ESP32 has QC test firmware installed.</span><br>
-                Connect ESP32+GPRS/Nuvoton assembly, scan the barcode(s), enter tester name, then click the <b>▶ Start Diagnostics</b> button below.
+                To re-flash QC firmware to ESP32 anyway, check <b>⚡ Force re-flash firmware</b> below.
               `;
             }
           }
@@ -12071,14 +12092,38 @@ function getManageRecordsHtml() {
       // Toggle Step 3 Programming options based on ESP32 checked status
       const flowSelector = document.querySelector(".flow-selector");
       const forceFlashContainer = document.getElementById("forceFlashContainer");
+      const eraseFlashRow       = chkEraseFlash ? chkEraseFlash.closest("div")?.parentElement : null;
       const cardProgrammingTitle = document.querySelector("#cardProgramming .card-title span");
 
       if (flowSelector) {
         flowSelector.style.display = espEnabled ? "block" : "none";
       }
       if (forceFlashContainer) {
-        forceFlashContainer.style.display = (espEnabled && activeFlow === 'factory') ? "flex" : "none";
+        if (espEnabled) {
+          // ESP32 checked: full factory flash options visible
+          forceFlashContainer.style.display = activeFlow === 'factory' ? "flex" : "none";
+          // Restore wipe-chip row visibility
+          const eraseRow = chkEraseFlash?.closest("div");
+          if (eraseRow) eraseRow.style.display = "";
+        } else if (qcFirmwareAlreadyOnBoard) {
+          // ✅ QC FW already on board + ESP32 unticked
+          // → No flash of any kind needed. Hide everything.
+          // User just swaps GPRS board and hits Start.
+          forceFlashContainer.style.display = "none";
+          if (chkEraseFlash) chkEraseFlash.checked = false;
+          if (chkForceFlash) chkForceFlash.checked = false;
+        } else {
+          // ⚠️ ESP32 unchecked but QC FW not detected (new or corrupted ESP32)
+          // → Show both options so user can choose. Default both unchecked.
+          // Wipe chip is useful for new/corrupted chips before flashing QC FW.
+          forceFlashContainer.style.display = "flex";
+          const eraseRow = chkEraseFlash?.closest("div");
+          if (eraseRow) eraseRow.style.display = "";  // Show Wipe Chip row
+          if (chkEraseFlash) chkEraseFlash.checked = false;  // Default off — user opts in if needed
+          if (chkForceFlash) chkForceFlash.checked = false;
+        }
       }
+
       if (cardProgrammingTitle) {
         cardProgrammingTitle.textContent = espEnabled ? "Step 3: Run Programming" : "Step 3: Run Diagnostics Only";
       }
@@ -13773,6 +13818,50 @@ function getManageRecordsHtml() {
         }
       }
 
+      // Post-registration network verification confirmation
+      if (line.includes("MODEM_REG_VERIFY:")) {
+        const verPart = line.split("MODEM_REG_VERIFY:")[1]?.trim() || "";
+        const netMatch  = verPart.match(/^([^\|]+)/);
+        const csqMatch  = verPart.match(/CSQ=(\d+)/);
+        const dbmMatch  = verPart.match(/\((-?\d+)dBm\)/);
+        const creMatch  = verPart.match(/CREG=(\d)/);
+        const cereMatch = verPart.match(/CEREG=(\d)/);
+        const cgreMatch = verPart.match(/CGREG=(\d)/);
+        const netType   = netMatch  ? netMatch[1].trim()  : "?";
+        const csqNum    = csqMatch  ? parseInt(csqMatch[1]) : 99;
+        const dbm       = dbmMatch  ? parseInt(dbmMatch[1]) : null;
+        const creVal    = creMatch  ? parseInt(creMatch[1])  : 0;
+        const cereVal   = cereMatch ? parseInt(cereMatch[1]) : 0;
+        const cgreVal   = cgreMatch ? parseInt(cgreMatch[1]) : 0;
+
+        let sigQuality = "—";
+        let sigColor   = "#fbbf24";
+        if (csqNum !== 99 && dbm !== null) {
+          sigQuality = `${csqNum} (${dbm} dBm)`;
+          sigColor   = dbm >= -85 ? "#22c55e" : dbm >= -100 ? "#f59e0b" : "#ef4444";
+        }
+
+        const regStrings = { 0:"Not Reg", 1:"Registered Home", 2:"Searching", 3:"Denied", 5:"Registered Roaming" };
+        const creStr  = regStrings[creVal]  || creVal;
+        const cereStr = regStrings[cereVal] || cereVal;
+        const cgreStr = regStrings[cgreVal] || cgreVal;
+
+        logToConsole(
+          `┌─── 📡 NETWORK REGISTRATION CONFIRMED ─────────────────┐\n` +
+          `│  Network Type  : ${netType.padEnd(35)}│\n` +
+          `│  Signal (CSQ)  : ${sigQuality.padEnd(35)}│\n` +
+          `│  CREG (2G)     : ${creStr.padEnd(35)}│\n` +
+          `│  CEREG (4G)    : ${cereStr.padEnd(35)}│\n` +
+          `│  CGREG (GPRS)  : ${cgreStr.padEnd(35)}│\n` +
+          `└────────────────────────────────────────────────────────┘`,
+          "success"
+        );
+
+        // Update the GPRS check row with full verified details
+        const verLabel = `${netType} | CSQ:${csqNum}${dbm !== null ? ` (${dbm}dBm)` : ""}`;
+        setCheckState(chkGprs, valGprs, "pass", verLabel);
+      }
+
       // ADC / Power Rails — parse raw values and compute voltages
       // Line format: [QC_JIG] BATT_3V7_ADC: 3706, SYS_3V3_ADC: 2877, SOLAR_ADC: 431
       if (line.includes("BATT_3V7_ADC:") && line.includes("SOLAR_ADC:")) {
@@ -14641,7 +14730,7 @@ function getManageRecordsHtml() {
       // Reset live diagnostics checklist immediately when starting
       resetChecklist();
 
-      if (!testCfgEsp.checked) {
+      if (!testCfgEsp.checked && qcFirmwareAlreadyOnBoard && !(chkForceFlash && chkForceFlash.checked) && !(chkEraseFlash && chkEraseFlash.checked)) {
         await runDiagnosticsOnly();
         return;
       }
@@ -14958,6 +15047,7 @@ function getManageRecordsHtml() {
       // Update Flow A description to reflect detected state
       updateFlowADesc();
       checkPreconditions();
+      updateSubsystemUI(); // Re-evaluate flash panel visibility now that qcFirmwareAlreadyOnBoard is known
     }
 
 

@@ -82,6 +82,22 @@ void get_network() {
   // AND it matches the physical SIM in the slot.
   if (current_iccid[0] != '\0' && strcmp(cached_iccid, current_iccid) == 0 &&
       strcmp(sim_number, "NA") != 0) {
+
+    // v6.23: Cache cross-validation — if cached carrier contradicts ICCID prefix, invalidate.
+    // BSNL ICCIDs always start with 89917, 89913, or 89915.
+    // Airtel ICCIDs typically start with 89914 or 89912.
+    // If cache says BSNL but ICCID is clearly Airtel, the cache was poisoned — redo discovery.
+    bool iccid_is_airtel = (strlen(current_iccid) >= 5 &&
+                            (strncmp(current_iccid, "89914", 5) == 0 ||
+                             strncmp(current_iccid, "89912", 5) == 0));
+    bool cached_is_bsnl  = (strstr(carrier, "BSNL") != nullptr);
+
+    if (cached_is_bsnl && iccid_is_airtel) {
+      debugln("[CACHE] Stale cache: carrier=BSNL but ICCID is Airtel prefix. Forcing re-discovery.");
+      cached_iccid[0] = '\0'; // Invalidate cache
+      goto full_discovery;
+    }
+
     debugln("[CACHE] Using cached carrier/number to save power.");
     if (strcmp(sim_msisdn, "NA") == 0 || sim_msisdn[0] == '\0') {
       retrieveOwnNumber(sim_msisdn, sizeof(sim_msisdn), true);
@@ -119,6 +135,7 @@ void get_network() {
     }
     return;
   }
+
 
 full_discovery:
   debugln("[CACHE] New SIM or No Cache. Performing full discovery...");
@@ -712,6 +729,15 @@ void get_registration() {
     gprs_mode = eGprsSignalForStoringOnly;
     debugf1("Registration failed. Consecutive fails: %d/10\n",
             diag_consecutive_reg_fails);
+
+    // v6.23 Fail-Safe: Automatically wipe RTC network cache on 2 consecutive fails
+    // to prevent any stale carrier/APN cache lock from persisting.
+    if (diag_consecutive_reg_fails >= 2) {
+      debugln("[GPRS] Consecutive registration failures. Wiping RTC network cache to force fresh discovery...");
+      cached_iccid[0] = '\0';
+      carrier[0] = '\0';
+      apn_str[0] = '\0';
+    }
 
     // v5.56: Aggressive Modem Reset before full system reboot
     if (diag_consecutive_reg_fails == 4 || diag_consecutive_reg_fails == 8) {
@@ -1508,43 +1534,43 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
 
   bool success = false;
   int max_attempts = 2;
+  bool skip_cipshut = false; // Set true after zombie nuke to avoid killing freshly rebuilt bearer
 
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
     debugf("[Health] Attempt %d/%d\n", attempt, max_attempts);
 
     if (!verify_bearer_or_recover()) continue;
+    vTaskDelay(2000 / portTICK_PERIOD_MS); // Allow network 2s to assign IP context
 
     // [H-02] Session tracking Restoration
     bool session_terminated = false;
 
-    // Proactive IP stack cleanup for A7672S reliability when live post was muted
-    flushSerialSIT();
-    SerialSIT.println("AT+CIPSHUT");
-    waitForResponse("SHUT OK", 3000);
-    vTaskDelay(200 / portTICK_PERIOD_MS);
+    // Suppress network URCs during health HTTP transaction
+    SerialSIT.println("AT+CGEREP=0"); waitForResponse("OK", 1000);
 
-    // Simplified sequence for A7672S stability: Flush UART buffer before initialization
+    // v5.92 / Airtel 706 Fix: Do NOT call AT+CIPSHUT after verify_bearer_or_recover()!
+    // verify_bearer_or_recover() just established a pristine, clean IP mapping (CGACT=1,1).
+    // CIPSHUT deactivates PDP context 1, causing HTTPDATA to reject with ERROR.
+
     flushSerialSIT();
-    SerialSIT.println("AT+HTTPTERM"); 
+    SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 1000);
     vTaskDelay(400 / portTICK_PERIOD_MS); // SIMCOM A7672S stack breather
-    
+
     flushSerialSIT();
     SerialSIT.println("AT+HTTPINIT");
     if (!waitForResponse("OK", 5000)) {
-      debugln("[Health] [ERR] HTTPINIT Reject.");
-      flushSerialSIT();
+      debugf("[Health] [ERR] HTTPINIT Reject. Modem Resp: '%s'\n", modem_response_buf);
       SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 1000);
       session_terminated = true;
       continue;
     }
 
-    flushSerialSIT();
-    SerialSIT.println("AT+HTTPPARA=\"CID\",1");
-    waitForResponse("OK", 2000);
+    // Note: AT+HTTPPARA="CID" omitted — this A7672S firmware returns plain ERROR.
+    // The modem binds to the active PDP context automatically after HTTPINIT.
 
     flushSerialSIT();
-    SerialSIT.println("AT+HTTPPARA=\"REDR\",1");
+    SerialSIT.println("AT+HTTPPARA=\"REDR\",1"); // Enable HTTP redirect following (v6.21)
     waitForResponse("OK", 2000);
 
     char ht_url[150];
@@ -1554,27 +1580,37 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
     snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_IP, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
 #endif
     debugf("[Health] Prepared URL: %s\n", ht_url);
-    flushSerialSIT(); 
+    flushSerialSIT();
     SerialSIT.println(ht_url);
     if (!waitForResponse("OK", 5000)) {
-        debugln("[Health] [ERR] URL PARA Reject.");
+        debugf("[Health] [ERR] URL PARA Reject. Modem Resp: '%s'\n", modem_response_buf);
         session_terminated = true;
         continue;
     }
 
     flushSerialSIT();
     SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-    waitForResponse("OK", 2000);
+    if (!waitForResponse("OK", 2000)) {
+      debugf("[Health] [ERR] CONTENT PARA Reject. Modem Resp: '%s'\n", modem_response_buf);
+      session_terminated = true;
+      continue;
+    }
 
     flushSerialSIT();
     SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
-    waitForResponse("OK", 2000);
+    if (!waitForResponse("OK", 2000)) {
+      debugf("[Health] [ERR] ACCEPT PARA Reject. Modem Resp: '%s'\n", modem_response_buf);
+      session_terminated = true;
+      continue;
+    }
 
+    // Triple flush before HTTPDATA (v6.21 pattern)
     for (int i = 0; i < 3; i++) { flushSerialSIT(); vTaskDelay(50 / portTICK_PERIOD_MS); }
 
     int actualLen = strlen(gprs_payload);
     char ht_data_cmd[64];
-    snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,15000", actualLen); 
+    snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,15000", actualLen); // 15s modem timeout (v6.21)
+
     flushSerialSIT();
     vTaskDelay(300 / portTICK_PERIOD_MS);
     SerialSIT.println(ht_data_cmd);
@@ -1582,6 +1618,7 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
 
     if (waitForResponse("DOWNLOAD", 15000)) {
       vTaskDelay(100 / portTICK_PERIOD_MS);
+      // v6.21: SerialSIT.print() — no trailing \r\n which corrupts A7672S payload boundary
       SerialSIT.print(gprs_payload);
       if (waitForResponse("OK", 5000)) {
         flushSerialSIT();
@@ -1593,7 +1630,15 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
             debugln("[Health] 🧟 Zombie Socket. Nuking Bearer Context...");
             SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 1000);
             SerialSIT.println("AT+CGACT=0,1"); waitForResponse("OK", 5000);
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            vTaskDelay(2000 / portTICK_PERIOD_MS);
+            // Re-establish bearer so next attempt starts with a live PDP context
+            if (!verify_bearer_or_recover()) {
+              debugln("[Health] [ERR] Bearer re-establish failed after zombie nuke.");
+              session_terminated = true;
+              continue;
+            }
+            vTaskDelay(2000 / portTICK_PERIOD_MS);
+            skip_cipshut = true; // Bearer freshly rebuilt — skip CIPSHUT next attempt
             session_terminated = true;
             continue; 
           }
@@ -1634,6 +1679,21 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
             if (strstr(body, "\"OTA_CHECK\"")) {
                 force_ota = true;
                 strcpy(last_cmd_res, "Success: OTA Triggered");
+                // Extract filename parameter ("p":"FW_S5_KSNDMC_TRG.bin")
+                const char* pTag = strstr(body, "\"p\"");
+                if (pTag) {
+                    const char* col = strchr(pTag, ':');
+                    if (col) {
+                        const char* q1 = strchr(col, '"');
+                        if (q1) {
+                            const char* q2 = strchr(q1 + 1, '"');
+                            if (q2 && (q2 - q1 - 1) < sizeof(ota_cmd_param)) {
+                                strncpy(ota_cmd_param, q1 + 1, q2 - q1 - 1);
+                                ota_cmd_param[q2 - q1 - 1] = '\0';
+                            }
+                        }
+                    }
+                }
             }
             if (strstr(body, "\"GET_STATUS\"") || strstr(body, "\"GET_HEALTH\"")) {
                 force_health_upload = true;
@@ -1719,11 +1779,8 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
         }
       }
     } else {
-      debugln("[Health] DOWNLOAD Fail. Nuking Bearer Context...");
+      debugf("[Health] DOWNLOAD Fail. Modem Response: '%s'\n", modem_response_buf);
       SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 1000);
-      SerialSIT.println("AT+CIPSHUT"); waitForResponse("SHUT OK", 3000);
-      SerialSIT.println("AT+CGACT=0,1"); waitForResponse("OK", 5000);
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
       session_terminated = true;
     }
 
