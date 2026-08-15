@@ -253,55 +253,33 @@ void resync_time() {
   }
   
   vTaskDelay(200 / portTICK_PERIOD_MS);
-  // v5.82 Platinum: Enhanced parsing for multi-format CLBS (+CLBS: 0,lat,lon,alt,YY/MM/DD,HH:MM:SS)
   response_char = modem_response_buf;
   vTaskDelay(200 / portTICK_PERIOD_MS);
-  csqstr = strstr(response_char, "+CLBS");
+  debugf("[RTC] Modem +CLBS Response: %s\n", response_char);
 
-  if (csqstr != NULL) {
-    // Robust Manual Parsing for +CLBS:
-    // <err>,<lat>,<long>,<alt>,<year/mm/dd,hh:mm:ss> Handles SIMCOM 7672
-    // response format variations (with or without quotes)
-    const char *p = strchr(csqstr, ':');
-    if (p) {
+  double resync_lat = 0.0, resync_lon = 0.0;
+  char date_str[16] = {0}, time_str[16] = {0};
+  if (parse_clbs_response(response_char, resync_lat, resync_lon, date_str, time_str)) {
+    lati = resync_lat;
+    longi = resync_lon;
+    gps_latitude = resync_lat;
+    gps_longitude = resync_lon;
+    saveGPS();
 
-      p++; // Skip ':'
-      tmp = atoi(p);
-      p = strchr(p, ',');
-      if (p) {
-        lati = atof(++p);
-        p = strchr(p, ',');
-        if (p) {
-          longi = atof(++p);
-          p = strchr(p, ',');
-          if (p) {
-            tmp3 = atoi(++p); // skip altitude
-            p = strchr(p, ',');
-            if (p) {
-              p++; // Skip comma
-              // Handle optional quotes around date string
-              if (*p == '"')
-                p++;
-
-              // v5.65 Fix: Robust manual parsing. Handle comma OR space as separator
-              // between date and time (standard modems vary). Also use double %lf.
-              if (sscanf(p, "%d/%d/%d%*[ ,]%d:%d:%d", &year1, &month1, &day1, &hour1,
-                         &minute1, &seconds1) == 6) {
-                debugln("[RTC] CLBS data parsed successfully (Manual)");
-                parse_and_convert_clbs_response(response_char, year1, month1,
-                                                day1, hour1, minute1, seconds1);
-                badReads = 0;
-              } else {
-                debugln("[RTC] Error: Date/Time parsing failed");
-              }
-            }
-          }
-        }
+    if (strlen(date_str) >= 8 && strlen(time_str) >= 8) {
+      if (sscanf(date_str, "%d/%d/%d", &year1, &month1, &day1) == 3 &&
+          sscanf(time_str, "%d:%d:%d", &hour1, &minute1, &seconds1) == 3) {
+        if (year1 < 100) year1 += 2000;
+        debugln("[RTC] CLBS data parsed successfully (Manual)");
+        parse_and_convert_clbs_response(response_char, year1, month1,
+                                        day1, hour1, minute1, seconds1);
+        badReads = 0;
+      } else {
+        debugln("[RTC] Error: Date/Time parsing failed");
       }
     }
   } else {
-    debugln("Error: +CLBS not found in response - will retry later");
-    // Removed ESP.restart() to prevent boot loops on poor signal
+    debugln("Error: +CLBS not valid in response - will retry later");
   }
 
   // Phase 14 Fix: Ensure the activity flags are ALWAYS cleared if 

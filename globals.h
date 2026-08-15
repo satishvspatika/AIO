@@ -154,10 +154,9 @@ extern float RF_RESOLUTION;
 //#define RADIUS_METERS 0.07       // e.g., 7 cm
 //#define PULSES_PER_REV 4
 #define AVG_WS_DURATION_SECONDS 900 // 15 minutes
-#define NUM_OF_TEETH 4
-#define TWO_PI 6.28318530718
-// 2*pi*r (pulses per revolution = 4 and r = 0.07m)
-#define WS_CALIBRATION_FACTOR 0.4398229715026
+// Wind Speed (m/s) = (WS_CALIBRATION_FACTOR * PPS) / WIND_TEETH_COUNT
+// WS_CALIBRATION_FACTOR represents the distance (circumference) per revolution (0.45m)
+#define WS_CALIBRATION_FACTOR 0.45
 
 // Record length constants for different systems (Audit-Hardened v5.75)
 #define RECORD_LENGTH_RF 46    // SYSTEM == 0 (NN,YYYY-MM-DD,HH:MM,II.II,CC.CC,SSSY,BB.BB\r\n)
@@ -364,9 +363,9 @@ extern int sd_card_ok;
 extern int send_daily;
 extern float solar_val, solar;
 extern float li_bat, li_bat_val;
-#if USE_NUVOTON_UI == 1
 extern float bat_3v3_val;
 extern float ref_volt_val;
+#if USE_NUVOTON_UI == 1
 extern char sys_status[17];
 void set_sys_status(const char *status);
 void read_and_calibrate_voltages();
@@ -666,7 +665,10 @@ void retrieveOwnNumber(char* outBuf, size_t outSize, bool alreadyLocked = false)
 int setup_ftp(int transMode = 0);
 void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked = false);
 void copyFromSPIFFSToFS(char *dateFile, bool alreadyLocked = false);
+void saveGPS();
 void loadGPS();
+bool parse_clbs_response(const char *response, double &out_lat, double &out_lon,
+                         char *date_out = NULL, char *time_out = NULL);
 void sync_rtc_from_http_header();
 // I2C Protection (v5.49)
 

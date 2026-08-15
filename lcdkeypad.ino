@@ -164,7 +164,7 @@ uint64_t get_lcd_timeout_val() {
   return current_gprs_active ? 180000000ULL : 60000000ULL;
 }
 
-volatile bool timerFlag = false;
+DRAM_ATTR volatile bool timerFlag = false;
 unsigned long calib_start_time = 0;
 
 // CALIB Timer ISR callback function
@@ -174,7 +174,7 @@ void IRAM_ATTR onTimer() {
   portEXIT_CRITICAL_ISR(&timerMux1);
 }
 
-volatile bool lcd_power_cut_pending = false;
+DRAM_ATTR volatile bool lcd_power_cut_pending = false;
 
 // LCD Timer ISR callback function
 void IRAM_ATTR lcdTimer() {
@@ -474,7 +474,7 @@ void refresh_sensor_data() {
   }
   else if (cur_fld_no == FLD_SIM_STATUS) {
     int rssi = signal_strength;
-    bool sigValid = !(rssi == 0 || rssi == 99 || rssi == -114);
+    bool sigValid = (rssi < 0 && rssi > -110 && rssi != SIGNAL_STRENGTH_MISSING_DATA);
     if (strlen(carrier) == 0 || strcmp(carrier, "NA") == 0 || !sigValid) {
       strcpy(ui_data[FLD_SIM_STATUS].topRow, "SIGNAL          ");
       strcpy(ui_data[FLD_SIM_STATUS].bottomRow, "FETCHING...     ");
@@ -687,11 +687,17 @@ void lcdkeypad(void *pvParameters) {
       // We ping the LCD expander (0x27) to verify the bus is electrically alive.
       if (wakeupKey != NO_KEY) {
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
-          Wire.beginTransmission(0x27);
+#ifndef LCD_I2C_ADDR
+#define LCD_I2C_ADDR 0x27
+#endif
+          Wire.beginTransmission(LCD_I2C_ADDR);
           if (Wire.endTransmission() != 0) {
-            // No ACK from the LCD. The physical power switch must be OFF.
-            wakeupKey = NO_KEY; // Ignore ghost key
-            // debugln("[UI] Ignored ghost keypress. LCD switch is currently OFF."); // Optional, avoid spam
+            uint8_t alt_addr = (LCD_I2C_ADDR == 0x27) ? 0x3F : 0x27;
+            Wire.beginTransmission(alt_addr);
+            if (Wire.endTransmission() != 0) {
+              // No ACK from LCD at 0x27 or 0x3F. Ignore ghost key.
+              wakeupKey = NO_KEY;
+            }
           }
           xSemaphoreGive(i2cMutex);
         }
@@ -780,6 +786,19 @@ void lcdkeypad(void *pvParameters) {
         show_now = 1;
 #else
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+#ifndef LCD_I2C_ADDR
+#define LCD_I2C_ADDR 0x27
+#endif
+          uint8_t target_addr = LCD_I2C_ADDR;
+          Wire.beginTransmission(target_addr);
+          if (Wire.endTransmission() != 0) {
+            uint8_t alt_addr = (target_addr == 0x27) ? 0x3F : 0x27;
+            Wire.beginTransmission(alt_addr);
+            if (Wire.endTransmission() == 0) {
+              target_addr = alt_addr;
+            }
+          }
+          lcd = LiquidCrystal_I2C(target_addr, 16, 2);
           lcd.init();
           lcd.display();
           lcd.backlight();

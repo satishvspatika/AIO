@@ -103,9 +103,9 @@ char battery[10] = "0.0";
 char solar_sense[10] = "0.0";
 float solar_val = 0.0, solar = 0.0;
 float li_bat = 0.0, li_bat_val = 0.0;
-#if USE_NUVOTON_UI == 1
 float bat_3v3_val = 0.0;
 float ref_volt_val = 0.0;
+#if USE_NUVOTON_UI == 1
 char sys_status[17] = "BOOTING";
 RTC_DATA_ATTR float last_cal_factor = 1.0;
 
@@ -148,7 +148,7 @@ char rssi_resp[10] = "";
 uint8_t rssi_val = 0;
 char date_now[11] = "";
 char time_now[6] = "";
-int ULP_WAKEUP_TC = 2000;
+int ULP_WAKEUP_TC = WIND_SAMPLING_US;
 float rf_value = 0, current_rf_value = 0, calib_rf_float = 0;
 int rf_res_edit_state = 0;
 char cum_rf[10], inst_rf[10], inst_temp[10], avg_cum_rf[10];
@@ -183,20 +183,23 @@ HardwareSerial SerialSIT(2);
 #if USE_NUVOTON_UI == 1
 NuvotonLCD lcd;
 #else
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+#ifndef LCD_I2C_ADDR
+#define LCD_I2C_ADDR 0x27
+#endif
+LiquidCrystal_I2C lcd(LCD_I2C_ADDR, 16, 2);
 #endif
 SemaphoreHandle_t i2cMutex = NULL;
 SemaphoreHandle_t serialMutex = NULL;
 SemaphoreHandle_t modemMutex = NULL;
 SemaphoreHandle_t fsMutex = NULL;
 RTC_DS1307 rtc;
-portMUX_TYPE timerMux0 = portMUX_INITIALIZER_UNLOCKED;
-portMUX_TYPE timerMux1 = portMUX_INITIALIZER_UNLOCKED;
-portMUX_TYPE timerMux2 = portMUX_INITIALIZER_UNLOCKED;
-portMUX_TYPE windMux = portMUX_INITIALIZER_UNLOCKED;
-portMUX_TYPE rtcTimeMux = portMUX_INITIALIZER_UNLOCKED;
-portMUX_TYPE syncMux = portMUX_INITIALIZER_UNLOCKED;
-portMUX_TYPE sensorDataMux = portMUX_INITIALIZER_UNLOCKED;
+DRAM_ATTR portMUX_TYPE timerMux0 = portMUX_INITIALIZER_UNLOCKED;
+DRAM_ATTR portMUX_TYPE timerMux1 = portMUX_INITIALIZER_UNLOCKED;
+DRAM_ATTR portMUX_TYPE timerMux2 = portMUX_INITIALIZER_UNLOCKED;
+DRAM_ATTR portMUX_TYPE windMux = portMUX_INITIALIZER_UNLOCKED;
+DRAM_ATTR portMUX_TYPE rtcTimeMux = portMUX_INITIALIZER_UNLOCKED;
+DRAM_ATTR portMUX_TYPE syncMux = portMUX_INITIALIZER_UNLOCKED;
+DRAM_ATTR portMUX_TYPE sensorDataMux = portMUX_INITIALIZER_UNLOCKED;
 
 volatile char show_now = 0;
 TaskHandle_t bmeTask_h;
@@ -441,7 +444,7 @@ struct http_params httpSet[11] = {
 volatile bool rtcReady = false;
 volatile bool rtcTimeChanged = false;
 volatile int wakeup_reason_is = 0;
-volatile int lcdkeypad_start = 0;
+DRAM_ATTR volatile int lcdkeypad_start = 0;
 volatile bool initial_boot_complete = false;
 // --- End Volatile Definitions ---
 
@@ -1455,7 +1458,7 @@ void setup() {
   uint32_t preserved_wind = (rr == DEEPSLEEP_RESET) ? wind_count.val : 0;
 #endif
 
-  debug("ULP Wakeup Period set to 1ms (High Resolution for Wind)");
+  debugf("[ULP] Sampling Period set to %dus (%dHz)\n", ULP_WAKEUP_TC, 1000000/ULP_WAKEUP_TC);
   ULP_COUNTING(ULP_WAKEUP_TC);
   debugln("ULP Program loaded and started.");
 
@@ -2217,7 +2220,7 @@ void ULP_COUNTING(uint32_t us) {
 
       // States are different, start debouncing
       I_MOVI(R3, 0), I_ST(R2, R3, U_PREV_STATE), // prev_state = current
-      I_MOVI(R0, 5),                             // Debounce optimized to 5 loops (10ms total)
+      I_MOVI(R0, (10000 / WIND_SAMPLING_US)),     // Scaled to maintain 10ms total rain debounce
       I_ST(R0, R3, U_DEBOUNCE_CNT),
       M_BX(4), // Skip to next sensor while debouncing
 
@@ -2265,7 +2268,7 @@ void ULP_COUNTING(uint32_t us) {
 
       // States are different, start debouncing
       I_MOVI(R3, 0), I_ST(R2, R3, U_WIND_PREV_STATE), // prev_state = current
-      I_MOVI(R0, 1),                                  // v5.92: Reduced to 1 loop (1ms) to support fast 4-teeth anemometer
+      I_MOVI(R0, WIND_DEBOUNCE_CYCLES),               // Parameterized wind debounce loop count
       I_ST(R0, R3, U_WIND_DEBOUNCE_CNT),
       M_BX(5), // Skip to exit while debouncing
 

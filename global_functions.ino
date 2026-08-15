@@ -124,8 +124,10 @@ void start_deep_sleep() {
       Wire.end();                  // Release SDA/SCL before PCF8574 loses power
 #if USE_NUVOTON_UI == 1
       Serial1.end();               // Release UART pins to prevent back-powering Nuvoton
+      digitalWrite(32, HIGH);      // Keep Nuvoton powered during deep sleep for key scanning
+#else
+      digitalWrite(32, LOW);       // Cut power to standalone LCD during deep sleep
 #endif
-      digitalWrite(32, LOW);       // Cut power to Nuvoton / LCD during deep sleep
       // Hardware Hold: Capture the state for the duration of the sleep
       gpio_hold_en(GPIO_NUM_32);
       gpio_hold_en(GPIO_NUM_26); // Modem was cut in graceful_modem_shutdown()
@@ -144,7 +146,11 @@ void start_deep_sleep() {
       live_sec = current_sec;
       portEXIT_CRITICAL(&rtcTimeMux);
 
+#if USE_NUVOTON_UI == 1
+      digitalWrite(32, HIGH);      // Fallback: keep Nuvoton powered
+#else
       digitalWrite(32, LOW);       // Fallback cut if mutex totally hung / Path B power down
+#endif
       gpio_hold_en(GPIO_NUM_32);
       gpio_hold_en(GPIO_NUM_26);
       gpio_hold_en(GPIO_NUM_16);
@@ -199,7 +205,15 @@ void start_deep_sleep() {
   rtc_gpio_pullup_en(GPIO_NUM_27);
   rtc_gpio_pulldown_dis(GPIO_NUM_27);
 
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW);
+  // Guard against instant wakeup loops: verify GPIO 27 level prior to sleep.
+  // If GPIO 27 is currently LOW (stuck key, noise, or unpowered pin clamp),
+  // arming EXT0 on LOW causes an instant 0ms deep sleep wakeup loop.
+  delayMicroseconds(50);
+  if (gpio_get_level(GPIO_NUM_27) == 1) {
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW);
+  } else {
+    debugln("[PWR] [WARN] GPIO 27 is LOW prior to sleep! EXT0 wakeup skipped to prevent instant sleep loop.");
+  }
   // Use the calculated seconds directly
   esp_sleep_enable_timer_wakeup((uint64_t)sleep_seconds * uS_TO_S_FACTOR);
 
@@ -595,6 +609,8 @@ void saveGPS() {
     debugln("[SPIFFS] Mutex Timeout: Skipping saveGPS");
     return;
   }
+  gps_latitude = lati;
+  gps_longitude = longi;
   File file = SPIFFS.open("/gps_fix.tmp", FILE_WRITE);
   if (file) {
     file.printf("%.6f,%.6f,%d,%d,%d", lati, longi, current_day, current_month,
@@ -634,10 +650,21 @@ void loadGPS() {
       int r = file.readBytes(line_buf, sizeof(line_buf) - 1);
       line_buf[r] = '\0';
       file.close();
-      if (sscanf(line_buf, "%lf,%lf,%d,%d,%d", &lati, &longi, &gps_fix_dd,
-                 &gps_fix_mm, &gps_fix_yy) == 5) {
+      double loaded_lat = 0.0, loaded_lon = 0.0;
+      int items = sscanf(line_buf, "%lf,%lf,%d,%d,%d", &loaded_lat, &loaded_lon, &gps_fix_dd,
+                         &gps_fix_mm, &gps_fix_yy);
+      if (items < 2) {
+        items = sscanf(line_buf, "%lf,%lf", &loaded_lat, &loaded_lon);
+      }
+      if (items >= 2 && (fabs(loaded_lat) > 0.00001 || fabs(loaded_lon) > 0.00001)) {
+        lati = loaded_lat;
+        longi = loaded_lon;
+        gps_latitude = lati;
+        gps_longitude = longi;
         debugf5("[GPS] Loaded from SPIFFS: %.6f,%.6f (Fix: %02d/%02d/%d)\n",
                 lati, longi, gps_fix_dd, gps_fix_mm, gps_fix_yy);
+      } else {
+        debugln("[GPS] No valid persisted coordinates in /gps_fix.txt");
       }
     }
   } else {

@@ -54,16 +54,15 @@ void gprs(void *pvParameters) {
                    (mode_snap == eGPSStart) ? FLD_SEND_GPS :
                    (mode_snap == eHealthStart) ? FLD_SEND_HEALTH : FLD_SEND_GPS;
 
-      // Clear the queued pending flag immediately to prevent double-execution
-      if (mode_snap == eSMSStart) pending_manual_status = false;
-      else if (mode_snap == eGPSStart) pending_manual_gps = false;
-      else if (mode_snap == eHealthStart) pending_manual_health = false;
-
       // [A-09] v5.89: Added 100ms breather to prevent contention timeout 
       // if an automated task just finished releasing the mutex.
       vTaskDelay(100 / portTICK_PERIOD_MS); 
 
       if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
+        // Clear the queued pending flag once lock is successfully acquired
+        if (mode_snap == eSMSStart) pending_manual_status = false;
+        else if (mode_snap == eGPSStart) pending_manual_gps = false;
+        else if (mode_snap == eHealthStart) pending_manual_health = false;
         
         if (gprs_mode == eGprsInitial) {
           debugln("[GPRS] Manual Trigger: Initiating Power On...");

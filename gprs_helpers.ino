@@ -1087,6 +1087,7 @@ void power_cut_modem_shutdown() {
   digitalWrite(26, LOW); // Cut modem VCC instantly
   vTaskDelay(3000 / portTICK_PERIOD_MS); // allow 3-second delay to settle heavy current draw
 }
+#endif
 
 /*
  *   HTTP
@@ -1277,5 +1278,83 @@ void retrieveOwnNumber(char* outBuf, size_t outSize, bool alreadyLocked) {
     xSemaphoreGive(modemMutex);
   }
 }
-#endif
+
+/**
+ * Robust SIMCom +CLBS AT Command Response Parser
+ * Format: +CLBS: <location_state>,<lon/lat>,<lat/lon>,<altitude>[,<date>,<time>]
+ * Handles error status, missing fields, quotes, and auto-detects Lat vs Lon ordering.
+ */
+bool parse_clbs_response(const char *response, double &out_lat, double &out_lon,
+                         char *date_out, char *time_out) {
+  if (!response)
+    return false;
+  const char *csqstr = strstr(response, "+CLBS");
+  if (!csqstr)
+    return false;
+
+  const char *p = strchr(csqstr, ':');
+  if (!p)
+    return false;
+  p++; // skip ':'
+
+  int location_state = atoi(p);
+  if (location_state != 0) {
+    debugf("[GPS] CLBS returned error status: %d\n", location_state);
+    return false;
+  }
+
+  p = strchr(p, ',');
+  if (!p)
+    return false;
+  double val1 = atof(++p); // First value after error status
+
+  p = strchr(p, ',');
+  if (!p)
+    return false;
+  double val2 = atof(++p); // Second value after error status
+
+  if (fabs(val1) < 0.00001 && fabs(val2) < 0.00001) {
+    debugln("[GPS] CLBS returned zero coordinates.");
+    return false;
+  }
+
+  // Auto-detect Latitude vs Longitude:
+  // For India / Asia, Longitude is between ~60.0°E and 100.0°E, Latitude is between ~5.0°N and 40.0°N.
+  if (fabs(val1) > 45.0 && fabs(val2) <= 45.0) {
+    out_lon = val1;
+    out_lat = val2;
+  } else if (fabs(val2) > 45.0 && fabs(val1) <= 45.0) {
+    out_lat = val1;
+    out_lon = val2;
+  } else {
+    // Default SIMCom specification: field 1 = Longitude, field 2 = Latitude
+    out_lon = val1;
+    out_lat = val2;
+  }
+
+  // Optional date and time extraction
+  if (date_out || time_out) {
+    p = strchr(p, ','); // skip second coordinate value
+    if (p) {
+      p = strchr(p + 1, ','); // skip altitude (field 3)
+      if (p) {
+        p++; // Position of date/time string
+        if (*p == '"')
+          p++; // strip leading quote if any
+        char d_buf[16] = {0}, t_buf[16] = {0};
+        if (sscanf(p, "%15[^, ,\"],%15[^,\"\r\n]", d_buf, t_buf) >= 1 ||
+            sscanf(p, "%15[0-9/]%*[ ,]%15[0-9:]", d_buf, t_buf) >= 1) {
+          if (date_out && strlen(d_buf) > 0)
+            strcpy(date_out, d_buf);
+          if (time_out && strlen(t_buf) > 0)
+            strcpy(time_out, t_buf);
+        }
+      }
+    }
+  }
+
+  debugf("[GPS] Parsed valid coordinates: Lat=%.6f, Lon=%.6f\n", out_lat, out_lon);
+  return true;
+}
+
 

@@ -1007,6 +1007,15 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
     }
   }
 
+  // Validate destination phone number
+  if (!gsm_no || strlen(gsm_no) < 8) {
+    debugln("[SMS] ERROR: Invalid or missing target phone number.");
+    strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "NO PHONE NUMBER ");
+    show_now = 1;
+    if (!alreadyLocked) xSemaphoreGive(modemMutex);
+    return;
+  }
+
   int response_no;
   char msg_type[9];
   char status_response[256];
@@ -1030,6 +1039,15 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
       get_calibrated_battery_voltage(); // Phase 8 Fix: eFuse-calibrated ADC
   snprintf(battery, sizeof(battery), "%04.1f", li_bat_val);
   bat_val = li_bat_val; // bat_val is given for storage in spiffs
+
+  // Brownout Safeguard: If battery is critically low (< 3.35V), block 2A RF transmit surge to prevent brownout reset
+  if (li_bat_val > 0.1f && li_bat_val < 3.35f) {
+    debugf("[SMS] CRITICAL: Battery too low for SMS RF transmit (%.2fV < 3.35V). Blocking transmit to prevent Brownout Reset.\n", li_bat_val);
+    strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "LOW BATT (<3.4V)");
+    show_now = 1;
+    if (!alreadyLocked) xSemaphoreGive(modemMutex);
+    return;
+  }
 
   if (STATION_TYPE[0] == '\0') {
 #if SYSTEM == 0
@@ -1064,13 +1082,9 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
     tLen--;
   }
 
-  // Send primary 3.2V battery and secondary 3.7V GPRS battery from global voltage readings
-#if USE_NUVOTON_UI == 1
-  float primary_bat = (bat_3v3_val > 0.5) ? bat_3v3_val : (bat_val > 0.5 ? bat_val : 3.2);
-#else
-  float primary_bat = (bat_val > 0.5) ? bat_val : 3.2;
-#endif
-  float secondary_bat = (li_bat_val > 0.5) ? li_bat_val : 3.7;
+  // Bat1 = MCU Power (3.3V system rail), Bat2 = GPRS Power (3.7V Li-ion battery)
+  float primary_bat = (bat_3v3_val > 0.5f) ? bat_3v3_val : 3.3f;
+  float secondary_bat = (li_bat_val > 0.5f) ? li_bat_val : 3.7f;
 
   // RF & TWS
   snprintf(
@@ -1143,60 +1157,70 @@ void get_gps_coordinates(bool alreadyLocked) {
   }
 
   int tmp;
-  double lat, lon;
+  double lat = 0.0, lon = 0.0;
   const char *response_ptr;
   char *csqstr;
 
-  for (int retry = 0; retry < 2; retry++) {
+  verify_bearer_or_recover();
+
+  for (int retry = 0; retry < 4; retry++) {
     debugf1("[GPS] Requesting Coordinates (AT+CLBS=1), Attempt %d...\n",
             retry + 1);
     SerialSIT.println("ATE0");
     waitForResponse("OK", 2000);
 
-    SerialSIT.println("AT+CLBS=1");
-    if (waitForResponse("+CLBS:", 15000)) {
-      const char* response_ptr = modem_response_buf;
-      const char* csqstr = strstr(response_ptr, "+CLBS");
-      if (csqstr != NULL) {
-        // v5.90: Extended parsing to include network date and time for auto-sync
-        char date_buf[16] = {0}, time_buf[16] = {0};
-        int prec = 0;
-        if (sscanf(csqstr, "+CLBS: %d,%lf,%lf,%d,%[^,],%s", &tmp, &lat, &lon, &prec, date_buf, time_buf) >= 3) {
-          if (fabs(lat) > 0.00001 && fabs(lon) > 0.00001) {
-            lati = lat;
-            longi = lon;
-            saveGPS(); // Persist immediately
-            
-            // SYNC TIME: Extract YY/MM/DD and HH:MM:SS from network
-            if (strlen(date_buf) >= 8 && strlen(time_buf) >= 8) {
-              int yy, mm, dd, hr, mi, ss;
-              if (sscanf(date_buf, "%d/%d/%d", &yy, &mm, &dd) == 3 &&
-                  sscanf(time_buf, "%d:%d:%d", &hr, &mi, &ss) == 3) {
-                int full_year = 2000 + yy;
-                if (full_year >= 2025 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
-                  debugf("[GPS] Network Time Sync: %04d-%02d-%02d %02d:%02d:%02d\n", full_year, mm, dd, hr, mi, ss);
-                  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                    rtc.adjust(DateTime(full_year, mm, dd, hr, mi, ss));
-                    xSemaphoreGive(i2cMutex);
-                    
-                    portENTER_CRITICAL(&rtcTimeMux);
-                    current_year = full_year; current_month = mm; current_day = dd;
-                    current_hour = hr; current_min = mi; current_sec = ss;
-                    portEXIT_CRITICAL(&rtcTimeMux);
-                  }
-                }
+    flushSerialSIT();
+    if (retry % 2 == 0) {
+      SerialSIT.println("AT+CLBS=1");
+    } else {
+      SerialSIT.println("AT+CLBS=1,1");
+    }
+    bool got_clbs = waitForResponse("+CLBS:", 15000) || waitForResponse("OK", 2000);
+    debugf("[GPS] Modem +CLBS Response: %s\n", modem_response_buf);
+    if (got_clbs) {
+      char date_buf[16] = {0}, time_buf[16] = {0};
+      if (parse_clbs_response(modem_response_buf, lat, lon, date_buf, time_buf)) {
+        lati = lat;
+        longi = lon;
+        gps_latitude = lat;
+        gps_longitude = lon;
+        saveGPS(); // Persist immediately
+
+        // SYNC TIME: Extract YY/MM/DD and HH:MM:SS from network
+        if (strlen(date_buf) >= 8 && strlen(time_buf) >= 8) {
+          int yy, mm, dd, hr, mi, ss;
+          if (sscanf(date_buf, "%d/%d/%d", &yy, &mm, &dd) == 3 &&
+              sscanf(time_buf, "%d:%d:%d", &hr, &mi, &ss) == 3) {
+            int full_year = 2000 + yy;
+            if (full_year >= 2025 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+              debugf("[GPS] Network Time Sync: %04d-%02d-%02d %02d:%02d:%02d\n", full_year, mm, dd, hr, mi, ss);
+              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                rtc.adjust(DateTime(full_year, mm, dd, hr, mi, ss));
+                xSemaphoreGive(i2cMutex);
+                
+                portENTER_CRITICAL(&rtcTimeMux);
+                current_year = full_year; current_month = mm; current_day = dd;
+                current_hour = hr; current_min = mi; current_sec = ss;
+                portEXIT_CRITICAL(&rtcTimeMux);
               }
             }
-            if (locked_by_us) xSemaphoreGive(modemMutex);
-            return; // SUCCESS
           }
         }
+        if (locked_by_us) xSemaphoreGive(modemMutex);
+        return; // SUCCESS
       }
     }
-    debugln("[GPS] Attempt failed. Retrying...");
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    debugln("[GPS] Attempt failed (+CLBS error or timeout). Retrying in 2.5s...");
+    vTaskDelay(2500 / portTICK_PERIOD_MS);
+    if (retry == 1) {
+      debugln("[GPS] Re-verifying bearer context before final attempts...");
+      verify_bearer_or_recover();
+    }
   }
-  debugln("[GPS] All attempts to get fresh coordinates failed.");
+  debugln("[GPS] Fresh coordinate acquisition failed. Checking SPIFFS backup...");
+  if (lati == 0.0 || longi == 0.0) {
+    loadGPS();
+  }
   if (locked_by_us) xSemaphoreGive(modemMutex);
 }
 
@@ -1211,15 +1235,12 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
     }
   }
 
-  int response_no;
-  int tmp, tmp3;
-  char tmp2[16];
-  int day, month, year, hour, minute, seconds;
   char status_response[256];
   char gprs_xmit_buf[300];
   msg_sent = 0;
 
-  char *csqstr;
+  // Ensure modem bearer context (CGACT 1,1) is active before requesting location via CLBS
+  verify_bearer_or_recover();
 
   SerialSIT.println("ATE0");
   if (waitForResponse("OK", 3000)) {
@@ -1227,43 +1248,63 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
   }
 
   // To find Latitude and Longitude. Only with A7672S
-  vTaskDelay(5000 / portTICK_PERIOD_MS);
-  SerialSIT.println("AT+CLBS=1");
-  if (waitForResponse("+CLBS:", 15000)) {
-    const char* csqstr = strstr(modem_response_buf, "+CLBS");
-    if (csqstr != NULL) {
-      // v5.90: Extended parsing to include network date and time for manual sync
+  bool fresh_fix_ok = false;
+  double fresh_lat = 0.0, fresh_lon = 0.0;
+  for (int retry = 0; retry < 4; retry++) {
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    flushSerialSIT();
+    if (retry % 2 == 0) {
+      SerialSIT.println("AT+CLBS=1");
+    } else {
+      SerialSIT.println("AT+CLBS=1,1");
+    }
+    bool got_clbs = waitForResponse("+CLBS:", 15000) || waitForResponse("OK", 2000);
+    debugf("[GPS] Modem +CLBS Response: %s\n", modem_response_buf);
+    if (got_clbs) {
       char date_buf[16] = {0}, time_buf[16] = {0};
-      int prec = 0;
-      if (sscanf(csqstr, "+CLBS: %d,%lf,%lf,%d,%[^,],%s", &tmp, &lati, &longi, &prec, date_buf, time_buf) >= 3) {
-        debugf("Latitude is : %.6f\n", lati);
-        debugf("Longitude is : %.6f\n", longi);
-        if (lati != 0 && longi != 0) {
-          saveGPS();
+      if (parse_clbs_response(modem_response_buf, fresh_lat, fresh_lon, date_buf, time_buf)) {
+        lati = fresh_lat;
+        longi = fresh_lon;
+        gps_latitude = fresh_lat;
+        gps_longitude = fresh_lon;
+        saveGPS();
+        fresh_fix_ok = true;
 
-          // SYNC TIME: Extract YY/MM/DD and HH:MM:SS from network
-          if (strlen(date_buf) >= 8 && strlen(time_buf) >= 8) {
-            int yy, mm, dd, hr, mi, ss;
-            if (sscanf(date_buf, "%d/%d/%d", &yy, &mm, &dd) == 3 &&
-                sscanf(time_buf, "%d:%d:%d", &hr, &mi, &ss) == 3) {
-              int full_year = 2000 + yy;
-              if (full_year >= 2025 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
-                debugf("[GPS] Network Time Sync (Manual): %04d-%02d-%02d %02d:%02d:%02d\n", full_year, mm, dd, hr, mi, ss);
-                if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                  rtc.adjust(DateTime(full_year, mm, dd, hr, mi, ss));
-                  xSemaphoreGive(i2cMutex);
-                  
-                  portENTER_CRITICAL(&rtcTimeMux);
-                  current_year = full_year; current_month = mm; current_day = dd;
-                  current_hour = hr; current_min = mi; current_sec = ss;
-                  portEXIT_CRITICAL(&rtcTimeMux);
-                }
+        // SYNC TIME: Extract YY/MM/DD and HH:MM:SS from network
+        if (strlen(date_buf) >= 8 && strlen(time_buf) >= 8) {
+          int yy, mm, dd, hr, mi, ss;
+          if (sscanf(date_buf, "%d/%d/%d", &yy, &mm, &dd) == 3 &&
+              sscanf(time_buf, "%d:%d:%d", &hr, &mi, &ss) == 3) {
+            int full_year = 2000 + yy;
+            if (full_year >= 2025 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+              debugf("[GPS] Network Time Sync (Manual): %04d-%02d-%02d %02d:%02d:%02d\n", full_year, mm, dd, hr, mi, ss);
+              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                rtc.adjust(DateTime(full_year, mm, dd, hr, mi, ss));
+                xSemaphoreGive(i2cMutex);
+                
+                portENTER_CRITICAL(&rtcTimeMux);
+                current_year = full_year; current_month = mm; current_day = dd;
+                current_hour = hr; current_min = mi; current_sec = ss;
+                portEXIT_CRITICAL(&rtcTimeMux);
               }
             }
           }
-        } 
+        }
+        break; // Fresh fix acquired
       }
     }
+    debugln("[GPS] Attempt failed (+CLBS error or timeout). Retrying in 2.5s...");
+    vTaskDelay(2500 / portTICK_PERIOD_MS);
+    if (retry == 1) {
+      debugln("[GPS] Re-verifying bearer context before final attempts...");
+      verify_bearer_or_recover();
+    }
+  }
+
+  // Fallback to persisted SPIFFS location if fresh fix failed or lati/longi are zero
+  if (!fresh_fix_ok || lati == 0.0 || longi == 0.0) {
+    debugln("[GPS] Fresh fix unavailable in get_lat_long_date_time. Loading persisted location...");
+    loadGPS();
   } 
 
   if (STATION_TYPE[0] == '\0') {
@@ -1516,12 +1557,6 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
 
     // [H-02] Session tracking Restoration
     bool session_terminated = false;
-
-    // Proactive IP stack cleanup for A7672S reliability when live post was muted
-    flushSerialSIT();
-    SerialSIT.println("AT+CIPSHUT");
-    waitForResponse("SHUT OK", 3000);
-    vTaskDelay(200 / portTICK_PERIOD_MS);
 
     // Simplified sequence for A7672S stability: Flush UART buffer before initialization
     flushSerialSIT();
