@@ -246,12 +246,18 @@ print_header "Step 5: Verifying Release Package"
 
 RELEASE_DIR="/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5"
 ZIP_FILE="${RELEASE_DIR}/AIO9_v${VERSION}.zip"
+FACTORY_ZIP="${RELEASE_DIR}/AIO9_Factory_Flash_Files.zip"
 
 if [ -f "$ZIP_FILE" ]; then
     ZIP_SIZE=$(du -h "$ZIP_FILE" | cut -f1)
-    print_success "ZIP archive created: AIO9_v${VERSION}.zip ($ZIP_SIZE)"
+    print_success "Release ZIP archive created: AIO9_v${VERSION}.zip ($ZIP_SIZE)"
 else
     print_warning "ZIP file not found at: $ZIP_FILE"
+fi
+
+if [ -f "$FACTORY_ZIP" ]; then
+    FACTORY_ZIP_SIZE=$(du -h "$FACTORY_ZIP" | cut -f1)
+    print_success "Factory Flash ZIP archive created: AIO9_Factory_Flash_Files.zip ($FACTORY_ZIP_SIZE)"
 fi
 
 # 7. Git push (with confirmation)
@@ -280,11 +286,14 @@ print_header "Release Complete!"
 echo -e "${GREEN}✓ Version: v${VERSION}${NC}"
 echo -e "${GREEN}✓ Summary: ${SUMMARY}${NC}"
 echo -e "${GREEN}✓ Release Notes: ${RELEASE_NOTES}${NC}"
-echo -e "${GREEN}✓ Configurations: 6 built${NC}"
+echo -e "${GREEN}✓ Configurations: 7 built${NC}"
 echo -e "${GREEN}✓ Package: ${RELEASE_DIR}/v${VERSION}/${NC}"
 
 if [ -f "$ZIP_FILE" ]; then
-    echo -e "${GREEN}✓ ZIP Archive: ${ZIP_FILE} (${ZIP_SIZE})${NC}"
+    echo -e "${GREEN}✓ Release ZIP Archive: ${ZIP_FILE} (${ZIP_SIZE})${NC}"
+fi
+if [ -f "$FACTORY_ZIP" ]; then
+    echo -e "${GREEN}✓ Factory Flash ZIP Archive: ${FACTORY_ZIP} (${FACTORY_ZIP_SIZE})${NC}"
 fi
 
 echo -e "\n${BLUE}Next Steps:${NC}"
@@ -296,19 +305,21 @@ echo -e "  3. Upload ZIP to GitHub Releases (optional)"
 print_header "Step 7: Email Release Package"
 
 if [ "$NON_INTERACTIVE" = true ]; then
-    SEND_EMAIL="n"
+    SEND_EMAIL="y"
 else
     echo -e "${YELLOW}Send release package via email?${NC}"
-    echo -e "  To: production.spatika@gmail.com, rajesh.spatika@gmail.com"
-    echo -e "  CC: ssraghavan.spatika@gmail.com"
-    echo -e "  Attachment: AIO9_v${VERSION}.zip (${ZIP_SIZE})"
+    echo -e "  To: satishv.spatika@gmail.com"
+    echo -e "  Attachments:"
+    echo -e "    - Release ZIP: AIO9_v${VERSION}.zip (${ZIP_SIZE})"
+    echo -e "    - Factory ZIP: AIO9_Factory_Flash_Files.zip (${FACTORY_ZIP_SIZE})"
+    echo -e "    - Release Notes: ${RELEASE_NOTES}"
     echo -e "\n${YELLOW}Send email? (y/n):${NC}"
     read -r SEND_EMAIL
 fi
 
 if [ "$SEND_EMAIL" = "y" ] || [ "$SEND_EMAIL" = "Y" ]; then
     if [ -f "$ZIP_FILE" ]; then
-        python3 send_release_email.py "$VERSION" "$ZIP_FILE" "$RELEASE_NOTES" "$SUMMARY" "${RELEASE_DIR}/v${VERSION}"
+        python3 send_release_email.py "$VERSION" "$ZIP_FILE" "$RELEASE_NOTES" "$SUMMARY" "${RELEASE_DIR}/v${VERSION}" "satishv.spatika@gmail.com" "$FACTORY_ZIP"
         
         if [ $? -eq 0 ]; then
             print_success "Email sent successfully"
@@ -319,7 +330,7 @@ if [ "$SEND_EMAIL" = "y" ] || [ "$SEND_EMAIL" = "Y" ]; then
         print_error "Cannot send email: ZIP file not found"
     fi
 else
-    print_warning "Skipped email. Run manually: python3 send_release_email.py $VERSION $ZIP_FILE $RELEASE_NOTES \"$SUMMARY\" \"${RELEASE_DIR}/v${VERSION}\""
+    print_warning "Skipped email. Run manually: python3 send_release_email.py $VERSION $ZIP_FILE $RELEASE_NOTES \"$SUMMARY\" \"${RELEASE_DIR}/v${VERSION}\" \"satishv.spatika@gmail.com\" \"$FACTORY_ZIP\""
 fi
 
 echo -e "\n${GREEN}🎉 Release v${VERSION} is ready for deployment!${NC}\n"

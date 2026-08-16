@@ -66,11 +66,18 @@ def build_settings_table(release_dir):
     lines.append("=" * 66)
     return "\n".join(lines)
 
-def send_release_email(version, zip_file, release_notes_file, summary, release_dir=None):
+def send_release_email(version, zip_file, release_notes_file, summary, release_dir=None, recipient_emails=None, factory_zip_file=None):
     # Email configuration
     SENDER_EMAIL = "satishv.spatika@gmail.com"
-    TO_EMAILS = ["production.spatika@gmail.com", "rajesh.spatika@gmail.com"]
-    CC_EMAILS = ["ssraghavan.spatika@gmail.com", SENDER_EMAIL]
+    if recipient_emails:
+        if isinstance(recipient_emails, str):
+            TO_EMAILS = [e.strip() for e in recipient_emails.split(",") if e.strip()]
+        else:
+            TO_EMAILS = recipient_emails
+        CC_EMAILS = []
+    else:
+        TO_EMAILS = ["satishv.spatika@gmail.com"]
+        CC_EMAILS = []
     
     # Discover built configurations dynamically for the subject line
     built_configs = []
@@ -98,14 +105,16 @@ def send_release_email(version, zip_file, release_notes_file, summary, release_d
     print(f"\n📧 Preparing Release Email...")
     print(f"   From: {SENDER_EMAIL}")
     print(f"   To: {', '.join(TO_EMAILS)}")
-    print(f"   CC: {', '.join(CC_EMAILS)}")
+    if CC_EMAILS:
+        print(f"   CC: {', '.join(CC_EMAILS)}")
     print(f"   Subject: {SUBJECT}")
 
     # Create message container
     msg = MIMEMultipart()
     msg['From'] = SENDER_EMAIL
     msg['To'] = ", ".join(TO_EMAILS)
-    msg['Cc'] = ", ".join(CC_EMAILS)
+    if CC_EMAILS:
+        msg['Cc'] = ", ".join(CC_EMAILS)
     msg['Subject'] = SUBJECT
 
     # Read release notes content
@@ -144,12 +153,15 @@ COMPILE-TIME SETTINGS (What was compiled in/out)
 PACKAGE CONTENTS
 ============================================================
 
-The attached ZIP file contains the pre-compiled configurations listed in the compile-time settings table above.
+The attached ZIP file ({os.path.basename(zip_file)}) contains the pre-compiled configurations listed in the compile-time settings table above.
 
 Each config folder contains:
   firmware.bin     — pre-compiled binary (flash at offset 0x10000)
-  fw_version.txt   — full version string (e.g. TRG9-DMC-6.10-N)
+  fw_version.txt   — full version string (e.g. TRG9-DMC-6.23-N)
   metadata.json    — machine-readable compile settings
+
+Additionally, for new board factory flashing, the standalone package (AIO9_Factory_Flash_Files.zip) contains:
+  bootloader.bin, partitions.bin, boot_app0.bin, flash scripts, and FACTORY_FLASH_GUIDE.md.
 
 ============================================================
 DEPLOYMENT
@@ -166,9 +178,9 @@ Spatika AIO Release Automation
 """
     msg.attach(MIMEText(body, 'plain'))
 
-    # Attach ZIP file
+    # Attach Release ZIP file
     if os.path.exists(zip_file):
-        print(f"   📎 Attaching ZIP: {os.path.basename(zip_file)} ({os.path.getsize(zip_file)/(1024*1024):.2f} MB)")
+        print(f"   📎 Attaching Release ZIP: {os.path.basename(zip_file)} ({os.path.getsize(zip_file)/(1024*1024):.2f} MB)")
         with open(zip_file, "rb") as attachment:
             part = MIMEBase("application", "octet-stream")
             part.set_payload(attachment.read())
@@ -178,6 +190,24 @@ Spatika AIO Release Automation
     else:
         print(f"❌ Error: ZIP file not found at {zip_file}")
         return False
+
+    # Attach Factory Flash Files ZIP
+    factory_zip = factory_zip_file
+    if not factory_zip and release_dir:
+        candidate = Path(release_dir).parent / "AIO9_Factory_Flash_Files.zip"
+        if candidate.exists():
+            factory_zip = str(candidate)
+
+    if factory_zip and os.path.exists(factory_zip):
+        print(f"   📎 Attaching Factory Flash ZIP: {os.path.basename(factory_zip)} ({os.path.getsize(factory_zip)/(1024*1024):.2f} MB)")
+        with open(factory_zip, "rb") as attachment:
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(attachment.read())
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(factory_zip)}")
+        msg.attach(part)
+    elif factory_zip:
+        print(f"⚠️ Warning: Specified factory ZIP file not found at {factory_zip}")
 
     # Attach Release Notes MD
     if os.path.exists(release_notes_file):
@@ -230,14 +260,16 @@ Spatika AIO Release Automation
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print("Usage: python3 send_release_email.py <version> <zip_file> <release_notes> [summary] [release_dir]")
+        print("Usage: python3 send_release_email.py <version> <zip_file> <release_notes> [summary] [release_dir] [recipients] [factory_zip]")
         sys.exit(1)
 
-    version       = sys.argv[1]
-    zip_file      = sys.argv[2]
-    release_notes = sys.argv[3]
-    summary       = sys.argv[4] if len(sys.argv) > 4 else "New Release"
-    release_dir   = sys.argv[5] if len(sys.argv) > 5 else None
+    version          = sys.argv[1]
+    zip_file         = sys.argv[2]
+    release_notes    = sys.argv[3]
+    summary          = sys.argv[4] if len(sys.argv) > 4 else "New Release"
+    release_dir      = sys.argv[5] if len(sys.argv) > 5 else None
+    recipient_emails = sys.argv[6] if len(sys.argv) > 6 else None
+    factory_zip_file = sys.argv[7] if len(sys.argv) > 7 else None
 
-    success = send_release_email(version, zip_file, release_notes, summary, release_dir)
+    success = send_release_email(version, zip_file, release_notes, summary, release_dir, recipient_emails, factory_zip_file)
     sys.exit(0 if success else 1)

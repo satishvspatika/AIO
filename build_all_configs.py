@@ -31,6 +31,10 @@ CONFIGS = [
     (2, "KSNDMC_ADDON", "KSNDMC_ADDON"),
 ]
 
+# Configs that require Nuvoton UI (USE_NUVOTON_UI = 1) in addition to Matrix UI (USE_NUVOTON_UI = 0)
+NUVOTON_UI_CONFIGS = {"KSNDMC_TRG", "KSNDMC_TWS"}
+
+
 # Flash size variants available:
 # Use --flash 4mb or --flash 16mb on CLI to include those variants.
 # Default (no flag): 8mb only (current production hardware).
@@ -408,11 +412,21 @@ def main():
             elif ui in ["matrix", "m"]:
                 if 0 not in ui_targets: ui_targets.append(0)
 
+    # Calculate total planned builds taking UI restrictions into account
+    # Nuvoton UI (USE_NUVOTON_UI == 1) is ONLY built for KSNDMC_TRG and KSNDMC_TWS
+    total_builds = 0
+    for _ in FLASH_VARIANTS:
+        for u_target in ui_targets:
+            for _, _, output_name in active_configs:
+                if u_target == 1 and output_name not in NUVOTON_UI_CONFIGS and not args.configs:
+                    continue
+                total_builds += 1
+
     print_header(f"AIO9_5.0 Multi-Configuration Builder")
     print(f"  Flash targets: {', '.join(args.flash).upper()}")
     print(f"  UI targets: {', '.join(['NUVOTON' if u==1 else 'MATRIX' for u in ui_targets])}")
     print(f"  Configurations: {len(active_configs)}")
-    print(f"  Total builds: {len(FLASH_VARIANTS) * len(ui_targets) * len(active_configs)}")
+    print(f"  Total builds: {total_builds}")
     
     # Check arduino-cli
     if not check_arduino_cli():
@@ -451,6 +465,10 @@ def main():
             ui_label = "NUVOTON UI" if use_nuvoton_ui == 1 else "MATRIX UI"
             print_info(f"Building for UI variant: {ui_label}")
             for system, unit, output_name in active_configs:
+                # Nuvoton UI (USE_NUVOTON_UI=1) is only built for KSNDMC_TRG and KSNDMC_TWS unless explicitly overridden via --configs
+                if use_nuvoton_ui == 1 and output_name not in NUVOTON_UI_CONFIGS and not args.configs:
+                    print_info(f"Skipping Nuvoton UI for {output_name} (Nuvoton UI is restricted to KSNDMC_TRG & KSNDMC_TWS)")
+                    continue
                 if build_config(system, unit, output_name, flash_size, flash_fqbn, partition_csv, use_nuvoton_ui=use_nuvoton_ui):
                     success_count += 1
                 else:
@@ -539,6 +557,39 @@ def main():
                 
                 zip_size = zip_filename.stat().st_size / (1024 * 1024)
                 print_success(f"Release archive created: {zip_filename.name} ({zip_size:.2f} MB)")
+
+                # 5. Create standalone Factory Flash Files ZIP archive
+                try:
+                    factory_zip_filename = external_base.parent / "AIO9_Factory_Flash_Files.zip"
+                    print(f"→ Creating Factory Flash Files archive: {factory_zip_filename.name}")
+                    
+                    factory_files_to_pack = [
+                        SKETCH_DIR / "flash_files",
+                        SKETCH_DIR / "partitions.csv",
+                        SKETCH_DIR / "partitions_16mb.csv",
+                        SKETCH_DIR / "partitions_4mb.csv",
+                        SKETCH_DIR / "flash_firmware.sh",
+                        SKETCH_DIR / "quick_flash.sh",
+                        SKETCH_DIR / "FACTORY_FLASH_GUIDE.md",
+                    ]
+                    
+                    with zipfile.ZipFile(factory_zip_filename, 'w', zipfile.ZIP_DEFLATED) as fzipf:
+                        for item in factory_files_to_pack:
+                            if item.exists():
+                                if item.is_dir():
+                                    for root, dirs, files in os.walk(item):
+                                        for file in files:
+                                            file_path = Path(root) / file
+                                            arcname = file_path.relative_to(SKETCH_DIR)
+                                            fzipf.write(file_path, arcname)
+                                elif item.is_file():
+                                    fzipf.write(item, item.relative_to(SKETCH_DIR))
+                    
+                    factory_zip_size = factory_zip_filename.stat().st_size / (1024 * 1024)
+                    print_success(f"Factory Flash archive created: {factory_zip_filename.name} ({factory_zip_size:.2f} MB)")
+                except Exception as e:
+                    print_error(f"Failed to create factory zip archive: {e}")
+
             except Exception as e:
                 print_error(f"Failed to create zip archive: {e}")
 
