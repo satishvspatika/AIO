@@ -58,16 +58,18 @@ void start_deep_sleep() {
     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
         pdTRUE) {
       lcd.clear();
+      vTaskDelay(10 / portTICK_PERIOD_MS); // Allow HD44780 controller time to clear RAM
       lcd.setCursor(0, 0);
-      lcd.print("SYSTEM SLEEPING");
+      lcd.print(" SYSTEM SLEEP  ");
       lcd.setCursor(0, 1);
-      lcd.print("  GOODBYE...   ");
+      lcd.print("   GOODBYE...   ");
       xSemaphoreGive(i2cMutex);
 
       vTaskDelay(1000 / portTICK_PERIOD_MS); // Show for 1s before power cut
 
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
           pdTRUE) {
+        lcd.clear();
         lcd.noBacklight();
         // Do NOT cut GPIO 32 power here! It causes SDA/SCL ESD diode glitches
         xSemaphoreGive(i2cMutex);
@@ -1725,5 +1727,138 @@ int get_formatted_signal(int sig) {
   uint32_t r = esp_random();
   int jitter = (int)(r % 8); // 0 to 7
   return -108 - jitter;      // Yields -108..-115 dBm
+}
+
+/**
+ * Safely executes remote Station ID change:
+ * 1. Validates & normalizes new Station ID (strips leading "00" if 6-digit numeric)
+ * 2. Locks fsMutex and i2cMutex for thread-safe migration
+ * 3. Purges old backlog files (/unsent.txt, /ftpunsent.txt, /unsent_pointer.txt, etc.)
+ * 4. Migrates active daily log files (/OLDID_YYYYMMDD.txt -> /NEWID_YYYYMMDD.txt)
+ * 5. Persists new ID in ESP32 NVS ("sys-config" -> "station"), SPIFFS (/station.doc, /station.txt), and SD card
+ * 6. Updates runtime globals station_name & ftp_station and refreshes LCD UI
+ */
+bool execute_station_id_change(const char *raw_id) {
+  if (!raw_id || strlen(raw_id) < 2) {
+    debugln("[STN-CHANGE] Error: Null or invalid station ID param.");
+    strcpy(last_cmd_res, "Fail: Invalid Stn ID");
+    return false;
+  }
+
+  char clean_id[16] = {0};
+  strncpy(clean_id, raw_id, sizeof(clean_id) - 1);
+  trim_whitespace(clean_id);
+
+  // Strip leading "00" if 6-digit numeric (e.g. "001827" -> "1827")
+  if (strlen(clean_id) == 6 && isDigitStr(clean_id) && strncmp(clean_id, "00", 2) == 0) {
+    char tmp[16];
+    strcpy(tmp, clean_id + 2);
+    strcpy(clean_id, tmp);
+  }
+
+  if (strlen(clean_id) < 2 || strlen(clean_id) > 14) {
+    debugf("[STN-CHANGE] Error: ID length out of bounds (%d)\n", (int)strlen(clean_id));
+    strcpy(last_cmd_res, "Fail: ID Length Error");
+    return false;
+  }
+
+  if (strcmp(station_name, clean_id) == 0) {
+    debugf("[STN-CHANGE] Station ID already set to %s. Skipping update.\n", clean_id);
+    snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: Already %s", clean_id);
+    return true;
+  }
+
+  debugf("[STN-CHANGE] Migrating Station ID: %s -> %s\n", station_name, clean_id);
+
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
+    debugln("[STN-CHANGE] Error: fsMutex timeout during station ID change.");
+    strcpy(last_cmd_res, "Fail: FS Mutex Timeout");
+    return false;
+  }
+
+  // 1. Purge old unsent backlog queues to prevent uploading old station data under new ID
+  if (SPIFFS.exists("/unsent.txt")) SPIFFS.remove("/unsent.txt");
+  if (SPIFFS.exists("/ftpunsent.txt")) SPIFFS.remove("/ftpunsent.txt");
+  if (SPIFFS.exists("/unsent_pointer.txt")) SPIFFS.remove("/unsent_pointer.txt");
+  if (SPIFFS.exists("/unsent_ptr.tmp")) SPIFFS.remove("/unsent_ptr.tmp");
+  if (SPIFFS.exists("/ftpremain.txt")) SPIFFS.remove("/ftpremain.txt");
+
+  last_unsent_sampleNo = -1;
+  last_ftp_unsent_sampleNo = -1;
+  diag_backlog_total = 0;
+
+  // 2. Migrate active day log files (/OLDID_YYYYMMDD.txt -> /NEWID_YYYYMMDD.txt)
+  if (strlen(station_name) > 0) {
+    char old_lastrec[40], new_lastrec[40];
+    snprintf(old_lastrec, sizeof(old_lastrec), "/lastrecorded_%s.txt", station_name);
+    snprintf(new_lastrec, sizeof(new_lastrec), "/lastrecorded_%s.txt", clean_id);
+    if (SPIFFS.exists(old_lastrec)) {
+      SPIFFS.rename(old_lastrec, new_lastrec);
+    }
+
+    char old_closing[40], new_closing[40];
+    snprintf(old_closing, sizeof(old_closing), "/closingdata_%s.txt", station_name);
+    snprintf(new_closing, sizeof(new_closing), "/closingdata_%s.txt", clean_id);
+    if (SPIFFS.exists(old_closing)) {
+      SPIFFS.rename(old_closing, new_closing);
+    }
+
+    // Rename today's active SPIFFS daily log file if present
+    if (current_year >= 2025) {
+      char old_daily[40], new_daily[40];
+      snprintf(old_daily, sizeof(old_daily), "/%s_%04d%02d%02d.txt", station_name, current_year, current_month, current_day);
+      snprintf(new_daily, sizeof(new_daily), "/%s_%04d%02d%02d.txt", clean_id, current_year, current_month, current_day);
+      if (SPIFFS.exists(old_daily)) {
+        SPIFFS.rename(old_daily, new_daily);
+        debugf("[STN-CHANGE] Renamed active daily log: %s -> %s\n", old_daily, new_daily);
+      }
+    }
+  }
+
+  // 3. Persist new Station ID to SPIFFS
+  File fDoc = SPIFFS.open("/station.doc", FILE_WRITE);
+  if (fDoc) { fDoc.print(clean_id); fDoc.close(); }
+
+  File fTxt = SPIFFS.open("/station.txt", FILE_WRITE);
+  if (fTxt) { fTxt.print(clean_id); fTxt.close(); }
+
+  // 4. Persist new Station ID to SD card (if present)
+  if (sd_card_ok) {
+    File sdDoc = SD.open("/station.doc", FILE_WRITE);
+    if (sdDoc) { sdDoc.print(clean_id); sdDoc.close(); }
+
+    File sdTxt = SD.open("/station.txt", FILE_WRITE);
+    if (sdTxt) { sdTxt.print(clean_id); sdTxt.close(); }
+  }
+
+  // 5. Persist new Station ID to ESP32 NVS ("sys-config" -> "station")
+  Preferences prefs;
+  prefs.begin("sys-config", false);
+  prefs.putString("station", clean_id);
+  prefs.end();
+
+  // 6. Update runtime globals & LCD UI
+  strncpy(station_name, clean_id, sizeof(station_name) - 1);
+  station_name[sizeof(station_name) - 1] = '\0';
+  strncpy(ftp_station, clean_id, sizeof(ftp_station) - 1);
+  ftp_station[sizeof(ftp_station) - 1] = '\0';
+
+  // Update active cur_file buffer to point to new station daily log
+  if (current_year >= 2025) {
+    snprintf(cur_file, sizeof(cur_file), "/%s_%04d%02d%02d.txt", station_name, current_year, current_month, current_day);
+  }
+
+  xSemaphoreGive(fsMutex);
+
+  // Update LCD UI
+  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    snprintf(ui_data[FLD_STATION].bottomRow, sizeof(ui_data[FLD_STATION].bottomRow), "%-16s", station_name);
+    show_now = 1;
+    xSemaphoreGive(i2cMutex);
+  }
+
+  debugf("[STN-CHANGE] ✅ Station ID successfully updated to: %s\n", station_name);
+  snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: Stn ID -> %s", station_name);
+  return true;
 }
 

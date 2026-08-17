@@ -58,6 +58,14 @@
                             <button type="submit" class="btn-sm btn-grn whitespace-nowrap">DEPLOY</button>
                         </form>
 
+                        {% if fw.file_exists and fw.total_stations > 0 %}
+                        <form action="/ota/deploy_group/{{ fw.category_id }}" method="post" class="inline-block"
+                            onsubmit="return confirm('Queue OTA update for ALL {{ fw.total_stations }} stations in {{ fw.display_name or fw.name }}?');">
+                            <button type="submit" class="btn-sm bg-amber-500 hover:bg-amber-400 text-slate-950 font-black whitespace-nowrap"
+                                title="Queue OTA update for all stations in this group">⚡ Batch Queue Group</button>
+                        </form>
+                        {% endif %}
+
                         {% if request.state.user and (request.state.user.role == 'supervisor' or
                         request.state.user.get('role') == 'supervisor') %}
                         <form action="/ota/delete/{{ fw.category_id }}" method="post" class="inline-block"

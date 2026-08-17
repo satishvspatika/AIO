@@ -264,12 +264,9 @@ async def _process_health_data(data: dict, request: Request, db: Session):
         cmd, cmd_param, cmd_id = pending.cmd, pending.cmd_param, pending.id
         pending.executed_at = now_utc
     else:
-        setting = db.query(StationSettings).filter_by(stn_id=stn_id).first()
-        if not (setting and setting.ota_exempt == 1):
-            fw = db.query(FirmwareRegistry).filter_by(unit_type=unit_type, system_mode=sys_mode).first()
-            if fw and needs_ota(ver, fw.current_ver):
-                if os.path.exists(os.path.join(BUILDS_DIR, fw.filename)):
-                    cmd, cmd_param = "OTA_CHECK", fw.filename
+        # Automatic background OTA disabled per operational policy.
+        # OTA updates occur strictly via explicit manual commands in CommandQueue (Batch or Individual Station).
+        pass
 
         # Priority commands if no OTA
         if not cmd:

@@ -328,6 +328,8 @@ extern volatile bool force_ota;
 extern volatile bool force_gps_refresh;
 extern volatile bool force_clear_ftp_queue;
 extern volatile bool force_delete_data;
+extern volatile bool force_change_station_id;
+extern char new_station_id_cmd[16];
 // v5.87: ota_writing_active deduplicated (defined at line 84)
 extern char hw_tag; // v5.75: Passive hardware/VFS health tag
 extern bool
@@ -693,6 +695,7 @@ void parse_and_convert_clbs_response(const char *response, int year1,
 bool initHDC();
 bool readHDC(float &tempC, float &humidity);
 bool isDigitStr(const char *s);
+bool execute_station_id_change(const char *raw_id);
 
 // GPRS / SMS / GPS Helper Prototypes
 int get_formatted_signal(int sig = 0);

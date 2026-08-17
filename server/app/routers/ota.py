@@ -77,6 +77,11 @@ async def ota_upload(
                         raise HTTPException(status_code=413, detail="Payload too large. Max 2.5MB strict ceiling.")
                     b.write(chunk)
             shutil.move(tmp, dest)  # Atomic rename — safe even if upload fails mid-way
+            # Legacy Fallback: Copy to firmware.bin so legacy v6.21 DLs requesting default firmware.bin find it
+            try:
+                shutil.copy(dest, os.path.join(BUILDS_DIR, "firmware.bin"))
+            except Exception:
+                pass
         
         fw.filename = fw_filename
         db.commit()
@@ -106,34 +111,88 @@ async def ota_delete(
 @router.post("/station/{stn_id}/ota")
 async def station_individual_ota(
     stn_id: str,
-    ver:    str        = Form(...),
-    file:   UploadFile = File(...),
-    db:     Session    = Depends(get_db)
+    ver:    str               = Form(None),
+    file:   UploadFile        = File(None),
+    existing_filename: str    = Form(None),
+    db:     Session           = Depends(get_db)
 ):
-    """Upload a custom .bin targeted at ONE specific station only."""
+    """Deploy an existing server build OR upload a custom .bin for ONE station only."""
     if not re.match(r"^[a-zA-Z0-9_\-]+$", stn_id):
         raise HTTPException(status_code=400, detail="Path Traversal Blocked: Invalid characters in station ID")
 
-    os.makedirs(BUILDS_DIR, exist_ok=True)
-    filename = f"FW_CUSTOM_{stn_id}.bin"
-    dest     = os.path.join(BUILDS_DIR, filename)
-    tmp      = dest + ".tmp"
-    
-    with open(tmp, "wb") as b:
-        size = 0
-        while True:
-            chunk = await file.read(64 * 1024)
-            if not chunk:
-                break
-            size += len(chunk)
-            if size > 2.5 * 1024 * 1024:
-                b.close()
-                if os.path.exists(tmp): os.remove(tmp)
-                raise HTTPException(status_code=413, detail="Payload too large. Max 2.5MB strict ceiling.")
-            b.write(chunk)
-            
-    shutil.move(tmp, dest)
-    # Queue an OTA command specifically for this station
-    db.add(CommandQueue(stn_id=stn_id, cmd="OTA_CHECK", cmd_param=filename))
-    db.commit()
+    target_filename = None
+
+    if file and file.filename:
+        os.makedirs(BUILDS_DIR, exist_ok=True)
+        filename = f"FW_CUSTOM_{stn_id}.bin"
+        dest     = os.path.join(BUILDS_DIR, filename)
+        tmp      = dest + ".tmp"
+        
+        with open(tmp, "wb") as b:
+            size = 0
+            while True:
+                chunk = await file.read(64 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > 2.5 * 1024 * 1024:
+                    b.close()
+                    if os.path.exists(tmp): os.remove(tmp)
+                    raise HTTPException(status_code=413, detail="Payload too large. Max 2.5MB strict ceiling.")
+                b.write(chunk)
+                
+        shutil.move(tmp, dest)
+        target_filename = filename
+    elif existing_filename:
+        clean_name = os.path.basename(existing_filename.strip())
+        if clean_name.endswith(".bin") and os.path.exists(os.path.join(BUILDS_DIR, clean_name)):
+            target_filename = clean_name
+        else:
+            raise HTTPException(status_code=400, detail="Selected firmware build file does not exist on server.")
+
+    if target_filename:
+        # Clear any old pending OTA commands for this station to avoid duplicate queueing
+        db.query(CommandQueue).filter(
+            CommandQueue.stn_id == stn_id,
+            CommandQueue.cmd == "OTA_CHECK",
+            CommandQueue.executed_at == None
+        ).delete()
+        db.add(CommandQueue(stn_id=stn_id, cmd="OTA_CHECK", cmd_param=target_filename))
+        db.commit()
+
     return RedirectResponse(url=f"/station/{stn_id}", status_code=303)
+
+
+@router.post("/ota/deploy_group/{cat_id}")
+async def ota_deploy_group(
+    cat_id: int,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Queue OTA_CHECK command explicitly for all stations in this group (Batch OTA)."""
+    if not hasattr(request.state, "user") or not request.state.user:
+        return RedirectResponse(url="/ota", status_code=303)
+
+    fw = db.query(FirmwareRegistry).filter_by(category_id=cat_id).first()
+    if fw and fw.filename:
+        dest = os.path.join(BUILDS_DIR, fw.filename)
+        if os.path.exists(dest):
+            # Find all unique station IDs in this group from health reports
+            stations = (
+                db.query(HealthReport.stn_id)
+                .filter_by(unit_type=fw.unit_type, system=fw.system_mode)
+                .group_by(HealthReport.stn_id)
+                .all()
+            )
+            for s in stations:
+                stn_id = s[0]
+                if stn_id:
+                    db.query(CommandQueue).filter(
+                        CommandQueue.stn_id == stn_id,
+                        CommandQueue.cmd == "OTA_CHECK",
+                        CommandQueue.executed_at == None
+                    ).delete()
+                    db.add(CommandQueue(stn_id=stn_id, cmd="OTA_CHECK", cmd_param=fw.filename))
+            db.commit()
+    return RedirectResponse(url="/ota", status_code=303)
+

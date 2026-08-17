@@ -244,6 +244,7 @@ bool try_activate_apn(const char *apn) {
         debugln("[APN] CGACT OK but no valid IP (0.0.0.0). Treating as failure.");
         return false;
     }
+    active_cid = 1; // Anchor active_cid = 1 on successful activation
     return true;
   }
   return false;

@@ -257,6 +257,8 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
                 config_content = f.read()
             version_match = re.search(r'#define FIRMWARE_VERSION "([^"]+)"', config_content)
             firmware_version = version_match.group(1) if version_match else "UNKNOWN"
+            # Strip trailing -M or -N if present in user_config.h so UI suffix is not duplicated
+            firmware_version = re.sub(r'-[MN]$', '', firmware_version)
             
             type_prefix = "TRG9" if system == 0 else ("TWS9" if system == 1 else "TWSRF9")
             

@@ -677,6 +677,16 @@ void gprs(void *pvParameters) {
       ESP.restart();
     }
 
+    // Remote Station ID Change
+    if (force_change_station_id) {
+      debugf("[CMD] Executing Remote Station ID Change to: %s\n", new_station_id_cmd);
+      bool changed = execute_station_id_change(new_station_id_cmd);
+      force_change_station_id = false;
+      if (changed) {
+        force_health_upload = true; // Feedback new Station ID back to Contabo server
+      }
+    }
+
     // v7.90: Final Cycle Reset - Move here to ensure COMMANDS (OTA/FTP/GPS)
     // finish before loopTask triggers deep sleep.
     // v7.90: Final Cycle Reset - Move here to ensure COMMANDS (OTA/FTP/GPS)

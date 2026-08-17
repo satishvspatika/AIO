@@ -4,6 +4,7 @@
 #   Default: 8mb (current production hardware)
 
 FLASH_SIZE=${1:-8mb}
+PATCHED=0
 
 case "$FLASH_SIZE" in
   4mb)
@@ -30,12 +31,11 @@ esac
 
 echo "--- Using partition file: $PARTITION_FILE ---"
 
-# Get firmware version from user_config.h
+USER_NAME=${USER:-satishkripavasan}
+BUILD_PATH="/tmp/aio_build_${USER_NAME}_${FLASH_SIZE}"
 FW_VER=$(grep '#define FIRMWARE_VERSION' user_config.h | sed 's/.*"\(.*\)".*/\1/')
-BUILD_PATH="/tmp/aio_build_${FLASH_SIZE}"
 
 # 4MB builds: temporarily disable WebServer to fit within 1.25MB slot
-PATCHED=0
 if [ "$FLASH_SIZE" = "4mb" ]; then
     echo "--- 4MB build: patching ENABLE_WEBSERVER=0 ---"
     cp user_config.h /tmp/user_config_backup.h
@@ -44,25 +44,30 @@ if [ "$FLASH_SIZE" = "4mb" ]; then
     PATCHED=1
 fi
 
+# Clean stale build artifacts to prevent object file corruption
+chflags -R nouchg "$BUILD_PATH" 2>/dev/null || true
+chmod -R 777 "$BUILD_PATH" 2>/dev/null || true
+rm -rf "$BUILD_PATH"
+
 /usr/local/bin/arduino-cli compile \
-    --clean \
     --fqbn "$FQBN" \
     --build-property "build.partitions=custom" \
     --build-property "build.custom_partitions=$(pwd)/$PARTITION_FILE" \
     --build-property "upload.maximum_size=1769472" \
     --build-path "$BUILD_PATH" \
+    --clean \
     --export-binaries \
     .
 
 BUILD_RESULT=$?
 
 # Restore user_config.h if patched
-if [ $PATCHED -eq 1 ]; then
+if [ "$PATCHED" -eq 1 ]; then
     cp /tmp/user_config_backup.h user_config.h
     echo "--- user_config.h restored ---"
 fi
 
-if [ $BUILD_RESULT -eq 0 ]; then
+if [ "$BUILD_RESULT" -eq 0 ]; then
     echo ""
     echo "--- Compilation Successful (v${FW_VER} / ${FLASH_SIZE}) ---"
     echo "Binary: $BUILD_PATH/AIO9_5.0.ino.bin"
@@ -72,4 +77,3 @@ else
     echo "--- Compilation FAILED ---"
     exit 1
 fi
-

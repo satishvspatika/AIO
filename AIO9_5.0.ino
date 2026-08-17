@@ -51,6 +51,8 @@ volatile bool force_gps_refresh =
     false; // v7.59: Server-requested GPS re-acquire
 volatile bool force_clear_ftp_queue = false;
 volatile bool force_delete_data = false;
+volatile bool force_change_station_id = false;
+char new_station_id_cmd[16] = "";
 
 // --- v5.81 DEFINITIVE SYMBOL SEAL ---
 int send_at_cmd_data(char *payload, bool robust);

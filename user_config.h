@@ -21,8 +21,7 @@
   1 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)
 
 // --- 2. COMPILE OPTIONS ---
-#define USE_NUVOTON_UI                                                         \
-  0 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
+#define USE_NUVOTON_UI 0 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
 #ifndef LCD_I2C_ADDR
 #define LCD_I2C_ADDR 0x27 // 0x27 (Default PCF8574T) or 0x3F (PCF8574AT)
 #endif
@@ -51,7 +50,7 @@
 
 // --- 5. SERVER ENDPOINTS & SECURITY ---
 // Spatika Health Server (Contabo VPS - Plain HTTP API)
-#define HEALTH_SERVER_DOMAIN "devhlt.spatika.net"
+//#define HEALTH_SERVER_DOMAIN "devhlt.spatika.net"
 #define HEALTH_SERVER_IP "75.119.148.192"
 #define HEALTH_SERVER_PORT "80"
 #define OTA_SERVER_PORT "80"

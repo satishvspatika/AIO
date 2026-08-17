@@ -529,14 +529,17 @@ void prepare_data_and_send() {
       SerialSIT.println("AT+CGEREP=0");
       waitForResponse("OK", 1000);
 
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 1000);
+      vTaskDelay(200 / portTICK_PERIOD_MS);
       flushSerialSIT(); // Clear stale UART bytes before HTTPINIT
 
       SerialSIT.println("AT+HTTPINIT");
       if (waitForResponse("OK", 5000)) {
         http_ready = true; // v5.42: Session live for retry attempt
-        // Restore all parameters
-        SerialSIT.println("AT+HTTPPARA=\"CID\",1"); // v5.58: Hard-lock
-        waitForResponse("OK", 1000);
+        // Restore parameters
+        SerialSIT.println("AT+HTTPPARA=\"CID\",1");
+        waitForResponse("OK", 500);
 
         SerialSIT.println(httpPostRequest);
         waitForResponse("OK", 1000);
@@ -841,13 +844,14 @@ void send_http_data() {
   debugf("[GPRS] Prepared URL: %s\n", httpPostRequest);
 
   // Ensure PDP context is active before doing DNS lookups or HTTP
+  int check_cid = (active_cid > 0) ? active_cid : 1;
   SerialSIT.println("AT+CGACT?");
   if (waitForResponse("OK", 3000)) {
     char target[20];
-    snprintf(target, sizeof(target), "+CGACT: %d,1", active_cid);
+    snprintf(target, sizeof(target), "+CGACT: %d,1", check_cid);
     if (strstr(modem_response_buf, target) == NULL) {
       debugln("[GPRS] PDP context inactive. Activating for DNS/HTTP...");
-      SerialSIT.printf("AT+CGACT=1,%d\n", active_cid);
+      SerialSIT.printf("AT+CGACT=1,%d\n", check_cid);
       waitForResponse("OK", 10000);
     }
   }
@@ -857,7 +861,7 @@ void send_http_data() {
   // slot v5.75: Tightened to > 1 slot. Airtel/Jio can drop idle bearers in < 15
   // mins.
   if (!last_http_ok || (abs(sampleNo - last_http_ok_slot) > 1)) {
-    SerialSIT.printf("AT+CGPADDR=%d\n", active_cid);
+    SerialSIT.printf("AT+CGPADDR=%d\n", check_cid);
     if (waitForResponse("OK", 3000)) {
        if (strstr(modem_response_buf, "0.0.0.0") != NULL || strstr(modem_response_buf, "+CGPADDR") == NULL) {
           debugln("[GPRS] Ghost PDP (0.0.0.0). Triggering recovery...");
@@ -906,9 +910,9 @@ void send_http_data() {
   SerialSIT.println("AT+CGACT?");
   if (waitForResponse("OK", 3000)) {
     char target[20];
-    snprintf(target, sizeof(target), "+CGACT: %d,1", active_cid);
-    if (strstr(modem_response_buf, target) != NULL && diag_consecutive_http_fails == 0) {
-      debugln("[GPRS] Bearer already live. Skipping CIPSHUT to save time.");
+    snprintf(target, sizeof(target), "+CGACT: %d,1", check_cid);
+    if (strstr(modem_response_buf, target) != NULL && diag_consecutive_http_fails == 0 && http_ready) {
+      debugln("[GPRS] Bearer already live and HTTP session ready. Skipping CIPSHUT to save time.");
     } else {
     debugln("[GPRS] Bearer status check: Re-initializing IP stack...");
     debugln("[GPRS] Starting HTTP...");
@@ -938,8 +942,7 @@ void send_http_data() {
           "[PROACTIVE] Consecutive failures detected. Forcing deep CIPSHUT...");
       SerialSIT.println("AT+CIPSHUT");
       waitForResponse("SHUT OK", 5000);
-      SerialSIT.print("AT+CGACT=0,");
-      SerialSIT.println(active_cid);
+      SerialSIT.printf("AT+CGACT=0,%d\n", check_cid);
       waitForResponse("OK", 3000);
     } else {
       SerialSIT.println("AT+CIPSHUT");
@@ -1936,11 +1939,11 @@ int send_at_cmd_data(char *payload, bool robust) {
   waitForResponse("OK", 5000);
 
   SerialSIT.println("AT+HTTPREAD=0,512");
-  if (!waitForResponse("+HTTPREAD: 0", 10000)) {
+  if (!waitForResponse("+HTTPREAD:", 10000)) {
     debugln("[GPRS] Param-READ failed. Retrying with breather...");
     vTaskDelay(200 / portTICK_PERIOD_MS); 
-    SerialSIT.println("AT+HTTPREAD");
-    if (!waitForResponse("+HTTPREAD: 0", 10000)) {
+    SerialSIT.println("AT+HTTPREAD=0,512");
+    if (!waitForResponse("+HTTPREAD:", 10000)) {
        debugln("[GPRS] Final RAW READ failed.");
     }
   }

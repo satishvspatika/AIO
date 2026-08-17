@@ -119,7 +119,7 @@ os.makedirs("/app/builds", exist_ok=True)
 
 @app.api_route("/builds/{filename}", methods=["GET", "HEAD"])
 async def serve_firmware(filename: str, request: Request):
-    """Range-aware firmware file server for ESP32 OTA downloads."""
+    """Range-aware firmware file server for ESP32 OTA downloads with MD5 checksum."""
     # Security: only serve .bin files, no path traversal
     if not filename.endswith(".bin") or "/" in filename or ".." in filename:
         from fastapi import Response
@@ -134,6 +134,18 @@ async def serve_firmware(filename: str, request: Request):
         return Response(status_code=404)
 
     file_size = os.path.getsize(filepath)
+
+    # Compute MD5 checksum of the binary file for ESP32 verification
+    import hashlib
+    md5 = hashlib.md5()
+    async with aiofiles.open(filepath, "rb") as f:
+        while True:
+            chunk = await f.read(65536)
+            if not chunk:
+                break
+            md5.update(chunk)
+    file_md5 = md5.hexdigest()
+
     if request.method == "HEAD":
         from fastapi import Response
         return Response(
@@ -142,6 +154,7 @@ async def serve_firmware(filename: str, request: Request):
                 "Content-Length": str(file_size),
                 "Accept-Ranges": "bytes",
                 "Content-Type": "application/octet-stream",
+                "X-Firmware-MD5": file_md5,
             }
         )
 
@@ -160,48 +173,36 @@ async def serve_firmware(filename: str, request: Request):
         end = min(end, file_size - 1)
         chunk_size = end - start + 1
 
-        async def iter_file():
-            async with aiofiles.open(filepath, "rb") as f:
-                await f.seek(start)
-                remaining = chunk_size
-                while remaining > 0:
-                    import asyncio
-                    # Phase 7 Fix: Maximize 2G band delivery. Expanded to 32KB bursts.
-                    data = await f.read(min(32768, remaining)) 
-                    if not data:
-                        break
-                    remaining -= len(data)
-                    yield data
-                    # Phase 7 Fix: Removed artificial 500ms 4KB/s server throttle to save battery!
+        async with aiofiles.open(filepath, "rb") as f:
+            await f.seek(start)
+            data = await f.read(chunk_size)
 
-        return StreamingResponse(
-            iter_file(),
+        from fastapi import Response
+        return Response(
+            content=data,
             status_code=206,
             headers={
                 "Content-Range": f"bytes {start}-{end}/{file_size}",
-                "Content-Length": str(chunk_size),
+                "Content-Length": str(len(data)),
                 "Accept-Ranges": "bytes",
                 "Content-Type": "application/octet-stream",
+                "X-Firmware-MD5": file_md5,
             }
         )
     else:
-        # Full file request (e.g. for size check via HEAD/GET)
-        async def iter_full():
-            async with aiofiles.open(filepath, "rb") as f:
-                while True:
-                    import asyncio
-                    data = await f.read(32768)
-                    if not data:
-                        break
-                    yield data
+        # Full file request
+        async with aiofiles.open(filepath, "rb") as f:
+            data = await f.read()
 
-        return StreamingResponse(
-            iter_full(),
+        from fastapi import Response
+        return Response(
+            content=data,
             status_code=200,
             headers={
                 "Content-Length": str(file_size),
                 "Accept-Ranges": "bytes",
                 "Content-Type": "application/octet-stream",
+                "X-Firmware-MD5": file_md5,
             }
         )
 

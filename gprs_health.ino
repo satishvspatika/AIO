@@ -469,7 +469,15 @@ void get_registration() {
       registration = 0;
     }
 
-    // --- SUCCESS CHECK ---
+    // --- SUCCESS CHECK (4G/LTE Preferred) ---
+    if (r4 == 1 || r4 == 5) {
+      is_registered = true;
+      isLTE = true;
+      last_successful_cnmp = 2; // Mark Auto/LTE success
+      strcpy(reg_status, (r4 == 1) ? "LTE:Home:OK" : "LTE:Roam:OK");
+      debugf("[GPRS] Registered via CEREG! (4G:%d)\n", r4);
+      break;
+    }
     if (r2 == 1 || r2 == 5) {
       if (!isBSNL) {
         SerialSIT.println("AT+CEREG?");
@@ -492,18 +500,13 @@ void get_registration() {
       }
       is_registered = true;
       isLTE = false;
-      last_successful_cnmp = 13; // v5.84: Mark GSM success
+      if (!isBSNL) {
+        last_successful_cnmp = 2; // Keep Auto (2) for Airtel/Jio so 4G LTE is re-tried on future wakeups
+      } else {
+        last_successful_cnmp = 13; // Mark GSM success for BSNL
+      }
       strcpy(reg_status, (r2 == 1) ? "GSM:Home:OK" : "GSM:Roam:OK");
       debugf("[GPRS] Registered via CREG! (2G:%d)\n", r2);
-      break;
-    }
-    if (r4 == 1 || r4 == 5) {
-      is_registered = true;
-      isLTE = true;
-      last_successful_cnmp = 2; // v5.84: Mark Auto/LTE success (CNMP=2 is safer
-                                // for future 2G fallback)
-      strcpy(reg_status, (r4 == 1) ? "LTE:Home:OK" : "LTE:Roam:OK");
-      debugf("[GPRS] Registered via CEREG! (4G:%d)\n", r4);
       break;
     }
 
@@ -1555,22 +1558,24 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
     debugf("[Health] Attempt %d/%d\n", attempt, max_attempts);
 
-    if (!verify_bearer_or_recover()) continue;
+    if (!verify_bearer_or_recover()) {
+      debugln("[Health] [ERR] Bearer recovery failed before HTTPINIT.");
+      continue;
+    }
 
     // [H-02] Session tracking Restoration
     bool session_terminated = false;
 
-    // Simplified sequence for A7672S stability: Flush UART buffer before initialization
+    // Clean up any stale HTTP session without destroying live PDP/TCP context
     flushSerialSIT();
-    SerialSIT.println("AT+HTTPTERM"); 
+    SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 1000);
-    vTaskDelay(400 / portTICK_PERIOD_MS); // SIMCOM A7672S stack breather
-    
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+
     flushSerialSIT();
     SerialSIT.println("AT+HTTPINIT");
     if (!waitForResponse("OK", 5000)) {
-      debugln("[Health] [ERR] HTTPINIT Reject.");
-      flushSerialSIT();
+      debugf("[Health] [ERR] HTTPINIT Reject. Modem Resp: '%s'\n", modem_response_buf);
       SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 1000);
       session_terminated = true;
       continue;
@@ -1578,48 +1583,65 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
 
     flushSerialSIT();
     SerialSIT.println("AT+HTTPPARA=\"CID\",1");
-    waitForResponse("OK", 2000);
-
-    flushSerialSIT();
-    SerialSIT.println("AT+HTTPPARA=\"REDR\",1");
-    waitForResponse("OK", 2000);
+    waitForResponse("OK", 500);
 
     char ht_url[150];
 #ifdef HEALTH_SERVER_DOMAIN
-    snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_DOMAIN, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
-#else
-    snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_IP, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
+    if (attempt == 1 && strlen(HEALTH_SERVER_DOMAIN) > 0) {
+      snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_DOMAIN, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
+    } else
 #endif
+    {
+      snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_IP, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
+    }
     debugf("[Health] Prepared URL: %s\n", ht_url);
-    flushSerialSIT(); 
+    flushSerialSIT();
     SerialSIT.println(ht_url);
     if (!waitForResponse("OK", 5000)) {
-        debugln("[Health] [ERR] URL PARA Reject.");
+        debugf("[Health] [ERR] URL PARA Reject. Modem Resp: '%s'\n", modem_response_buf);
         session_terminated = true;
         continue;
     }
 
     flushSerialSIT();
     SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-    waitForResponse("OK", 2000);
+    if (!waitForResponse("OK", 2000)) {
+      debugf("[Health] [ERR] CONTENT PARA Reject. Modem Resp: '%s'\n", modem_response_buf);
+      session_terminated = true;
+      continue;
+    }
 
     flushSerialSIT();
     SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
-    waitForResponse("OK", 2000);
+    if (!waitForResponse("OK", 2000)) {
+      debugf("[Health] [ERR] ACCEPT PARA Reject. Modem Resp: '%s'\n", modem_response_buf);
+      session_terminated = true;
+      continue;
+    }
 
+    // Triple flush before HTTPDATA
     for (int i = 0; i < 3; i++) { flushSerialSIT(); vTaskDelay(50 / portTICK_PERIOD_MS); }
 
     int actualLen = strlen(gprs_payload);
     char ht_data_cmd[64];
-    snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,15000", actualLen); 
+    snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,15000", actualLen); // 15s modem timeout
+
     flushSerialSIT();
-    vTaskDelay(300 / portTICK_PERIOD_MS);
+    vTaskDelay(200 / portTICK_PERIOD_MS);
     SerialSIT.println(ht_data_cmd);
-    vTaskDelay(100 / portTICK_PERIOD_MS);
 
     if (waitForResponse("DOWNLOAD", 15000)) {
       vTaskDelay(100 / portTICK_PERIOD_MS);
-      SerialSIT.print(gprs_payload);
+      // v7.95: 128-byte/10ms chunked stream to prevent UART FIFO overflow on A7672S
+      int payloadLen = actualLen;
+      int sentBytes = 0;
+      while (sentBytes < payloadLen) {
+        int toWrite = min(128, payloadLen - sentBytes);
+        SerialSIT.write((const uint8_t*)(gprs_payload + sentBytes), toWrite);
+        sentBytes += toWrite;
+        esp_task_wdt_reset();
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+      }
       if (waitForResponse("OK", 5000)) {
         flushSerialSIT();
         SerialSIT.println("AT+HTTPACTION=1");
@@ -1629,8 +1651,16 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
           else if (strstr(modem_response_buf, "714") || strstr(modem_response_buf, "706")) {
             debugln("[Health] 🧟 Zombie Socket. Nuking Bearer Context...");
             SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 1000);
+            SerialSIT.println("AT+CIPSHUT"); waitForResponse("SHUT OK", 3000);
             SerialSIT.println("AT+CGACT=0,1"); waitForResponse("OK", 5000);
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            vTaskDelay(2000 / portTICK_PERIOD_MS);
+            // Re-establish bearer so next attempt starts with a live PDP context
+            if (!verify_bearer_or_recover()) {
+              debugln("[Health] [ERR] Bearer re-establish failed after zombie nuke.");
+              session_terminated = true;
+              continue;
+            }
+            vTaskDelay(2000 / portTICK_PERIOD_MS);
             session_terminated = true;
             continue; 
           }
@@ -1730,6 +1760,28 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
             if (strstr(body, "\"DELETE_DATA\"")) {
                 force_delete_data = true;
                 strcpy(last_cmd_res, "Success: Data Wiped");
+            }
+            if (strstr(body, "\"SET_STATION_ID\"") || strstr(body, "\"SET_STN_ID\"")) {
+                const char* stnTag = strstr(body, "\"p\"");
+                if (!stnTag) stnTag = strstr(body, "\"param\"");
+                if (stnTag) {
+                    const char* col = strchr(stnTag, ':');
+                    if (col) {
+                        const char* q1 = strchr(col, '"');
+                        if (q1) {
+                            const char* q2 = strchr(q1 + 1, '"');
+                            if (q2) {
+                                int idLen = q2 - (q1 + 1);
+                                if (idLen >= 2 && idLen < 16) {
+                                    strncpy(new_station_id_cmd, q1 + 1, idLen);
+                                    new_station_id_cmd[idLen] = '\0';
+                                    force_change_station_id = true;
+                                    snprintf(last_cmd_res, sizeof(last_cmd_res), "Queued: Stn ID -> %s", new_station_id_cmd);
+                                }
+                            }
+                        }
+                    }
+                }
             }
             
             const char* pTag = strstr(body, "\"INTERVAL\"");

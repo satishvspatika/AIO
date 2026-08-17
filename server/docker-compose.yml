@@ -11,6 +11,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./app:/app/app
+      - ./builds:/app/builds   # OTA firmware binaries — persisted on host, survives container recreate
     restart: unless-stopped
     environment:
       - DATABASE_URL=sqlite:////app/data/health.db
