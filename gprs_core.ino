@@ -99,11 +99,11 @@ void gprs(void *pvParameters) {
         if (mode_snap == eSMSStart) {
           debugln("[GPRS] Keypad Triggered SMS Status");
 
-          // Re-verify network & APN for manual triggers (Ensures connection is live)
-          get_signal_strength();
-          get_network();
-          get_registration();
-          get_a7672s();
+          if (signal_strength <= -110) {
+            get_signal_strength();
+            get_network();
+            get_registration();
+          }
 
           strcpy(ui_data[target_fld].bottomRow, "SENDING STATUS..");
           show_now = 1;

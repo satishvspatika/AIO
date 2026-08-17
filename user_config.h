@@ -13,7 +13,7 @@
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 
-#define FIRMWARE_VERSION "6.23"
+#define FIRMWARE_VERSION "6.26"
 
 #define ENABLE_HEALTH_REPORT                                                   \
   0 // Master Switch: Enable automated device health reporting
@@ -26,9 +26,9 @@
 #ifndef LCD_I2C_ADDR
 #define LCD_I2C_ADDR 0x27 // 0x27 (Default PCF8574T) or 0x3F (PCF8574AT)
 #endif
-#define DEBUG 1 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
+#define DEBUG 0 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
 #define ENABLE_WEBSERVER                                                       \
-  1 // 0: Disable, 1: Enable (requires 8MB flash partition)
+  0 // 0: Disable, 1: Enable (requires 8MB flash partition)
 
 // --- 3. HARDWARE CAPABILITIES ---
 #define ENABLE_PRESSURE_SENSOR 0 // 0: Disable BMP/BME routines, 1: Enable

@@ -1021,12 +1021,9 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
   char status_response[256];
   char gprs_xmit_buf[300];
   msg_sent = 0;
-  if (!wifi_active) {
-    int solar_raw;
-    if (adc2_get_raw(ADC2_CHANNEL_8, ADC_WIDTH_BIT_12, &solar_raw) == ESP_OK) {
-      solar = solar_raw;
-    }
-  }
+#if USE_NUVOTON_UI == 1
+  read_and_calibrate_voltages();
+#endif
   solar_val = (solar / (float)WIND_DIR_ADC_MAX) * 3.3 * 6.119;  // R_top=620K R_bot=100K → 720/100, adj for ADC_MAX=3480
 
   if (solar_val > 4)
@@ -1118,12 +1115,12 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CMGS=\"%s\"\r", gsm_no);
   SerialSIT.println(gprs_xmit_buf);
   debug("Waiting for '>' prompt...");
-  if (waitForResponse(">", 15000)) {
+  if (waitForResponse(">", 3000)) {
     debugln(" Received!");
     flushSerialSIT(); // v5.81: Ensure clean UART pipe for Ctrl+Z termination
     SerialSIT.print(status_response); 
     debug("Waiting for +CMGS confirmation...");
-    if (waitForResponse("+CMGS:", 35000)) {
+    if (waitForResponse("+CMGS:", 10000)) {
        debugln(" Done.");
        debug("Response of AT+CMGS is ");
        debugln(modem_response_buf);

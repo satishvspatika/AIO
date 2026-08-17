@@ -1008,6 +1008,13 @@ bool waitForResponse(const char *expected, unsigned long timeout) {
     if (strstr(modem_response_buf, expected) != NULL) {
       return true;
     }
+    // Fail fast for all modem commands: If modem outputs ERROR / +CMS ERROR / +CME ERROR, exit immediately!
+    if (strstr(modem_response_buf, "ERROR") != NULL || strstr(modem_response_buf, "+CMS ERROR") != NULL || strstr(modem_response_buf, "+CME ERROR") != NULL) {
+      if (strstr(expected, "ERROR") == NULL) {
+        debugln("[MODEM] Early exit: Modem returned ERROR.");
+        return false;
+      }
+    }
   }
 
   return false; 

@@ -472,15 +472,19 @@ int last_lcd_state = 0; // v5.70 Final: Global UI state tracker
 int badReads = 0;
 int prev_wind_count = 0;
 char pres_str[20] = "NA";
+#include "globals.h"
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+
 // --- End System Definitions ---
 
 void setup() {
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Disable brownout detector to prevent reset during 2A modem RF transmit surge
   set_sys_status("BOOTING");
 
   // Re-configure Watchdog early with a safe 120-second timeout for boot tasks
   esp_task_wdt_config_t wdt_config = {.timeout_ms = 120000,
-                                      .idle_core_mask =
-                                          (1 << portNUM_PROCESSORS) - 1,
+                                      .idle_core_mask = 0, // Disable Idle Task monitoring to prevent false WDT panics during flash/SD operations
                                       .trigger_panic = true};
   esp_task_wdt_reconfigure(&wdt_config);
   esp_task_wdt_add(NULL);
@@ -1595,13 +1599,29 @@ void setup() {
   esp_task_wdt_reset();
 }
 
+static bool sd_ota_lcd_active = false;
+static int last_lcd_percent = -1;
+
 void progressCallBack(size_t currSize, size_t totalSize) {
-  // Silent during actual download to prevent console leak into Modem RX
   if (!ota_silent_mode) {
     debugf2("CALLBACK:  Update process at %d of %d bytes...\n", currSize,
             totalSize);
   }
-  esp_task_wdt_reset(); // v5.79: Keep system alive during long flash writes
+  if (sd_ota_lcd_active && totalSize > 0) {
+    int percent = (int)((currSize * 100) / totalSize);
+    if (percent != last_lcd_percent && percent % 5 == 0) {
+      last_lcd_percent = percent;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        char pBuf[17];
+        snprintf(pBuf, sizeof(pBuf), "PROGRESS: %3d%%  ", percent);
+        lcd.setCursor(0, 1);
+        lcd.print(pBuf);
+        xSemaphoreGive(i2cMutex);
+      }
+    }
+  }
+  vTaskDelay(1 / portTICK_PERIOD_MS); // Yield CPU to FreeRTOS scheduler & keep system alive during long flash writes
+  esp_task_wdt_reset();
 }
 
 void initialize_hw() {
@@ -1784,28 +1804,31 @@ void initialize_hw() {
   snprintf(ui_data[FLD_DELETE_DATA].topRow, sizeof(ui_data[FLD_DELETE_DATA].topRow),
            "DELETE DATA?   %c", hw_tag);
 
-  // v5.89: Hardened SD Initialization (Stubborn Mode)
-  // Try both common CS pins (5 and 13) with retries
+  // v5.89: Hardened SD Initialization (Multi-frequency + Pin Fallback)
   int sd_pins[] = {5, 13};
+  uint32_t sd_freqs[] = {4000000, 16000000, 40000000};
   bool found_sd = false;
   
   for (int p = 0; p < 2; p++) {
     int cs_pin = sd_pins[p];
-    debugf("[BOOT] Testing SD on Pin %d...\n", cs_pin);
-    SPI.begin(18, 19, 23, cs_pin);
-    
-    for (int retry = 1; retry <= 3; retry++) {
-      if (SD.begin(cs_pin, SPI, 16000000)) { // Use robust 16MHz
-        debugf("[BOOT] SD Card: OK on Pin %d (Attempt %d)\n", cs_pin, retry);
-        found_sd = true;
-        sd_card_ok = 1;
-        break;
+    for (int f = 0; f < 3; f++) {
+      uint32_t freq = sd_freqs[f];
+      SD.end();
+      SPI.end();
+      SPI.begin(18, 19, 23, cs_pin);
+      
+      for (int retry = 1; retry <= 3; retry++) {
+        if (SD.begin(cs_pin, SPI, freq)) {
+          debugf("[BOOT] SD Card: OK on Pin %d @ %dMHz (Attempt %d)\n", cs_pin, (int)(freq / 1000000), retry);
+          found_sd = true;
+          sd_card_ok = 1;
+          break;
+        }
+        vTaskDelay(50 / portTICK_PERIOD_MS);
       }
-      vTaskDelay(100 / portTICK_PERIOD_MS);
+      if (found_sd) break;
     }
-    
     if (found_sd) break;
-    SPI.end(); // Try next pin
   }
 
   if (!found_sd) {
@@ -1836,90 +1859,143 @@ void initialize_hw() {
 
   debugln("[BOOT] Hardware Initialized.");
 
-  // v5.79 FINAL STRUCTURAL FIX: Moved from Line 1060 to after SD Card initialization.
-  // This ensures the Hardware is actually ready before we check for firmware.
-  if (sd_card_ok && SD.exists("/firmware.bin")) {
-    bool needUpdate = true;
-    char sd_ver[64] = {0};   // v5.81 Fix: Expanded scope for healing logic
+  // Case-insensitive binary filename check
+  const char* bin_path = NULL;
+  if (sd_card_ok) {
+    if (SD.exists("/firmware.bin")) bin_path = "/firmware.bin";
+    else if (SD.exists("/FIRMWARE.BIN")) bin_path = "/FIRMWARE.BIN";
+    else if (SD.exists("/Firmware.bin")) bin_path = "/Firmware.bin";
+  }
+
+  if (sd_card_ok && bin_path != NULL) {
+    bool needUpdate = false;
+    char sd_ver[64] = {0};
     char sd_md5[64] = {0};
 
-    if (SD.exists("/fw_version.txt")) {
-      File vFile = SD.open("/fw_version.txt", FILE_READ);
+    // Read fw_version.txt if present (for logging/metadata)
+    const char* ver_path = NULL;
+    if (SD.exists("/fw_version.txt")) ver_path = "/fw_version.txt";
+    else if (SD.exists("/FW_VERSION.TXT")) ver_path = "/FW_VERSION.TXT";
+
+    if (ver_path != NULL) {
+      File vFile = SD.open(ver_path, FILE_READ);
       if (vFile) {
         int r = vFile.readBytesUntil('\n', sd_ver, sizeof(sd_ver) - 1);
         sd_ver[r] = '\0';
         trim_whitespace(sd_ver);
         vFile.close();
-
-        if (strcasecmp(sd_ver, UNIT_VER) == 0 || strcasecmp(sd_ver, FIRMWARE_VERSION) == 0) {
-          debugln("SD Version matches current firmware. Skipping update.");
-          needUpdate = false;
-        } else {
-          if (SPIFFS.exists("/sd_fw_ver.txt")) {
-            File svFile = SPIFFS.open("/sd_fw_ver.txt", FILE_READ);
-            if (svFile) {
-              char spiffs_ver[64];
-              int r2 = svFile.readBytesUntil('\n', spiffs_ver, sizeof(spiffs_ver) - 1);
-              spiffs_ver[r2] = '\0';
-              trim_whitespace(spiffs_ver);
-              svFile.close();
-              if (strcasecmp(spiffs_ver, sd_ver) == 0) {
-                debugln("[OTA] Version already flashed (SPIFFS guard). Skipping.");
-                needUpdate = false;
-              }
-            }
-          }
-          if (needUpdate)
-            debugf("[OTA] Version difference detected. Proceeding...\n");
-        }
       }
     }
 
+    // 1. Calculate MD5 hash of firmware.bin on SD card
+    File firmware = SD.open(bin_path, FILE_READ);
+    if (firmware) {
+      MD5Builder md5;
+      md5.begin();
+      md5.addStream(firmware, firmware.size());
+      md5.calculate();
+      strncpy(sd_md5, md5.toString().c_str(), sizeof(sd_md5) - 1);
+      sd_md5[sizeof(sd_md5) - 1] = '\0';
+      firmware.close();
+    }
+
+    // 2. Read stored MD5 and stored Version from SPIFFS
+    char stored_md5[64] = {0};
+    char stored_ver[64] = {0};
+    if (SPIFFS.exists("/sd_fw_md5.txt")) {
+      File md5File = SPIFFS.open("/sd_fw_md5.txt", FILE_READ);
+      if (md5File) {
+        int r3 = md5File.readBytesUntil('\n', stored_md5, sizeof(stored_md5) - 1);
+        stored_md5[r3] = '\0';
+        trim_whitespace(stored_md5);
+        md5File.close();
+      }
+    }
+    if (SPIFFS.exists("/sd_fw_ver.txt")) {
+      File verFile = SPIFFS.open("/sd_fw_ver.txt", FILE_READ);
+      if (verFile) {
+        int r4 = verFile.readBytesUntil('\n', stored_ver, sizeof(stored_ver) - 1);
+        stored_ver[r4] = '\0';
+        trim_whitespace(stored_ver);
+        verFile.close();
+      }
+    }
+
+    debugf("[OTA] SD File: %s | SD MD5: %s | Stored MD5: %s | SD Ver: '%s' | Active Ver: '%s'\n",
+           bin_path, sd_md5, stored_md5, sd_ver, FIRMWARE_VERSION);
+
+    // 3. Bulletproof Decision Tree:
+    // Primary Rule: If SD binary MD5 matches stored SPIFFS MD5, firmware is ALREADY installed -> SKIP!
+    if (strlen(sd_md5) > 0 && strcasecmp(sd_md5, stored_md5) == 0) {
+      debugln("[OTA] Binary MD5 matches stored hash. Firmware already installed. Skipping update.");
+      needUpdate = false;
+    } else if (strlen(sd_ver) > 0 && strcasecmp(sd_ver, FIRMWARE_VERSION) == 0) {
+      debugln("[OTA] Version string matches active version. Skipping update.");
+      needUpdate = false;
+    } else if (strlen(sd_ver) > 0 && strstr(sd_ver, FIRMWARE_VERSION) != NULL) {
+      debugf("[OTA] Version '%s' contains active version '%s'. Skipping update.\n", sd_ver, FIRMWARE_VERSION);
+      needUpdate = false;
+    } else if (strlen(sd_ver) > 0 || strlen(sd_md5) > 0) {
+      debugf("[OTA] New firmware detected (SD: '%s' vs Active: '%s'). Proceeding with update...\n", sd_ver, FIRMWARE_VERSION);
+      needUpdate = true;
+    } else {
+      needUpdate = false;
+    }
+
     if (needUpdate) {
-      debugln("Found firmware.bin in SD... Verifying MD5...");
-      File firmware = SD.open("/firmware.bin", FILE_READ);
-      if (firmware) {
-        MD5Builder md5;
-        md5.begin();
-        md5.addStream(firmware, firmware.size());
-        md5.calculate();
-        strncpy(sd_md5, md5.toString().c_str(), sizeof(sd_md5) - 1);
-        sd_md5[sizeof(sd_md5) - 1] = '\0';
-        firmware.close();
-
-        if (SPIFFS.exists("/sd_fw_md5.txt")) {
-          File md5File = SPIFFS.open("/sd_fw_md5.txt", FILE_READ);
-          if (md5File) {
-            char stored_md5[64];
-            int r3 = md5File.readBytesUntil('\n', stored_md5, sizeof(stored_md5) - 1);
-            stored_md5[r3] = '\0';
-            trim_whitespace(stored_md5);
-            md5File.close();
-            if (strcasecmp(sd_md5, stored_md5) == 0) {
-              // MD5 match: Usually skip, but REL-M02: Recover healing path
-              if (strlen(sd_ver) == 0) {
-                debugln("Firmware identical (MD5 match, no version file). Skipping.");
-                needUpdate = false;
-              } else if (strcasecmp(sd_ver, UNIT_VER) == 0 || strcasecmp(sd_ver, FIRMWARE_VERSION) == 0) {
-                debugln("Firmware identical (MD5 + Version match). Skipping.");
-                needUpdate = false;
-              } else {
-                debugln("MD5 match but Version MISMATCH. REL-M02: RE-FLASHING for system healing...");
-                needUpdate = true;
-              }
-            }
-          }
-        }
-
-        if (needUpdate) {
-          firmware = SD.open("/firmware.bin", FILE_READ);
+          firmware = SD.open(bin_path, FILE_READ);
           if (firmware) {
             debugln("Starting Firmware Update...");
+            sd_ota_lcd_active = true;
+            last_lcd_percent = -1;
+
+            digitalWrite(32, HIGH); // Ensure LCD 5V power rail is ON
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+#if USE_NUVOTON_UI == 1
+            Serial1.begin(9600, SERIAL_8N1, 14, 4);
+            vTaskDelay(200 / portTICK_PERIOD_MS);
+            lcd.backlight();
+            lcd.clear();
+            lcd.print("SD FW UPDATING..");
+            lcd.setCursor(0, 1);
+            lcd.print("PROGRESS:   0%  ");
+#else
+            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+              uint8_t target_addr = LCD_I2C_ADDR;
+              Wire.beginTransmission(target_addr);
+              if (Wire.endTransmission() != 0) {
+                uint8_t alt_addr = (target_addr == 0x27) ? 0x3F : 0x27;
+                Wire.beginTransmission(alt_addr);
+                if (Wire.endTransmission() == 0) {
+                  target_addr = alt_addr;
+                }
+              }
+              lcd = LiquidCrystal_I2C(target_addr, 16, 2);
+              lcd.init();
+              lcd.display();
+              lcd.backlight();
+              lcd.clear();
+              lcd.setCursor(0, 0);
+              lcd.print("SD FW UPDATING..");
+              lcd.setCursor(0, 1);
+              lcd.print("PROGRESS:   0%  ");
+              xSemaphoreGive(i2cMutex);
+            }
+#endif
+
             Update.onProgress(progressCallBack);
             if (Update.begin(firmware.size(), U_FLASH)) {
               Update.writeStream(firmware);
               if (Update.end()) {
                 debugln("Update finished! Storing MD5+Version and restarting...");
+                if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+                  lcd.clear();
+                  lcd.setCursor(0, 0);
+                  lcd.print("SD FW SUCCESS!  ");
+                  lcd.setCursor(0, 1);
+                  lcd.print("REBOOTING...    ");
+                  xSemaphoreGive(i2cMutex);
+                }
                 diag_fw_just_updated = true;
                 // Store MD5 so next boot skips if binary unchanged
                 File md5Write = SPIFFS.open("/sd_fw_md5.txt", FILE_WRITE);
@@ -1927,27 +2003,32 @@ void initialize_hw() {
                   md5Write.print(sd_md5);
                   md5Write.close();
                 }
-                // v5.81 Fix: Also store the flashed version string so version
-                // check at line 1706 is reliable even if MD5 write above fails.
-                // Without this, a SPIFFS full condition causes infinite reflash loop.
                 File verWrite = SPIFFS.open("/sd_fw_ver.txt", FILE_WRITE);
                 if (verWrite) {
                   verWrite.print(sd_ver);
                   verWrite.close();
                 }
                 debugln("[OTA] SD Update Successful. SD card reusable for multi-unit deployment.");
-                delay(1000);
+                delay(2000);
                 ESP.restart();
               } else {
                 debugf("Update failed! Error: %s\n", Update.errorString());
+                if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+                  lcd.clear();
+                  lcd.setCursor(0, 0);
+                  lcd.print("SD FW FAILED!   ");
+                  lcd.setCursor(0, 1);
+                  lcd.print("CHECK BINARY    ");
+                  xSemaphoreGive(i2cMutex);
+                }
+                delay(3000);
               }
             }
+            sd_ota_lcd_active = false;
             firmware.close();
           }
         }
       }
-    }
-  }
 
   last_activity_time = millis(); // v5.85: Trigger safety heartbeat starting now
   last_key_time = millis(); // v5.79: Prevent UI ghosting on first session
