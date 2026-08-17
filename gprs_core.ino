@@ -319,8 +319,8 @@ void gprs(void *pvParameters) {
 
         if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
           debugln("[GPRS] Powering On...");
-          signal_strength = -111;
-          signal_lvl = -111; 
+          signal_strength = get_formatted_signal(-111);
+          signal_lvl = signal_strength; 
           strcpy(reg_status, "NA");
           gprs_pdp_ready = false; // Reset PDP state
           portENTER_CRITICAL(&syncMux);

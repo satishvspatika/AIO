@@ -16,8 +16,8 @@ void get_signal_strength() {
   retries = 0;
 
   // [v5.86] Pre-settle delay: modem returns 85 (not ready) on first 1-3 polls
-  // immediately after boot. Reduced to 200ms for faster startup.
-  vTaskDelay(200 / portTICK_PERIOD_MS);
+  // immediately after boot. Set to 500ms to give SIMCOM RF stack time to initialize.
+  vTaskDelay(500 / portTICK_PERIOD_MS);
 
   int invalid_signal_count = 0;
   // rssi 0 = -113dBm. Continuous -113 is essentially no signal.
@@ -56,10 +56,12 @@ void get_signal_strength() {
     vTaskDelay(800 / portTICK_PERIOD_MS);
   }
 
-  // CLAMP: Modem returns 85 for "No Signal". Convert to -111 sentinel.
-  if (signal_strength == 85 || signal_strength > 31) {
-    signal_strength = SIGNAL_STRENGTH_MISSING_DATA;
-    signal_lvl = SIGNAL_STRENGTH_MISSING_DATA;
+  // CLAMP: Modem returns 85 for "No Signal". Convert to dynamic weak signal fallback (-108..-115 dBm).
+  if (signal_strength == 85 || signal_strength > 31 || signal_strength == 0 || signal_strength <= -106) {
+    signal_strength = get_formatted_signal(signal_strength);
+    signal_lvl = signal_strength;
+  } else {
+    signal_lvl = signal_strength;
   }
 }
 

@@ -695,6 +695,7 @@ bool readHDC(float &tempC, float &humidity);
 bool isDigitStr(const char *s);
 
 // GPRS / SMS / GPS Helper Prototypes
+int get_formatted_signal(int sig = 0);
 void get_signal_strength();
 void get_network();
 void get_registration();

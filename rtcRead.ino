@@ -211,8 +211,8 @@ void resync_time() {
   portENTER_CRITICAL(&syncMux);
   health_in_progress = true; // [H-01] Guard and Mark busy inside same critical section
   sync_mode = eHttpTrigger;
-  signal_strength = 0;       // v5.85.1: Zeroed inside syncMux to prevent Core 0/1 race
-  signal_lvl = 0;
+  signal_strength = SIGNAL_STRENGTH_MISSING_DATA; // Default missing sentinel until modem CSQ completes
+  signal_lvl = SIGNAL_STRENGTH_MISSING_DATA;
   portEXIT_CRITICAL(&syncMux);
 
   snprintf(reg_status, sizeof(reg_status), "NA");

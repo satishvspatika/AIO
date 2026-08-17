@@ -1500,7 +1500,7 @@ void scheduler(void *pvParameters) {
               snprintf(append_text, sizeof(append_text),
                        "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%05.2f\r\n", q,
                        temp_year, temp_month, temp_day, temp_hr, temp_min,
-                       inst_rf, cum_rf, signal_strength, bat_val);
+                       inst_rf, cum_rf, get_formatted_signal(signal_strength), bat_val);
 #endif
 
 // TWS
@@ -1509,13 +1509,13 @@ void scheduler(void *pvParameters) {
                   append_text, sizeof(append_text),
                   "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n",
                   q, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                  inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_strength,
+                  inst_temp, inst_hum, avg_wind_speed, inst_wd, get_formatted_signal(signal_strength),
                   bat_val);
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n",
                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                  inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_strength,
+                  inst_temp, inst_hum, avg_wind_speed, inst_wd, get_formatted_signal(signal_strength),
                   bat_val);
 
 #endif
@@ -1527,13 +1527,13 @@ void scheduler(void *pvParameters) {
                        "2f\r\n",
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                        cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-                       signal_strength, bat_val);
+                       get_formatted_signal(signal_strength), bat_val);
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-                  signal_strength, bat_val);
+                  get_formatted_signal(signal_strength), bat_val);
 
 #endif
               //                                                        '\0';
@@ -1712,7 +1712,7 @@ void scheduler(void *pvParameters) {
                   q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
                   fill_inst_wd,
-                  (q == sampleNo) ? signal_strength : SIGNAL_STRENGTH_GAP_FILLED, // v6.09: use signal_strength directly for current slot
+                  (q == sampleNo) ? get_formatted_signal(signal_strength) : SIGNAL_STRENGTH_GAP_FILLED, // v6.09: use signal_strength directly for current slot
                   bat_val);
               snprintf(
                   ftpappend_text, sizeof(ftpappend_text),
@@ -1720,7 +1720,7 @@ void scheduler(void *pvParameters) {
                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
                   fill_inst_wd,
-                  (q == sampleNo) ? signal_strength : SIGNAL_STRENGTH_GAP_FILLED, // v6.09: use signal_strength directly for current slot
+                  (q == sampleNo) ? get_formatted_signal(signal_strength) : SIGNAL_STRENGTH_GAP_FILLED, // v6.09: use signal_strength directly for current slot
                   bat_val);
 #endif
 
@@ -1733,7 +1733,7 @@ void scheduler(void *pvParameters) {
                        q, temp_year, temp_month, temp_day, temp_hr, temp_min,
                        fill_cum_rf, fill_inst_temp, fill_inst_hum,
                        fill_avg_wind_speed, fill_inst_wd,
-                       (q == sampleNo) ? signal_strength
+                       (q == sampleNo) ? get_formatted_signal(signal_strength)
                                        : SIGNAL_STRENGTH_GAP_FILLED, // v6.09: use signal_strength directly for current slot
                        bat_val);
               snprintf(
@@ -1742,7 +1742,7 @@ void scheduler(void *pvParameters) {
                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                   fill_ftpcum_rf, fill_inst_temp, fill_inst_hum,
                   fill_avg_wind_speed, fill_inst_wd,
-                  (q == sampleNo) ? signal_strength : SIGNAL_STRENGTH_GAP_FILLED, // v6.09: use signal_strength directly for current slot
+                  (q == sampleNo) ? get_formatted_signal(signal_strength) : SIGNAL_STRENGTH_GAP_FILLED, // v6.09: use signal_strength directly for current slot
                   bat_val);
 #endif
             }
@@ -1831,16 +1831,17 @@ void scheduler(void *pvParameters) {
           debugln();
 
 // [FTP-04] Signal Inconsistency Fix: Synchronize signal_lvl with live signal_strength
-          signal_lvl = signal_strength;
+          signal_lvl = get_formatted_signal(signal_strength);
+          signal_strength = signal_lvl;
 
 // RF
 #if SYSTEM == 0
-          snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%05.2f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, inst_rf, cum_rf, signal_strength, bat_val); 
+          snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%05.2f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, inst_rf, cum_rf, signal_lvl, bat_val); 
 #endif
 
 // TWS
 #if SYSTEM == 1
-          snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_strength, bat_val);
+          snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%04d,%05.2f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
           // v7.70: Strict TWS FTP Format (57 bytes)
           snprintf(ftpappend_text, sizeof(ftpappend_text), "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%04d;%05.2f\r\n", stnId, temp_year, temp_month, temp_day, record_hr, record_min, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
 #endif

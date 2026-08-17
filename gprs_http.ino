@@ -397,13 +397,13 @@ void prepare_data_and_send() {
     // Current data (all carriers) or Backlog for BSNL: Fast -> Fast -> Robust
     success_count = send_at_cmd_data(http_data, false);
     if (success_count == 0) {
-      debugln("[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt "
-              "2)...");
-      vTaskDelay(2000 / portTICK_PERIOD_MS);
-      success_count = send_at_cmd_data(http_data, false);
-      if (success_count == 0) {
-        debugln("[HTTP] 2nd Attempt (Fast) also failed. Falling back to Robust "
-                "method...");
+      if (http_ready) {
+        debugln("[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt 2)...");
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        success_count = send_at_cmd_data(http_data, false);
+      }
+      if (success_count == 0 && http_ready) {
+        debugln("[HTTP] 2nd Attempt (Fast) also failed. Falling back to Robust method...");
         vTaskDelay(2000 / portTICK_PERIOD_MS);
         success_count = send_at_cmd_data(http_data, true);
       }
