@@ -135,7 +135,7 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked = false);
 
 /************************************************************************************************/
 extern char
-    UNIT[15]; // (Initialized secretly in .ino via UNIT_CFG to avoid ODR issues)
+    UNIT[20]; // (Initialized secretly in .ino via UNIT_CFG to avoid ODR issues)
 extern int test_health_every_slot;
 extern float RF_RESOLUTION;
 
@@ -756,10 +756,10 @@ enum UI_FIELD_ID {
   FLD_WIND_DIR,
   FLD_INST_WS,
   FLD_AVG_WS,
-  FLD_TEMP,
-  FLD_HUMIDITY,
   FLD_PRESSURE,
   FLD_ALTITUDE,   // #1: Station altitude for MSLP correction (BME only)
+  FLD_TEMP,
+  FLD_HUMIDITY,
   FLD_HTTP_FAILS, // v7.70: Present/Cumulative HTTP failure stats
 #if USE_NUVOTON_UI == 1
   FLD_SYS_STATUS,
@@ -794,7 +794,7 @@ extern struct http_params httpSet[7];
 #endif
 
 #if (SYSTEM == 1) || (SYSTEM == 2)
-extern struct http_params httpSet[11];
+extern struct http_params httpSet[12];
 #endif
 
 // Function Prototypes for Tasks defined in other files

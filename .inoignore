@@ -1,0 +1,11 @@
+SpatikaTechApp
+v5.80_compare
+TEST_JIG
+builds
+docs
+server
+*.md
+*.py
+*.sh
+test*
+

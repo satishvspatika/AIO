@@ -1848,8 +1848,11 @@ void scheduler(void *pvParameters) {
 #if SYSTEM == 2
           snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(new_current_cumRF));
           snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%05.2f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
-          // v7.70: Strict TWSRF FTP Format (63 bytes)
-          snprintf(ftpappend_text, sizeof(ftpappend_text), "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n", stnId, temp_year, temp_month, temp_day, record_hr, record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
+          if (strstr(UNIT, "SPATIKA_ADDON_AP") || strstr(STATION_TYPE, "TWSRP") || ENABLE_PRESSURE_SENSOR == 1 || pressure > 300.0f) {
+            snprintf(ftpappend_text, sizeof(ftpappend_text), "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%.2f;%04d;%05.2f\r\n", stnId, temp_year, temp_month, temp_day, record_hr, record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, pressure, signal_lvl, bat_val);
+          } else {
+            snprintf(ftpappend_text, sizeof(ftpappend_text), "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n", stnId, temp_year, temp_month, temp_day, record_hr, record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
+          }
 #endif
 
           //                                            len =
@@ -2063,11 +2066,19 @@ void scheduler(void *pvParameters) {
               sampleNo, temp_year, temp_month, temp_day, record_hr, record_min,
               cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
               signal_strength, bat_val);
-          snprintf(ftpappend_text, sizeof(ftpappend_text),
-                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
-                   stnId, temp_year, temp_month, temp_day, record_hr,
-                   record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
-                   inst_wd, signal_strength, bat_val);
+          if (strstr(UNIT, "SPATIKA_ADDON_AP") || strstr(STATION_TYPE, "TWSRP") || ENABLE_PRESSURE_SENSOR == 1) {
+            snprintf(ftpappend_text, sizeof(ftpappend_text),
+                     "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%.2f;%04d;%05.2f\r\n",
+                     stnId, temp_year, temp_month, temp_day, record_hr,
+                     record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
+                     inst_wd, pressure, signal_strength, bat_val);
+          } else {
+            snprintf(ftpappend_text, sizeof(ftpappend_text),
+                     "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                     stnId, temp_year, temp_month, temp_day, record_hr,
+                     record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
+                     inst_wd, signal_strength, bat_val);
+          }
 #endif
 
           //                                          len =
@@ -2293,12 +2304,21 @@ void scheduler(void *pvParameters) {
                 sampleNo, cur_year, cur_month, cur_day, record_hr, record_min,
                 cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                 signal_strength, bat_val);
-            snprintf(
-                ftpappend_text, sizeof(ftpappend_text),
-                "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
-                stnId, cur_year, cur_month, cur_day, record_hr, record_min,
-                ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
-                signal_strength, bat_val);
+            if (strstr(UNIT, "SPATIKA_ADDON_AP") || strstr(STATION_TYPE, "TWSRP") || ENABLE_PRESSURE_SENSOR == 1 || pressure > 300.0f) {
+              snprintf(
+                  ftpappend_text, sizeof(ftpappend_text),
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%.2f;%04d;%05.2f\r\n",
+                  stnId, cur_year, cur_month, cur_day, record_hr, record_min,
+                  ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                  pressure, signal_strength, bat_val);
+            } else {
+              snprintf(
+                  ftpappend_text, sizeof(ftpappend_text),
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                  stnId, cur_year, cur_month, cur_day, record_hr, record_min,
+                  ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                  signal_strength, bat_val);
+            }
 #endif
 
             //                                          len =
@@ -2794,13 +2814,23 @@ void scheduler(void *pvParameters) {
                          fill_cum_rf, fill_inst_temp, fill_inst_hum,
                          fill_avg_wind_speed, fill_inst_wd,
                          SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
-                snprintf(ftpappend_text, sizeof(ftpappend_text),
-                         "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05."
-                         "2f\r\n",
-                         stnId, temp_year, temp_month, temp_day, temp_hr,
-                         temp_min, fill_ftpcum_rf, fill_inst_temp,
-                         fill_inst_hum, fill_avg_wind_speed, fill_inst_wd,
-                         SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+                if (strstr(UNIT, "SPATIKA_ADDON_AP") || strstr(STATION_TYPE, "TWSRP") || ENABLE_PRESSURE_SENSOR == 1 || pressure > 300.0f) {
+                  snprintf(ftpappend_text, sizeof(ftpappend_text),
+                           "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%.2f;%04d;%05."
+                           "2f\r\n",
+                           stnId, temp_year, temp_month, temp_day, temp_hr,
+                           temp_min, fill_ftpcum_rf, fill_inst_temp,
+                           fill_inst_hum, fill_avg_wind_speed, fill_inst_wd,
+                           pressure, SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+                } else {
+                  snprintf(ftpappend_text, sizeof(ftpappend_text),
+                           "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05."
+                           "2f\r\n",
+                           stnId, temp_year, temp_month, temp_day, temp_hr,
+                           temp_min, fill_ftpcum_rf, fill_inst_temp,
+                           fill_inst_hum, fill_avg_wind_speed, fill_inst_wd,
+                           SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+                }
 #endif
 
                 //                                                              len

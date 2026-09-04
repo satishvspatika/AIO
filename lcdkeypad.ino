@@ -126,15 +126,13 @@ bool isFieldVisible(int fld_id) {
 #endif
 
 #if ENABLE_PRESSURE_SENSOR == 1
-  if (fld_id == FLD_PRESSURE || fld_id == FLD_ALTITUDE) {
-    if (SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP"))
-      return true;
-    return false;
+  if (fld_id == FLD_PRESSURE) {
+    return true;
   }
-#else
-  if (fld_id == FLD_PRESSURE || fld_id == FLD_ALTITUDE)
-    return false;
 #endif
+
+  if (fld_id == FLD_ALTITUDE)
+    return false;
 
 #if SYSTEM == 0 // TRG ONLY
   if (fld_id == FLD_WIND_DIR || fld_id == FLD_INST_WS || fld_id == FLD_AVG_WS ||
@@ -464,7 +462,7 @@ void refresh_sensor_data() {
   if (cur_fld_no == FLD_INST_WS) snprintf(ui_data[FLD_INST_WS].bottomRow, 17, "%0.2f", cur_wind_speed);
   else if (cur_fld_no == FLD_AVG_WS) snprintf(ui_data[FLD_AVG_WS].bottomRow, 17, "%0.2f", cur_avg_wind_speed);
   else if (cur_fld_no == FLD_WIND_DIR) snprintf(ui_data[FLD_WIND_DIR].bottomRow, 17, "%03d", (int)windDir);
-  else if (cur_fld_no == FLD_PRESSURE) snprintf(ui_data[FLD_PRESSURE].bottomRow, 17, "%0.1f", pressure);
+  else if (cur_fld_no == FLD_PRESSURE) snprintf(ui_data[FLD_PRESSURE].bottomRow, 17, "%0.2f hPa", pressure);
   else if (cur_fld_no == FLD_RF_RES) {
     snprintf(ui_data[FLD_RF_RES].bottomRow, 17, "%0.2f", RF_RESOLUTION);
   }
@@ -1422,14 +1420,23 @@ void lcdkeypad(void *pvParameters) {
                 if (ui_data[cur_fld_no].fieldType != eDisplayOnly && ui_data[cur_fld_no].fieldType != eLive) {
                    cur_mode = eEditOn;
                    if (cur_fld_no == FLD_STATION) {
-                      // v5.78 Hardening: Reverted to v5.74 "Blank Slate" behavior. 
-                      // Field is cleared on entry to ensure intentional ID assignment.
-                      memset(input_buf, ' ', 16);
-                      input_buf[16] = '\0';
+                       if (strlen(station_name) > 0) {
+                          snprintf(input_buf, 17, "%-16s", station_name);
+                       } else if (strstr(UNIT, "SPATIKA_ADDON_AP") || strstr(STATION_TYPE, "TWSRP")) {
+                          snprintf(input_buf, 17, "%-16s", "WS0111");
+                       } else {
+                          memset(input_buf, ' ', 16);
+                          input_buf[16] = '\0';
+                       }
                    } else {
                       strcpy(input_buf, ui_data[cur_fld_no].bottomRow);
                    }
-                   cur_pos_no = 0; cur_char_no = 0;
+                   cur_pos_no = 0;
+                   char cc = input_buf[cur_pos_no];
+                   const char *cs = inpCharSet[ui_data[cur_fld_no].fieldType];
+                   const char *p = strchr(cs, cc);
+                   if (p) cur_char_no = p - cs;
+                   else cur_char_no = 0;
                 }
              } else {
                 if (cur_fld_no == FLD_STATION) {
@@ -1543,6 +1550,17 @@ void lcdkeypad(void *pvParameters) {
                          xSemaphoreGive(i2cMutex);
                       }
                    }
+                } else if (cur_fld_no == FLD_ALTITUDE) {
+                   float new_alt = atof(input_buf);
+                   if (new_alt >= 0.0 && new_alt <= 5000.0) {
+                      station_altitude_m = new_alt;
+                      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                         File altF = SPIFFS.open("/station_alt.txt", FILE_WRITE);
+                         if (altF) { altF.print(station_altitude_m); altF.close(); }
+                         xSemaphoreGive(fsMutex);
+                      }
+                      snprintf(input_buf, sizeof(input_buf), "%.0f m", station_altitude_m);
+                   }
                 }
                 strcpy(ui_data[cur_fld_no].bottomRow, input_buf);
                 cur_mode = eEditOff;
@@ -1552,7 +1570,14 @@ void lcdkeypad(void *pvParameters) {
           break;
 
         case 4: // LEFT
-          if (cur_mode == eEditOn && cur_pos_no > 0) cur_pos_no--;
+          if (cur_mode == eEditOn && cur_pos_no > 0) {
+            cur_pos_no--;
+            char cc = input_buf[cur_pos_no];
+            const char *cs = inpCharSet[ui_data[cur_fld_no].fieldType];
+            const char *p = strchr(cs, cc);
+            if (p) cur_char_no = p - cs;
+            else cur_char_no = 0;
+          }
           show_now = 1;
           break;
 
@@ -1580,7 +1605,14 @@ void lcdkeypad(void *pvParameters) {
           break;
 
         case 6: // RIGHT
-          if (cur_mode == eEditOn && cur_pos_no < 15) cur_pos_no++;
+          if (cur_mode == eEditOn && cur_pos_no < 15) {
+            cur_pos_no++;
+            char cc = input_buf[cur_pos_no];
+            const char *cs = inpCharSet[ui_data[cur_fld_no].fieldType];
+            const char *p = strchr(cs, cc);
+            if (p) cur_char_no = p - cs;
+            else cur_char_no = 0;
+          }
           show_now = 1;
           break;
         }

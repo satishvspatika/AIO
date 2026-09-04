@@ -331,9 +331,16 @@ void prepare_data_and_send() {
 // TWS-RF (ADDON / SPATIKA)
 #if SYSTEM == 2
   if (strcmp(httpSet[http_no].Format, "json")) { // Only if NOT json
-    // v7.53: DMC Legacy requires stn_no and %05.1f. Spatika General requires
-    // stn_id.
-    if (strstr(UNIT, "SPATIKA")) {
+    if (strstr(UNIT, "SPATIKA_ADDON_AP") || http_no == 11 || strstr(STATION_TYPE, "TWSRP") || ENABLE_PRESSURE_SENSOR == 1 || pressure > 300.0f) {
+      snprintf(
+          http_data, sizeof(http_data),
+          "stn_id=%s&rec_time=%04d-%02d-%02d,%02d:%02d&key=%s&rainfall=%05.1f&"
+          "temp=%s&humid=%s&w_speed=%s&w_dir=%s&atm_pressure=%.2f&"
+          "signal=%04d&bat_volt=%s",
+          cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
+          httpSet[http_no].Key, temp_crf, sample_temp, sample_hum, sample_avgWS,
+          sample_WD, pressure, temp_sig, sample_bat);
+    } else if (strstr(UNIT, "SPATIKA")) {
       snprintf(
           http_data, sizeof(http_data),
           "stn_id=%s&rec_time=%04d-%02d-%02d,%02d:%02d&key=%s&rainfall=%05."
@@ -496,8 +503,8 @@ void prepare_data_and_send() {
           false; // v5.72: Clear fallback cache to force fresh DNS next slot
 
       // Mandatory Nuke Protocol
-      SerialSIT.println("AT+CIPSHUT");
-      waitForResponse("SHUT OK", 3000);
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 2000);
 
       SerialSIT.println("AT+CGACT=0,1");
       waitForResponse("OK", 2000);
@@ -676,11 +683,19 @@ void prepare_data_and_send() {
           strcpy(stnId, ftp_station);
         }
 
-        snprintf(ftpappend_text, sizeof(ftpappend_text),
-                 "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
-                 stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
-                 ftpsample_cum_rf, sample_temp, sample_hum, sample_avgWS,
-                 sample_WD, temp_sig, temp_bat);
+        if (strstr(UNIT, "SPATIKA_ADDON_AP") || strstr(STATION_TYPE, "TWSRP") || ENABLE_PRESSURE_SENSOR == 1 || pressure > 300.0f) {
+          snprintf(ftpappend_text, sizeof(ftpappend_text),
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%.2f;%04d;%05.2f\r\n",
+                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                   ftpsample_cum_rf, sample_temp, sample_hum, sample_avgWS,
+                   sample_WD, pressure, temp_sig, temp_bat);
+        } else {
+          snprintf(ftpappend_text, sizeof(ftpappend_text),
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n",
+                   stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                   ftpsample_cum_rf, sample_temp, sample_hum, sample_avgWS,
+                   sample_WD, temp_sig, temp_bat);
+        }
         debug("ftpappend_text is : ");
         debugln(ftpappend_text);
 #endif
@@ -847,7 +862,9 @@ void send_http_data() {
     snprintf(target, sizeof(target), "+CGACT: %d,1", active_cid);
     if (strstr(modem_response_buf, target) == NULL) {
       debugln("[GPRS] PDP context inactive. Activating for DNS/HTTP...");
-      SerialSIT.printf("AT+CGACT=1,%d\n", active_cid);
+      char actCmd[30];
+      snprintf(actCmd, sizeof(actCmd), "AT+CGACT=1,%d", active_cid);
+      SerialSIT.println(actCmd);
       waitForResponse("OK", 10000);
     }
   }
@@ -857,7 +874,9 @@ void send_http_data() {
   // slot v5.75: Tightened to > 1 slot. Airtel/Jio can drop idle bearers in < 15
   // mins.
   if (!last_http_ok || (abs(sampleNo - last_http_ok_slot) > 1)) {
-    SerialSIT.printf("AT+CGPADDR=%d\n", active_cid);
+    char addrCmd[30];
+    snprintf(addrCmd, sizeof(addrCmd), "AT+CGPADDR=%d", active_cid);
+    SerialSIT.println(addrCmd);
     if (waitForResponse("OK", 3000)) {
        if (strstr(modem_response_buf, "0.0.0.0") != NULL || strstr(modem_response_buf, "+CGPADDR") == NULL) {
           debugln("[GPRS] Ghost PDP (0.0.0.0). Triggering recovery...");
@@ -935,15 +954,15 @@ void send_http_data() {
       }
 
       debugln(
-          "[PROACTIVE] Consecutive failures detected. Forcing deep CIPSHUT...");
-      SerialSIT.println("AT+CIPSHUT");
-      waitForResponse("SHUT OK", 5000);
+          "[PROACTIVE] Consecutive failures detected. Resetting PDP context...");
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 2000);
       SerialSIT.print("AT+CGACT=0,");
       SerialSIT.println(active_cid);
       waitForResponse("OK", 3000);
     } else {
-      SerialSIT.println("AT+CIPSHUT");
-      waitForResponse("SHUT OK", 4000);
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 2000);
     }
     }
   }
@@ -1163,8 +1182,6 @@ void send_http_data() {
             "[Backlog] Airtel/Jio: proactive bearer refresh before backlog.");
         SerialSIT.println("AT+HTTPTERM");
         waitForResponse("OK", 2000);
-        SerialSIT.println("AT+CIPSHUT");
-        waitForResponse("SHUT OK", 3000);
         SerialSIT.println("AT+CGACT=0,1");
         waitForResponse("OK", 2000);
         vTaskDelay((isLTE ? 800 : 5000) /
@@ -1453,7 +1470,11 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
 #endif
 
 #if SYSTEM == 2
-  if (strstr(UNIT, "SPATIKA") || strstr(NETWORK, "SPATIKA"))
+  if (strstr(UNIT, "SPATIKA_ADDON_AP") || strstr(STATION_TYPE, "TWSRP"))
+    snprintf(fileName, sizeof(fileName),
+             "/TWSRP_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
+             rf_cls_mm, rf_cls_dd, snap_hr, snap_mi);
+  else if (strstr(UNIT, "SPATIKA") || strstr(NETWORK, "SPATIKA"))
     snprintf(fileName, sizeof(fileName),
              "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
              rf_cls_mm, rf_cls_dd, snap_hr, snap_mi);
@@ -1626,7 +1647,7 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
                 lineBuf[--len] = '\0';
               }
 
-              if (len == expected_len) {
+              if (len == expected_len || (len > 50 && (strstr(UNIT, "TWSRP") != NULL || strstr(STATION_TYPE, "TWSRP") != NULL))) {
                 if (linesRead < FTP_CHUNK_SIZE) {
                   chunk.write((uint8_t *)lineBuf, len);
                   chunk.print("\r\n");
@@ -1755,7 +1776,11 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
                    rf_cls_mm, rf_cls_dd, record_hr, record_min);
 #endif
 #if SYSTEM == 2
-        if (strstr(UNIT, "SPATIKA"))
+        if (strstr(UNIT, "SPATIKA_ADDON_AP") || strstr(STATION_TYPE, "TWSRP"))
+          snprintf(fileName, sizeof(fileName),
+                   "/TWSRP_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
+                   rf_cls_mm, rf_cls_dd, record_hr, record_min);
+        else if (strstr(UNIT, "SPATIKA") || strstr(NETWORK, "SPATIKA"))
           snprintf(fileName, sizeof(fileName),
                    "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
                    rf_cls_mm, rf_cls_dd, record_hr, record_min);
@@ -1908,18 +1933,19 @@ int send_at_cmd_data(char *payload, bool robust) {
       // v5.82 Surgical Hardening (Phase 4):
       // On legacy boards, a 706 TCP Zombie often requires an immediate stack reset
       // rather than waiting for 3 fails.
-      debugln("[CRIT] TCP Zombie detected. Nuking bearer for fresh IP...");
-      SerialSIT.println("AT+CIPSHUT");
-      waitForResponse("SHUT OK", 3000);
+      debugln("[CRIT] TCP Zombie detected. Refreshing bearer for fresh IP...");
+      SerialSIT.println("AT+HTTPTERM");
+      waitForResponse("OK", 2000);
       SerialSIT.println("AT+CGACT=0,1");
       waitForResponse("OK", 1000);
       http_ready = false; // Housekeeping: State follows destroyed stack
-      vTaskDelay(2000 / portTICK_PERIOD_MS); 
+      vTaskDelay(1000 / portTICK_PERIOD_MS); 
 
+      // Re-establish bearer immediately so retry or FTP has a valid IP!
+      verify_bearer_or_recover();
       if (current_zombies >= 3) {
-         debugln("[CRIT] Persistent Zombie detected. Triggering Radio Refresh...");
+         debugln("[CRIT] Persistent Zombie detected. Resetting zombie counter.");
          __atomic_store_n(&diag_http_zombie_count, 0, __ATOMIC_SEQ_CST);
-         verify_bearer_or_recover(); // Triggers radio refresh internally if APN fails
       }
     } else {
       __atomic_store_n(&diag_http_zombie_count, 0, __ATOMIC_SEQ_CST); // Reset on other errors

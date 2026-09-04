@@ -631,7 +631,7 @@ void get_registration() {
     if (isBSNL && registration == 0 && retries == 3) {
       debugln(
           "[GPRS] BSNL Stubborn Idle. Forcing Frequency Re-scan (COPS=0)...");
-      SerialSIT.println("AT+CIPSHUT");
+      SerialSIT.println("AT+CGACT=0,1");
       waitForResponse("OK", 2000);
       diag_http_present_fails++;
       SerialSIT.println("AT+COPS=0");

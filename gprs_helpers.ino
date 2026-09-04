@@ -12,6 +12,7 @@ void save_apn_config(const char* apn, const char* ccid) {
       f.println(ccid);
       f.println(apn);
       f.close();
+      vTaskDelay(pdMS_TO_TICKS(10)); // Flash write commit breather
       debugf("[FS] Saved APN Config: %s\n", apn);
     }
     xSemaphoreGive(fsMutex);

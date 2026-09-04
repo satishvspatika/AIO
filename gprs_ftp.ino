@@ -670,7 +670,11 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
     ftpServer = "ftp.spatika.net"; ftpUser = "tws_gen"; ftpPassword = "spgen123"; portName = 21;
 #endif
 #if SYSTEM == 2
-    ftpServer = "ftp.spatika.net"; ftpUser = "twsrf_gen"; ftpPassword = "spgen123"; portName = 21;
+    if (strstr(UNIT, "SPATIKA_ADDON_AP") || strstr(STATION_TYPE, "TWSRP")) {
+      ftpServer = "ftp.spatika.net"; ftpUser = "twsrp"; ftpPassword = FTP_PASS_TWSRP; portName = 21;
+    } else {
+      ftpServer = "ftp.spatika.net"; ftpUser = "twsrf_gen"; ftpPassword = "spgen123"; portName = 21;
+    }
 #endif
   }
 
@@ -692,8 +696,6 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
   SerialSIT.println("AT+CFTPSCFG=\"bindcid\",1");
   waitForResponse("OK", 2000);
 
-  SerialSIT.println("AT+CFTPSSINGLEIP=1"); // Data channel binding — confirmed working in v13.9
-  
   // v5.75 BSNL Active Mode Hardening (Moved to post-start)
   debugf("[FTP] Configuring mode (%d)...\n", transMode);
   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSCFG=\"TRANSMODE\",%d", transMode);

@@ -167,7 +167,7 @@ char rf_str[10], calib_rf[10], temp_str[16], hum_str[16], windSpeedInst_str[16],
     prevWindSpeedAvg_str[7], windDir_str[16];
 
 // v5.66: Final ODR Hoist Block
-char UNIT[15] = UNIT_CFG; 
+char UNIT[20] = UNIT_CFG; 
 float station_altitude_m = 0.0;
 int record_length = 0;
 volatile bool gprs_pdp_ready = false;
@@ -374,7 +374,7 @@ RTC_DATA_ATTR volatile int diag_http_zombie_count = 0;    // REL-C01: Missing De
 
 // --- UI & Server Configurations (v5.65 ODR Fix) ---
 ui_data_t ui_data[FLD_COUNT] = {
-    {1, "STATION", "SIT099", eAlphaNum},             // 0
+    {1, "STATION", "WS0111", eAlphaNum},             // 0
     {2, "DATE(dd-mm-yyyy)", "08-03-2023", eNumeric}, // 1
     {3, "TIME 24hr:mm", "00:00", eNumeric},          // 2
     {5, "VERSION", FIRMWARE_VERSION, eDisplayOnly},  // 3
@@ -399,10 +399,10 @@ ui_data_t ui_data[FLD_COUNT] = {
     {16, "WIND DIRECTION", "NA", eLive},             // 21
     {17, "INST WIND SPEED", "NA", eLive},            // 22
     {18, "AVG WIND SPEED", "NA", eLive},             // 23
-    {19, "TEMPERATURE", "NA", eLive},                // 24
-    {20, "HUMIDITY", "NA", eLive},                   // 25
-    {24, "PRESSURE", "NA", eLive},                   // 27
-    {26, "STATION ALT", "900", eNumeric},            // 28 BME only
+    {24, "ATM PRESSURE", "NA", eLive},
+    {26, "STATION ALT", "900", eNumeric},
+    {19, "TEMPERATURE", "NA", eLive},
+    {20, "HUMIDITY", "NA", eLive},
     {27, "HTTP FAIL STATS", "                ",
      eLive},                                         // 29 v7.70: HTTP fail counters
 #if USE_NUVOTON_UI == 1
@@ -424,7 +424,7 @@ struct http_params httpSet[7] = {
 #endif
 
 #if (SYSTEM == 1) || (SYSTEM == 2)
-struct http_params httpSet[11] = {
+struct http_params httpSet[12] = {
     {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80", SEC_KS_TRG_OLD, "x-www-form-urlencoded"}, 
     {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80", SEC_KS_TRG_NEW, "x-www-form-urlencoded"}, 
     {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085", SEC_BIH_GOV, "json"}, 
@@ -436,6 +436,7 @@ struct http_params httpSet[11] = {
     {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_tws_data_v2", "80", SEC_KS_TWS, "x-www-form-urlencoded"}, 
     {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_twsrf_data_v2", "80", SEC_KS_ADDON, "x-www-form-urlencoded"}, 
     {"rtdas.spatika.net", "89.32.144.163", "/tws_gprs/twsrf_gen", "80", SEC_SPT_TWS_RF, "x-www-form-urlencoded"}, 
+    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_data_twsrp", "80", SEC_SPT_TWSRP, "x-www-form-urlencoded"}, // 11 (SPATIKA ADDON AP / TWSRP)
 };
 #endif
 // --- End Configuration Tables ---
@@ -890,7 +891,7 @@ void setup() {
   // Station Altitude Load (for MSLP calculation) - #1 Fix
   // Only meaningful for KSNDMC_TWS-AP (BME280 pressure sensor enabled)
 #if (SYSTEM == 1) || (SYSTEM == 2)
-  bool is_ap_unit = (strstr(UNIT, "-AP") != NULL);
+  bool is_ap_unit = (strstr(UNIT, "-AP") != NULL) || (strstr(UNIT, "_AP") != NULL) || (strstr(UNIT, "TWSRP") != NULL) || (ENABLE_PRESSURE_SENSOR == 1);
   if (SPIFFS.exists("/station_alt.txt")) {
     File altF = SPIFFS.open("/station_alt.txt", FILE_READ);
     if (altF) {
@@ -916,7 +917,7 @@ void setup() {
   }
   // Update LCD field display with loaded value
   snprintf(ui_data[FLD_ALTITUDE].bottomRow,
-           sizeof(ui_data[FLD_ALTITUDE].bottomRow), "%.0f", station_altitude_m);
+           sizeof(ui_data[FLD_ALTITUDE].bottomRow), "%.0f m", station_altitude_m);
   debug("[BOOT] Station Altitude: ");
   debugln(station_altitude_m);
 #endif
@@ -1094,8 +1095,8 @@ void setup() {
     debug(" | Type: ");
     debugln(STATION_TYPE);
     http_no = 7; // 7 (KSNDMC ADDON)
-  } else if (((strstr(UNIT, "SPATIKA_GEN") || strstr(UNIT, "SPATIKA_TRG")) && (SYSTEM == 0))) {
-    strcpy(universalNumber, "9980945474"); //"9980945474"); // Universal number
+  } else if (((strstr(UNIT, "SPATIKA_TRG") || strstr(UNIT, "SPATIKA_GEN")) && (SYSTEM == 0))) {
+    strcpy(universalNumber, "9980945474"); // Universal number
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG9-GEN-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "SPATIKA");
     strcpy(STATION_TYPE, "TRG");
@@ -1105,8 +1106,8 @@ void setup() {
     debug(NETWORK);
     debug(" | Type: ");
     debugln(STATION_TYPE);
-    http_no = 6; // 6 (SPATIKA GEN TRG - index 6 confirmed)
-  } else if (((strstr(UNIT, "SPATIKA_GEN") || strstr(UNIT, "SPATIKA_TWS")) && (SYSTEM == 1))) {
+    http_no = 6; // 6 (SPATIKA TRG)
+  } else if (((strstr(UNIT, "SPATIKA_TWS") || strstr(UNIT, "SPATIKA_GEN")) && (SYSTEM == 1))) {
     strcpy(universalNumber, "9980945474");
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TWS9-GEN-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "SPATIKA");
@@ -1118,8 +1119,24 @@ void setup() {
     debug(" | Type: ");
     debugln(STATION_TYPE);
     http_no = 8; // 8 (SPATIKA TWS)
-  } else if (((strstr(UNIT, "SPATIKA_GEN") || strstr(UNIT, "SPATIKA_ADDON")) && (SYSTEM == 2))) { // EMPRII
-    strcpy(universalNumber, "9980945474"); //"9980945474"); // Universal number
+  } else if ((strstr(UNIT, "SPATIKA_ADDON_AP") && (SYSTEM == 2))) {
+    strcpy(universalNumber, "9980945474");
+    snprintf(UNIT_VER, sizeof(UNIT_VER), "TWSRP9-GEN-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
+    strcpy(NETWORK, "SPATIKA");
+    strcpy(STATION_TYPE, "TWSRP");
+    if (strlen(station_name) == 0) {
+      strcpy(station_name, "WS0111");
+      strcpy(ftp_station, "WS0111");
+    }
+    debug("[BOOT] Unit: ");
+    debug(UNIT_VER);
+    debug(" | Network: ");
+    debug(NETWORK);
+    debug(" | Type: ");
+    debugln(STATION_TYPE);
+    http_no = 11; // 11 (SPATIKA ADDON AP / TWSRP)
+  } else if (((strstr(UNIT, "SPATIKA_ADDON") || strstr(UNIT, "SPATIKA_GEN")) && (SYSTEM == 2))) {
+    strcpy(universalNumber, "9980945474");
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TWSRF9-GEN-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "SPATIKA");
     strcpy(STATION_TYPE, "TWS-RF");
@@ -1129,7 +1146,7 @@ void setup() {
     debug(NETWORK);
     debug(" | Type: ");
     debugln(STATION_TYPE);
-    http_no = 10; // 10 (SPATIKA GEN TWS-RF)
+    http_no = 10; // 10 (SPATIKA ADDON TWS-RF)
   } else {
     debugln("!!! FATAL: ********** NO UNIT/SYSTEM MATCH FOUND **********");
     debugln("!!! Check UNIT and SYSTEM defines in globals.h!");
@@ -1162,7 +1179,7 @@ void setup() {
     debugln("!!! FATAL: http_no OOB for SYSTEM 0 !!!"); 
   }
 #else
-  if (http_no >= 11) { 
+  if (http_no >= 12) { 
     http_no = -1; 
     debugln("!!! FATAL: http_no OOB for SYSTEM 1/2 !!!"); 
   }
@@ -1523,11 +1540,11 @@ void setup() {
     else debugln("[BOOT] No T/H sensor (HDC or BME). tempHumTask NOT created.");
   }
 
-  // v5.50: Only spawn bmeTask if Pressure is enabled AND this is a TWS-AP
-  // unit
+  // v5.50: Only spawn bmeTask if Pressure is enabled AND this is a TWS-AP/TWSRP unit
   bool pressure_supported =
-      (SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP") != NULL);
-  if (bmeType == BME_280 && ENABLE_PRESSURE_SENSOR == 1 && pressure_supported) {
+      (strstr(UNIT, "-AP") != NULL) || (strstr(UNIT, "_AP") != NULL) ||
+      (strstr(UNIT, "TWSRP") != NULL) || (ENABLE_PRESSURE_SENSOR == 1);
+  if (bmeType == BME_280 && pressure_supported) {
     xTaskCreatePinnedToCore(bmeTask, "bmeTask", 4096, NULL, 2, &bmeTask_h,
                             1); // Core 1
   } else {
@@ -1680,8 +1697,8 @@ void initialize_hw() {
 
 #if (SYSTEM == 1 || SYSTEM == 2)
   // Early init for sensor detection status
-  // v6.50: Skip BME for TWS-RF (SYSTEM 2) as requested
-  if (SYSTEM != 2) {
+  // Allow BME for SYSTEM 1 or SYSTEM 2 if pressure unit or pressure sensor enabled
+  if (SYSTEM != 2 || strstr(UNIT, "_AP") != NULL || strstr(UNIT, "-AP") != NULL || ENABLE_PRESSURE_SENSOR == 1) {
     initBME();
   }
   initHDC();

@@ -64,10 +64,10 @@ if [ $DO_FULL -eq 1 ]; then
     echo "--- FULL FLASH (Bootloader, Partitions, App) | ${FLASH_SIZE} | Port: $PORT | Baud: $BAUD ---"
     
     case "$FLASH_SIZE" in
-      4mb) FLASH_MB="4MB" ;;
-      8mb) FLASH_MB="8MB" ;;
-      16mb) FLASH_MB="16MB" ;;
-      *) FLASH_MB="detect" ;;
+      4mb) FLASH_MB="4MB"; APP1_OFFSET="0x150000" ;;
+      8mb) FLASH_MB="8MB"; APP1_OFFSET="0x1C0000" ;;
+      16mb) FLASH_MB="16MB"; APP1_OFFSET="0x210000" ;;
+      *) FLASH_MB="detect"; APP1_OFFSET="0x1C0000" ;;
     esac
 
     # Erase otadata partition so bootloader defaults to app0 at 0x10000
@@ -83,12 +83,19 @@ if [ $DO_FULL -eq 1 ]; then
         0x8000  "$PARTITIONS" \
         0xe000  "$BOOT_APP" \
         0x10000 "$APP_BIN" \
-        0x210000 "$APP_BIN"
+        "$APP1_OFFSET" "$APP_BIN"
 else
+    case "$FLASH_SIZE" in
+      4mb) APP1_OFFSET="0x150000" ;;
+      8mb) APP1_OFFSET="0x1C0000" ;;
+      16mb) APP1_OFFSET="0x210000" ;;
+      *) APP1_OFFSET="0x1C0000" ;;
+    esac
     echo "--- QUICK FLASH (App0 & App1) | ${FLASH_SIZE} | Port: $PORT | Baud: $BAUD ---"
     esptool.py --chip esp32 --port "$PORT" erase_region 0xe000 0x2000
-    esptool.py --chip esp32 --port "$PORT" --baud $BAUD write_flash 0x10000 "$APP_BIN" 0x210000 "$APP_BIN"
+    esptool.py --chip esp32 --port "$PORT" --baud $BAUD write_flash 0x10000 "$APP_BIN" "$APP1_OFFSET" "$APP_BIN"
 fi
+
 
 echo "--- Flash Complete ---"
 

@@ -73,11 +73,11 @@ void windDirection(void *pvParameters) {
       }
 
       // Dynamic calibration debug info (prints on value change)
-      static int last_printed_wd = -1;
-      if (abs(windDir - last_printed_wd) >= 2) {
-        debugf2("[WD Debug] Raw ADC:%d (spread:%d) -> Mapped Dir:%d deg\n", tempWindDir, spread, windDir);
-        last_printed_wd = windDir;
-      }
+      // static int last_printed_wd = -1;
+      // if (abs(windDir - last_printed_wd) >= 2) {
+      //   debugf2("[WD Debug] Raw ADC:%d (spread:%d) -> Mapped Dir:%d deg\n", tempWindDir, spread, windDir);
+      //   last_printed_wd = windDir;
+      // }
     }
     prev_wd_ok = wd_ok;
     snprintf(windDir_str, sizeof(windDir_str), "%03d deg", windDir);

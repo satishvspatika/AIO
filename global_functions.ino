@@ -1157,6 +1157,7 @@ void reconstructSentMasks(bool alreadyLocked) {
   }
 
   debugln("[GoldenData] Starting Sent Mask Reconstruction from SPIFFS...");
+  vTaskDelay(pdMS_TO_TICKS(10)); // Flash cache settle breather
 
   char cleanStn[16];
   strncpy(cleanStn, station_name, 15);

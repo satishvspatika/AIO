@@ -34,7 +34,11 @@ echo "--- Using partition file: $PARTITION_FILE ---"
 FW_VER=$(grep '#define FIRMWARE_VERSION' user_config.h | sed 's/.*"\(.*\)".*/\1/')
 BUILD_PATH="/tmp/aio_build_${FLASH_SIZE}"
 
-# 4MB builds: temporarily disable WebServer to fit within 1.25MB slot
+# Force clean build directory to avoid permission / unlinkat directory not empty errors
+chmod -R 777 "$BUILD_PATH" 2>/dev/null || true
+rm -rf "$BUILD_PATH"
+mkdir -p "$BUILD_PATH"
+
 PATCHED=0
 if [ "$FLASH_SIZE" = "4mb" ]; then
     echo "--- 4MB build: patching ENABLE_WEBSERVER=0 ---"
@@ -45,7 +49,6 @@ if [ "$FLASH_SIZE" = "4mb" ]; then
 fi
 
 /usr/local/bin/arduino-cli compile \
-    --clean \
     --fqbn "$FQBN" \
     --build-property "build.partitions=custom" \
     --build-property "build.custom_partitions=$(pwd)/$PARTITION_FILE" \
