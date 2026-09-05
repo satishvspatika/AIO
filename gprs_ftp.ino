@@ -109,17 +109,41 @@ void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
     ftp_login_flag = setup_ftp(initial_ftp_mode);
     if (ftp_login_flag == 0) {
         debugln("[FTP] First Login attempt failed. BSNL Shield: Forcing Context Refresh...");
-        
+
+        // v6.28 FIX: Must stop FTP service BEFORE deactivating PDP context.
+        // A7672S rejects AT+CGACT=0,1 while AT+CFTPSSTART session is still bound —
+        // this is exactly why CGACT was returning ERROR on every retry.
+        SerialSIT.println("AT+CFTPSSTOP");
+        waitForResponse("OK", 3000);
+        flushSerialSIT();
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+
         // [FTP-05]: BSNL NAT Port Clear - Tightened Delays in v5.76.3
         SerialSIT.println("AT+CGACT=0,1");
         waitForResponse("OK", 2000);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
         SerialSIT.println("AT+CGACT=1,1");
-        waitForResponse("OK", 8000); // Reduced from 15s
+        waitForResponse("OK", 10000); // Extended from 8s: M2M SIM re-attach on airteliot.com
         vTaskDelay(1000 / portTICK_PERIOD_MS);
-        
-        // Retry with same mode (Active for BSNL)
+
+        // Retry with same mode (2nd attempt)
         ftp_login_flag = setup_ftp(initial_ftp_mode);
+    }
+
+    // v6.28 FIX: 3rd attempt with mode flip if both same-mode attempts failed.
+    // Airtel 4G CGNAT sometimes only allows one transfer mode after context refresh.
+    if (ftp_login_flag == 0) {
+        int flip_mode = (initial_ftp_mode == 1) ? 0 : 1;
+        debugf("[FTP] 2nd attempt also failed. Trying mode flip (%d)...\n", flip_mode);
+        SerialSIT.println("AT+CFTPSSTOP");
+        waitForResponse("OK", 3000);
+        flushSerialSIT();
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        ftp_login_flag = setup_ftp(flip_mode);
+        if (ftp_login_flag == 1) {
+            // Update initial_ftp_mode so PUTFILE retry uses the successful mode
+            initial_ftp_mode = flip_mode;
+        }
     }
     
     if (ftp_login_flag == 1) {
@@ -686,14 +710,17 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
   waitForResponse("OK", 5000);
 
   SerialSIT.println("AT+CFTPSSTART");
-  waitForResponse("+CFTPSSTART: 0", 20000); // v7.70: Increased to 20s for BSNL stability (H-03)
+  bool ftp_started_ok = waitForResponse("OK", 20000) || (strstr(modem_response_buf, "+CFTPSSTART") != NULL);
 
-  // v5.38 Harmonization: Explicitly Configure FTP Client Context
-  // Ensure plain FTP (No SSL/TLS) and bind strictly to GPRS Context 1
-  // v5.75 FIX: These MUST be sent AFTER Start response for A7672S stack stability (M-01)
-  SerialSIT.println("AT+CFTPSCFG=\"security\",0");
-  waitForResponse("OK", 2000);
+  if (!ftp_started_ok) {
+    debugln("[FTP] CFTPSSTART failed. Aborting setup_ftp.");
+    return 0;
+  }
+
+  // Bind FTPS to PDP Context 1 & plain FTP security mode
   SerialSIT.println("AT+CFTPSCFG=\"bindcid\",1");
+  waitForResponse("OK", 2000);
+  SerialSIT.println("AT+CFTPSCFG=\"security\",0");
   waitForResponse("OK", 2000);
 
   // v5.75 BSNL Active Mode Hardening (Moved to post-start)
@@ -704,47 +731,53 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
   SerialSIT.println("AT+CFTPSCFG=\"type\",I");
   waitForResponse("OK", 3000);
   SerialSIT.println("AT+CMEE=1");
-  debugln(waitForResponse("OK", 2000));
+  waitForResponse("OK", 2000);
 
-
-  // v5.76.6: DNS Resilience - Fresh retry per call. 
+  // v5.76.6: Use domain name directly for Airtel/Jio M2M networks (skips CGNAT IP block on port 21)
   char targetAddress[64];
-  strncpy(targetAddress, ftpServer, sizeof(targetAddress)-1);
-  targetAddress[sizeof(targetAddress)-1] = '\0';
+  bool isAirtelOrJio = (strstr(apn_str, "airteliot") != NULL || strstr(carrier, "AIRTEL") != NULL || strstr(carrier, "Airtel") != NULL || strstr(carrier, "Jio") != NULL);
 
-  debugln("[FTP] Warming up DNS...");
-  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CDNSGIP=\"%s\"", ftpServer);
-  SerialSIT.println(gprs_xmit_buf);
-  // v5.76.3: Reduced timeout to 12s for faster transition
-  if (waitForResponse("+CDNSGIP:", 12000)) {
-      const char* fq = strstr(modem_response_buf, "\",\"");
-      if (fq != NULL) {
-          const char* sq = strchr(fq + 3, '\"');
-          if (sq != NULL) {
-              int rLen = sq - (fq + 3);
-              if (rLen > 6 && rLen < (int)sizeof(targetAddress)) {
-                  strncpy(targetAddress, fq + 3, rLen);
-                  targetAddress[rLen] = '\0';
-                  debugf("[FTP] DNS Resolved: %s\n", targetAddress);
-              }
-          }
-      }
+  if (isAirtelOrJio) {
+    strncpy(targetAddress, ftpServer, sizeof(targetAddress)-1);
+    targetAddress[sizeof(targetAddress)-1] = '\0';
+    debugf("[FTP] Airtel/Jio M2M: Using domain name directly: %s\n", targetAddress);
   } else {
-      debugln("[FTP] DNS Failed. Switching to Insurance IP.");
-      if (strstr(ftpServer, "spatika.net")) {
-        strncpy(targetAddress, "89.32.144.163", sizeof(targetAddress)-1);
-      }
-      else if (strstr(ftpServer, "ksndmc.net")) {
-        strncpy(targetAddress, "27.34.245.70", sizeof(targetAddress)-1);
-      }
-      targetAddress[sizeof(targetAddress)-1] = '\0';
+    strncpy(targetAddress, ftpServer, sizeof(targetAddress)-1);
+    targetAddress[sizeof(targetAddress)-1] = '\0';
+
+    debugln("[FTP] Warming up DNS...");
+    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CDNSGIP=\"%s\"", ftpServer);
+    SerialSIT.println(gprs_xmit_buf);
+    if (waitForResponse("+CDNSGIP:", 12000)) {
+        const char* fq = strstr(modem_response_buf, "\",\"");
+        if (fq != NULL) {
+            const char* sq = strchr(fq + 3, '\"');
+            if (sq != NULL) {
+                int rLen = sq - (fq + 3);
+                if (rLen > 6 && rLen < (int)sizeof(targetAddress)) {
+                    strncpy(targetAddress, fq + 3, rLen);
+                    targetAddress[rLen] = '\0';
+                    debugf("[FTP] DNS Resolved: %s\n", targetAddress);
+                }
+            }
+        }
+    } else {
+        debugln("[FTP] DNS Failed. Switching to Insurance IP.");
+        if (strstr(ftpServer, "spatika.net")) {
+          strncpy(targetAddress, "144.91.104.105", sizeof(targetAddress)-1);
+        }
+        else if (strstr(ftpServer, "ksndmc.net")) {
+          strncpy(targetAddress, "27.34.245.70", sizeof(targetAddress)-1);
+        }
+        targetAddress[sizeof(targetAddress)-1] = '\0';
+    }
   }
 
   // Pre-login settling delay
   vTaskDelay(1000 / portTICK_PERIOD_MS); 
 
   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-           "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",0",
+           "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\"",
            targetAddress, portName, ftpUser, ftpPassword); // v7.70: Use resolved IP to skip BSNL DNS (H-02)
 
   SerialSIT.println(gprs_xmit_buf);

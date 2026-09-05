@@ -502,15 +502,28 @@ void prepare_data_and_send() {
       dns_fallback_active =
           false; // v5.72: Clear fallback cache to force fresh DNS next slot
 
-      // Mandatory Nuke Protocol
+      // v6.28 Hardened Nuke Protocol:
+      // Step 1: Give HTTP engine a full 5s to terminate — 2s was too short on A7672S
       SerialSIT.println("AT+HTTPTERM");
-      waitForResponse("OK", 2000);
+      waitForResponse("OK", 5000);
+      flushSerialSIT();
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
 
+      // Step 2: Deactivate PDP context — if CGACT returns ERROR the modem
+      // stack is stuck (HTTP session still internally bound). GPIO power-cycle
+      // is the only reliable recovery in that case.
       SerialSIT.println("AT+CGACT=0,1");
-      waitForResponse("OK", 2000);
-
-      vTaskDelay(5000 /
-                 portTICK_PERIOD_MS); // Crucial 5-second carrier breather
+      if (!waitForResponse("OK", 3000)) {
+        debugln("[CRIT] CGACT=0 failed (stack stuck). GPIO power cycling modem...");
+        digitalWrite(26, LOW);
+        vTaskDelay(3000 / portTICK_PERIOD_MS); // Full discharge
+        digitalWrite(26, HIGH);
+        vTaskDelay(8000 / portTICK_PERIOD_MS); // Boot + SIM init
+        recoverI2CBus(); // Mitigate I2C spike from modem power-on
+        diag_consecutive_http_fails = 0; // Fresh start after hard reset
+      } else {
+        vTaskDelay(3000 / portTICK_PERIOD_MS); // Carrier breather after clean deact
+      }
     } else {
       vTaskDelay(500 / portTICK_PERIOD_MS);
     }
@@ -702,20 +715,23 @@ void prepare_data_and_send() {
 
         vTaskDelay(100 / portTICK_PERIOD_MS);
 
-        // SMART RECOVERY: If data fails for 4 consecutive slots (~1 hour),
-        // trigger a Full Modem Reset. Use diag_consecutive_http_fails here
-        // (NOT diag_consecutive_reg_fails — that counter is only for actual
-        // registration failures and gates graceful_modem_shutdown).
-        // v5.55 SELF-HEALING: If we are failing 4 times in a row, the bearer is
-        // likely a zombie. Force a HARD MODEM RESET (GPIO 26 cycle) as per
-        // Rule 19.
-        if (diag_consecutive_http_fails >= 4) {
-          debugln("[RECOVERY] 4 Consecutive HTTP Fail Slots (Zombie Bearer). "
-                  "Hard Resetting Modem...");
+        // SMART RECOVERY: If data fails consecutively, trigger a Full Modem Reset.
+        // Use diag_consecutive_http_fails here (NOT diag_consecutive_reg_fails —
+        // that counter is only for actual registration failures).
+        // v6.28: Lowered threshold for Airtel M2M to 2 slots (~30 min) because
+        // Airtel CGNAT creates sticky zombie bearers that never self-heal.
+        // BSNL/others still use 4 slots (1 hour) as they recover on their own.
+        bool isAirtelM2M = (strstr(carrier, "AIRTEL") != NULL ||
+                            strstr(carrier, "Airtel") != NULL ||
+                            strstr(carrier, "Jio")    != NULL);
+        int hard_reset_threshold = isAirtelM2M ? 2 : 4;
+        if (diag_consecutive_http_fails >= hard_reset_threshold) {
+          debugf("[RECOVERY] %d Consecutive HTTP Fail Slots (Zombie Bearer). "
+                 "Hard Resetting Modem...\n", diag_consecutive_http_fails);
           SerialSIT.println("AT+HTTPTERM");
           waitForResponse("OK", 2000);
           digitalWrite(26, LOW);                 // Pull GPRS Power LOW
-          vTaskDelay(2500 / portTICK_PERIOD_MS); // ≥2s guaranteed off
+          vTaskDelay(3000 / portTICK_PERIOD_MS); // ≥3s guaranteed off (was 2.5s)
           digitalWrite(26, HIGH);                // Pull GPRS Power HIGH
           vTaskDelay(8000 / portTICK_PERIOD_MS); // allow boot + SIM init
           recoverI2CBus(); // v5.82 Platinum: Mitigate spike on HTTP recovery
@@ -841,19 +857,19 @@ void send_http_data() {
     }
   }
 
-  // v5.55: PREPARE URL (Zero-Gap Prep)
-  // Logic: Use static IP from globals.h if DNS is problematic or if first
-  // attempt fails.
-  snprintf(httpPostRequest, sizeof(httpPostRequest),
-           "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", domain,
-           httpSet[http_no].Port, httpSet[http_no].Link);
-
+  // Build fallback URL (IP-based) for dns_fallback_active path
   char fallbackUrl[150] = {0};
   snprintf(fallbackUrl, sizeof(fallbackUrl),
            "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", httpSet[http_no].IP,
            httpSet[http_no].Port, httpSet[http_no].Link);
 
+  // Default primary URL uses domain name
+  snprintf(httpPostRequest, sizeof(httpPostRequest),
+           "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", domain,
+           httpSet[http_no].Port, httpSet[http_no].Link);
+
   debugf("[GPRS] Prepared URL: %s\n", httpPostRequest);
+
 
   // Ensure PDP context is active before doing DNS lookups or HTTP
   SerialSIT.println("AT+CGACT?");
@@ -972,7 +988,7 @@ void send_http_data() {
 
   // v7.03: Smarter context cleanup (only if needed or if consecutive fails
   // occur)
-  if (diag_consecutive_http_fails > 0) {
+  if (diag_consecutive_http_fails > 1) {
     int clean_target = (active_cid > 0) ? active_cid : 1;
     snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CGACT=0,%d",
              clean_target);
@@ -1113,9 +1129,12 @@ void send_http_data() {
       // [CRIT] CRITICAL FIX: If skip_primary_http was true, send_http_data() was
       // skipped and httpPostRequest is empty. Rebuild it locally so backlog has
       // a target!
-      const char *domain = httpSet[http_no].serverName;
+      const char *target_host = domain;
+      if (dns_fallback_active && strlen(httpSet[http_no].IP) > 6) {
+        target_host = httpSet[http_no].IP;
+      }
       snprintf(httpPostRequest, sizeof(httpPostRequest),
-               "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", domain,
+               "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", target_host,
                httpSet[http_no].Port, httpSet[http_no].Link);
       unsent_pointer_count = 0; // resetting to 1st record of unsent data ..
       unsent_counter = 0;
@@ -1539,7 +1558,7 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
           unsent_cnt, snap_hr, snap_mi, scheduled_slot ? "YES" : "NO",
           morning_cleanup ? "YES" : "NO");
   bool should_push =
-      (unsent_cnt > 2) || (unsent_cnt > 0 && morning_cleanup); // v5.81: Daily Drain phase phase phase phase phase phase phase phase (Summary truncated)
+      (unsent_cnt > 2) || (unsent_cnt > 0 && (scheduled_slot || morning_cleanup || (diag_consecutive_http_fails > 0)));
 
   if (signal_lvl > -95 && (should_push || force_ftp) &&
       SPIFFS.exists(ftpunsent_file)) {
@@ -1878,7 +1897,7 @@ int send_at_cmd_data(char *payload, bool robust) {
     
     // v5.92: Increased host wait-time to 5s for high-latency BSNL 2G cells
     if (waitForResponse("DOWNLOAD", 5000)) {
-      SerialSIT.println(payload);
+      SerialSIT.print(payload);
       waitForResponse("OK", 2000); // v5.92: Increased from 1500ms
     } else {
       debugln("[HTTP] Fast DOWNLOAD prompt timeout.");

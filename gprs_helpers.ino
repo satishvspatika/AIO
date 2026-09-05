@@ -245,6 +245,7 @@ bool try_activate_apn(const char *apn) {
         debugln("[APN] CGACT OK but no valid IP (0.0.0.0). Treating as failure.");
         return false;
     }
+    active_cid = 1;
     return true;
   }
   return false;
@@ -441,7 +442,8 @@ bearer_recovery: // Label used for ghost-session fallthrough
         if (strlen(apn_str) > 0) {
           if (try_activate_apn(apn_str)) {
             bearer_recovery_active = false;
-            return true;
+            active_cid = 1;
+        return true;
           }
         }
         break;
@@ -775,11 +777,7 @@ void start_gprs() {
 
       SerialSIT.println("AT+CMEE=2"); // v5.82 Diagnostic: Enable verbose error messages
       waitForResponse("OK", 500);
-      SerialSIT.println("AT+CSDT=0"); // Disable mechanical SIM detect for BSNL/etc
-      waitForResponse("OK", 500);
-      SerialSIT.println("AT+UIMHOTSWAPON=0"); // Disable mechanical SIM hot-swap detect for SIM7600/A7672S
-      waitForResponse("OK", 500);
-      vTaskDelay(500 / portTICK_PERIOD_MS); // Reduced from 3000ms to 500ms (SIM polling loop will wait dynamically if needed)
+      vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 
     // PROACTIVE SIM POLLING

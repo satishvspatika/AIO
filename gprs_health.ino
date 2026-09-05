@@ -550,16 +550,9 @@ void get_registration() {
             SerialSIT.println("AT+COPS=0");
           }
         } else {
-          // v5.84 Airtel/Jio Strategy: Toggle Mode if stalled.
-          if (initial_cnmp != 13) {
-            debugln("[GPRS] Tier1 @ iter5: Auto mode stalled. Fallback to "
-                    "GSM-only (CNMP=13)...");
-            SerialSIT.println("AT+CNMP=13");
-          } else {
-            debugln("[GPRS] Tier1 @ iter5: GSM-only stalled. Peeking Auto "
-                    "(CNMP=2)...");
-            SerialSIT.println("AT+CNMP=2");
-          }
+          // Airtel/Jio Strategy: Keep Auto LTE mode (CNMP=2) for M2M APN compatibility
+          debugln("[GPRS] Tier1 @ iter5: Re-asserting Auto Mode (CNMP=2)...");
+          SerialSIT.println("AT+CNMP=2");
         }
         waitForResponse("OK", 1000);
         if (isBSNL)
@@ -746,7 +739,7 @@ void get_a7672s() {
   debugln("************************");
   debugln();
 
-  active_cid = 0;
+  active_cid = 1;
   // v5.63: Native v3.0 style activation.
   // No status queries, fire and move on.
   if (load_apn_config(cached_iccid, stored_apn, sizeof(stored_apn))) {

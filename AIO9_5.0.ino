@@ -436,7 +436,7 @@ struct http_params httpSet[12] = {
     {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_tws_data_v2", "80", SEC_KS_TWS, "x-www-form-urlencoded"}, 
     {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_twsrf_data_v2", "80", SEC_KS_ADDON, "x-www-form-urlencoded"}, 
     {"rtdas.spatika.net", "89.32.144.163", "/tws_gprs/twsrf_gen", "80", SEC_SPT_TWS_RF, "x-www-form-urlencoded"}, 
-    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_data_twsrp", "80", SEC_SPT_TWSRP, "x-www-form-urlencoded"}, // 11 (SPATIKA ADDON AP / TWSRP)
+    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_data_twsrp", "80", SEC_SPT_TWSRP, "x-www-form-urlencoded"}, // 11 (SPATIKA ADDON AP / TWSRP - Main Whitelisted Server)
 };
 #endif
 // --- End Configuration Tables ---
