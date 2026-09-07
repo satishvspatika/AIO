@@ -889,7 +889,7 @@ void setup() {
 
   // Station Altitude Load (for MSLP calculation) - #1 Fix
   // Only meaningful for KSNDMC_TWS-AP (BME280 pressure sensor enabled)
-#if (SYSTEM == 1) || (SYSTEM == 2)
+#if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
   bool is_ap_unit = (strstr(UNIT, "-AP") != NULL);
   if (SPIFFS.exists("/station_alt.txt")) {
     File altF = SPIFFS.open("/station_alt.txt", FILE_READ);
@@ -1262,7 +1262,7 @@ void setup() {
       }
 
       // RF
-#if (SYSTEM == 0) || (SYSTEM == 2)
+#if (SYSTEM == 0) || (SYSTEM == 2) || (SYSTEM == 3)
       rf_count.val = 0;
       rf_value = 0;
       total_rf_pulses_32 = 0;      // v5.78: Reset accumulator to prevent jump
@@ -1271,7 +1271,7 @@ void setup() {
 #endif
 
 // TWS
-#if (SYSTEM == 1) || (SYSTEM == 2)
+#if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
       wind_count.val = 0; // Making the count as 0
       total_wind_pulses_32 = 0;      // v5.78: Reset accumulator to prevent jump
       last_raw_wind_count = 0;       // v5.78: Reset anchor to 0
@@ -1458,7 +1458,7 @@ void setup() {
   // [ULP Preservation]: Only preserve ULP pulse counts during actual Deep Sleep wakeups (DEEPSLEEP_RESET).
   // On Power-On, Software Reset (SD OTA), or HW Reset, reset counts to 0 to prevent huge garbage values on LCD.
   uint16_t preserved_rf = (rr == DEEPSLEEP_RESET) ? rf_count.val : 0;
-#if (SYSTEM == 1) || (SYSTEM == 2)
+#if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
   uint32_t preserved_wind = (rr == DEEPSLEEP_RESET) ? wind_count.val : 0;
 #endif
 
@@ -1468,7 +1468,7 @@ void setup() {
 
   // Safely restore the physical counts back into the fresh ULP memory block
   rf_count.val = preserved_rf;
-#if (SYSTEM == 1) || (SYSTEM == 2)
+#if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
   wind_count.val = preserved_wind;
 #endif
 
@@ -1511,7 +1511,7 @@ void setup() {
   //        1, NULL, 1);
   //    #endif
 
-#if (SYSTEM == 1) || (SYSTEM == 2)
+#if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
   // #7: Smart Task Creation - Only spawn tasks if sensors were found in
   // initialize_hw
   if ((hdcType != HDC_UNKNOWN || bmeType != BME_UNKNOWN) && !skip_temphum_task) {
@@ -1526,7 +1526,7 @@ void setup() {
   // v5.50: Only spawn bmeTask if Pressure is enabled AND this is a TWS-AP
   // unit
   bool pressure_supported =
-      (SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP") != NULL);
+      ((SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP") != NULL) || SYSTEM == 3);
   if (bmeType == BME_280 && ENABLE_PRESSURE_SENSOR == 1 && pressure_supported) {
     xTaskCreatePinnedToCore(bmeTask, "bmeTask", 4096, NULL, 2, &bmeTask_h,
                             1); // Core 1
@@ -1678,7 +1678,7 @@ void initialize_hw() {
   Wire.setTimeOut(I2C_TIMEOUT_MS);
   delay(100); // Reduced from 300ms as 100ms is sufficient for bus stability
 
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
   // Early init for sensor detection status
   // v6.50: Skip BME for TWS-RF (SYSTEM 2) as requested
   if (SYSTEM != 2) {
@@ -1853,7 +1853,7 @@ void initialize_hw() {
     debugln("[BOOT] HDC Sensor: NOT FOUND");
   }
 
-#if (SYSTEM == 0 || SYSTEM == 2)
+#if (SYSTEM == 0 || SYSTEM == 2 || SYSTEM == 3)
   debugln("[BOOT] Rainfall Counter: OK");
 #endif
 

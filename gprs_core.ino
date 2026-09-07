@@ -425,7 +425,7 @@ void gprs(void *pvParameters) {
           } else {
             debugln("[SCHED] Skipping Duplicate/Fresh Upload. Checking Backlog/Health...");
             primary_data_delivered = true; // Assume 'Success' to allow backlog
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
             // v7.65: Handle backlog push sequentially in GPRS task
             if (gprs_mode == eGprsSignalOk && (signal_lvl > -96)) {
               send_unsent_data();
@@ -532,7 +532,7 @@ void gprs(void *pvParameters) {
 
     if (force_ftp) { // v5.80: FTP_BACKLOG
       debugln("[CMD] Remote FTP_BACKLOG triggered. Syncing unsent backlog...");
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
       send_unsent_data();
 #endif
       force_ftp = false;
@@ -541,7 +541,7 @@ void gprs(void *pvParameters) {
     if (force_ftp_daily) { // v5.80: FTP_DAILY
       debugf1("[CMD] Remote FTP_DAILY triggered for date: %s\n",
               ftp_daily_date);
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
       if (strlen(ftp_daily_date) >= 8) { 
         char ftpPath[50];
         // Surgical Fix: Construct proper SPIFFS path from date param

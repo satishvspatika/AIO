@@ -285,7 +285,7 @@ void handleRoot() { // v5.70 STREAMING
         rec_hum = (d + 1 < tokenCount) ? tokens[d + 1] : "--";
         rec_ws = (d + 2 < tokenCount) ? tokens[d + 2] : "--";
         rec_wd = (d + 3 < tokenCount) ? tokens[d + 3] : "--";
-#elif SYSTEM == 2
+#elif SYSTEM == 2 || SYSTEM == 3
         rec_rf = (d < tokenCount) ? tokens[d] : "--";
         rec_temp = (d + 1 < tokenCount) ? tokens[d + 1] : "--";
         rec_hum = (d + 2 < tokenCount) ? tokens[d + 2] : "--";
@@ -431,6 +431,8 @@ void handleRoot() { // v5.70 STREAMING
   sysType = "<i>Varsha TWS</i>";
 #elif SYSTEM == 2
   sysType = "<i>Varsha TWS-RF</i>";
+#elif SYSTEM == 3
+  sysType = "<i>Varsha TWSRP</i>";
 #endif
 
   String stationValue =
@@ -476,13 +478,13 @@ void handleRoot() { // v5.70 STREAMING
     server.sendContent(
         "<div "
         "style='display:flex;flex-wrap:wrap;justify-content:center;gap:5px;'>");
-#if SYSTEM == 0 || SYSTEM == 2
+#if SYSTEM == 0 || SYSTEM == 2 || SYSTEM == 3
     server.sendContent("<div class='card'><div class='label'>" + String(s_rf) +
                        "</div><div id='live_rf' class='value'>" +
                        String((float)rf_count.val * RF_RESOLUTION, 2) +
                        " <span style='font-size:0.6em'>mm</span></div></div>");
 #endif
-#if SYSTEM == 1 || SYSTEM == 2
+#if SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3
     server.sendContent("<div class='card'><div class='label'>Temp</div><div "
                        "id='live_temp' class='value'>" +
                        String(temperature, 1) + " &deg;C</div></div>");

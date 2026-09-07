@@ -1458,7 +1458,7 @@ void scheduler(void *pvParameters) {
             pruneFile(unsent_file, (300 * record_length), false);
           }
 #endif
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
           snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
           if (SPIFFS.exists(ftpunsent_file)) {
             pruneFile(ftpunsent_file, (300 * record_length), false);
@@ -1923,7 +1923,7 @@ void scheduler(void *pvParameters) {
                     "append.");
           }
 #endif
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
           debugln("Primary skipped mid-day. Queuing CURRENT record to "
                   "ftpunsent.txt...");
           if (last_ftp_unsent_sampleNo != sampleNo) { // [FTP-03] Persistent Dedup
@@ -2832,7 +2832,7 @@ void scheduler(void *pvParameters) {
                     last_unsent_sampleNo = q;
                   }
 #endif
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
                   if (q != last_ftp_unsent_sampleNo) { // [FTP-03] Persistent Dedup
                     File funs_p = SPIFFS.open("/ftpunsent.txt", FILE_APPEND);
                     if (funs_p) {
@@ -2925,7 +2925,7 @@ void scheduler(void *pvParameters) {
       debugln(store_text);
 #endif
 
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
       strcpy(store_text, append_text);
       debugln();
       debug("append_text->store_text : Used for internal status: ");
@@ -3184,7 +3184,7 @@ void scheduler(void *pvParameters) {
       }
 #endif
 
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
       snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
       if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
         if (SPIFFS.exists(ftpunsent_file)) {
