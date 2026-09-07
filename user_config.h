@@ -27,12 +27,12 @@
 #ifndef LCD_I2C_ADDR
 #define LCD_I2C_ADDR 0x27 // 0x27 (Default PCF8574T) or 0x3F (PCF8574AT)
 #endif
-#define DEBUG 0 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
+#define DEBUG 1 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
 #define ENABLE_WEBSERVER                                                       \
   0 // 0: Disable, 1: Enable (requires 8MB flash partition)
 
 // --- 3. HARDWARE CAPABILITIES ---
-#define ENABLE_PRESSURE_SENSOR 0 // 0: Disable BMP/BME routines, 1: Enable
+#define ENABLE_PRESSURE_SENSOR 1 // 0: Disable BMP/BME routines, 1: Enable
 #define DEFAULT_RF_RESOLUTION                                                  \
   0.5 // Factory default rain resolution (0.50mm / 0.25mm)
 #define WIND_TEETH_COUNT 2.0 // H-02: Customizable anemometer teeth divisor

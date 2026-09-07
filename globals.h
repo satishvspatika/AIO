@@ -793,8 +793,8 @@ struct http_params {
 extern struct http_params httpSet[7];
 #endif
 
-#if (SYSTEM == 1) || (SYSTEM == 2)
-extern struct http_params httpSet[11];
+#if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
+extern struct http_params httpSet[12];
 #endif
 
 // Function Prototypes for Tasks defined in other files
