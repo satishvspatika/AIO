@@ -7,11 +7,12 @@
  * ========================================================================= */
 
 // --- 1. CORE SYSTEM IDENTITY ---
-#define SYSTEM 0
-#define UNIT_CFG "KSNDMC_TRG"
+#define SYSTEM 3
+#define UNIT_CFG "SPATIKA_GEN"
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
+// SYSTEM 3 options: SPATIKA_GEN - AP
 
 #define FIRMWARE_VERSION "6.28"
 
