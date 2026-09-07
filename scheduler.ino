@@ -366,7 +366,7 @@ void scheduler(void *pvParameters) {
       inst_rf[6] = 0;
 #endif
 
-#if SYSTEM == 2
+#if SYSTEM == 2 || SYSTEM == 3
       snprintf(inst_rf, sizeof(inst_rf), "%06.2f", float(rf_value));
       snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(rf_value));
       snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(rf_value));
@@ -375,7 +375,7 @@ void scheduler(void *pvParameters) {
 #endif
 
 // TWS
-#if (SYSTEM == 1) || (SYSTEM == 2)
+#if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
       debugln();
       // v5.50: Seed any ULP pulses the windSpeed task hasn't processed yet
       // (race condition on first wakeup — windSpeed task has 5s boot delay).
@@ -503,7 +503,7 @@ void scheduler(void *pvParameters) {
       esp_task_wdt_reset();
 
       // --- SENSOR SNAPSHOT START (Moved from top to allow stabilization) ---
-#if (SYSTEM == 1) || (SYSTEM == 2)
+#if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
       // --- NEW JITTER LOGIC START ---
       temp_read = 0.0;
       hum_read = 0.0;
@@ -746,7 +746,7 @@ void scheduler(void *pvParameters) {
       */
       debug("Wind Pulses : ");
       debugln(totalWindPulses);
-#if (SYSTEM == 0) || (SYSTEM == 2)
+#if (SYSTEM == 0) || (SYSTEM == 2) || (SYSTEM == 3)
       debug("Rain Pulses : ");
       debugln((float)captured_rf);
       debug("Rainfall    : ");
@@ -1232,10 +1232,10 @@ void scheduler(void *pvParameters) {
         // 00,2024-05-21,08:45,0000.0,000.0,000.0,00.00,000,-111,00.0 : tws :
         // 58+2 = 60 cumrf,temp,hum,avg_ws,wd
 
-#if SYSTEM == 2
+#if SYSTEM == 2 || SYSTEM == 3
         last_sampleNo = atoi(content_buf);
         if (last_sampleNo == sampleNo) {
-          debugln("Duplicate sample detected (TWS-RF).");
+          debugln("Duplicate sample detected (TWSRP).");
           data_writing_initiated = 0;
           skip_primary_http = true;
           __atomic_store_n(&httpInitiated, true,
@@ -1536,6 +1536,20 @@ void scheduler(void *pvParameters) {
                   signal_strength, bat_val);
 
 #endif
+#if SYSTEM == 3
+              snprintf(append_text, sizeof(append_text),
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%06.2f,%04d,%05.2f\r\n",
+                       q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                       cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                       pressure, signal_strength, bat_val);
+              snprintf(
+                  ftpappend_text, sizeof(ftpappend_text),
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%06.2f;%04d;%05.2f\r\n",
+                  stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                  pressure, signal_strength, bat_val);
+
+#endif
               //                                                        '\0';
             } else { // Gap Filling with Linear Interpolation
               float target_number, min_val, max_val;
@@ -1745,6 +1759,26 @@ void scheduler(void *pvParameters) {
                   (q == sampleNo) ? signal_strength : SIGNAL_STRENGTH_GAP_FILLED, // v6.09: use signal_strength directly for current slot
                   bat_val);
 #endif
+#if SYSTEM == 3
+              // TWSRP: Standardized 11 fields (Rainfall, Temp, Hum, WS, WD, Pressure)
+              snprintf(append_text, sizeof(append_text),
+                       "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%06.2f,%04d,%05.2f\r\n",
+                       q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                       fill_cum_rf, fill_inst_temp, fill_inst_hum,
+                       fill_avg_wind_speed, fill_inst_wd, pressure,
+                       (q == sampleNo) ? signal_strength
+                                       : SIGNAL_STRENGTH_GAP_FILLED,
+                       bat_val);
+              snprintf(
+                  ftpappend_text, sizeof(ftpappend_text),
+                  "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%06.2f;%04d;%05.2f\r\n",
+                  stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                  fill_ftpcum_rf, fill_inst_temp, fill_inst_hum, fill_avg_wind_speed,
+                  fill_inst_wd, pressure,
+                  (q == sampleNo) ? signal_strength
+                                  : SIGNAL_STRENGTH_GAP_FILLED,
+                  bat_val);
+#endif
             }
 
             //                                                        len =
@@ -1790,7 +1824,7 @@ void scheduler(void *pvParameters) {
                 last_unsent_sampleNo = q; // Mark as written
               }
 #endif
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
               if (q < sampleNo &&
                   q != last_ftp_unsent_sampleNo) { // [FTP-03] Persistent Dedup
                 File funs_p = SPIFFS.open("/ftpunsent.txt", FILE_APPEND);
@@ -1850,6 +1884,13 @@ void scheduler(void *pvParameters) {
           snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%05.2f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
           // v7.70: Strict TWSRF FTP Format (63 bytes)
           snprintf(ftpappend_text, sizeof(ftpappend_text), "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%04d;%05.2f\r\n", stnId, temp_year, temp_month, temp_day, record_hr, record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, signal_lvl, bat_val);
+#endif
+
+#if SYSTEM == 3
+          snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(new_current_cumRF));
+          snprintf(append_text, sizeof(append_text), "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%06.2f,%04d,%05.2f\r\n", sampleNo, temp_year, temp_month, temp_day, record_hr, record_min, cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, pressure, signal_lvl, bat_val);
+          // Strict TWSRP FTP Format (71 bytes)
+          snprintf(ftpappend_text, sizeof(ftpappend_text), "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%06.2f;%04d;%05.2f\r\n", stnId, temp_year, temp_month, temp_day, record_hr, record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd, pressure, signal_lvl, bat_val);
 #endif
 
           //                                            len =
@@ -2069,6 +2110,23 @@ void scheduler(void *pvParameters) {
                    record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
                    inst_wd, signal_strength, bat_val);
 #endif
+#if SYSTEM == 3
+          snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(rf_value));
+          cum_rf[6] = 0;
+          snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(rf_value));
+          ftpcum_rf[5] = 0;
+          snprintf(
+              append_text, sizeof(append_text),
+              "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%06.2f,%04d,%05.2f\r\n",
+              sampleNo, temp_year, temp_month, temp_day, record_hr, record_min,
+              cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+              pressure, signal_strength, bat_val);
+          snprintf(ftpappend_text, sizeof(ftpappend_text),
+                   "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%06.2f;%04d;%05.2f\r\n",
+                   stnId, temp_year, temp_month, temp_day, record_hr,
+                   record_min, ftpcum_rf, inst_temp, inst_hum, avg_wind_speed,
+                   inst_wd, pressure, signal_strength, bat_val);
+#endif
 
           //                                          len =
           //                                          strlen(append_text);
@@ -2119,7 +2177,7 @@ void scheduler(void *pvParameters) {
                 if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
               }
 #endif
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
               snprintf(ftpunsent_file, sizeof(ftpunsent_file),
                        "/ftpunsent.txt");
               File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
@@ -2229,6 +2287,18 @@ void scheduler(void *pvParameters) {
                      stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
                      SIGNAL_STRENGTH_NO_DATA, bat_val);
 #endif
+#if SYSTEM == 3
+            snprintf(append_text, sizeof(append_text),
+                     "%02d,%04d-%02d-%02d,%02d:%02d,000.00,000.0,000.0,00.0,"
+                     "000,0000.00,%04d,%05.2f\r\n",
+                     i, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                     SIGNAL_STRENGTH_NO_DATA, bat_val);
+            snprintf(ftpappend_text, sizeof(ftpappend_text),
+                     "%s;%04d-%02d-%02d,%02d:%02d;00.00;000.0;000.0;00.0;000;0000.00;%"
+                     "04d;%05.2f\r\n",
+                     stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                     SIGNAL_STRENGTH_NO_DATA, bat_val);
+#endif
 
             //                                                    len =
             //                                                    strlen(append_text);
@@ -2287,6 +2357,10 @@ void scheduler(void *pvParameters) {
 
 // TWS-RF
 #if SYSTEM == 2
+            snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(rf_value));
+            cum_rf[6] = 0;
+            snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(rf_value));
+            ftpcum_rf[5] = 0;
             snprintf(
                 append_text, sizeof(append_text),
                 "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%04d,%05.2f\r\n",
@@ -2299,6 +2373,24 @@ void scheduler(void *pvParameters) {
                 stnId, cur_year, cur_month, cur_day, record_hr, record_min,
                 ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
                 signal_strength, bat_val);
+#endif
+#if SYSTEM == 3
+            snprintf(cum_rf, sizeof(cum_rf), "%06.2f", float(rf_value));
+            cum_rf[6] = 0;
+            snprintf(ftpcum_rf, sizeof(ftpcum_rf), "%05.2f", float(rf_value));
+            ftpcum_rf[5] = 0;
+            snprintf(
+                append_text, sizeof(append_text),
+                "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%06.2f,%04d,%05.2f\r\n",
+                sampleNo, cur_year, cur_month, cur_day, record_hr, record_min,
+                cum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                pressure, signal_strength, bat_val);
+            snprintf(
+                ftpappend_text, sizeof(ftpappend_text),
+                "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%06.2f;%04d;%05.2f\r\n",
+                stnId, cur_year, cur_month, cur_day, record_hr, record_min,
+                ftpcum_rf, inst_temp, inst_hum, avg_wind_speed, inst_wd,
+                pressure, signal_strength, bat_val);
 #endif
 
             //                                          len =
@@ -2332,7 +2424,7 @@ void scheduler(void *pvParameters) {
                   uf.close();
                 }
 #endif
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
                 if (SPIFFS.exists(ftpunsent_file)) {
                   pruneFile(ftpunsent_file, (300 * record_length), true);
                 }
@@ -2408,7 +2500,7 @@ void scheduler(void *pvParameters) {
             snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
 #endif
 
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
             snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
 #endif
 
@@ -2800,6 +2892,20 @@ void scheduler(void *pvParameters) {
                          stnId, temp_year, temp_month, temp_day, temp_hr,
                          temp_min, fill_ftpcum_rf, fill_inst_temp,
                          fill_inst_hum, fill_avg_wind_speed, fill_inst_wd,
+                         SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+#endif
+#if SYSTEM == 3
+                snprintf(append_text, sizeof(append_text),
+                         "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%06.2f,%04d,%05.2f\r\n",
+                         q, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                         fill_cum_rf, fill_inst_temp, fill_inst_hum,
+                         fill_avg_wind_speed, fill_inst_wd, pressure,
+                         SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
+                snprintf(ftpappend_text, sizeof(ftpappend_text),
+                         "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%06.2f;%04d;%05.2f\r\n",
+                         stnId, temp_year, temp_month, temp_day, temp_hr,
+                         temp_min, fill_ftpcum_rf, fill_inst_temp,
+                         fill_inst_hum, fill_avg_wind_speed, fill_inst_wd, pressure,
                          SIGNAL_STRENGTH_PREV_DAY_GAP, bat_val);
 #endif
 

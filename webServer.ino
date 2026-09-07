@@ -536,7 +536,7 @@ void handleRoot() { // v5.70 STREAMING
   server.sendContent(
       "<div "
       "style='display:flex;flex-wrap:wrap;justify-content:center;gap:5px;'>");
-#if SYSTEM == 0 || SYSTEM == 2
+#if SYSTEM == 0 || SYSTEM == 2 || SYSTEM == 3
   server.sendContent("<div class='card'><div class='label'>Logged RF</div><div "
                      "class='value' style='color:#666'>" +
                      rec_rf + " mm</div></div>");

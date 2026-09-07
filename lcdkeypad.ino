@@ -191,7 +191,6 @@ void IRAM_ATTR lcdTimer() {
 bool draw_current_page() {
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
     if (cur_mode == eEditOff) {
-      lcd.noBlink();
       char line0[17], line1[17];
       memset(line0, ' ', 16); line0[16] = '\0';
       memset(line1, ' ', 16); line1[16] = '\0';

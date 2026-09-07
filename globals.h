@@ -144,7 +144,7 @@ extern float RF_RESOLUTION;
 #define HDC_ADDR 0x40 // Default I2C address for both HDC1080 and HDC2022
 #define I2C_SDA 21    // Explicit definition for I2C bus in ESP32
 #define I2C_SCL 22
-#define I2C_TIMEOUT_MS 2000 // I2C hardware timeout (2 seconds)
+#define I2C_TIMEOUT_MS 50   // I2C hardware timeout (50ms max to prevent watchdog hangs)
 #define I2C_MUTEX_WAIT_TIME                                                    \
   800 // v5.84: Reduced from 2500 to 800 to prevent UI stalls during I2C hangs
 #define uS_TO_S_FACTOR                                                         \
@@ -162,6 +162,7 @@ extern float RF_RESOLUTION;
 #define RECORD_LENGTH_RF 46    // SYSTEM == 0 (NN,YYYY-MM-DD,HH:MM,II.II,CC.CC,SSSY,BB.BB\r\n)
 #define RECORD_LENGTH_TWS 57   // SYSTEM == 1 (NN,YYYY-MM-DD,HH:MM,TT.T,HHH.H,WW.W,DDD,SSSY,BB.BB\r\n) => 55 + 2 = 57
 #define RECORD_LENGTH_TWSRF 63 // SYSTEM == 2 (NN,YYYY-MM-DD,HH:MM,RR.RR,TT.T,HHH.H,WW.W,DDD,SSSY,BB.BB\r\n) => 61 + 2 = 63
+#define RECORD_LENGTH_TWSRP 71 // SYSTEM == 3 (NN,YYYY-MM-DD,HH:MM,RR.RR,TT.T,HHH.H,WW.W,DDD,PPPP.PP,SSSY,BB.BB\r\n) => 69 + 2 = 71
 
 // Sample number constants
 #define MAX_SAMPLE_NO 95
@@ -297,7 +298,7 @@ enum { eCursorOff, eCursorUl, eCursorBlink }; // lcdkeypad
 extern bool webServerStarted;
 extern volatile bool wifi_active;
 extern unsigned long last_wifi_activity_time;
-extern float temp_crf, temp_instrf, temp_bat, temp_temp, temp_hum, temp_avg_ws;
+extern float temp_crf, temp_instrf, temp_bat, temp_temp, temp_hum, temp_avg_ws, temp_press;
 extern volatile bool
     wd_ok; // v5.74: WD sensor health flag (written by Core 1, read by Core 0)
 extern volatile int

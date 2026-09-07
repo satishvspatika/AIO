@@ -152,6 +152,19 @@ void prepare_data_and_send() {
     return;
   }
 #endif
+#if SYSTEM == 3
+  // TWSRP (Rain + Temp + Hum + Wind + Dir + Press): 14 components
+  int res = sscanf(charArray,
+                   "%02d,%04d-%02d-%02d,%02d:%02d,%f,%f,%f,%f,%03d,%f,%04d,%f",
+                   &temp_sampleNo, &temp_year, &temp_month, &temp_day, &temp_hr,
+                   &temp_min, &temp_crf, &temp_temp, &temp_hum, &temp_avg_ws,
+                   &temp_dir, &temp_press, &temp_sig, &temp_bat);
+  if (res < 14) {
+    debugln("[HTTP] ERROR: sscanf parse failed (TWSRP). Skipping record.");
+    success_count = 2;
+    return;
+  }
+#endif
 
   // v5.77: Timestamp-Redundancy Fix
   // If we are sending the 'Current' met-day record, force the timestamp
@@ -166,7 +179,7 @@ void prepare_data_and_send() {
 #if (SYSTEM == 0)
   snprintf(sample_bat, sizeof(sample_bat), "%04.1f", float(temp_bat));
 #endif
-#if (SYSTEM == 1) || (SYSTEM == 2)
+#if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
   // v5.52 LOOP-3 FIX: Guard against empty station name before building FTP
   // filename
   if (strlen(ftp_station) == 0) {
@@ -182,7 +195,7 @@ void prepare_data_and_send() {
   snprintf(sample_WD, sizeof(sample_WD), "%03d", temp_dir);
   snprintf(sample_bat, sizeof(sample_bat), "%05.2f", float(temp_bat));
 #endif
-#if (SYSTEM == 0) || (SYSTEM == 2)
+#if (SYSTEM == 0) || (SYSTEM == 2) || (SYSTEM == 3)
   snprintf(sample_cum_rf, sizeof(sample_cum_rf), "%06.2f", float(temp_crf));
   snprintf(sample_inst_rf, sizeof(sample_inst_rf), "%06.2f",
            float(temp_instrf));
@@ -352,6 +365,20 @@ void prepare_data_and_send() {
           httpSet[http_no].Key, temp_crf, sample_temp, sample_hum, sample_avgWS,
           sample_WD, temp_sig, sample_bat, sample_bat);
     }
+  }
+#endif
+
+// TWSRP (SPATIKA)
+#if SYSTEM == 3
+  if (strcmp(httpSet[http_no].Format, "json")) { // Only if NOT json
+    snprintf(
+        http_data, sizeof(http_data),
+        "stn_id=%s&rec_time=%04d-%02d-%02d,%02d:%02d&rainfall=%05.2f&temp=%s&"
+        "humid=%s&w_speed=%s&w_dir=%s&atm_pressure=%.2f&signal=%04d&"
+        "bat_volt=%s&key=%s",
+        cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
+        temp_crf, sample_temp, sample_hum, sample_avgWS, sample_WD,
+        temp_press, temp_sig, sample_bat, httpSet[http_no].Key);
   }
 #endif
 
@@ -684,6 +711,27 @@ void prepare_data_and_send() {
         debug("ftpappend_text is : ");
         debugln(ftpappend_text);
 #endif
+#if SYSTEM == 3 // TWSRP
+        snprintf(current_record, sizeof(current_record),
+                 "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%s,%s,%s,%06.2f,%04d,%05.2f\r\n",
+                 temp_sampleNo, temp_year, temp_month, temp_day, temp_hr,
+                 temp_min, sample_cum_rf, sample_temp, sample_hum, sample_avgWS,
+                 sample_WD, temp_press, temp_sig, temp_bat);
+        char stnId[16];
+        if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
+          snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
+        } else {
+          strcpy(stnId, ftp_station);
+        }
+
+        snprintf(ftpappend_text, sizeof(ftpappend_text),
+                 "%s;%04d-%02d-%02d,%02d:%02d;%s;%s;%s;%s;%s;%06.2f;%04d;%05.2f\r\n",
+                 stnId, temp_year, temp_month, temp_day, temp_hr, temp_min,
+                 ftpsample_cum_rf, sample_temp, sample_hum, sample_avgWS,
+                 sample_WD, temp_press, temp_sig, temp_bat);
+        debug("ftpappend_text is : ");
+        debugln(ftpappend_text);
+#endif
 
         vTaskDelay(100 / portTICK_PERIOD_MS);
 
@@ -757,7 +805,7 @@ void prepare_data_and_send() {
         }
 #endif
 
-#if SYSTEM == 2
+#if (SYSTEM == 2 || SYSTEM == 3)
         // 001881;2024-05-21,08:45;000.0;000.0;000.0;00.00;000;-111;04.2
         // v5.72: Removed hardcoded 63-byte truncation. Full buffer required for
         // 9-field TWSRF record.
@@ -1385,7 +1433,7 @@ void send_http_data() {
   xSemaphoreGive(
       modemMutex); // v5.55: Release modem early to allow sub-calls to take it
 
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
   // v5.49 Build 5: INDEPENDENT FTP TRIGGER
   // Decoupled from HTTP Success. FTP serves as the robust rescue layer.
   if (gprs_mode == eGprsSignalOk && (signal_lvl > -96)) {
@@ -1460,6 +1508,17 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
   else
     snprintf(fileName, sizeof(fileName),
              "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
+             rf_cls_mm, rf_cls_dd, snap_hr, snap_mi);
+#endif
+
+#if SYSTEM == 3
+  if (strstr(UNIT, "SPATIKA") || strstr(NETWORK, "SPATIKA"))
+    snprintf(fileName, sizeof(fileName),
+             "/TWSRP_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
+             rf_cls_mm, rf_cls_dd, snap_hr, snap_mi);
+  else
+    snprintf(fileName, sizeof(fileName),
+             "/TWSRP_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
              rf_cls_mm, rf_cls_dd, snap_hr, snap_mi);
 #endif
 
@@ -1762,6 +1821,16 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
         else
           snprintf(fileName, sizeof(fileName),
                    "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
+                   rf_cls_mm, rf_cls_dd, record_hr, record_min);
+#endif
+#if SYSTEM == 3
+        if (strstr(UNIT, "SPATIKA"))
+          snprintf(fileName, sizeof(fileName),
+                   "/TWSRP_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
+                   rf_cls_mm, rf_cls_dd, record_hr, record_min);
+        else
+          snprintf(fileName, sizeof(fileName),
+                   "/TWSRP_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
                    rf_cls_mm, rf_cls_dd, record_hr, record_min);
 #endif
 
@@ -2178,7 +2247,7 @@ void store_current_unsent_data() {
             }
             
             char *fields = fieldStartPtr;
-#if SYSTEM == 2
+#if (SYSTEM == 2 || SYSTEM == 3)
             char *c1 = strchr(fields, ',');
             if (c1 != NULL) {
                char cumRfStr[16] = {0};
@@ -2236,7 +2305,7 @@ void store_current_unsent_data() {
   }
 #endif
 
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
   snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
   if (last_unsent_sampleNo != snap_sampleNo) { // v5.75: Atomic Dedup
     if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
@@ -2290,7 +2359,7 @@ void store_current_unsent_data() {
       }
     }
 #endif
-#if (SYSTEM == 1 || SYSTEM == 2)
+#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
     if (SPIFFS.exists("/ftpunsent.txt")) {
       File ftpfile4 = SPIFFS.open("/ftpunsent.txt", FILE_READ);
       if (ftpfile4) {

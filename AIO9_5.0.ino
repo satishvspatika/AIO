@@ -171,7 +171,7 @@ char UNIT[15] = UNIT_CFG;
 float station_altitude_m = 0.0;
 int record_length = 0;
 volatile bool gprs_pdp_ready = false;
-float temp_crf, temp_instrf, temp_bat, temp_temp, temp_hum, temp_avg_ws;
+float temp_crf, temp_instrf, temp_bat, temp_temp, temp_hum, temp_avg_ws, temp_press;
 int temp_dir = 0;
 int temp_sampleNo = 0, temp_day = 0, temp_month = 0, temp_year = 0, temp_hr = 0, temp_min = 0, temp_sig = 0;
 int unsent_pointer_count = 0;
@@ -423,8 +423,8 @@ struct http_params httpSet[7] = {
 };
 #endif
 
-#if (SYSTEM == 1) || (SYSTEM == 2)
-struct http_params httpSet[11] = {
+#if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
+struct http_params httpSet[12] = {
     {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80", SEC_KS_TRG_OLD, "x-www-form-urlencoded"}, 
     {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80", SEC_KS_TRG_NEW, "x-www-form-urlencoded"}, 
     {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085", SEC_BIH_GOV, "json"}, 
@@ -436,6 +436,7 @@ struct http_params httpSet[11] = {
     {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_tws_data_v2", "80", SEC_KS_TWS, "x-www-form-urlencoded"}, 
     {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_twsrf_data_v2", "80", SEC_KS_ADDON, "x-www-form-urlencoded"}, 
     {"rtdas.spatika.net", "89.32.144.163", "/tws_gprs/twsrf_gen", "80", SEC_SPT_TWS_RF, "x-www-form-urlencoded"}, 
+    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_data_twsrp", "80", SEC_SPT_TWSRP, "x-www-form-urlencoded"}, 
 };
 #endif
 // --- End Configuration Tables ---
@@ -1130,6 +1131,18 @@ void setup() {
     debug(" | Type: ");
     debugln(STATION_TYPE);
     http_no = 10; // 10 (SPATIKA GEN TWS-RF)
+  } else if (((strstr(UNIT, "SPATIKA_GEN") || strstr(UNIT, "SPATIKA_TWSRP")) && (SYSTEM == 3))) {
+    strcpy(universalNumber, "9980945474");
+    snprintf(UNIT_VER, sizeof(UNIT_VER), "TWSRP9-GEN-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
+    strcpy(NETWORK, "SPATIKA");
+    strcpy(STATION_TYPE, "TWSRP");
+    debug("[BOOT] Unit: ");
+    debug(UNIT_VER);
+    debug(" | Network: ");
+    debug(NETWORK);
+    debug(" | Type: ");
+    debugln(STATION_TYPE);
+    http_no = 11; // 11 (SPATIKA GEN TWSRP)
   } else {
     debugln("!!! FATAL: ********** NO UNIT/SYSTEM MATCH FOUND **********");
     debugln("!!! Check UNIT and SYSTEM defines in globals.h!");
@@ -1162,9 +1175,9 @@ void setup() {
     debugln("!!! FATAL: http_no OOB for SYSTEM 0 !!!"); 
   }
 #else
-  if (http_no >= 11) { 
+  if (http_no >= 12) { 
     http_no = -1; 
-    debugln("!!! FATAL: http_no OOB for SYSTEM 1/2 !!!"); 
+    debugln("!!! FATAL: http_no OOB for SYSTEM 1/2/3 !!!"); 
   }
 #endif
 
@@ -1180,6 +1193,10 @@ void setup() {
 
 #if SYSTEM == 2
   record_length = RECORD_LENGTH_TWSRF;
+#endif
+
+#if SYSTEM == 3
+  record_length = RECORD_LENGTH_TWSRP;
 #endif
 
   set_wakeup_reason();

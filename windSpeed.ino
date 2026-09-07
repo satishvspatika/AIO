@@ -6,8 +6,8 @@ void windSpeed(void *pvParameters) {
   uint16_t pulseBuffer[BUFFER_SIZE];
   int bufferIndex = 0;
 
-  // READ WIND SPEED TWS & TWS-RF
-#if (SYSTEM == 1) || (SYSTEM == 2)
+  // READ WIND SPEED TWS & TWS-RF & TWSRP
+#if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
   // v6.09: Load previous average from RTC memory instead of SPIFFS to prevent flash wear
   snprintf(prevWindSpeedAvg_str, sizeof(prevWindSpeedAvg_str), "%.1f", rtc_prev_wind_speed_avg);
   debugf("[RTC] Loaded Prev Wind Speed Avg: %s\n", prevWindSpeedAvg_str);
