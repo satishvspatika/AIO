@@ -125,14 +125,17 @@ bool isFieldVisible(int fld_id) {
     return false;
 #endif
 
+  if (fld_id == FLD_ALTITUDE)
+    return false;
+
 #if ENABLE_PRESSURE_SENSOR == 1
-  if (fld_id == FLD_PRESSURE || fld_id == FLD_ALTITUDE) {
-    if (SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP"))
+  if (fld_id == FLD_PRESSURE) {
+    if (SYSTEM == 3 || SYSTEM == 2 || (SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP") != NULL) || SYSTEM != 0)
       return true;
     return false;
   }
 #else
-  if (fld_id == FLD_PRESSURE || fld_id == FLD_ALTITUDE)
+  if (fld_id == FLD_PRESSURE)
     return false;
 #endif
 
@@ -149,6 +152,9 @@ bool isFieldVisible(int fld_id) {
     return false;
 #elif SYSTEM == 2 // TWS-RF
   // #1: Hide altitude field if BME280 is not installed
+  if (fld_id == FLD_ALTITUDE && bmeType == BME_UNKNOWN)
+    return false;
+#elif SYSTEM == 3 // TWSRP (TWS-RF + Pressure)
   if (fld_id == FLD_ALTITUDE && bmeType == BME_UNKNOWN)
     return false;
 #endif
@@ -463,7 +469,7 @@ void refresh_sensor_data() {
   if (cur_fld_no == FLD_INST_WS) snprintf(ui_data[FLD_INST_WS].bottomRow, 17, "%0.2f", cur_wind_speed);
   else if (cur_fld_no == FLD_AVG_WS) snprintf(ui_data[FLD_AVG_WS].bottomRow, 17, "%0.2f", cur_avg_wind_speed);
   else if (cur_fld_no == FLD_WIND_DIR) snprintf(ui_data[FLD_WIND_DIR].bottomRow, 17, "%03d", (int)windDir);
-  else if (cur_fld_no == FLD_PRESSURE) snprintf(ui_data[FLD_PRESSURE].bottomRow, 17, "%0.1f", pressure);
+  else if (cur_fld_no == FLD_PRESSURE) snprintf(ui_data[FLD_PRESSURE].bottomRow, 17, "%0.1f hPa", pressure);
   else if (cur_fld_no == FLD_RF_RES) {
     snprintf(ui_data[FLD_RF_RES].bottomRow, 17, "%0.2f", RF_RESOLUTION);
   }
@@ -570,7 +576,7 @@ void lcdkeypad(void *pvParameters) {
   vTaskDelay(100 / portTICK_PERIOD_MS);
 
   // Load Calibration string for UI display
-#if (SYSTEM == 0) || (SYSTEM == 2)
+#if (SYSTEM == 0) || (SYSTEM == 2) || (SYSTEM == 3)
   // v5.70: Protect calibration load with fsMutex
   if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
     if (SPIFFS.exists("/calib.txt")) {
@@ -1392,6 +1398,15 @@ void lcdkeypad(void *pvParameters) {
                                lcd.clear();
                                lcd.setCursor(0,0); char b1[17]; snprintf(b1,17,"R:%-3.1f T:%-4.1f",rf,tf); lcd.print(b1);
                                lcd.setCursor(0,1); char b2[17]; snprintf(b2,17,"H:%-2.0f AWS:%-4.1f",hf,af); lcd.print(b2);
+                               xSemaphoreGive(i2cMutex);
+                            }
+                         } else if (SYSTEM == 3) {
+                            float pf = 0.0;
+                            sscanf(line, "%*d,%*[^,],%*[^,],%f,%f,%f,%f,%d,%f", &rf, &tf, &hf, &af, &wf, &pf);
+                            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                               lcd.clear();
+                               lcd.setCursor(0,0); char b1[17]; snprintf(b1,17,"R:%-3.1f T:%-4.1f",rf,tf); lcd.print(b1);
+                               lcd.setCursor(0,1); char b2[17]; snprintf(b2,17,"H:%-2.0f P:%-5.1f",hf,pf); lcd.print(b2);
                                xSemaphoreGive(i2cMutex);
                             }
                          }

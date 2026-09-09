@@ -342,7 +342,10 @@ bool readHDC(float &tempC, float &humidity) {
       humidity = (rawHum / 65536.0) * 100.0;
       
       // v5.65 fix: If raw values are exactly 0, it signals a digital/bus failure
-      if (rawTemp == 0 || rawHum == 0) return false;
+      if (rawTemp == 0 || rawHum == 0) {
+        xSemaphoreGive(i2cMutex);
+        return false;
+      }
 
       if (humidity > 100.0)
         humidity = 100.0; // <--- Add this line here

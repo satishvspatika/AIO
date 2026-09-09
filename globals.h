@@ -670,7 +670,7 @@ void saveGPS();
 void loadGPS();
 bool parse_clbs_response(const char *response, double &out_lat, double &out_lon,
                          char *date_out = NULL, char *time_out = NULL);
-void sync_rtc_from_http_header();
+void sync_rtc_from_http_header(const char *header_override = NULL);
 // I2C Protection (v5.49)
 
 // MODEM / GPRS

@@ -474,8 +474,8 @@ void flushSerialSIT() {
  * 
  * This resolves the 'Rejected' issue where the server rejects future-timed data.
  */
-void sync_rtc_from_http_header() {
-  const char *head = modem_response_buf;
+void sync_rtc_from_http_header(const char *header_override) {
+  const char *head = (header_override && strlen(header_override) > 0) ? header_override : modem_response_buf;
   if (strlen(head) < 20) {
     debugln("[RTC-Sync] Invalid header string passed.");
     return;

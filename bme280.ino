@@ -54,16 +54,18 @@ void bmeTask(void *pvParameters) {
 
         // Trigger measurement (Forced Mode)
         bme.takeForcedMeasurement();
+        vTaskDelay(20 / portTICK_PERIOD_MS); // Allow BME280 ADC conversion to complete
 
         float pres_raw = bme.readPressure(); // Read pressure in Pascals
 
-        if (!isnan(pres_raw) && pres_raw > 30000.0) { // Valid range > 300 hPa
+        // Valid terrestrial pressure range: 700.0 hPa (70000 Pa) to 1150.0 hPa (115000 Pa)
+        if (!isnan(pres_raw) && pres_raw >= 70000.0 && pres_raw <= 115000.0) {
           // v5.70: H-1 Pressure Over-Sampling (5-sample Median Filter)
-          static float p_buf[5];
-          static int p_idx = 0;
-          static bool p_init = false;
+          RTC_DATA_ATTR static float p_buf[5];
+          RTC_DATA_ATTR static int p_idx = 0;
+          RTC_DATA_ATTR static bool p_init = false;
 
-          if (!p_init) { 
+          if (!p_init || p_buf[0] < 70000.0 || p_buf[0] > 115000.0) { 
             for(int i=0; i<5; i++) p_buf[i] = pres_raw;
             p_init = true;
           }
@@ -71,7 +73,7 @@ void bmeTask(void *pvParameters) {
           p_idx = (p_idx + 1) % 5;
 
           // Inline Median Sort
-          float s[5]; memcpy(s, p_buf, 20);
+          float s[5]; memcpy(s, p_buf, sizeof(s));
           for(int i=0; i<4; i++) for(int j=0; j<4-i; j++) 
             if(s[j]>s[j+1]) { float t=s[j]; s[j]=s[j+1]; s[j+1]=t; }
           float pres_pa = s[2];
@@ -86,6 +88,8 @@ void bmeTask(void *pvParameters) {
           // UI String: Show Station Pressure and Sea Level Pressure
           snprintf(pres_str, sizeof(pres_str), "%.2f|%.2f", pressure,
                    sea_level_pressure);
+        } else if (!isnan(pres_raw)) {
+          debugf1("[BME] [WARN] Glitched pressure reading ignored: %.2f hPa\n", pres_raw / 100.0);
         }
         xSemaphoreGive(i2cMutex);
       } else {

@@ -1,5 +1,7 @@
 #include "globals.h"
 
+int last_ftp_login_result = -1; // Added for HTTP Fallback tracking
+
 void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked) {
   set_sys_status("FTP UPLOAD");
   int modem_ftp_handle = 0; // Turner-Fix: Persistent handle scope to prevent leak (C-04)
@@ -672,6 +674,9 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
 #if SYSTEM == 2
     ftpServer = "ftp.spatika.net"; ftpUser = "twsrf_gen"; ftpPassword = "spgen123"; portName = 21;
 #endif
+#if SYSTEM == 3
+    ftpServer = "ftp.spatika.net"; ftpUser = "twsrp"; ftpPassword = FTP_PASS_TWSRP; portName = 21;
+#endif
   }
 
   send_daily = 0; // Ensure flag is reset after use
@@ -681,26 +686,54 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
   SerialSIT.println("AT+CFTPSSTOP");
   waitForResponse("OK", 5000);
 
-  SerialSIT.println("AT+CFTPSSTART");
-  waitForResponse("+CFTPSSTART: 0", 20000); // v7.70: Increased to 20s for BSNL stability (H-03)
-
-  // v5.38 Harmonization: Explicitly Configure FTP Client Context
-  // Ensure plain FTP (No SSL/TLS) and bind strictly to GPRS Context 1
-  // v5.75 FIX: These MUST be sent AFTER Start response for A7672S stack stability (M-01)
+  // v6.29 FIX: CFTPSCFG configuration commands MUST be sent BEFORE CFTPSSTART on A7672S.
+  // Sending them after CFTPSSTART causes the modem to return ERROR and fail to apply transmode=1 (Passive Mode).
   SerialSIT.println("AT+CFTPSCFG=\"security\",0");
   waitForResponse("OK", 2000);
   SerialSIT.println("AT+CFTPSCFG=\"bindcid\",1");
   waitForResponse("OK", 2000);
-
-  SerialSIT.println("AT+CFTPSSINGLEIP=1"); // Data channel binding — confirmed working in v13.9
-  
-  // v5.75 BSNL Active Mode Hardening (Moved to post-start)
   debugf("[FTP] Configuring mode (%d)...\n", transMode);
-  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSCFG=\"TRANSMODE\",%d", transMode);
+  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSCFG=\"transmode\",%d", transMode);
   SerialSIT.println(gprs_xmit_buf);
   waitForResponse("OK", 3000);
   SerialSIT.println("AT+CFTPSCFG=\"type\",I");
   waitForResponse("OK", 3000);
+
+  SerialSIT.println("AT+CFTPSSTART");
+  bool ftp_stack_ok = waitForResponse("+CFTPSSTART: 0", 20000); // v7.70: Increased to 20s for BSNL stability (H-03)
+
+  // v6.29-FIX: CFTPSSTART error guard — if FTP stack fails to start (common after HTTP
+  // context teardown), recycle the PDP bearer and retry ONCE before giving up.
+  // Without this, all subsequent config commands + CFTPSLOGIN silently fail with error 9.
+  if (!ftp_stack_ok) {
+    debugln("[FTP] CFTPSSTART failed. Recycling bearer and retrying...");
+    SerialSIT.println("AT+CGACT=0,1");
+    waitForResponse("OK", 3000);
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    SerialSIT.println("AT+CGACT=1,1");
+    waitForResponse("OK", 10000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    flushSerialSIT();
+    // Re-apply CFTPSCFG parameters before retrying CFTPSSTART
+    SerialSIT.println("AT+CFTPSCFG=\"security\",0");
+    waitForResponse("OK", 2000);
+    SerialSIT.println("AT+CFTPSCFG=\"bindcid\",1");
+    waitForResponse("OK", 2000);
+    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CFTPSCFG=\"transmode\",%d", transMode);
+    SerialSIT.println(gprs_xmit_buf);
+    waitForResponse("OK", 3000);
+    SerialSIT.println("AT+CFTPSSTART");
+    ftp_stack_ok = waitForResponse("+CFTPSSTART: 0", 20000);
+    if (!ftp_stack_ok) {
+      debugln("[FTP] CFTPSSTART failed after bearer recycle. Aborting FTP setup.");
+      return 0;
+    }
+    debugln("[FTP] CFTPSSTART OK after bearer recycle.");
+  } else {
+    debugln("[FTP] CFTPSSTART OK.");
+  }
+
+  SerialSIT.println("AT+CFTPSSINGLEIP=1"); // Data channel binding — confirmed working in v13.9
   SerialSIT.println("AT+CMEE=1");
   debugln(waitForResponse("OK", 2000));
 
@@ -729,10 +762,13 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
       }
   } else {
       debugln("[FTP] DNS Failed. Switching to Insurance IP.");
-      if (strstr(ftpServer, "spatika.net")) {
-        strncpy(targetAddress, "89.32.144.163", sizeof(targetAddress)-1);
-      }
-      else if (strstr(ftpServer, "ksndmc.net")) {
+      // v6.29-FIX: Corrected insurance IP for ftp.spatika.net.
+      // 89.32.144.163 is the Dota/intovps server (WRONG). Real IP is 144.91.104.105.
+      if (strstr(ftpServer, "ftp.spatika.net")) {
+        strncpy(targetAddress, "144.91.104.105", sizeof(targetAddress)-1);
+      } else if (strstr(ftpServer, "spatika.net")) {
+        strncpy(targetAddress, "89.32.144.163", sizeof(targetAddress)-1); // Dota/Bihar server
+      } else if (strstr(ftpServer, "ksndmc.net")) {
         strncpy(targetAddress, "27.34.245.70", sizeof(targetAddress)-1);
       }
       targetAddress[sizeof(targetAddress)-1] = '\0';
@@ -750,6 +786,7 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
      const char* login_ptr = strstr(modem_response_buf, "+CFTPSLOGIN:");
      if (login_ptr != NULL) {
         result = atoi(login_ptr + 12);
+        last_ftp_login_result = result; // Capture for HTTP Fallback
         debugf("[FTP] Login Result: %d\n", result);
         if (result == 0) {
            debugln("FTP Login success");
@@ -1259,6 +1296,8 @@ void copyFromSPIFFSToFS(char *dateFile, bool alreadyLocked) {
   prefix = "TWS_";
 #elif SYSTEM == 2
   prefix = "TWSRF_";
+#elif SYSTEM == 3
+  prefix = "TWSRP_";
 #endif
 
   const char *extension = ".txt";

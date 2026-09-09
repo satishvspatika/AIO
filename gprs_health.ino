@@ -1053,6 +1053,8 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
     strcpy(STATION_TYPE, "TWS");
 #elif SYSTEM == 2
     strcpy(STATION_TYPE, "TWS-RF");
+#elif SYSTEM == 3
+    strcpy(STATION_TYPE, "TWSRP");
 #endif
   }
 
@@ -1311,6 +1313,8 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
     strcpy(STATION_TYPE, "TWS");
 #elif SYSTEM == 2
     strcpy(STATION_TYPE, "TWS-RF");
+#elif SYSTEM == 3
+    strcpy(STATION_TYPE, "TWSRP");
 #endif
   }
 

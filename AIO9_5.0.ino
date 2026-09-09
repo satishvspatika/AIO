@@ -401,7 +401,7 @@ ui_data_t ui_data[FLD_COUNT] = {
     {18, "AVG WIND SPEED", "NA", eLive},             // 23
     {19, "TEMPERATURE", "NA", eLive},                // 24
     {20, "HUMIDITY", "NA", eLive},                   // 25
-    {24, "PRESSURE", "NA", eLive},                   // 27
+    {24, "ATM PRESSURE", "NA", eLive},                   // 27
     {26, "STATION ALT", "900", eNumeric},            // 28 BME only
     {27, "HTTP FAIL STATS", "                ",
      eLive},                                         // 29 v7.70: HTTP fail counters
@@ -436,7 +436,7 @@ struct http_params httpSet[12] = {
     {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_tws_data_v2", "80", SEC_KS_TWS, "x-www-form-urlencoded"}, 
     {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_twsrf_data_v2", "80", SEC_KS_ADDON, "x-www-form-urlencoded"}, 
     {"rtdas.spatika.net", "89.32.144.163", "/tws_gprs/twsrf_gen", "80", SEC_SPT_TWS_RF, "x-www-form-urlencoded"}, 
-    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_data_twsrp", "80", SEC_SPT_TWSRP, "x-www-form-urlencoded"}, 
+    {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_data_twsrp_v2", "80", SEC_SPT_TWSRP, "x-www-form-urlencoded"}, 
 };
 #endif
 // --- End Configuration Tables ---
@@ -1161,6 +1161,8 @@ void setup() {
     strcpy(STATION_TYPE, "TWS");
 #elif SYSTEM == 2
     strcpy(STATION_TYPE, "TWS-RF");
+#elif SYSTEM == 3
+    strcpy(STATION_TYPE, "TWSRP");
 #endif
   }
 

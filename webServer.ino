@@ -492,6 +492,18 @@ void handleRoot() { // v5.70 STREAMING
         "<div class='card'><div class='label'>Humidity</div><div id='live_hum' "
         "class='value'>" +
         String(humidity, 1) + " %</div></div>");
+    server.sendContent("<div class='card'><div class='label'>Wind</div><div "
+                       "id='live_ws' class='value'>" +
+                       String(cur_wind_speed, 2) + " <span style='font-size:0.6em'>m/s</span></div></div>");
+    server.sendContent("<div class='card'><div class='label'>Wind Dir</div><div "
+                       "id='live_wd' class='value'>" +
+                       String(windDir) + " <span style='font-size:0.6em'>&deg;</span></div></div>");
+    if (bmeType != BME_UNKNOWN && pressure > 300.0) {
+      String pStr = String(pressure, 2);
+      if (sea_level_pressure > 300.0) pStr += " | " + String(sea_level_pressure, 2);
+      server.sendContent("<div class='card'><div class='label'>Pressure</div><div "
+                         "id='live_pres' class='value'>" + pStr + " <span style='font-size:0.6em'>hPa</span></div></div>");
+    }
 #endif
 
     bool is_charging_now = (solar_val > li_bat_val + 0.3f && solar_val >= 4.0f);
@@ -928,13 +940,13 @@ void handleFileView() {
                 "ಸಿಗ್ನಲ್ (Signal), ಬ್ಯಾಟರಿ (Battery)"
               : "SampleNo, Date, Time, Temp, Humidity, Wind Spd, Wind Dir, "
                 "Signal, Battery";
-#elif SYSTEM == 2
+#elif SYSTEM == 2 || SYSTEM == 3
       legend += isKan ? "ಸ್ಯಾಂಪಲ್ (SampleNo), ದಿನಾಂಕ (Date), ಸಮಯ (Time), ಸಂಚಿತ ಮಳೆ "
                         "(Cum RF), ತಾಪಮಾನ (Temp), ತೇವಾಂಶ (Humidity), ಗಾಳಿಯ ವೇಗ "
-                        "(Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir), ಸಿಗ್ನಲ್ (Signal), "
+                        "(Wind Spd), ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir), ವಾತಾವರಣದ ಒತ್ತಡ (Pressure), ಸಿಗ್ನಲ್ (Signal), "
                         "ಬ್ಯಾಟರಿ (Battery)"
                       : "SampleNo, Date, Time, Cum RF, Temp, Humidity, Wind "
-                        "Spd, Wind Dir, Signal, Battery";
+                        "Spd, Wind Dir, Pressure, Signal, Battery";
 #endif
       server.sendContent("</pre>");
       server.sendContent(
@@ -1109,6 +1121,26 @@ void handleViewLog() {
                         p_ws + " m/s<br>";
         parsedResult += (isKan ? "ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir): " : "Wind Dir: ") +
                         p_wd + " &deg;<br>";
+#elif SYSTEM == 3
+        String p_rf = (tokenCount > d) ? tokens[d] : "--";
+        String p_temp = (tokenCount > d + 1) ? tokens[d + 1] : "--";
+        String p_hum = (tokenCount > d + 2) ? tokens[d + 2] : "--";
+        String p_ws = (tokenCount > d + 3) ? tokens[d + 3] : "--";
+        String p_wd = (tokenCount > d + 4) ? tokens[d + 4] : "--";
+        String p_press = (tokenCount > d + 5) ? tokens[d + 5] : "--";
+
+        parsedResult +=
+            (isKan ? "ಸಂಚಿತ ಮಳೆ (Cum RF): " : "Cum RF: ") + p_rf + " mm<br>";
+        parsedResult +=
+            (isKan ? "ತಾಪಮಾನ (Temp): " : "Temp: ") + p_temp + " &deg;C<br>";
+        parsedResult +=
+            (isKan ? "ತೇವಾಂಶ (Humidity): " : "Humidity: ") + p_hum + " %<br>";
+        parsedResult += (isKan ? "ಗಾಳಿಯ ವೇಗ (Wind Speed): " : "Wind Speed: ") +
+                        p_ws + " m/s<br>";
+        parsedResult += (isKan ? "ಗಾಳಿಯ ದಿಕ್ಕು (Wind Dir): " : "Wind Dir: ") +
+                        p_wd + " &deg;<br>";
+        parsedResult += (isKan ? "ವಾತಾವರಣದ ಒತ್ತಡ (Pressure): " : "Pressure: ") +
+                        p_press + " hPa<br>";
 #endif
 
         // Find Signal and Battery if they exist at the end of the line
@@ -1208,7 +1240,7 @@ void handleData() {
   }
 #endif
 
-#if SYSTEM == 2
+#if SYSTEM == 2 || SYSTEM == 3
   json += ", \"rf_inst\": " + String((float)rf_count.val * RF_RESOLUTION, 2) +
           ", \"rf_cum\": " + String(new_current_cumRF, 2) +
           ", \"temperature\": " + String(temperature, 1) +

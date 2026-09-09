@@ -163,13 +163,13 @@ void start_deep_sleep() {
   int next_boundary_min = ((live_min / 15) + 1) * 15;
   int sleep_seconds;
 
-  // Handle hour rollover (e.g., 59 minutes -> next hour at 0 minutes)
-  // v7.89: Reverted to +30s offset for maximum stability.
+  // v6.31: Wake up 2m02s past boundary (:02:02, :17:02, :32:02, :47:02)
+  // This satisfies Spatika/RTDAS server's 2-minute slot closing rule while saving battery during sleep.
   if (next_boundary_min >= 60) {
-    sleep_seconds = (60 - live_min) * 60 - live_sec + 15; // v5.65 fix: reduced offset to 15s
+    sleep_seconds = (60 - live_min) * 60 - live_sec + 122; // Wake up 2m02s past boundary (:02:02)
   } else {
     sleep_seconds =
-        (next_boundary_min * 60) - (live_min * 60 + live_sec) + 15; // v5.65 fix
+        (next_boundary_min * 60) - (live_min * 60 + live_sec) + 122; // Wake up 2m02s past boundary (:17:02, :32:02, :47:02)
   }
 
   // Safety bounds: 1 minute minimum, 20 minutes maximum
@@ -889,8 +889,10 @@ void scanFileToMask(const char *fName, uint32_t *mask) {
       const int sig_field = 5;
 #elif SYSTEM == 1
       const int sig_field = 7;
-#else
+#elif SYSTEM == 2
       const int sig_field = 8;
+#elif SYSTEM == 3
+      const int sig_field = 9;
 #endif
       for (int i = 0; i < sig_field && token != NULL; i++) {
         token = strtok_r(NULL, ",", &saveptr_scan);
@@ -1455,8 +1457,12 @@ int get_total_backlogs(bool force) {
           int r = ptrFile.readBytes(pBuf, sizeof(pBuf) - 1);
           pBuf[r] = '\0';
           long ptrVal = atol(pBuf);
-          if (ptrVal > 0 && ptrVal < (long)f.size()) {
-            f.seek(ptrVal);
+          if (ptrVal > 0) {
+            if (ptrVal < (long)f.size()) {
+              f.seek(ptrVal);
+            } else {
+              f.seek(f.size()); // All records in unsent file have been sent
+            }
           }
           ptrFile.close();
         }

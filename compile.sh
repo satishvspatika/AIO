@@ -63,6 +63,7 @@ if [ $PATCHED -eq 1 ]; then
 fi
 
 if [ $BUILD_RESULT -eq 0 ]; then
+    cp build/esp32.esp32.esp32/AIO9_5.0.ino*.bin "$BUILD_PATH/" 2>/dev/null || true
     echo ""
     echo "--- Compilation Successful (v${FW_VER} / ${FLASH_SIZE}) ---"
     echo "Binary: $BUILD_PATH/AIO9_5.0.ino.bin"
