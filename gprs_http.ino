@@ -473,29 +473,17 @@ void prepare_data_and_send() {
     }
   }
 
-  // v5.63: Selective Mode Logic (Airtel/Jio Backlog Optimization)
-  bool isAirtelOrJio = (strstr(carrier, "Airtel") != nullptr ||
-                        strstr(carrier, "Jio") != nullptr);
-
-  if (isAirtelOrJio && data_mode == eUnsentData) {
-    // M2M SIM backlog: Skip Fast, jump straight to Robust.
-    // Fast always times out on M2M SIMs after a session rebuild/zombie state.
-    debugln("[HTTP] Airtel/Jio backlog: using Robust direct.");
-    success_count = send_at_cmd_data(http_data, true);
-  } else {
-    // Current data (all carriers) or Backlog for BSNL: Fast -> Fast -> Robust
+  // v6.31: Fast v3.0 Handshake for all carriers/modes (Current & Backlog)
+  // Fast v3.0 Handshake is optimized for A7672S LTE modem and avoids AT+HTTPDATA timeouts.
+  success_count = send_at_cmd_data(http_data, false);
+  if (success_count == 0) {
+    debugln("[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt 2)...");
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
     success_count = send_at_cmd_data(http_data, false);
     if (success_count == 0) {
-      debugln("[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt "
-              "2)...");
+      debugln("[HTTP] 2nd Attempt (Fast) also failed. Falling back to Robust method...");
       vTaskDelay(2000 / portTICK_PERIOD_MS);
-      success_count = send_at_cmd_data(http_data, false);
-      if (success_count == 0) {
-        debugln("[HTTP] 2nd Attempt (Fast) also failed. Falling back to Robust "
-                "method...");
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
-        success_count = send_at_cmd_data(http_data, true);
-      }
+      success_count = send_at_cmd_data(http_data, true);
     }
   }
   // v6.76: One retry added above for current data.
