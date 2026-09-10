@@ -746,7 +746,7 @@ void get_a7672s() {
   debugln("************************");
   debugln();
 
-  active_cid = 0;
+  active_cid = 1; // Default to CID 1 for all carriers / systems
   // v5.63: Native v3.0 style activation.
   // No status queries, fire and move on.
   if (load_apn_config(cached_iccid, stored_apn, sizeof(stored_apn))) {
@@ -1089,7 +1089,7 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
   snprintf(
       status_response, sizeof(status_response),
       "%s,%s,%s,%s,%04d-%02d-%02dT%02d:%02d,%s,15,%04d,%04.1f,%04.1f,%s,%s,%s,"
-      "%04d-%02d-%02d,%04d-%02d-%02dT%02d:%02d,0\r\n\032",
+      "%04d-%02d-%02d,%04d-%02d-%02dT%02d:%02d,0\r\n",
       NETWORK, STATION_TYPE, msg_type, cleanStn, current_year, current_month,
       current_day, current_hour, current_min, UNIT_VER, signal_strength,
       primary_bat, secondary_bat, (solar_conn ? "Y" : "N"), (sd_card_ok ? "SDC-OK" : "SDC-FAIL"),
@@ -1121,8 +1121,9 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
     debugln(" Received!");
     flushSerialSIT(); // v5.81: Ensure clean UART pipe for Ctrl+Z termination
     SerialSIT.print(status_response); 
+    SerialSIT.write(0x1A); // Send Ctrl+Z (ASCII 26) to commit SMS
     debug("Waiting for +CMGS confirmation...");
-    if (waitForResponse("+CMGS:", 10000)) {
+    if (waitForResponse("+CMGS:", 20000)) {
        debugln(" Done.");
        debug("Response of AT+CMGS is ");
        debugln(modem_response_buf);
@@ -1327,7 +1328,7 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
 
   snprintf(status_response, sizeof(status_response),
            "%s,%s,%s,%s,%04d-%02d-%02dT%02d:%02d,SIM_1,%04d,%.6f,%.6f,0."
-           "0\r\n\032",
+           "0\r\n",
            NETWORK, STATION_TYPE, gps_msg_type, station_name, current_year, current_month,
            current_day, current_hour, current_min, signal_strength, lati,
            longi);
@@ -1345,6 +1346,7 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
     debugln(" Received!");
     flushSerialSIT();
     SerialSIT.print(status_response);
+    SerialSIT.write(0x1A); // Send Ctrl+Z (ASCII 26) to commit SMS
     debug("Waiting for +CMGS confirmation...");
     if (waitForResponse("+CMGS:", 35000)) {
       debugln(" Done.");

@@ -431,7 +431,7 @@ struct http_params httpSet[12] = {
     {"rtdasbih.spatika.net", "185.250.105.225", "/trg_gprs/upload_bih_trg_data_new", "80", SEC_BIH_SPT, "json"}, 
     {"104.211.5.142", "104.211.5.142", "/esprain", "3002", SEC_EX_SIT, "json"},
     {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", SEC_EX_SIT, "x-www-form-urlencoded"},
-    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_tws_data_v2", "80", SEC_KS_TWS, "x-www-form-urlencoded"}, 
+    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_tws_data_v3", "80", SEC_KS_TWS, "x-www-form-urlencoded"}, 
     {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_twsrf_data_v2", "80", SEC_KS_ADDON, "x-www-form-urlencoded"}, 
     {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_tws_data_v2", "80", SEC_KS_TWS, "x-www-form-urlencoded"}, 
     {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_twsrf_data_v2", "80", SEC_KS_ADDON, "x-www-form-urlencoded"}, 

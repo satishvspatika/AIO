@@ -130,7 +130,7 @@ bool isFieldVisible(int fld_id) {
 
 #if ENABLE_PRESSURE_SENSOR == 1
   if (fld_id == FLD_PRESSURE) {
-    if (SYSTEM == 3 || SYSTEM == 2 || (SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP") != NULL) || SYSTEM != 0)
+    if (SYSTEM == 3 || strstr(UNIT, "SPATIKA") != NULL || (SYSTEM == 1 && strstr(UNIT, "KSNDMC_TWS-AP") != NULL))
       return true;
     return false;
   }
@@ -195,6 +195,9 @@ void IRAM_ATTR lcdTimer() {
 
 // v5.60: Central drawing function - differential to eliminate flicker
 bool draw_current_page() {
+  if (lcdkeypad_start == 0) {
+    return false; // Display powered off/inactive. Do NOT attempt I2C LCD access!
+  }
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
     if (cur_mode == eEditOff) {
       char line0[17], line1[17];

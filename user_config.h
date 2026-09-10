@@ -7,14 +7,14 @@
  * ========================================================================= */
 
 // --- 1. CORE SYSTEM IDENTITY ---
-#define SYSTEM 3
-#define UNIT_CFG "SPATIKA_GEN"
+#define SYSTEM 1
+#define UNIT_CFG "KSNDMC_TWS"
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 // SYSTEM 3 options: SPATIKA_GEN - AP
 
-#define FIRMWARE_VERSION "6.30"
+#define FIRMWARE_VERSION "6.31"
 
 #define ENABLE_HEALTH_REPORT                                                   \
   0 // Master Switch: Enable automated device health reporting
@@ -27,12 +27,12 @@
 #ifndef LCD_I2C_ADDR
 #define LCD_I2C_ADDR 0x27 // 0x27 (Default PCF8574T) or 0x3F (PCF8574AT)
 #endif
-#define DEBUG 0 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
+#define DEBUG 1 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
 #define ENABLE_WEBSERVER                                                       \
   1 // 0: Disable, 1: Enable (requires 8MB flash partition)
 
 // --- 3. HARDWARE CAPABILITIES ---
-#define ENABLE_PRESSURE_SENSOR 1 // 0: Disable BMP/BME routines, 1: Enable
+#define ENABLE_PRESSURE_SENSOR 0 // 0: Disable BMP/BME routines, 1: Enable
 #define DEFAULT_RF_RESOLUTION                                                  \
   0.5 // Factory default rain resolution (0.50mm / 0.25mm)
 #define WIND_TEETH_COUNT 2.0 // H-02: Customizable anemometer teeth divisor
@@ -47,7 +47,8 @@
 // --- 4. NETWORK BEHAVIOR ---
 #define FILLGAP 1
 #define FTP_CHUNK_SIZE 15 // v5.52 ENH-2: Standardized chunk size for backlog
-#define ENABLE_HTTP_BACKLOG_FALLBACK 1 // 1: Migrate to HTTP (Spatika), 0: APN Swap to airtelgprs.com (KSNDMC)
+#define ENABLE_HTTP_BACKLOG_FALLBACK                                           \
+  1 // 1: Migrate to HTTP (Spatika), 0: APN Swap to airtelgprs.com (KSNDMC)
 
 #include "secrets.h"
 

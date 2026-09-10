@@ -235,14 +235,15 @@ bool try_activate_apn(const char *apn) {
   debugf("[GPRS] CGACT Resp: %s\n", modem_response_buf); 
 
   if (act_success) {
-    // v5.70 Hardened [H-4 Fix]: Verify actual IP assigned — BSNL returns OK but 0.0.0.0
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+    active_cid = 1;
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    flushSerialSIT();
     SerialSIT.println("AT+CGPADDR=1");
-    waitForResponse("OK", 3000);
-    const char* ip_resp = modem_response_buf;
-    if (strstr(ip_resp, "0.0.0.0") != NULL || strstr(ip_resp, "+CGPADDR:") == NULL) {
-        debugln("[APN] CGACT OK but no valid IP (0.0.0.0). Treating as failure.");
+    if (waitForResponse("OK", 3000)) {
+      if (strstr(modem_response_buf, "0.0.0.0") != NULL) {
+        debugln("[APN] CGACT OK but 0.0.0.0 IP. Treating as failure.");
         return false;
+      }
     }
     return true;
   }
@@ -459,9 +460,13 @@ void flushSerialSIT() {
   // this loop to spin indefinitely: data arrives faster than the 1ms drain,
   // so SerialSIT.available() never returns false, hanging the GPRS task.
   unsigned long deadline = millis() + 500;
+  int drained = 0;
   while (SerialSIT.available() && millis() < deadline) {
     SerialSIT.read();
     esp_task_wdt_reset();
+    if ((++drained & 0x1F) == 0) {   // Yield every 32 bytes to service scheduler & feed Interrupt WDT
+      vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
   }
 }
 
@@ -808,6 +813,10 @@ void start_gprs() {
            waitForResponse("OK", 2000);
            vTaskDelay(2000 / portTICK_PERIOD_MS);
            // The loop will continue and try AT+CPIN? again naturally
+        } else if (strstr(modem_response_buf, "SIM busy") != NULL) {
+           debugln("[GPRS] SIM is initializing (SIM busy). Retrying CPIN poll...");
+           vTaskDelay(1500 / portTICK_PERIOD_MS);
+           // Continue polling loop naturally
         } else {
            debugln("[GPRS] Triggering hard reset recovery...");
            break; 
@@ -984,8 +993,9 @@ bool waitForResponse(const char *expected, unsigned long timeout) {
   // v5.80.1 defensive guard: waitForResponse uses a static buffer and MUST be protected by modemMutex
   configASSERT(xSemaphoreGetMutexHolder(modemMutex) == xTaskGetCurrentTaskHandle());
 
-  // v6.0 Stability Fix: Use global fixed buffer to eliminate all heap jitter
-  // The modemMutex guarantees single-task access to modem_response_buf.
+  // Drain any unread bytes sitting in UART FIFO before waiting for current command response
+  flushSerialSIT();
+
   memset(modem_response_buf, 0, sizeof(modem_response_buf));
   int buf_idx = 0;
   modem_response_buf[0] = '\0'; 
@@ -1003,15 +1013,22 @@ bool waitForResponse(const char *expected, unsigned long timeout) {
         modem_response_buf[buf_idx++] = c;
         modem_response_buf[buf_idx] = '\0';
       }
+      if ((buf_idx & 0x1F) == 0) {   // Yield every 32 bytes to service scheduler & feed WDT
+        esp_task_wdt_reset();
+        vTaskDelay(1 / portTICK_PERIOD_MS);
+      }
     }
 
     if (strstr(modem_response_buf, expected) != NULL) {
       return true;
     }
-    // Fail fast for all modem commands: If modem outputs ERROR / +CMS ERROR / +CME ERROR, exit immediately!
-    if (strstr(modem_response_buf, "ERROR") != NULL || strstr(modem_response_buf, "+CMS ERROR") != NULL || strstr(modem_response_buf, "+CME ERROR") != NULL) {
+    // Fail fast for current command response: If modem returned ERROR / +CMS ERROR / +CME ERROR
+    if (strstr(modem_response_buf, "\nERROR") != NULL || strstr(modem_response_buf, "\n+CMS ERROR") != NULL || strstr(modem_response_buf, "\n+CME ERROR") != NULL ||
+        strstr(modem_response_buf, "\rERROR") != NULL || strstr(modem_response_buf, "\r+CME ERROR") != NULL) {
       if (strstr(expected, "ERROR") == NULL) {
         debugln("[MODEM] Early exit: Modem returned ERROR.");
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        flushSerialSIT();
         return false;
       }
     }

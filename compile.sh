@@ -34,6 +34,9 @@ echo "--- Using partition file: $PARTITION_FILE ---"
 FW_VER=$(grep '#define FIRMWARE_VERSION' user_config.h | sed 's/.*"\(.*\)".*/\1/')
 BUILD_PATH="/tmp/aio_build_${FLASH_SIZE}"
 
+# Force 100% fresh clean build by removing old build directories
+rm -rf "$BUILD_PATH" ./build
+
 # 4MB builds: temporarily disable WebServer to fit within 1.25MB slot
 PATCHED=0
 if [ "$FLASH_SIZE" = "4mb" ]; then

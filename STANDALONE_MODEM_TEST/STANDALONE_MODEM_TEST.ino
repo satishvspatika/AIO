@@ -149,23 +149,66 @@ void setup() {
   }
   Serial.println("[TEST RESULT] PDP ACTIVATION: PASS\n");
 
-  // 6. TEST HTTP 1: SPATIKA TWSRP (rtdas.spatika.net)
-  Serial.println("--- STEP 5: HTTP POST TEST -> rtdas.spatika.net ---");
+  // 6. TEST HTTP 1: KSNDMC TWS v3 (rtdas.ksndmc.net)
+  Serial.println("--- STEP 5: HTTP POST TEST -> rtdas.ksndmc.net (KSNDMC TWS v3) ---");
   sendCommand("AT+CGEREP=0", "OK", 1000);
   sendCommand("AT+HTTPTERM", "OK", 2000);
 
   if (sendCommand("AT+HTTPINIT", "OK", 5000)) {
-    sendCommand("AT+HTTPPARA=\"URL\",\"http://rtdas.spatika.net/tws_gprs/update_data_twsrp\"", "OK", 2000);
+    // Note: A7672S returns ERROR for AT+HTTPPARA="CID",1. We attempt it but do not abort on ERROR.
+    bool cid_resp = sendCommand("AT+HTTPPARA=\"CID\",1", "OK", 1000);
+    if (!cid_resp) {
+      Serial.println("[INFO] AT+HTTPPARA=\"CID\",1 returned ERROR (expected on A7672S, continuing)");
+    }
+    
+    sendCommand("AT+HTTPPARA=\"URL\",\"http://rtdas.ksndmc.net/tws_gprs/update_tws_data_v3\"", "OK", 2000);
     sendCommand("AT+HTTPPARA=\"ACCEPT\",\"*/*\"", "OK", 1000);
     sendCommand("AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"", "OK", 1000);
 
-    const char* payload = "stn_id=WS0100&rec_time=2026-09-07,10:45&rainfall=00.00&temp=028.5&humid=062.0&w_speed=00.0&w_dir=180&atm_pressure=915.00&signal=-070&bat_volt=04.12&key=wsgen2016";
+    const char* payload = "stn_no=001826&rec_time=2026-09-09,22:15&temp=000.0&humid=000.0&w_speed=00.0&w_dir=000&signal=-65&bat_volt=03.92&key=climate4pTWS";
     char hdata[32];
     snprintf(hdata, sizeof(hdata), "AT+HTTPDATA=%d,5000", (int)strlen(payload));
 
     if (sendCommand(hdata, "DOWNLOAD", 5000)) {
       flushModem();
       SerialModem.write((uint8_t*)payload, strlen(payload));
+      if (sendCommand("", "OK", 3000)) {
+        if (sendCommand("AT+HTTPACTION=1", "+HTTPACTION:", 20000)) {
+          if (strstr(rx_buf, "+HTTPACTION: 1,200,") != NULL) {
+            Serial.println("\n[TEST RESULT] HTTP KSNDMC TWS v3: SUCCESS (HTTP 200 OK)");
+            sendCommand("AT+HTTPREAD=0,100", "OK", 3000);
+          } else {
+            Serial.print("\n[TEST RESULT] HTTP KSNDMC TWS v3: FAIL -> Response: "); Serial.println(rx_buf);
+          }
+        } else {
+          Serial.println("\n[TEST RESULT] HTTP KSNDMC TWS v3: FAIL (HTTPACTION Timeout)");
+        }
+      }
+    } else {
+      Serial.println("\n[TEST RESULT] HTTP KSNDMC TWS v3: FAIL (DOWNLOAD Timeout)");
+    }
+  } else {
+    Serial.println("\n[TEST RESULT] HTTP KSNDMC TWS v3: FAIL (HTTPINIT Error)");
+  }
+
+  sendCommand("AT+HTTPTERM", "OK", 2000);
+  Serial.println();
+
+  // 7. TEST HTTP 2: SPATIKA TWSRP (rtdas.spatika.net)
+  Serial.println("--- STEP 6: HTTP POST TEST -> rtdas.spatika.net (SPATIKA TWSRP) ---");
+  if (sendCommand("AT+HTTPINIT", "OK", 5000)) {
+    sendCommand("AT+HTTPPARA=\"CID\",1", "OK", 1000); // Ignore error if return ERROR
+    sendCommand("AT+HTTPPARA=\"URL\",\"http://rtdas.spatika.net/tws_gprs/update_data_twsrp\"", "OK", 2000);
+    sendCommand("AT+HTTPPARA=\"ACCEPT\",\"*/*\"", "OK", 1000);
+    sendCommand("AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"", "OK", 1000);
+
+    const char* trg_payload = "stn_id=WS0100&rec_time=2026-09-07,10:45&rainfall=00.00&temp=028.5&humid=062.0&w_speed=00.0&w_dir=180&atm_pressure=915.00&signal=-070&bat_volt=04.12&key=wsgen2016";
+    char hdata2[32];
+    snprintf(hdata2, sizeof(hdata2), "AT+HTTPDATA=%d,5000", (int)strlen(trg_payload));
+
+    if (sendCommand(hdata2, "DOWNLOAD", 5000)) {
+      flushModem();
+      SerialModem.write((uint8_t*)trg_payload, strlen(trg_payload));
       if (sendCommand("", "OK", 3000)) {
         if (sendCommand("AT+HTTPACTION=1", "+HTTPACTION:", 20000)) {
           if (strstr(rx_buf, "+HTTPACTION: 1,200,") != NULL) {
@@ -183,42 +226,6 @@ void setup() {
     }
   } else {
     Serial.println("\n[TEST RESULT] HTTP SPATIKA TWSRP: FAIL (HTTPINIT Error)");
-  }
-
-  sendCommand("AT+HTTPTERM", "OK", 2000);
-  Serial.println();
-
-  // 7. TEST HTTP 2: KSNDMC TRG (rtdas.ksndmc.net)
-  Serial.println("--- STEP 6: HTTP POST TEST -> rtdas.ksndmc.net ---");
-  if (sendCommand("AT+HTTPINIT", "OK", 5000)) {
-    sendCommand("AT+HTTPPARA=\"URL\",\"http://rtdas.ksndmc.net/trg_gprs/update_data_sit_v3\"", "OK", 2000);
-    sendCommand("AT+HTTPPARA=\"ACCEPT\",\"*/*\"", "OK", 1000);
-    sendCommand("AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"", "OK", 1000);
-
-    const char* trg_payload = "stn_id=009876&rec_time=2026-09-07,10:45&rainfall=00.00&signal=-070&key=pse2420&bat_volt=04.1&bat_volt1=04.1";
-    char hdata2[32];
-    snprintf(hdata2, sizeof(hdata2), "AT+HTTPDATA=%d,5000", (int)strlen(trg_payload));
-
-    if (sendCommand(hdata2, "DOWNLOAD", 5000)) {
-      flushModem();
-      SerialModem.write((uint8_t*)trg_payload, strlen(trg_payload));
-      if (sendCommand("", "OK", 3000)) {
-        if (sendCommand("AT+HTTPACTION=1", "+HTTPACTION:", 20000)) {
-          if (strstr(rx_buf, "+HTTPACTION: 1,200,") != NULL) {
-            Serial.println("\n[TEST RESULT] HTTP KSNDMC TRG: SUCCESS (HTTP 200 OK)");
-            sendCommand("AT+HTTPREAD=0,100", "OK", 3000);
-          } else {
-            Serial.print("\n[TEST RESULT] HTTP KSNDMC TRG: FAIL -> Response: "); Serial.println(rx_buf);
-          }
-        } else {
-          Serial.println("\n[TEST RESULT] HTTP KSNDMC TRG: FAIL (HTTPACTION Timeout)");
-        }
-      }
-    } else {
-      Serial.println("\n[TEST RESULT] HTTP KSNDMC TRG: FAIL (DOWNLOAD Timeout)");
-    }
-  } else {
-    Serial.println("\n[TEST RESULT] HTTP KSNDMC TRG: FAIL (HTTPINIT Error)");
   }
 
   sendCommand("AT+HTTPTERM", "OK", 2000);
