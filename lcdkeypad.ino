@@ -1063,7 +1063,6 @@ void lcdkeypad(void *pvParameters) {
               strcpy(ui_data[FLD_SEND_STATUS].bottomRow, "SENDING STATUS..");
               show_now = 1;
             } else {
-              portENTER_CRITICAL(&syncMux);
               send_status = 1;
               pending_manual_status = true;
               portEXIT_CRITICAL(&syncMux);
@@ -1077,21 +1076,20 @@ void lcdkeypad(void *pvParameters) {
               portEXIT_CRITICAL(&syncMux);
               strcpy(ui_data[FLD_SEND_GPS].bottomRow, "SENDING...     ");
             } else {
+              pending_manual_gps = true;
               portEXIT_CRITICAL(&syncMux);
-            portENTER_CRITICAL(&syncMux);
-            pending_manual_gps = true;
-            portEXIT_CRITICAL(&syncMux);
               strcpy(ui_data[FLD_SEND_GPS].bottomRow, "PLEASE WAIT..  ");
             }
           } else if (cur_fld_no == FLD_SEND_HEALTH) {
 #if ENABLE_HEALTH_REPORT == 1
             portENTER_CRITICAL(&syncMux);
-            pending_manual_health = true;
             if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
+              pending_manual_health = true;
               sync_mode = eHealthStart; // Uses the GPS + HEALTH sequence explicitly
               portEXIT_CRITICAL(&syncMux);
               strcpy(ui_data[FLD_SEND_HEALTH].bottomRow, "SENDING...     ");
             } else {
+              pending_manual_health = true;
               portEXIT_CRITICAL(&syncMux);
               strcpy(ui_data[FLD_SEND_HEALTH].bottomRow, "PLEASE WAIT..  ");
             }

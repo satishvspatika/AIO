@@ -456,25 +456,7 @@ void prepare_data_and_send() {
     }
   }
 
-  if (is_domain) {
-    debugln("[DNS] Auditing resolution stack...");
-    SerialSIT.println("AT+CDNSCFG?");
-    waitForResponse("OK", 2000);
-    if (strstr(modem_response_buf, "0.0.0.0") != NULL ||
-        strstr(modem_response_buf, "127.0.0.1") != NULL) {
-      debugln("[DNS] Invalid DNS detected. Forcing Refresh to 8.8.8.8...");
-      SerialSIT.println("AT+CDNSCFG=\"8.8.8.8\",\"8.8.4.4\"");
-      waitForResponse("OK", 1000);
-
-      // Only settle when DNS was actually changed
-      debugln(
-          "[GPRS] Allowing network stack 2s to stabilize after DNS refresh...");
-      vTaskDelay(2000 / portTICK_PERIOD_MS);
-    }
-  }
-
-  // v6.31: Fast v3.0 Handshake for all carriers/modes (Current & Backlog)
-  // Fast v3.0 Handshake is optimized for A7672S LTE modem and avoids AT+HTTPDATA timeouts.
+  // Direct Layer-4 TCP Socket Engine connects directly to destination IP / domain
   success_count = send_at_cmd_data(http_data, false);
   if (success_count == 0) {
     debugln("[HTTP] 1st Attempt (Fast) failed. Retrying in 2s (Fast Attempt 2)...");
@@ -553,7 +535,8 @@ void prepare_data_and_send() {
     bool tcp_zombie = (strcmp(diag_http_fail_reason, "706") == 0 ||
                        strcmp(diag_http_fail_reason, "713") == 0 ||
                        strcmp(diag_http_fail_reason, "714") == 0 ||
-                       strcmp(diag_http_fail_reason, "TIMEOUT") == 0);
+                       strcmp(diag_http_fail_reason, "TIMEOUT") == 0 ||
+                       strcmp(diag_http_fail_reason, "HTTPDATA_ERR") == 0);
 
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 3000);
@@ -572,15 +555,16 @@ void prepare_data_and_send() {
       dns_fallback_active =
           false; // v5.72: Clear fallback cache to force fresh DNS next slot
 
-      // Mandatory Nuke Protocol
-      SerialSIT.println("AT+CIPSHUT");
-      waitForResponse("SHUT OK", 3000);
+      // Mandatory Nuke Protocol for SIMCom A7672S: AT+CFUN=0/1 forces RF stack reset and clears zombie IP
+      debugln("[HTTP] Executing Radio Refresh (AT+CFUN=0/1) to force fresh IP...");
+      SerialSIT.println("AT+CFUN=0");
+      waitForResponse("OK", 3000);
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      SerialSIT.println("AT+CFUN=1");
+      waitForResponse("OK", 3000);
 
-      SerialSIT.println("AT+CGACT=0,1");
-      waitForResponse("OK", 2000);
-
-      vTaskDelay(5000 /
-                 portTICK_PERIOD_MS); // Crucial 5-second carrier breather
+      vTaskDelay(3000 /
+                 portTICK_PERIOD_MS); // Crucial carrier breather for cell re-registration
     } else {
       vTaskDelay(500 / portTICK_PERIOD_MS);
     }
@@ -611,10 +595,8 @@ void prepare_data_and_send() {
       SerialSIT.println("AT+HTTPINIT");
       if (waitForResponse("OK", 5000)) {
         http_ready = true; // v5.42: Session live for retry attempt
+        
         // Restore all parameters
-        SerialSIT.println("AT+HTTPPARA=\"CID\",1"); // v5.58: Hard-lock
-        waitForResponse("OK", 1000);
-
         SerialSIT.println(httpPostRequest);
         waitForResponse("OK", 1000);
 
@@ -928,10 +910,10 @@ void send_http_data() {
     portEXIT_CRITICAL(&rtcTimeMux);
 
     int total_elapsed = (m_into * 60) + s_into;
-    if (total_elapsed < 122) {
-      int wait_sec = 122 - total_elapsed;
+    if (total_elapsed < 62) {
+      int wait_sec = 62 - total_elapsed;
       debugf("[SPATIKA-GUARD] Current time %02d:%02d is %ds past slot boundary "
-             "(< 122s). Holding %ds to reach T+2m02s...\n",
+             "(< 62s). Holding %ds to reach T+1m02s...\n",
              current_min, current_sec, total_elapsed, wait_sec);
       for (int w = 0; w < wait_sec; w++) {
         vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -961,21 +943,21 @@ void send_http_data() {
   char fallbackUrl[150] = {0};
   if (strcmp(httpSet[http_no].Port, "80") == 0) {
     snprintf(fallbackUrl, sizeof(fallbackUrl),
-             "AT+HTTPPARA=\"URL\",\"http://%s%s\"", httpSet[http_no].IP,
+             "http://%s%s", httpSet[http_no].IP,
              httpSet[http_no].Link);
     snprintf(httpPostRequest, sizeof(httpPostRequest),
-             "AT+HTTPPARA=\"URL\",\"http://%s%s\"", domain,
+             "http://%s%s", domain,
              httpSet[http_no].Link);
   } else {
     snprintf(fallbackUrl, sizeof(fallbackUrl),
-             "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", httpSet[http_no].IP,
+             "http://%s:%s%s", httpSet[http_no].IP,
              httpSet[http_no].Port, httpSet[http_no].Link);
     snprintf(httpPostRequest, sizeof(httpPostRequest),
-             "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", domain,
+             "http://%s:%s%s", domain,
              httpSet[http_no].Port, httpSet[http_no].Link);
   }
 
-  debugf("[GPRS] Prepared URL: %s\n", httpPostRequest);
+  debugf("[GPRS] Target Endpoint: %s\n", httpPostRequest);
 
   // Ensure PDP context is active AND verify assigned IP is valid (catches Airtel zombie bearer)
   int check_cid = (active_cid > 0) ? active_cid : 1;
@@ -1009,32 +991,11 @@ void send_http_data() {
   }
 
   if (!bearer_valid) {
-    // Force deactivation then reactivation of PDP context
-    char deact_cmd[32];
-    snprintf(deact_cmd, sizeof(deact_cmd), "AT+CGACT=0,%d", check_cid);
-    SerialSIT.println(deact_cmd);
-    waitForResponse("OK", 3000);
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-
-    char act_cmd[32];
-    snprintf(act_cmd, sizeof(act_cmd), "AT+CGACT=1,%d", check_cid);
-    SerialSIT.println(act_cmd);
-    if (!waitForResponse("OK", 10000)) {
-      debugf("[GPRS] ERROR: CGACT activation failed for CID %d. Triggering "
-             "full bearer recovery...\n",
-             check_cid);
-      if (!verify_bearer_or_recover()) {
-        debugln("[GPRS] FATAL: Full bearer recovery failed. Aborting HTTP "
-                "send.");
-        xSemaphoreGive(modemMutex);
-        return;
-      }
-    } else {
-      char paddr_cmd[32];
-      snprintf(paddr_cmd, sizeof(paddr_cmd), "AT+CGPADDR=%d", check_cid);
-      SerialSIT.println(paddr_cmd);
-      waitForResponse("OK", 3000);
-      debugf("[GPRS] Post-reactivation IP check: %s\n", modem_response_buf);
+    debugf("[GPRS] PDP context inactive or IP invalid for CID %d. Triggering bearer recovery...\n", check_cid);
+    if (!verify_bearer_or_recover()) {
+      debugln("[GPRS] FATAL: Full bearer recovery failed. Aborting HTTP send.");
+      xSemaphoreGive(modemMutex);
+      return;
     }
   }
 
@@ -1050,39 +1011,10 @@ void send_http_data() {
            domain);
     strncpy(httpPostRequest, fallbackUrl, sizeof(httpPostRequest) - 1);
     httpPostRequest[sizeof(httpPostRequest) - 1] = '\0';
-  } else if (!is_ip_format) {
-    if (!is_ip_format && (diag_consecutive_http_fails >= 2)) {
-      debugln("[DNS] Multiple fails. Attempting manual resolution...");
-      SerialSIT.print("AT+CDNSGIP=\"");
-      SerialSIT.print(domain);
-      SerialSIT.println("\"");
-      waitForResponse("+CDNSGIP: 1", 5000);
-    }
   }
-
-  // If consecutive HTTP failures occurred, perform deeper context reset
-  if (diag_consecutive_http_fails > 1) {
-    int mins_into;
-    int secs_into;
-    portENTER_CRITICAL(&rtcTimeMux);
-    mins_into = current_min % 15;
-    secs_into = current_sec;
-    portEXIT_CRITICAL(&rtcTimeMux);
-
-    if (mins_into == 14 && secs_into >= 50) {
-      debugln("[GPRS] Slot boundary imminent (T-10s). Deferring Bearer Nuke.");
-      vTaskDelay(12000 / portTICK_PERIOD_MS);
-      esp_task_wdt_reset();
-    }
-
-    debugln(
-        "[PROACTIVE] Consecutive failures detected. Resetting PDP context...");
-    SerialSIT.printf("AT+CGACT=0,%d\n", check_cid);
-    waitForResponse("OK", 3000);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    SerialSIT.printf("AT+CGACT=1,%d\n", check_cid);
-    waitForResponse("OK", 12000);
-  }
+  // v6.33: Removed legacy AT+CDNSGIP manual resolution attempt on consecutive fails.
+  // AT+CDNSGIP generates asynchronous/error responses on A7672S that pollute UART buffers
+  // and trigger DOWNLOAD prompt timeouts on subsequent AT+HTTPDATA commands.
   // snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), ...); // Prepared in
   // prepare_data_and_send()
 
@@ -1090,69 +1022,19 @@ void send_http_data() {
   SerialSIT.println("AT+CGEREP=0");
   waitForResponse("OK", 1000);
 
-  // Proactive session cleanup (matches STANDALONE_MODEM_TEST.ino lines 154-157)
-  SerialSIT.println("AT+HTTPTERM");
+  // Pre-HTTP Diagnostic Audit
+  SerialSIT.println("AT+CSQ");
   waitForResponse("OK", 2000);
-  vTaskDelay(300 / portTICK_PERIOD_MS);
-  flushSerialSIT();
-
-  http_ready = false;
-  SerialSIT.println("AT+HTTPINIT");
-  if (!waitForResponse("OK", 5000)) {
-    debugln("[GPRS] FATAL: HTTPINIT failed. Aborting HTTP attempt.");
-    xSemaphoreGive(modemMutex);
-    return;
+  if (!ota_silent_mode) {
+    Serial.printf("[GPRS-AUDIT] Signal (CSQ): %s\n", modem_response_buf);
+  }
+  SerialSIT.println("AT+CGPADDR=1");
+  waitForResponse("OK", 2000);
+  if (!ota_silent_mode) {
+    Serial.printf("[GPRS-AUDIT] Assigned IP (CID 1): %s\n", modem_response_buf);
   }
 
-  vTaskDelay(200 / portTICK_PERIOD_MS);
   http_ready = true;
-
-  // Restore parameters (URL, ACCEPT, CONTENT) with explicit per-parameter failure logging
-  bool para_ok = true;
-  char cid_cmd[32];
-  snprintf(cid_cmd, sizeof(cid_cmd), "AT+HTTPPARA=\"CID\",%d", check_cid);
-  SerialSIT.println(cid_cmd);
-  if (!waitForResponse("OK", 2000)) {
-    debugf("[GPRS] ℹ️ HTTPPARA CID returned ERROR (Ignored on A7672S): %s\n", cid_cmd);
-    // CID parameter setup is unsupported/ignored on SIMCom A7672S modem; do not fail para_ok
-  }
-
-  SerialSIT.println(httpPostRequest);
-  if (!waitForResponse("OK", 2000)) {
-    debugf("[GPRS] ❌ HTTPPARA URL failed (CMD: %s)\n", httpPostRequest);
-    para_ok = false;
-  }
-
-  SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
-  if (!waitForResponse("OK", 2000)) {
-    debugln("[GPRS] ❌ HTTPPARA ACCEPT failed");
-    para_ok = false;
-  }
-
-  if (!strcmp(httpSet[http_no].Format, "json")) {
-    SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-    if (!waitForResponse("OK", 2000)) {
-      debugln("[GPRS] ❌ HTTPPARA CONTENT (json) failed");
-      para_ok = false;
-    }
-    debugln("It is json");
-  } else {
-    SerialSIT.println(
-        "AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"");
-    if (!waitForResponse("OK", 2000)) {
-      debugln("[GPRS] ❌ HTTPPARA CONTENT (urlencoded) failed");
-      para_ok = false;
-    }
-  }
-
-  if (!para_ok) {
-    debugln("[GPRS] ❌ HTTPPARA setup failed. Terminating session...");
-    SerialSIT.println("AT+HTTPTERM");
-    waitForResponse("OK", 2000);
-    http_ready = false;
-    xSemaphoreGive(modemMutex);
-    return;
-  }
 
   /*
    * SENDING CURRENT DATA
@@ -1217,6 +1099,8 @@ void send_http_data() {
             size_t br;
             while ((br = fSource.read(fb, sizeof(fb))) > 0) {
               fDest.write(fb, br);
+              esp_task_wdt_reset();
+              vTaskDelay(1 / portTICK_PERIOD_MS);
             }
             fDest.close();
           }
@@ -1328,8 +1212,6 @@ void send_http_data() {
             "[Backlog] Airtel/Jio: proactive bearer refresh before backlog.");
         SerialSIT.println("AT+HTTPTERM");
         waitForResponse("OK", 2000);
-        SerialSIT.println("AT+CIPSHUT");
-        waitForResponse("SHUT OK", 3000);
         SerialSIT.println("AT+CGACT=0,1");
         waitForResponse("OK", 2000);
         vTaskDelay((isLTE ? 800 : 5000) /
@@ -1343,8 +1225,6 @@ void send_http_data() {
           http_ready = true;
         }
         // Set all HTTPPARA fields — required before AT+HTTPACTION can fire
-        SerialSIT.println("AT+HTTPPARA=\"CID\",1");
-        waitForResponse("OK", 1000);
         SerialSIT.println(
             httpPostRequest); // URL already built by
                               // send_http_data()/send_unsent_data()
@@ -1590,8 +1470,7 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
   const char
       // *charArray;
       *ptr;
-  debugln("Entering FTP mode and checking if data period is correct for "
-          "sending and if there is any file to be sent");
+  debugln("[Backlog] Checking queue for unsent HTTP records...");
   int ftp_year = rf_cls_yy % 100;
   char fileName[50];
 
@@ -1658,6 +1537,8 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
           size_t br;
           while ((br = fSource.read(fb, sizeof(fb))) > 0) {
             fDest.write(fb, br);
+            esp_task_wdt_reset();
+            vTaskDelay(1 / portTICK_PERIOD_MS);
           }
           fDest.close();
         }
@@ -1915,7 +1796,6 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
 #else
             debugln("[FTP] Firewall block detected (Error 9). Initiating APN "
                     "Swap to 'airtelgprs.com'...");
-            send_at_cmd("AT+CIPSHUT", "SHUT OK", "\r\n");
             send_at_cmd("AT+CGACT=0,1", "OK", "\r\n");
 
             if (try_activate_apn("airtelgprs.com")) {
@@ -1923,11 +1803,12 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
               send_ftp_file(fileName, false, false);
 
               debugln("[FTP] Backlog retry complete. Restoring default APN...");
-              send_at_cmd("AT+CIPSHUT", "SHUT OK", "\r\n");
               send_at_cmd("AT+CGACT=0,1", "OK", "\r\n");
+              try_activate_apn(apn_str);
               verify_bearer_or_recover();
             } else {
               debugln("[FTP] APN Swap Failed. Reverting...");
+              try_activate_apn(apn_str);
               verify_bearer_or_recover();
             }
 #endif
@@ -2048,7 +1929,6 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
 #if ENABLE_HTTP_BACKLOG_FALLBACK == 0
             debugln("[FTP] Firewall block detected (Error 9). Initiating APN "
                     "Swap for Daily FTP...");
-            send_at_cmd("AT+CIPSHUT", "SHUT OK", "\r\n");
             send_at_cmd("AT+CGACT=0,1", "OK", "\r\n");
 
             if (try_activate_apn("airtelgprs.com")) {
@@ -2057,11 +1937,12 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
 
               debugln(
                   "[FTP] Daily FTP retry complete. Restoring default APN...");
-              send_at_cmd("AT+CIPSHUT", "SHUT OK", "\r\n");
               send_at_cmd("AT+CGACT=0,1", "OK", "\r\n");
+              try_activate_apn(apn_str);
               verify_bearer_or_recover();
             } else {
               debugln("[FTP] APN Swap Failed. Reverting...");
+              try_activate_apn(apn_str);
               verify_bearer_or_recover();
             }
 #endif
@@ -2080,100 +1961,164 @@ void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
 
 int send_at_cmd_data(char *payload, bool robust) {
   uint32_t start_time = millis();
-  if (!http_ready) {
-    debugln("[HTTP] HTTP session not ready. Fast-fail to backlog.");
-    return 0;
+  strcpy(diag_http_fail_reason, "NONE"); // Clear stale context
+  int plen = strlen(payload);
+
+  if (!ota_silent_mode) {
+    Serial.printf("Payload is %s\n", payload);
   }
-  strcpy(diag_http_fail_reason, "NONE"); // v5.81 Surgical: Clear stale context
-  int i = strlen(payload);
+
+  // --- METHOD 1: DIRECT TCP SOCKET HTTP POST (100% System A & B / Airtel & BSNL Compatible) ---
+  SerialSIT.println("AT+NETOPEN?");
+  waitForResponse("OK", 2000);
+  if (strstr(modem_response_buf, "+NETOPEN: 1") == NULL) {
+    SerialSIT.println("AT+NETOPEN");
+    waitForResponse("OK", 5000);
+  }
+
+  const char *srvDomain = httpSet[http_no].serverName;
+  const char *srvIp = httpSet[http_no].IP;
+  const char *linkPath = httpSet[http_no].Link;
+  const char *portStr = httpSet[http_no].Port;
+  uint16_t portNum = (uint16_t)atoi(portStr);
+  if (portNum == 0) portNum = 80;
+
+  const char *contentType = !strcmp(httpSet[http_no].Format, "json") ? "application/json" : "application/x-www-form-urlencoded";
+
+  // IP Direct First for ultra-fast connection, Domain Fallback second
+  const char *hosts[2] = {
+    (srvIp[0] != '\0' && strcmp(srvIp, "0.0.0.0") != 0) ? srvIp : srvDomain,
+    srvDomain
+  };
+
+  for (int h = 0; h < 2; h++) {
+    const char *connHost = hosts[h];
+    if (connHost == NULL || connHost[0] == '\0') continue;
+    if (h == 1 && strcmp(hosts[0], hosts[1]) == 0) continue; // Skip redundant trial
+
+    char rawHttp[512];
+    snprintf(rawHttp, sizeof(rawHttp),
+      "POST %s HTTP/1.1\r\n"
+      "Host: %s\r\n"
+      "Content-Type: %s\r\n"
+      "Content-Length: %d\r\n"
+      "Connection: close\r\n\r\n"
+      "%s", linkPath, srvDomain, contentType, plen, payload);
+
+    int rawLen = strlen(rawHttp);
+
+    SerialSIT.println("AT+CIPCLOSE=0");
+    waitForResponse("OK", 1000);
+
+    char openCmd[128];
+    snprintf(openCmd, sizeof(openCmd), "AT+CIPOPEN=0,\"TCP\",\"%s\",%d", connHost, portNum);
+    SerialSIT.println(openCmd);
+
+    if (waitForResponse("+CIPOPEN: 0,0", 15000)) {
+      char sendCmd[32];
+      snprintf(sendCmd, sizeof(sendCmd), "AT+CIPSEND=0,%d", rawLen);
+      SerialSIT.println(sendCmd);
+
+      if (waitForResponse(">", 5000)) {
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+        SerialSIT.write((const uint8_t *)rawHttp, rawLen);
+
+        if (waitForResponse("+IPD", 15000) || strstr(modem_response_buf, "200 OK") != NULL || strstr(modem_response_buf, "Success") != NULL) {
+          uint32_t respStart = millis();
+          while (strstr(modem_response_buf, "200") == NULL && strstr(modem_response_buf, "Success") == NULL && (millis() - respStart < 3000)) {
+            while (SerialSIT.available()) {
+              int len = strlen(modem_response_buf);
+              if (len < 2047) {
+                modem_response_buf[len] = SerialSIT.read();
+                modem_response_buf[len + 1] = '\0';
+              } else {
+                SerialSIT.read();
+              }
+            }
+            vTaskDelay(20 / portTICK_PERIOD_MS);
+          }
+          if (strstr(modem_response_buf, "200") != NULL || strstr(modem_response_buf, "Success") != NULL) {
+            debugln("[HTTP] Direct TCP Socket POST Successful! Received 200 OK.");
+            diag_http_success_count++;
+            SerialSIT.println("AT+CIPCLOSE=0");
+            waitForResponse("OK", 2000);
+            return 1;
+          }
+        }
+      }
+      SerialSIT.println("AT+CIPCLOSE=0");
+      waitForResponse("OK", 2000);
+    }
+  }
+
+  // --- METHOD 2: FALLBACK TO HIGH-LEVEL AT+HTTPINIT STACK ---
+  debugln("[HTTP] TCP Socket POST unconfirmed. Trying High-Level AT+HTTPINIT fallback...");
   char cmd_buf[80];
 
-  debugf1("Payload is %s", payload);
-  debugln();
-
   if (robust) {
-    // Robust mode for weak-signal or strict towers (BSNL, etc.)
-    // v5.86: Purge UART before data request to ensure DOWNLOAD prompt is caught
-    // correctly
     flushSerialSIT();
     vTaskDelay(500 / portTICK_PERIOD_MS);
 
-    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,15000", i);
+    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,5000", plen);
     debugln("[HTTP] Using Robust Handshake (Wait for DOWNLOAD)...");
     SerialSIT.println(cmd_buf);
-    if (!waitForResponse("DOWNLOAD", 15000)) {
+    if (!waitForResponse("DOWNLOAD", 10000)) {
+      strncpy(diag_http_fail_reason, "HTTPDATA_ERR", sizeof(diag_http_fail_reason) - 1);
       debugln("[HTTP] AT+HTTPDATA failed (Missing DOWNLOAD).");
       flushSerialSIT();
       return 0;
     }
     vTaskDelay(200 / portTICK_PERIOD_MS);
 
-    // v5.88: Restored 128-byte/10ms chunking (Validated for A7672S)
-    int payloadLen = i;
     int sentBytes = 0;
-    while (sentBytes < payloadLen) {
-      int toWrite = min(128, payloadLen - sentBytes);
+    while (sentBytes < plen) {
+      int toWrite = min(128, plen - sentBytes);
       SerialSIT.write(payload + sentBytes, toWrite);
       sentBytes += toWrite;
       esp_task_wdt_reset();
       vTaskDelay(10 / portTICK_PERIOD_MS);
     }
-    // [H-02] v5.88: Removed SerialSIT.println() - corrupts A7672S payload
-    // boundaries
 
     if (!waitForResponse("OK", 15000)) {
-      debugln("[HTTP] AT+HTTPDATA confirmation timeout. Nuking PDP...");
+      strncpy(diag_http_fail_reason, "HTTPDATA_ERR", sizeof(diag_http_fail_reason) - 1);
+      debugln("[HTTP] AT+HTTPDATA confirmation timeout.");
       SerialSIT.println("AT+HTTPTERM");
       waitForResponse("OK", 2000);
-      SerialSIT.println("AT+CGACT=0,1");
-      waitForResponse("OK", 5000);
       return 0;
     }
   } else {
-    // v5.63 Native v3.0 Fast push!
-    // We send command, wait for prompt byte, then push payload.
-    // This mimics v3.0's behavior while keeping the UART clean.
-    // v5.67 (Claude's logic fix): Opened up latency window. If DOWNLOAD drops
-    // late, we need enough of the 3000ms window remaining to clock the payload
-    // JSON.
-    // v5.92: Breather and flush to ensure DOWNLOAD prompt is caught reliably in
-    // Fast Mode
-    flushSerialSIT();
-    vTaskDelay(200 / portTICK_PERIOD_MS);
-
-    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,5000",
-             i); // v5.92: Increased internal modem timeout to 5s
+    snprintf(cmd_buf, sizeof(cmd_buf), "AT+HTTPDATA=%d,5000", plen);
     debugln("[HTTP] Using Fast v3.0 Handshake...");
     SerialSIT.println(cmd_buf);
 
-    // v5.92: Increased host wait-time to 5s for high-latency BSNL 2G cells
     if (waitForResponse("DOWNLOAD", 5000)) {
-      vTaskDelay(
-          100 /
-          portTICK_PERIOD_MS); // Breather delay for A7672S state transition
-      SerialSIT.write((const uint8_t *)payload, i);
-      waitForResponse("OK", 3000);
+      vTaskDelay(10 / portTICK_PERIOD_MS);
+      SerialSIT.write((const uint8_t *)payload, plen);
+      if (!waitForResponse("OK", 5000)) {
+        strncpy(diag_http_fail_reason, "HTTPDATA_ERR", sizeof(diag_http_fail_reason) - 1);
+        debugln("[HTTP] Fast HTTPDATA payload confirmation timeout.");
+        return 0;
+      }
     } else {
-      debugln("[HTTP] Fast DOWNLOAD prompt timeout.");
-      return 0; // Force fallback to robust or retry
+      strncpy(diag_http_fail_reason, "HTTPDATA_ERR", sizeof(diag_http_fail_reason) - 1);
+      return 0;
     }
   }
 
   // Fire Action
   SerialSIT.println("AT+HTTPACTION=1");
   if (!waitForResponse("+HTTPACTION:", 25000)) {
-    strncpy(diag_http_fail_reason, "TIMEOUT",
-            sizeof(diag_http_fail_reason) - 1);
-    debugln("[HTTP] HTTPACTION timed out — no URC received from modem.");
+    strncpy(diag_http_fail_reason, "TIMEOUT", sizeof(diag_http_fail_reason) - 1);
     return 0;
   }
 
   const char *response = strstr(modem_response_buf, "+HTTPACTION:");
   if (response == NULL) {
-    debugln("[HTTP] HTTPACTION missing from modem buffer. Aborting.");
     return 0;
   }
-  debugf("[HTTP] Response of AT+HTTPACTION=1 is: %s\n", response);
+  if (!ota_silent_mode) {
+    Serial.printf("[HTTP] Response of AT+HTTPACTION=1 is: %s\n", response);
+  }
 
   if (strstr(response, "200") == NULL && strstr(response, "201") == NULL &&
       strstr(response, "202") == NULL) {
@@ -2210,10 +2155,8 @@ int send_at_cmd_data(char *payload, bool robust) {
       // On legacy boards, a 706 TCP Zombie often requires an immediate stack
       // reset rather than waiting for 3 fails.
       debugln("[CRIT] TCP Zombie detected. Nuking bearer for fresh IP...");
-      SerialSIT.println("AT+CIPSHUT");
-      waitForResponse("SHUT OK", 3000);
       SerialSIT.println("AT+CGACT=0,1");
-      waitForResponse("OK", 1000);
+      waitForResponse("OK", 2000);
       http_ready = false; // Housekeeping: State follows destroyed stack
       vTaskDelay(2000 / portTICK_PERIOD_MS);
 
@@ -2244,11 +2187,11 @@ int send_at_cmd_data(char *payload, bool robust) {
   }
 
   SerialSIT.println("AT+HTTPREAD=0,512");
-  if (!waitForResponse("+HTTPREAD: 0", 10000)) {
+  if (!waitForResponse("+HTTPREAD:", 10000)) {
     debugln("[GPRS] Param-READ failed. Retrying with breather...");
     vTaskDelay(200 / portTICK_PERIOD_MS);
     SerialSIT.println("AT+HTTPREAD");
-    if (!waitForResponse("+HTTPREAD: 0", 10000)) {
+    if (!waitForResponse("+HTTPREAD:", 10000)) {
       debugln("[GPRS] Final RAW READ failed.");
     }
   }

@@ -364,7 +364,7 @@ char hw_tag = ' '; // v5.75: Passive hardware/VFS health tag
 RTC_DATA_ATTR bool pending_manual_status = false;
 RTC_DATA_ATTR bool pending_manual_gps = false;
 RTC_DATA_ATTR bool pending_manual_health = false;
-RTC_DATA_ATTR int last_successful_cnmp = 2; // v5.84: 2=Auto, 13=GSM, 38=LTE
+RTC_DATA_ATTR int last_successful_cnmp = 38; // v6.40: 38=LTE Preferred, 13=GSM
 RTC_DATA_ATTR bool last_http_ok = false;    // v5.84: Skip IP check if last slot worked
 RTC_DATA_ATTR int gprs_2g_slots_count = 0; // v5.84: Self-recovering 'Peeking' for LTE
 RTC_DATA_ATTR int low_bat_skip_count = 0;   // v5.85: P6 - counts skipped slots
@@ -1239,9 +1239,9 @@ void setup() {
       debug("Firmware ver stored in SPIFFS is ");
       debugln(UNIT_VER);
       
-      // v5.67: Differentiate between a simple OTA patch and a cross-architecture flash
-      const char *p1 = strrchr(UNIT_VER, '-');
-      const char *p2 = strrchr(last_fw_ver, '-');
+      // v5.67: Differentiate between a simple OTA patch (TRG -> TRG) and a cross-architecture flash (TWS -> TRG)
+      const char *p1 = strchr(UNIT_VER, '-');
+      const char *p2 = strchr(last_fw_ver, '-');
       bool isCrossFlash = true;
       if (p1 && p2) {
           int len1 = p1 - UNIT_VER;

@@ -6,6 +6,13 @@ extern HardwareSerial SerialSIT;
 extern bool waitForResponse(const char *expected, unsigned long timeout);
 
 void save_apn_config(const char* apn, const char* ccid) {
+  if (ccid != NULL && apn != NULL) {
+    if ((strstr(ccid, "899145") != NULL || strstr(ccid, "899116") != NULL || strstr(ccid, "899110") != NULL) &&
+        strcmp(apn, "airtelgprs.com") == 0) {
+      debugln("[FS] Guard: Refusing to persist temporary fallback 'airtelgprs.com' for Airtel M2M SIM.");
+      return;
+    }
+  }
   if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
     File f = SPIFFS.open("/apn_config.txt", FILE_WRITE);
     if (f) {
@@ -85,6 +92,13 @@ bool load_apn_config(const char* current_ccid, char *target_apn, size_t max_len)
       apn_carrier_mismatch = true;
     } else if (strstr(carrier, "Airtel") != NULL && strstr(apn_buf, "bsnl") != NULL) {
       apn_carrier_mismatch = true;
+    }
+
+    // M2M IoT Guard: Reject commercial airtelgprs.com cache for Airtel M2M SIMs
+    if ((strstr(current_ccid, "899145") != NULL || strstr(current_ccid, "899116") != NULL || strstr(current_ccid, "899110") != NULL) &&
+        strcmp(apn_buf, "airtelgprs.com") == 0) {
+      apn_carrier_mismatch = true;
+      debugln("[APN] Smart APN Guard: Purging invalid commercial 'airtelgprs.com' cache for Airtel M2M SIM.");
     }
 
     if (apn_carrier_mismatch) {
@@ -195,22 +209,17 @@ bool try_activate_apn(const char *apn) {
   char target_apn_quoted[64];
   snprintf(target_apn_quoted, sizeof(target_apn_quoted), "\"%s\"", apn);
 
-  if (strstr(current_apn_resp, "+CGDCONT: 1,") != NULL &&
-     (strstr(current_apn_resp, target_apn_quoted) != NULL || strstr(current_apn_resp, apn) != NULL)) {
-    debugln("[APN] Flash match found. Skipping redundant write.");
+  // Always set active PDP context profile for CID 1 (Required by A7672S HTTP stack)
+  if (strcmp(apn, "jionet") == 0) {
+    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
+             "AT+CGDCONT=1,\"IPV4V6\",\"%s\"", apn);
   } else {
-    debugln("[APN] Flash mismatch or missing. Updating modem profile...");
-    if (strcmp(apn, "jionet") == 0) {
-      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-               "AT+CGDCONT=1,\"IPV4V6\",\"%s\"", apn);
-    } else {
-      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CGDCONT=1,\"IP\",\"%s\"",
-               apn);
-    }
-    SerialSIT.println(gprs_xmit_buf);
-    waitForResponse("OK", 3000);
-    vTaskDelay(200 / portTICK_PERIOD_MS);
+    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CGDCONT=1,\"IP\",\"%s\"",
+             apn);
   }
+  SerialSIT.println(gprs_xmit_buf);
+  waitForResponse("OK", 3000);
+  vTaskDelay(800 / portTICK_PERIOD_MS); // 800ms breather for modem to apply CGDCONT profile before activation
 
   flushSerialSIT(); // v5.79: Clear any "PB DONE" boot noise before command
   
@@ -792,11 +801,16 @@ void start_gprs() {
     for (int i = 0; i < 10; i++) {
       esp_task_wdt_reset(); // v5.83: Prevent WDT trigger during long recovery windows
       SerialSIT.println("AT+CPIN?");
-      if (waitForResponse("+CPIN: READY", 1000)) {
+      bool cpin_ok = waitForResponse("+CPIN: READY", 1000);
+      if (!ota_silent_mode) {
+        Serial.printf("[SIM-DIAG] Iter #%d: CPIN Resp: '%s'\n", i + 1, modem_response_buf);
+      }
+      if (cpin_ok) {
         sim_ready = true;
         set_sys_status("SIM READY");
-        // Note: Actual loop duration is approx (i+1)*3000ms including delays
-        debugf1("[GPRS] SIM ready in %d ms!\n", (i+1)*3000); 
+        if (!ota_silent_mode) {
+          Serial.printf("[SIM-DIAG] SIM Ready confirmed on attempt %d!\n", i + 1);
+        }
         break;
       }
       
@@ -805,13 +819,18 @@ void start_gprs() {
         
         // v5.82 Surgical Recovery: If "SIM failure" (13) is detected, try software re-trigger
         if (strstr(modem_response_buf, "SIM failure") != NULL) {
-           debugln("[GPRS] Detected Protocol Lock. Attempting Software Interface Reset (CFUN 0/1)...");
-           SerialSIT.println("AT+CFUN=0");
-           waitForResponse("OK", 2000);
-           vTaskDelay(2000 / portTICK_PERIOD_MS);
-           SerialSIT.println("AT+CFUN=1");
-           waitForResponse("OK", 2000);
-           vTaskDelay(2000 / portTICK_PERIOD_MS);
+           if (i >= 2) { // Only execute CFUN 0/1 if SIM failure persists across 3 polls (~8s)
+             debugln("[GPRS] Detected Persistent Protocol Lock. Attempting Software Interface Reset (CFUN 0/1)...");
+             SerialSIT.println("AT+CFUN=0");
+             waitForResponse("OK", 2000);
+             vTaskDelay(2000 / portTICK_PERIOD_MS);
+             SerialSIT.println("AT+CFUN=1");
+             waitForResponse("OK", 2000);
+             vTaskDelay(2000 / portTICK_PERIOD_MS);
+           } else {
+             debugln("[GPRS] Initial SIM failure transient. Waiting 1.5s for SIM rail to settle...");
+             vTaskDelay(1500 / portTICK_PERIOD_MS);
+           }
            // The loop will continue and try AT+CPIN? again naturally
         } else if (strstr(modem_response_buf, "SIM busy") != NULL) {
            debugln("[GPRS] SIM is initializing (SIM busy). Retrying CPIN poll...");
@@ -1026,8 +1045,7 @@ bool waitForResponse(const char *expected, unsigned long timeout) {
     if (strstr(modem_response_buf, "\nERROR") != NULL || strstr(modem_response_buf, "\n+CMS ERROR") != NULL || strstr(modem_response_buf, "\n+CME ERROR") != NULL ||
         strstr(modem_response_buf, "\rERROR") != NULL || strstr(modem_response_buf, "\r+CME ERROR") != NULL) {
       if (strstr(expected, "ERROR") == NULL) {
-        debugln("[MODEM] Early exit: Modem returned ERROR.");
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        vTaskDelay(50 / portTICK_PERIOD_MS);
         flushSerialSIT();
         return false;
       }

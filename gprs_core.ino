@@ -422,6 +422,11 @@ void gprs(void *pvParameters) {
             send_http_data();
             primary_data_delivered =
                 (success_count == 1); // v5.51 Track session success
+            if (primary_data_delivered) {
+              debugln("[HTTP] Primary Server Upload: SUCCESS (200 OK)");
+            } else {
+              debugln("[HTTP] Primary Server Upload: FAILED (Data stored to Backlog)");
+            }
           } else {
             debugln("[SCHED] Skipping Duplicate/Fresh Upload. Checking Backlog/Health...");
             primary_data_delivered = true; // Assume 'Success' to allow backlog

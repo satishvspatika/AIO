@@ -7,14 +7,14 @@
  * ========================================================================= */
 
 // --- 1. CORE SYSTEM IDENTITY ---
-#define SYSTEM 1
-#define UNIT_CFG "KSNDMC_TWS"
+#define SYSTEM 0
+#define UNIT_CFG "KSNDMC_TRG"
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 // SYSTEM 3 options: SPATIKA_GEN - AP
 
-#define FIRMWARE_VERSION "6.31"
+#define FIRMWARE_VERSION "6.41"
 
 #define ENABLE_HEALTH_REPORT                                                   \
   0 // Master Switch: Enable automated device health reporting

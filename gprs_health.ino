@@ -94,7 +94,9 @@ void get_network() {
     if (strstr(carrier, "Airtel")) {
       strcpy(apn_str, "airtelgprs.com"); 
       if (strlen(current_iccid) >= 6) {
-        if (strncmp(current_iccid, "899116", 6) == 0 || strncmp(current_iccid, "899110", 6) == 0) {
+        if (strncmp(current_iccid, "899116", 6) == 0 || 
+            strncmp(current_iccid, "899110", 6) == 0 || 
+            strncmp(current_iccid, "899145", 6) == 0) {
           strcpy(apn_str, "airteliot.com");
         }
       }
@@ -114,7 +116,16 @@ void get_network() {
         strcpy(apn_str, "bsnlnet");
         debugln("[CACHE] BSNL SIM detected via ICCID prefix on cache hit.");
       } else {
-        strcpy(apn_str, "airtelgprs.com"); 
+        if (strlen(current_iccid) >= 6 && 
+            (strncmp(current_iccid, "899116", 6) == 0 || 
+             strncmp(current_iccid, "899110", 6) == 0 || 
+             strncmp(current_iccid, "899145", 6) == 0)) {
+          strcpy(carrier, "Airtel");
+          strcpy(apn_str, "airteliot.com");
+          debugln("[CACHE] Airtel M2M SIM detected via ICCID prefix on cache hit.");
+        } else {
+          strcpy(apn_str, "airtelgprs.com"); 
+        }
       }
     }
     return;
@@ -132,7 +143,15 @@ full_discovery:
   dns_fallback_active = false;
   preferred_ftp_mode = -1;
   cached_server_ip[0] = '\0';
-  cached_server_domain[0] = '\0';
+  // Query Modem Hardware Revision (ATI) & Firmware Build (CGMR)
+  SerialSIT.println("AT+ATI");
+  if (waitForResponse("OK", 2000)) {
+    debugf("[MODEM-INFO] Model (ATI): %s\n", modem_response_buf);
+  }
+  SerialSIT.println("AT+CGMR");
+  if (waitForResponse("OK", 2000)) {
+    debugf("[MODEM-INFO] Firmware Revision (CGMR): %s\n", modem_response_buf);
+  }
 
   // [BSNL-FIX] Step 0: CIMI first — works before registration, SIM-resident
   SerialSIT.println("AT+CIMI");
@@ -251,8 +270,17 @@ full_discovery:
       strcpy(apn_str, "www");
     } else {
       // Final tier: ICCID prefix-based detection (on-device fallback)
-      strcpy(carrier, "SIM OK");
-      strcpy(apn_str, "airtelgprs.com");
+      if (strlen(current_iccid) >= 6 && 
+          (strncmp(current_iccid, "899116", 6) == 0 || 
+           strncmp(current_iccid, "899110", 6) == 0 || 
+           strncmp(current_iccid, "899145", 6) == 0)) {
+        strcpy(carrier, "Airtel");
+        strcpy(apn_str, "airteliot.com");
+        debugln("[APN] Airtel IoT/M2M SIM detected via ICCID prefix fallback.");
+      } else {
+        strcpy(carrier, "SIM OK");
+        strcpy(apn_str, "airtelgprs.com");
+      }
     }
   }
 
@@ -342,27 +370,17 @@ void get_registration() {
       }
     }
 
-    // v5.84: Adaptive Network Mode — Start with whatever mode succeeded last
-    // slot. Default is Auto (2). RESCAN RULE: If on 2G for >96 slots (once
-    // daily), try Auto again.
-    if (last_successful_cnmp == 13)
-      gprs_2g_slots_count++;
-    else
-      gprs_2g_slots_count = 0;
-
-    initial_cnmp = last_successful_cnmp;
-    if (gprs_2g_slots_count > 96 ||
-        (initial_cnmp != 13 && initial_cnmp != 38)) {
-      initial_cnmp = 2; // Force rescan or safe default
-      if (gprs_2g_slots_count > 96)
-        gprs_2g_slots_count = 0;
+    // v6.40: 4G-First Strategy for all SIM cards (Airtel, Jio, BSNL 4G) with 2G fallback
+    if (last_successful_cnmp == 13) {
+      initial_cnmp = 13; // Preserve GSM mode from previous session for fast 2G boot
+    } else {
+      initial_cnmp = 38; // Default to 4G LTE (CNMP=38) for Airtel / Jio / BSNL 4G
     }
 
     char cnmp_cmd[20];
     snprintf(cnmp_cmd, sizeof(cnmp_cmd), "AT+CNMP=%d", initial_cnmp);
     SerialSIT.println(cnmp_cmd);
-    debugf("[GPRS] Adaptive Mode: %s (LastSucc:%d SlotsOn2G:%d)\n", cnmp_cmd,
-           last_successful_cnmp, gprs_2g_slots_count);
+    debugf("[GPRS] Network Mode: %s (isBSNL:%d)\n", cnmp_cmd, isBSNL);
 
     waitForResponse("OK", 1000);
     vTaskDelay(500 / portTICK_PERIOD_MS); // v5.72: Radio settle delay after
@@ -394,67 +412,42 @@ void get_registration() {
     // UI Feedback: Show progress on LCD (v5.81 Surgical: Guarded 16-char buffer)
     snprintf(reg_status, 16, "TRY #%d...", retries + 1);
 
-    // v5.45.6: 4G-AWARE REGISTRATION POLL
-    // Strategy:
-    //   BSNL  [INFO] Uses CREG (2G) + CGREG (GPRS/3G). No LTE on BSNL.
-    //   Airtel/Jio [INFO] Uses CEREG (4G/LTE) first, then CREG fallback.
-    //
-    // CEREG=3 interpretation (THE FIX):
-    //   +CEREG: 2,3         = LTE: Denied, no cell info visible. Truly
-    //   denied. +CEREG: 2,3,TAC,CID = LTE: Denied at CS level BUT modem CAN
-    //   see the
-    //                         tower. Airtel 4G shuts down 2G/CS voice, so
-    //                         CREG says Denied. Tower IS there. Force CGATT
-    //                         and wait.
     int r2 = -1, r4 = -1;
 
-    if (!isBSNL) {
-      // --- 4G Path (Airtel / Jio): Check CEREG first ---
-      SerialSIT.println("AT+CEREG?");
-      if (waitForResponse("+CEREG:", 2000)) {
-        const char* resp4 = modem_response_buf;
-        const char* c4_ptr = strchr(resp4, ',');
-        if (c4_ptr != NULL) {
-          r4 = atoi(c4_ptr + 1);
+    // --- 1. Check CEREG (4G LTE) for ALL SIM Cards (Airtel, Jio, BSNL 4G) ---
+    SerialSIT.println("AT+CEREG?");
+    if (waitForResponse("+CEREG:", 2000)) {
+      const char* resp4 = modem_response_buf;
+      const char* c4_ptr = strchr(resp4, ',');
+      if (c4_ptr != NULL) {
+        r4 = atoi(c4_ptr + 1);
 
-          if (r4 == 3) {
-            const char* c4b_ptr = strchr(c4_ptr + 1, ','); // comma after stat field
-            if (c4b_ptr != NULL) {
-              debugln(
-                  "[GPRS] CEREG=3 but LTE cell visible (Airtel 4G-only tower)."
-                  " Pushing CGATT and waiting...");
-              SerialSIT.println("AT+CGATT=1");
-              waitForResponse("OK", 3000);
-              r4 = 0; // Reset to 'searching' — do NOT count as denied
-            } else {
-              debugln("[GPRS] CEREG=3, no cell info. Truly no LTE signal.");
-            }
+        if (r4 == 3) {
+          const char* c4b_ptr = strchr(c4_ptr + 1, ','); // comma after stat field
+          if (c4b_ptr != NULL) {
+            debugln(
+                "[GPRS] CEREG=3 but LTE cell visible."
+                " Pushing CGATT and waiting...");
+            SerialSIT.println("AT+CGATT=1");
+            waitForResponse("OK", 3000);
+            r4 = 0; // Reset to 'searching' — do NOT count as denied
+          } else {
+            debugln("[GPRS] CEREG=3, no cell info. Truly no LTE signal.");
           }
         }
       }
+    }
 
-      // Also check CREG as fallback for 2G/3G registration
-      SerialSIT.println("AT+CREG?");
-      if (waitForResponse("+CREG:", 2000)) {
-        const char* resp2 = modem_response_buf;
-        const char* c2_ptr = strchr(resp2, ',');
-        if (c2_ptr != NULL)
-          r2 = atoi(c2_ptr + 1);
-      }
-    } else {
-      // --- BSNL Path: 2G/3G only. Check CREG + CGREG (adaptive wait below)
-      // ---
-      SerialSIT.println("AT+CREG?");
-      if (waitForResponse("+CREG:", 2000)) {
-        const char* resp2 = modem_response_buf;
-        const char* c2_ptr = strchr(resp2, ',');
-        if (c2_ptr != NULL)
-          r2 = atoi(c2_ptr + 1);
-      }
+    // --- 2. Check CREG (2G/3G GSM) for ALL SIM Cards ---
+    SerialSIT.println("AT+CREG?");
+    if (waitForResponse("+CREG:", 2000)) {
+      const char* resp2 = modem_response_buf;
+      const char* c2_ptr = strchr(resp2, ',');
+      if (c2_ptr != NULL)
+        r2 = atoi(c2_ptr + 1);
     }
 
     // Determine overall registration status (4G preferred)
-    // r4 has already been normalized (Airtel ghost CEREG=3 [INFO] set to 0)
     if (r4 == 1 || r4 == 5) {
       registration = r4;
     } else if (r2 == 1 || r2 == 5) {
@@ -468,40 +461,23 @@ void get_registration() {
     }
 
     // --- SUCCESS CHECK ---
-    if (r2 == 1 || r2 == 5) {
-      if (!isBSNL) {
-        SerialSIT.println("AT+CEREG?");
-        if (waitForResponse("+CEREG:", 1000)) {
-          const char* resp4x = modem_response_buf;
-          const char* c4x_ptr = strchr(resp4x, ',');
-          if (c4x_ptr != NULL) {
-            int r4x = atoi(c4x_ptr + 1);
-            if (r4x == 1 || r4x == 5) {
-              is_registered = true;
-              isLTE = true;
-              last_successful_cnmp = 2; // 4G available, keep Auto
-              strcpy(reg_status, "LTE:Home:OK");
-              debugln(
-                  "[GPRS] CREG(2G) but CEREG also registered. Preferring LTE.");
-              break;
-            }
-          }
-        }
-      }
-      is_registered = true;
-      isLTE = false;
-      last_successful_cnmp = 13; // v5.84: Mark GSM success
-      strcpy(reg_status, (r2 == 1) ? "GSM:Home:OK" : "GSM:Roam:OK");
-      debugf("[GPRS] Registered via CREG! (2G:%d)\n", r2);
-      break;
-    }
+    // 1. Prioritize 4G LTE (CEREG) for all SIMs
     if (r4 == 1 || r4 == 5) {
       is_registered = true;
       isLTE = true;
-      last_successful_cnmp = 2; // v5.84: Mark Auto/LTE success (CNMP=2 is safer
-                                // for future 2G fallback)
+      last_successful_cnmp = 38; // Keep 4G LTE Preferred
       strcpy(reg_status, (r4 == 1) ? "LTE:Home:OK" : "LTE:Roam:OK");
       debugf("[GPRS] Registered via CEREG! (4G:%d)\n", r4);
+      break;
+    }
+
+    // 2. 2G Fallback (CREG): Accept 2G after retry #5 or if already in GSM mode
+    if ((r2 == 1 || r2 == 5) && (initial_cnmp == 13 || retries >= 5)) {
+      is_registered = true;
+      isLTE = false;
+      last_successful_cnmp = 13; // Save 2G mode for fast next boot
+      strcpy(reg_status, (r2 == 1) ? "GSM:Home:OK" : "GSM:Roam:OK");
+      debugf("[GPRS] Registered via CREG! (2G:%d)\n", r2);
       break;
     }
 
@@ -536,50 +512,34 @@ void get_registration() {
     // --- TIERED RECOVERY (fires every 5 retries) ---
     if (retries > 0 && retries % 5 == 0) {
       if (retries == 5) {
-        if (isBSNL) {
-          // v5.85 BSNL Strategy: Lock to GSM-only (CNMP=13) and Re-scan.
-          // BSNL 4G (Mode 38) is virtually non-existent; hunting for it wastes
-          // battery/time.
-          if (initial_cnmp != 13) {
-            debugln(
-                "[GPRS] BSNL Tier1 @ iter5: Locking to GSM-only (CNMP=13)...");
-            SerialSIT.println("AT+CNMP=13");
-          } else {
-            debugln("[GPRS] BSNL Tier1 @ iter5: Already in GSM-only. Forcing "
-                    "fresh scan (COPS=0)...");
-            SerialSIT.println("AT+COPS=0");
-          }
+        if (initial_cnmp != 13) {
+          debugln("[GPRS] Tier1 @ iter5: 4G LTE attach pending. Switching to GSM-only fallback (CNMP=13)...");
+          SerialSIT.println("AT+CNMP=13");
+          waitForResponse("OK", 1000);
         } else {
-          // v5.84 Airtel/Jio Strategy: Toggle Mode if stalled.
-          if (initial_cnmp != 13) {
-            debugln("[GPRS] Tier1 @ iter5: Auto mode stalled. Fallback to "
-                    "GSM-only (CNMP=13)...");
-            SerialSIT.println("AT+CNMP=13");
-          } else {
-            debugln("[GPRS] Tier1 @ iter5: GSM-only stalled. Peeking Auto "
-                    "(CNMP=2)...");
-            SerialSIT.println("AT+CNMP=2");
-          }
+          debugln("[GPRS] Tier1 @ iter5: Already in GSM mode. Forcing cell rescan (COPS=0)...");
         }
-        waitForResponse("OK", 1000);
-        if (isBSNL)
-          SerialSIT.println(
-              "AT+COPS=0"); // Ensure BSNL probes for a fresh 2G cell
-        else
-          SerialSIT.println("AT+COPS=0");
-        esp_task_wdt_reset();
+        SerialSIT.println("AT+COPS=0");
         waitForResponse("OK", 3000);
         SerialSIT.println("AT+CGATT=1");
         waitForResponse("OK", 3000);
       } else if (retries == 10) {
-        // v5.84 Tier 2 @ iter 10: Full Radio Reset & SIM Scrub
-        debugln("[GPRS] Tier2 @ iter10: Radio-Off SIM Scrub...");
-        SerialSIT.println("AT+CFUN=0");
-        esp_task_wdt_reset();
-        waitForResponse("OK", 5000);
-        SerialSIT.println(
-            "AT+CRSM=214,28539,0,0,12,\"FFFFFFFFFFFFFFFFFFFFFFFF\"");
-        waitForResponse("OK", 2000);
+        if (!isBSNL) {
+          // v6.40 Tier 2 @ iter 10 for Airtel/Jio: 4G did not register in 10s. Fallback to 2G GSM
+          debugln("[GPRS] Airtel/Jio Tier2 @ iter10: 4G LTE timed out (10s). Fallback to GSM-only (CNMP=13)...");
+          SerialSIT.println("AT+CNMP=13");
+          waitForResponse("OK", 1000);
+          SerialSIT.println("AT+COPS=0");
+        } else {
+          // v5.84 Tier 2 @ iter 10: Full Radio Reset & SIM Scrub for BSNL
+          debugln("[GPRS] Tier2 @ iter10: Radio-Off SIM Scrub...");
+          SerialSIT.println("AT+CFUN=0");
+          esp_task_wdt_reset();
+          waitForResponse("OK", 5000);
+          SerialSIT.println(
+              "AT+CRSM=214,28539,0,0,12,\"FFFFFFFFFFFFFFFFFFFFFFFF\"");
+          waitForResponse("OK", 2000);
+        }
         SerialSIT.println("AT+CFUN=1");
         esp_task_wdt_reset();
         waitForResponse("OK", 5000);
@@ -631,7 +591,7 @@ void get_registration() {
     if (isBSNL && registration == 0 && retries == 3) {
       debugln(
           "[GPRS] BSNL Stubborn Idle. Forcing Frequency Re-scan (COPS=0)...");
-      SerialSIT.println("AT+CIPSHUT");
+      SerialSIT.println("AT+CGACT=0,1");
       waitForResponse("OK", 2000);
       diag_http_present_fails++;
       SerialSIT.println("AT+COPS=0");
@@ -819,8 +779,13 @@ void get_a7672s() {
     if (strcmp(fallback_apns[i], primary_apn) == 0)
       continue; 
     if (try_activate_apn(fallback_apns[i])) {
-      strcpy(apn_str, fallback_apns[i]);
-      save_apn_config(fallback_apns[i], cached_iccid);
+      if (!((strstr(cached_iccid, "899145") != NULL || strstr(cached_iccid, "899116") != NULL || strstr(cached_iccid, "899110") != NULL) &&
+            strcmp(fallback_apns[i], "airtelgprs.com") == 0)) {
+        strcpy(apn_str, fallback_apns[i]);
+        save_apn_config(fallback_apns[i], cached_iccid);
+      } else {
+        debugln("[APN] Guard: Connected on temporary fallback 'airtelgprs.com', but preserving global apn_str as 'airteliot.com'.");
+      }
       vTaskDelay((isLTE ? 500 : 3000) / portTICK_PERIOD_MS);
       gprs_pdp_ready = true;
 
@@ -1018,8 +983,8 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
 
   int response_no;
   char msg_type[9];
-  char status_response[256];
-  char gprs_xmit_buf[300];
+  static char status_response[256];
+  static char gprs_xmit_buf[300];
   msg_sent = 0;
 #if USE_NUVOTON_UI == 1
   read_and_calibrate_voltages();
@@ -1121,6 +1086,7 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
     debugln(" Received!");
     flushSerialSIT(); // v5.81: Ensure clean UART pipe for Ctrl+Z termination
     SerialSIT.print(status_response); 
+    vTaskDelay(100 / portTICK_PERIOD_MS); // Breather delay before RF transmit surge
     SerialSIT.write(0x1A); // Send Ctrl+Z (ASCII 26) to commit SMS
     debug("Waiting for +CMGS confirmation...");
     if (waitForResponse("+CMGS:", 20000)) {
@@ -1759,7 +1725,6 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
     } else {
       debugln("[Health] DOWNLOAD Fail. Nuking Bearer Context...");
       SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 1000);
-      SerialSIT.println("AT+CIPSHUT"); waitForResponse("SHUT OK", 3000);
       SerialSIT.println("AT+CGACT=0,1"); waitForResponse("OK", 5000);
       vTaskDelay(1000 / portTICK_PERIOD_MS);
       session_terminated = true;
