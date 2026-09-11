@@ -8,8 +8,6 @@ void windDirection(void *pvParameters) {
   adc1_config_width(ADC_WIDTH_BIT_12);
   adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_DB_11); // GPIO39
   vTaskDelay(100 / portTICK_PERIOD_MS);
-  // Minimal delay for power stabilization
-  vTaskDelay(100 / portTICK_PERIOD_MS);
 
   for (;;) {
     esp_task_wdt_reset();
@@ -35,16 +33,12 @@ void windDirection(void *pvParameters) {
     int spread = maxVal - minVal;
 
     // v5.67 Disconnection Detection using ADC spread:
-    // - A real sensor at 0° (North) always has slight noise [INFO] spread >= 2
-    // - A disconnected cable stuck at GND is perfectly flat [INFO] spread == 0 AND
-    // mean == 0
-    // - We require 30 consecutive flat-zero readings (~30 sec) before marking
-    // as fault
+    // - A real sensor at 0° (North) always has slight noise -> spread >= 2
+    // - A disconnected cable stuck at GND is perfectly flat -> spread == 0 AND mean == 0
+    // - We require 300 consecutive flat-zero readings before marking as fault
     static int wd_fault_count = 0;
     if (tempWindDir == 0 && spread < 2) {
       wd_fault_count++;
-      // v5.49: Increased threshold to 300 (~5 mins) to prevent false 'NA'
-      // at stable North
       if (wd_fault_count > 300)
         wd_ok = false;
     } else {
@@ -52,32 +46,32 @@ void windDirection(void *pvParameters) {
       wd_ok = true;
     }
 
-    // v5.52 Fix: Only print disconnected message on state-CHANGE, not every
-    // second. When sensors are disconnected, this was flooding serial at 1/sec.
     static bool prev_wd_ok = true;
     if (!wd_ok) {
       windDir = 0;
       if (prev_wd_ok) {
-        // Print ONCE when transitioning from connected [INFO] disconnected
-        debugln("[WD] Sensor disconnected (ADC=0, spread=0). Suppressing "
-                "further prints.");
+        debugln("[WD] Sensor disconnected (ADC=0, spread=0). Suppressing further prints.");
       }
     } else {
-      // Smooth 0-WIND_DIR_ADC_MAX to 0-359 mapping
-      windDir = (tempWindDir * 360) / WIND_DIR_ADC_MAX;
-      if (windDir > 359)
-        windDir = 0; // Safety clamp
-      if (!prev_wd_ok) {
-        debugf2("[WD] Sensor reconnected. ADC:%d -> Dir:%d deg\n", tempWindDir,
-                windDir);
+      // Physical Potentiometer Track Calibration:
+      // ADC_MIN (140 raw) = 0° (North)
+      // ADC_MAX (3950 raw) = 359° (North-West)
+      // Values inside the dead-gap (0..139) map cleanly to 0° North
+      const int ADC_MIN = 140;
+      const int ADC_MAX = 3950;
+      const int ADC_SPAN = ADC_MAX - ADC_MIN; // 3810
+
+      if (tempWindDir <= ADC_MIN) {
+        windDir = 0;
+      } else {
+        int mapped = (int)(((float)(tempWindDir - ADC_MIN) * 360.0f) / (float)ADC_SPAN);
+        if (mapped < 0) mapped = 0;
+        windDir = mapped % 360;
       }
 
-      // Dynamic calibration debug info (disabled to prevent log flooding)
-      // static int last_printed_wd = -1;
-      // if (abs(windDir - last_printed_wd) >= 2) {
-      //   debugf2("[WD Debug] Raw ADC:%d (spread:%d) -> Mapped Dir:%d deg\n", tempWindDir, spread, windDir);
-      //   last_printed_wd = windDir;
-      // }
+      if (!prev_wd_ok) {
+        debugf2("[WD] Sensor reconnected. ADC:%d -> Dir:%d deg\n", tempWindDir, windDir);
+      }
     }
     prev_wd_ok = wd_ok;
     snprintf(windDir_str, sizeof(windDir_str), "%03d deg", windDir);

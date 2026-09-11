@@ -7,14 +7,14 @@
  * ========================================================================= */
 
 // --- 1. CORE SYSTEM IDENTITY ---
-#define SYSTEM 0
-#define UNIT_CFG "KSNDMC_TRG"
+#define SYSTEM 2
+#define UNIT_CFG "KSNDMC_ADDON"
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 // SYSTEM 3 options: SPATIKA_GEN - AP
 
-#define FIRMWARE_VERSION "6.41"
+#define FIRMWARE_VERSION "6.42"
 
 #define ENABLE_HEALTH_REPORT                                                   \
   0 // Master Switch: Enable automated device health reporting
@@ -41,7 +41,7 @@
        // sampling)
 #define WIND_DEBOUNCE_CYCLES 1 // Pulse stability cycles (1 = 1 loop @ 1ms)
 #define WIND_DIR_ADC_MAX                                                       \
-  3480 // Calibrated max raw ADC value at VCC (3.3V) right before dead zone
+  4095 // Full 12-bit ESP32 ADC max (3.3V) for full 360 degree wind vane range
 #define ENABLE_CALIB_TEST 0 // 1: IMD CALIB TEST in UI, 0: Field deployment mode
 
 // --- 4. NETWORK BEHAVIOR ---
