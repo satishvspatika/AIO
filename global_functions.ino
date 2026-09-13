@@ -188,7 +188,12 @@ void start_deep_sleep() {
   debug(current_min);
   debug(":");
   debugln(current_sec);
-  debug(" Sleep=");
+  uint32_t awake_sec = millis() / 1000;
+  debug(" Awake=");
+  debug(awake_sec / 60);
+  debug(":");
+  debug(awake_sec % 60);
+  debug(" (min:sec) | Sleep=");
   debug(sleep_seconds / 60);
   debug(":");
   debug(sleep_seconds % 60);
