@@ -541,6 +541,7 @@ void gprs(void *pvParameters) {
       send_unsent_data();
 #endif
       force_ftp = false;
+      force_health_upload = true;
     }
 
     if (force_ftp_daily) { // v5.80: FTP_DAILY
@@ -568,7 +569,7 @@ void gprs(void *pvParameters) {
     if (force_get_num) {
       debugln("[CMD] Remote GET_NUM triggered...");
       char numBuf[32];
-      retrieveOwnNumber(numBuf, sizeof(numBuf), true);
+      retrieveOwnNumber(numBuf, sizeof(numBuf), false);
       snprintf(last_cmd_res, sizeof(last_cmd_res), "Num: %s", numBuf);
       debugf("[CMD] GET_NUM Result: %s\n", last_cmd_res);
       force_get_num = false;
@@ -582,8 +583,11 @@ void gprs(void *pvParameters) {
       portEXIT_CRITICAL(&syncMux);
       debugln("[CMD] Remote OTA_CHECK triggered. Checking for updates...");
       // v7.03: Ensure HTTP is closed from health report before OTA begins
-      SerialSIT.println("AT+HTTPTERM");
-      waitForResponse("OK", 2000);
+      if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+        SerialSIT.println("AT+HTTPTERM");
+        waitForResponse("OK", 2000);
+        xSemaphoreGive(modemMutex);
+      }
       http_ready = false;
       vTaskDelay(2000 / portTICK_PERIOD_MS); // Stabilize modem stack
       if (strlen(ota_cmd_param) > 0) {
@@ -615,6 +619,7 @@ void gprs(void *pvParameters) {
         strcpy(last_cmd_res, "Fail: No GPS Fix");
       }
       force_gps_refresh = false;
+      force_health_upload = true;
     }
 
     // v7.59: CLEAR_FTP_QUEUE — server-requested FTP backlog clear
@@ -639,6 +644,7 @@ void gprs(void *pvParameters) {
       }
       strcpy(last_cmd_res, cleared ? "Success: Queue Cleared" : "Success: Already Empty");
       force_clear_ftp_queue = false;
+      force_health_upload = true;
     }
 
     // v7.94: DELETE_DATA — Server-requested Factory Reset

@@ -1729,6 +1729,13 @@ void initialize_hw() {
   pinMode(26, OUTPUT);
   pinMode(27, INPUT_PULLUP);
 
+  // Early GPRS Power-On: Turn modem VCC HIGH early at start of HW setup
+  // so modem power rail & SIM card ATR stabilize in parallel while ESP32 mounts SPIFFS/SD/sensors.
+  if (!(low_bat_mode_active && low_bat_skip_count > 0)) {
+    digitalWrite(26, HIGH);
+    debugln("[PWR] Pre-powering GPRS module for parallel SIM rail stabilization...");
+  }
+
   bool spiffs_mounted = false;
   uint32_t chip_size = ESP.getFlashChipSize();
   hw_tag = (chip_size == 16*1024*1024) ? 'X' : ((chip_size == 8*1024*1024) ? 'H' : 'L');

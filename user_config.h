@@ -14,12 +14,12 @@
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 // SYSTEM 3 options: SPATIKA_GEN - AP
 
-#define FIRMWARE_VERSION "6.42"
+#define FIRMWARE_VERSION "6.43"
 
 #define ENABLE_HEALTH_REPORT                                                   \
-  0 // Master Switch: Enable automated device health reporting
+  1 // Master Switch: Enable automated device health reporting
 #define TEST_HEALTH_DEFAULT                                                    \
-  0 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)
+  1 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)
 
 // --- 2. COMPILE OPTIONS ---
 #define USE_NUVOTON_UI                                                         \

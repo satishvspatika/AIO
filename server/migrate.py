@@ -111,9 +111,14 @@ def migrate():
         ("net_mode",         "TEXT",    "'4G'"),
         ("surv_mode",        "INTEGER", "0"),
         ("muted",            "INTEGER", "0"),
+        ("group",            "TEXT",    "''"),
+        ("network",          "TEXT",    "''"),
+        ("unit",             "TEXT",    "''"),
+        ("hw",               "TEXT",    "''"),
+        ("rf_cls_date",      "TEXT",    "''"),
     ]:
         try:
-            cursor.execute(f"ALTER TABLE health_reports ADD COLUMN {col} {dtype} DEFAULT {default};")
+            cursor.execute(f'ALTER TABLE health_reports ADD COLUMN "{col}" {dtype} DEFAULT {default};')
             print(f"✓ Column '{col}' added.")
         except sqlite3.OperationalError as e:
             if "duplicate column name" in str(e):

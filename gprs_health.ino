@@ -599,7 +599,7 @@ void get_registration() {
       waitForResponse("OK", 5000);
     }
 
-    debugf("Reg Search [BSNL:%d]... Status:%d Iter:#%d/%d\n", isBSNL,
+    debugf("Reg Search [Carrier:%s | BSNL_Flag:%d]... Status:%d Iter:#%d/%d\n", carrier, isBSNL,
            registration, retries + 1, no_of_retries);
 
     // v5.84: ADAPTIVE WAIT: Poll CGREG every 1s for up to 2s.
@@ -1141,7 +1141,7 @@ void get_gps_coordinates(bool alreadyLocked) {
     } else {
       SerialSIT.println("AT+CLBS=1,1");
     }
-    bool got_clbs = waitForResponse("+CLBS:", 15000) || waitForResponse("OK", 2000);
+    bool got_clbs = waitForResponse("+CLBS:", 15000);
     debugf("[GPS] Modem +CLBS Response: %s\n", modem_response_buf);
     if (got_clbs) {
       char date_buf[16] = {0}, time_buf[16] = {0};
@@ -1224,7 +1224,7 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
     } else {
       SerialSIT.println("AT+CLBS=1,1");
     }
-    bool got_clbs = waitForResponse("+CLBS:", 15000) || waitForResponse("OK", 2000);
+    bool got_clbs = waitForResponse("+CLBS:", 15000);
     debugf("[GPS] Modem +CLBS Response: %s\n", modem_response_buf);
     if (got_clbs) {
       char date_buf[16] = {0}, time_buf[16] = {0};
@@ -1336,6 +1336,121 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
     xSemaphoreGive(modemMutex); 
 }
 
+void parse_health_response(const char* body) {
+    if (body == NULL || body[0] == '\0') return;
+
+    sync_rtc_from_server_tm(body, false);
+
+    const char* idTag = strstr(body, "\"id\"");
+    if (idTag) {
+        const char* col = strchr(idTag, ':');
+        if (col) {
+            last_cmd_id = atoi(col + 1);
+        }
+    }
+
+    if (strstr(body, "\"REBOOT\"")) {
+        force_reboot = true;
+        strcpy(last_cmd_res, "Success: Rebooting Device");
+    }
+    if (strstr(body, "\"PAUSE_LIVE_POST\"") || strstr(body, "\"PAUSE_TX\"") || strstr(body, "\"PAUSE_KSNDMC\"")) {
+        live_post_muted = true;
+        Preferences pMute; pMute.begin("sys-config", false); pMute.putBool("muted", true); pMute.end();
+        strcpy(last_cmd_res, "Success: Primary Transmissions Muted");
+        debugln("[CMD] Primary server live transmissions MUTED.");
+    }
+    if (strstr(body, "\"RESUME_LIVE_POST\"") || strstr(body, "\"RESUME_TX\"") || strstr(body, "\"RESUME_KSNDMC\"")) {
+        live_post_muted = false;
+        Preferences pMute; pMute.begin("sys-config", false); pMute.putBool("muted", false); pMute.end();
+        strcpy(last_cmd_res, "Success: Primary Transmissions Resumed");
+        debugln("[CMD] Primary server live transmissions RESUMED.");
+    }
+    if (strstr(body, "\"OTA_CHECK\"")) {
+        force_ota = true;
+        strcpy(last_cmd_res, "Success: OTA Triggered");
+    }
+    if (strstr(body, "\"GET_STATUS\"") || strstr(body, "\"GET_HEALTH\"")) {
+        force_health_upload = true;
+        strcpy(last_cmd_res, "Success: Telemetry Refreshed");
+    }
+    if (strstr(body, "\"GET_NUM\"")) {
+        force_get_num = true;
+        strcpy(last_cmd_res, "Executing GET_NUM");
+    }
+    if (strstr(body, "\"FTP_BACKLOG\"") || strstr(body, "\"SYNC_BACKLOG\"") || strstr(body, "\"BACKLOG_SYNC\"")) {
+        force_ftp = true;
+        strcpy(last_cmd_res, "Success: Backlog Sync Triggered");
+    }
+    if (strstr(body, "\"FTP_DAILY\"")) {
+        force_ftp_daily = true;
+        strcpy(last_cmd_res, "Success: Daily Log Triggered");
+        const char* dTag = strstr(body, "\"p\"");
+        if (dTag) {
+            const char* col = strchr(dTag, ':');
+            if (col) {
+                const char* q1 = strchr(col, '"');
+                if (q1) { strncpy(ftp_daily_date, q1+1, 8); ftp_daily_date[8]='\0'; }
+            }
+        }
+    }
+    if (strstr(body, "\"SET_WIFI_PASS\"")) {
+        const char* pTag = strstr(body, "\"p\"");
+        if (pTag) {
+            const char* col = strchr(pTag, ':');
+            if (col) {
+                const char* q1 = strchr(col, '"');
+                if (q1) {
+                    const char* q2 = strchr(q1 + 1, '"');
+                    if (q2) {
+                        int passLen = q2 - (q1 + 1);
+                        if (passLen >= 8 && passLen < 32) {
+                            char newPass[32]; strncpy(newPass, q1+1, passLen); newPass[passLen] = '\0';
+                            if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+                                File f = SPIFFS.open("/wifi_pass.txt", FILE_WRITE);
+                                if (f) { f.print(newPass); f.close(); strcpy(last_cmd_res, "Success: WiFi Pass Updated"); }
+                                xSemaphoreGive(fsMutex);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (strstr(body, "\"GET_GPS\"")) {
+        force_gps_refresh = true;
+        strcpy(last_cmd_res, "Success: GPS Refresh");
+    }
+    if (strstr(body, "\"CLEAR_FTP_QUEUE\"")) {
+        force_clear_ftp_queue = true;
+        strcpy(last_cmd_res, "Success: FTP Queue Cleared");
+    }
+    if (strstr(body, "\"DELETE_DATA\"")) {
+        force_delete_data = true;
+        strcpy(last_cmd_res, "Success: Data Wiped");
+    }
+    
+    const char* pTag = strstr(body, "\"INTERVAL\"");
+    if (pTag) {
+        const char* pSub = strstr(pTag, "\"p\"");
+        if (pSub) {
+            const char* valStart = strchr(pSub, ':');
+            if (valStart) {
+                String valStr = "";
+                for (int k = 1; valStart[k] != '\0'; k++) {
+                    if (isdigit(valStart[k])) valStr += valStart[k];
+                    else if (valStr.length() > 0) break;
+                }
+                if (valStr.length() > 0) {
+                    test_health_every_slot = (valStr.toInt() <= 15) ? 1 : 0;
+                    Preferences prefs; prefs.begin("sys-config", false);
+                    prefs.putInt("test_health", test_health_every_slot); prefs.end();
+                    snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: Interval Set (%d min)", valStr.toInt());
+                }
+            }
+        }
+    }
+}
+
 bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
   set_sys_status("SENDING HEALTH");
 #if ENABLE_HEALTH_REPORT == 1
@@ -1362,7 +1477,7 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
   }
 
   bool mutex_acquired_by_us = false;
-  if (xSemaphoreGetMutexHolder(modemMutex) == xTaskGetCurrentTaskHandle()) {
+  if (alreadyLocked || (xSemaphoreGetMutexHolder(modemMutex) == xTaskGetCurrentTaskHandle())) {
     mutex_acquired_by_us = false;
   } else if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
     mutex_acquired_by_us = true;
@@ -1379,6 +1494,10 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
   }
 
   // [Health] Proceeding with Health report transmission for all connected carriers
+
+  // Terminate any leftover HTTP session context from prior telemetry tasks before starting health report
+  SerialSIT.println("AT+HTTPTERM");
+  waitForResponse("OK", 500);
 
   SerialSIT.println("AT+CGEREP=0");
   waitForResponse("OK", 1000);
@@ -1411,6 +1530,12 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
     bool dummyPD = false, dummyNDM = false;
     analyzeFileHealth(diag_sent_mask_cur, &diag_net_data_count, &dummyPD, &dummyNDM);
     analyzeFileHealth(diag_sent_mask_prev, &diag_net_data_count_prev, &unresolvedPD, &unresolvedNDM);
+    if (diag_http_success_count == 0 && diag_net_data_count > 0) {
+      diag_http_success_count = (diag_net_data_count > diag_http_retry_count) ? (diag_net_data_count - diag_http_retry_count) : diag_net_data_count;
+    }
+    if (diag_http_success_count_prev == 0 && diag_net_data_count_prev > 0) {
+      diag_http_success_count_prev = (diag_net_data_count_prev > diag_http_retry_count_prev) ? (diag_net_data_count_prev - diag_http_retry_count_prev) : diag_net_data_count_prev;
+    }
 
     char h_status[256] = "";
 #define H_FAULT(f) do { \
@@ -1497,21 +1622,42 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
     }
     sim_or_iccid[sizeof(sim_or_iccid) - 1] = '\0';
 
+    char calib_report[48] = "NA";
+    if (calib_year > 2000) {
+      snprintf(calib_report, sizeof(calib_report), "CLB-%s (%04d-%02d-%02d)",
+               (calib_sts == 1 ? "OK" : "FAIL"), calib_year, calib_month,
+               calib_day);
+    }
+
     snprintf(gprs_payload, sizeof(gprs_payload),
-        "{\"stn_id\":\"%s\",\"unit_type\":\"%s\",\"system\":%d,\"health_sts\":\"%s\",\"sensor_sts\":\"%s\",\"rtc_ok\":%d,\"bat_v\":%.2f,\"mcu_bat\":%.2f,\"sol_v\":%.2f,\"sd_ok\":%d,\"signal\":%d,\"rf_cls_date\":\"%s\",\"net_cnt\":%d,\"net_cnt_prev\":%d,\"pd_cnt\":%d,\"ndm_cnt\":%d,\"cdm_sts\":\"%s\",\"rf_res\":%.2f,\"unsent_cnt\":%d,\"zombie_cnt\":%d,\"net_mode\":\"%s\",\"surv_mode\":%d,\"muted\":%d,\"http_suc_cnt\":%d,\"http_suc_cnt_prev\":%d,\"http_ret_cnt\":%d,\"http_ret_cnt_prev\":%d,\"ftp_suc_cnt\":%d,\"ftp_suc_cnt_prev\":%d,\"reg_fails\":%d,\"reset_reason\":%d,\"spiffs_kb\":%d,\"ver\":\"%s\",\"iccid\":\"%s\",\"carrier\":\"%s\",\"gps\":\"%s\",\"token\":\"%s\"%s}", 
-        cleanStn, UNIT, SYSTEM, h_status, sensor_info, (diag_rtc_battery_ok ? 1 : 0), li_bat_val, bat_3v3_val, solar_val, (sd_card_ok ? 1 : 0), signal_lvl, rf_cls_date_str,
-        diag_net_data_count,           // net_cnt      = TDY delivered records
-        diag_net_data_count_prev,      // net_cnt_prev = YDY delivered records
-        (unresolvedPD ? 1 : 0),        // pd_cnt       = YDY partial data flag (1=PD, 0=OK)
-        diag_ndm_count_prev,           // ndm_cnt      = YDY night slots missed count
-        diag_cdm_status,               // cdm_sts      = Explicit Closing Data status
-        RF_RESOLUTION,                 // rf_res       = Tip resolution (0.25 / 0.50)
-        unsent_count,                  // unsent_cnt   = Pending unsent records queue size
-        diag_http_zombie_count,        // zombie_cnt   = Socket 706 resets count
-        (isLTE ? "4G" : "2G"),         // net_mode     = Cellular network mode
-        (low_bat_mode_active ? 1 : 0), // surv_mode    = Low battery survival mode flag
-        (live_post_muted ? 1 : 0),     // muted        = Primary server live transmissions muted flag
-        diag_http_success_count, diag_http_success_count_prev, diag_http_retry_count, diag_http_retry_count_prev, diag_ftp_success_count, diag_ftp_success_count_prev, diag_gprs_fails, diag_last_reset_reason, spiffs_used, UNIT_VER, sim_or_iccid, carrier, gps_str, TELEMETRY_TOKEN, feedback);
+        "{\"stn_id\":\"%s\",\"unit_type\":\"%s\",\"system\":%d,"
+        "\"health_sts\":\"%s\",\"sensor_sts\":\"%s\",\"rtc_ok\":%d,\"sd_ok\":%d,"
+        "\"bat_v\":%.2f,\"mcu_bat\":%.2f,\"sol_v\":%.2f,\"signal\":%d,"
+        "\"net_cnt\":%d,\"net_cnt_prev\":%d,\"cdm_sts\":\"%s\","
+        "\"pd_cnt\":%d,\"ndm_cnt\":%d,"
+        "\"spiffs_kb\":%d,\"spiffs_total_kb\":%d,\"unsent_count\":%d,"
+        "\"reset_reason\":%d,\"ver\":\"%s\",\"iccid\":\"%s\",\"carrier\":\"%s\",\"gps\":\"%s\","
+        "\"calib\":\"%s\",\"rf_res\":%.2f,\"rf_cls_date\":\"%s\","
+        "\"reg_fails\":%d,\"reg_fail_reason\":\"%s\","
+        "\"http_suc_cnt\":%d,\"http_ret_cnt\":%d,\"ftp_suc_cnt\":%d,"
+        "\"http_suc_cnt_prev\":%d,\"http_ret_cnt_prev\":%d,\"ftp_suc_cnt_prev\":%d,"
+        "\"http_present_fails\":%d,\"http_cum_fails\":%d,\"http_backlog_cnt\":%d,"
+        "\"mutex_fail\":%d,\"ota_fails\":%d,\"ota_fail_reason\":\"%s\","
+        "\"token\":\"%s\"%s}", 
+        cleanStn, UNIT, SYSTEM,
+        h_status, sensor_info, (diag_rtc_battery_ok ? 1 : 0), (sd_card_ok ? 1 : 0),
+        li_bat_val, bat_3v3_val, solar_val, signal_lvl,
+        diag_net_data_count, diag_net_data_count_prev, diag_cdm_status,
+        (unresolvedPD ? 1 : 0), diag_ndm_count_prev,
+        spiffs_used, spiffs_total, unsent_count,
+        diag_last_reset_reason, UNIT_VER, cached_iccid, carrier, gps_str,
+        calib_report, RF_RESOLUTION, rf_cls_date_str,
+        diag_gprs_fails, diag_reg_fail_type,
+        diag_http_success_count, diag_http_retry_count, diag_ftp_success_count,
+        diag_http_success_count_prev, diag_http_retry_count_prev, diag_ftp_success_count_prev,
+        diag_http_present_fails, diag_http_cum_fails, get_total_backlogs(true),
+        diag_modem_mutex_fails, ota_fail_count, ota_fail_reason,
+        TELEMETRY_TOKEN, feedback);
 
     xSemaphoreGive(fsMutex); 
   } 
@@ -1524,218 +1670,195 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
 
     if (!verify_bearer_or_recover()) continue;
 
-    // [H-02] Session tracking Restoration
-    bool session_terminated = false;
+    // ----------------------------------------------------
+    // Path 1: Direct TCP Socket Primary Transport (~300ms) - Exact A7672S Implementation
+    // ----------------------------------------------------
+    bool tcp_success = false;
+    debugln("[Health] Attempting Direct TCP Transport...");
 
-    // Simplified sequence for A7672S stability: Flush UART buffer before initialization
+    flushSerialSIT();
+    SerialSIT.println("AT+NETOPEN?");
+    waitForResponse("OK", 2000);
+    if (strstr(modem_response_buf, "+NETOPEN: 1") == NULL) {
+      SerialSIT.println("AT+NETOPEN");
+      waitForResponse("OK", 5000);
+    }
+
+    const char *health_hosts[2] = {
+#ifdef HEALTH_SERVER_IP
+      HEALTH_SERVER_IP,
+#else
+      HEALTH_SERVER_DOMAIN,
+#endif
+#ifdef HEALTH_SERVER_DOMAIN
+      HEALTH_SERVER_DOMAIN
+#else
+      HEALTH_SERVER_IP
+#endif
+    };
+
+    for (int h = 0; h < 2; h++) {
+      const char *connHost = health_hosts[h];
+      if (connHost == NULL || connHost[0] == '\0') continue;
+      if (h == 1 && strcmp(health_hosts[0], health_hosts[1]) == 0) continue;
+
+      SerialSIT.println("AT+CIPCLOSE=0");
+      waitForResponse("OK", 1000);
+
+      char hostHeader[128];
+      if (atoi(HEALTH_SERVER_PORT) == 80) {
+        snprintf(hostHeader, sizeof(hostHeader), "%s", HEALTH_SERVER_DOMAIN);
+      } else {
+        snprintf(hostHeader, sizeof(hostHeader), "%s:%s", HEALTH_SERVER_DOMAIN, HEALTH_SERVER_PORT);
+      }
+
+      char httpRequest[2048];
+      int payloadLen = strlen(gprs_payload);
+      snprintf(httpRequest, sizeof(httpRequest),
+          "POST %s HTTP/1.1\r\n"
+          "Host: %s\r\n"
+          "Content-Type: application/json\r\n"
+          "Content-Length: %d\r\n"
+          "Connection: close\r\n\r\n"
+          "%s", HEALTH_SERVER_PATH, hostHeader, payloadLen, gprs_payload);
+
+      int reqLen = strlen(httpRequest);
+
+      char openCmd[128];
+      snprintf(openCmd, sizeof(openCmd), "AT+CIPOPEN=0,\"TCP\",\"%s\",%s", connHost, HEALTH_SERVER_PORT);
+      SerialSIT.println(openCmd);
+      
+      if (waitForResponse("+CIPOPEN: 0,0", 15000)) {
+          debugf("[Health] TCP Connected successfully to %s.\n", connHost);
+
+          char sendCmd[32];
+          snprintf(sendCmd, sizeof(sendCmd), "AT+CIPSEND=0,%d", reqLen);
+          SerialSIT.println(sendCmd);
+
+          if (waitForResponse(">", 5000)) {
+              vTaskDelay(10 / portTICK_PERIOD_MS);
+              SerialSIT.write((const uint8_t *)httpRequest, reqLen);
+
+              if (waitForResponseNoFlush("+IPD", 15000) || strstr(modem_response_buf, "200 OK") != NULL || strstr(modem_response_buf, "status") != NULL || strstr(modem_response_buf, "stored") != NULL) {
+                  uint32_t respStart = millis();
+                  while (strstr(modem_response_buf, "status") == NULL && strstr(modem_response_buf, "stored") == NULL && strstr(modem_response_buf, "\"tm\"") == NULL && strstr(modem_response_buf, "200") == NULL && (millis() - respStart < 3000)) {
+                    while (SerialSIT.available()) {
+                      int len = strlen(modem_response_buf);
+                      if (len < 2047) {
+                        modem_response_buf[len] = SerialSIT.read();
+                        modem_response_buf[len + 1] = '\0';
+                      } else {
+                        SerialSIT.read();
+                      }
+                    }
+                    vTaskDelay(20 / portTICK_PERIOD_MS);
+                  }
+
+                  if (strstr(modem_response_buf, "200") != NULL || strstr(modem_response_buf, "status") != NULL || strstr(modem_response_buf, "stored") != NULL || strstr(modem_response_buf, "\"tm\"") != NULL) {
+                      tcp_success = true;
+                      success = true;
+                      debugln("[Health] ✅ Direct TCP Delivered & Confirmed by Server (200 OK).");
+                      parse_health_response(modem_response_buf);
+                      SerialSIT.println("AT+CIPCLOSE=0");
+                      waitForResponse("OK", 1000);
+                      break;
+                  } else {
+                      debugf("[Health] TCP Response missing 200/status after +IPD. Resp: '%s'\n", modem_response_buf);
+                  }
+              } else {
+                  debugf("[Health] TCP wait for +IPD failed/timeout. Resp: '%s'\n", modem_response_buf);
+              }
+          } else {
+              debugf("[Health] TCP CIPSEND Prompt (>) failed. Resp: '%s'\n", modem_response_buf);
+          }
+          SerialSIT.println("AT+CIPCLOSE=0");
+          waitForResponse("OK", 1000);
+      } else {
+          debugf("[Health] TCP Connection to %s failed.\n", connHost);
+          SerialSIT.println("AT+CIPCLOSE=0");
+          waitForResponse("OK", 1000);
+      }
+    }
+
+    if (success) break;
+
+    // ----------------------------------------------------
+    // Path 2: High-Level AT+HTTPINIT Stack (Fallback)
+    // ----------------------------------------------------
+    debugln("[Health] Attempting High-Level HTTPINIT Transport...");
+
+    flushSerialSIT();
+    SerialSIT.println("AT+CIPCLOSE=0");
+    waitForResponse("OK", 1000);
+
     flushSerialSIT();
     SerialSIT.println("AT+HTTPTERM"); 
     waitForResponse("OK", 1000);
-    vTaskDelay(400 / portTICK_PERIOD_MS); // SIMCOM A7672S stack breather
+    vTaskDelay(200 / portTICK_PERIOD_MS);
     
     flushSerialSIT();
     SerialSIT.println("AT+HTTPINIT");
-    if (!waitForResponse("OK", 5000)) {
-      debugln("[Health] [ERR] HTTPINIT Reject.");
-      flushSerialSIT();
-      SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 1000);
-      session_terminated = true;
-      continue;
-    }
-
-    flushSerialSIT();
-    SerialSIT.println("AT+HTTPPARA=\"CID\",1");
-    waitForResponse("OK", 2000);
-
-    flushSerialSIT();
-    SerialSIT.println("AT+HTTPPARA=\"REDR\",1");
-    waitForResponse("OK", 2000);
-
-    char ht_url[150];
-#ifdef HEALTH_SERVER_DOMAIN
-    snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_DOMAIN, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
-#else
-    snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_IP, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
-#endif
-    debugf("[Health] Prepared URL: %s\n", ht_url);
-    flushSerialSIT(); 
-    SerialSIT.println(ht_url);
-    if (!waitForResponse("OK", 5000)) {
-        debugln("[Health] [ERR] URL PARA Reject.");
-        session_terminated = true;
-        continue;
-    }
-
-    flushSerialSIT();
-    SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-    waitForResponse("OK", 2000);
-
-    flushSerialSIT();
-    SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
-    waitForResponse("OK", 2000);
-
-    for (int i = 0; i < 3; i++) { flushSerialSIT(); vTaskDelay(50 / portTICK_PERIOD_MS); }
-
-    int actualLen = strlen(gprs_payload);
-    char ht_data_cmd[64];
-    snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,15000", actualLen); 
-    flushSerialSIT();
-    vTaskDelay(300 / portTICK_PERIOD_MS);
-    SerialSIT.println(ht_data_cmd);
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-
-    if (waitForResponse("DOWNLOAD", 15000)) {
-      vTaskDelay(100 / portTICK_PERIOD_MS);
-      SerialSIT.print(gprs_payload);
-      if (waitForResponse("OK", 5000)) {
+    if (waitForResponse("OK", 5000)) {
+      SerialSIT.println("AT+HTTPPARA=\"CID\",1");
+      waitForResponse("OK", 1000);
+      char ht_url[150];
+      snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_DOMAIN, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
+      debugf("[Health] Prepared URL: %s\n", ht_url);
+      flushSerialSIT(); 
+      SerialSIT.println(ht_url);
+      if (waitForResponse("OK", 3000)) {
         flushSerialSIT();
-        SerialSIT.println("AT+HTTPACTION=1");
-        if (waitForResponse("+HTTPACTION:", 45000)) {
-          debugf("[Health] HTTPACTION Response: %s\n", modem_response_buf);
-          if (strstr(modem_response_buf, "200")) success = true;
-          else if (strstr(modem_response_buf, "714") || strstr(modem_response_buf, "706")) {
-            debugln("[Health] 🧟 Zombie Socket. Nuking Bearer Context...");
-            SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 1000);
-            SerialSIT.println("AT+CGACT=0,1"); waitForResponse("OK", 5000);
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-            session_terminated = true;
-            continue; 
-          }
-        }
-        if (success) {
-          vTaskDelay(500 / portTICK_PERIOD_MS);
-          SerialSIT.println("AT+HTTPREAD=0,512"); 
-          if (waitForResponse("+HTTPREAD:", 10000)) {
-            const char* body = modem_response_buf;
-            
-            // [M-01] Command Parsing Restoration
-            sync_rtc_from_server_tm(body, false);
+        SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+        waitForResponse("OK", 1000);
 
-            const char* idTag = strstr(body, "\"id\"");
-            if (idTag) {
-                const char* col = strchr(idTag, ':');
-                if (col) {
-                    last_cmd_id = atoi(col + 1);
-                }
-            }
+        int actualLen = strlen(gprs_payload);
+        char ht_data_cmd[64];
+        snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,15000", actualLen); 
+        flushSerialSIT();
+        SerialSIT.println(ht_data_cmd);
 
-            if (strstr(body, "\"REBOOT\"")) {
-                force_reboot = true;
-                strcpy(last_cmd_res, "Success: Rebooting Device");
+        if (waitForResponse("DOWNLOAD", 15000)) {
+          vTaskDelay(20 / portTICK_PERIOD_MS);
+          SerialSIT.write((const uint8_t *)gprs_payload, actualLen);
+
+          if (waitForResponse("OK", 10000) || strstr(modem_response_buf, "OK") != NULL) {
+            flushSerialSIT();
+            SerialSIT.println("AT+HTTPACTION=1");
+            if (waitForResponse("+HTTPACTION:", 30000)) {
+              debugf("[Health] HTTPACTION Response: %s\n", modem_response_buf);
+              if (strstr(modem_response_buf, "200") != NULL) {
+                success = true;
+                debugln("[Health] ✅ High-Level HTTPINIT Delivered & Confirmed by Server (200 OK).");
+              } else if (strstr(modem_response_buf, "714") || strstr(modem_response_buf, "706")) {
+                debugln("[Health] 🧟 Zombie Socket (714/706). Nuking Bearer Context...");
+                SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 1000);
+                SerialSIT.println("AT+CGACT=0,1"); waitForResponse("OK", 3000);
+                vTaskDelay(500 / portTICK_PERIOD_MS);
+              }
             }
-            if (strstr(body, "\"PAUSE_LIVE_POST\"") || strstr(body, "\"PAUSE_TX\"") || strstr(body, "\"PAUSE_KSNDMC\"")) {
-                live_post_muted = true;
-                Preferences pMute; pMute.begin("sys-config", false); pMute.putBool("muted", true); pMute.end();
-                strcpy(last_cmd_res, "Success: Primary Transmissions Muted");
-                debugln("[CMD] Primary server live transmissions MUTED.");
+            if (success) {
+              vTaskDelay(200 / portTICK_PERIOD_MS);
+              SerialSIT.println("AT+HTTPREAD=0,512"); 
+              if (waitForResponse("+HTTPREAD:", 5000)) {
+                parse_health_response(modem_response_buf);
+              }
             }
-            if (strstr(body, "\"RESUME_LIVE_POST\"") || strstr(body, "\"RESUME_TX\"") || strstr(body, "\"RESUME_KSNDMC\"")) {
-                live_post_muted = false;
-                Preferences pMute; pMute.begin("sys-config", false); pMute.putBool("muted", false); pMute.end();
-                strcpy(last_cmd_res, "Success: Primary Transmissions Resumed");
-                debugln("[CMD] Primary server live transmissions RESUMED.");
-            }
-            if (strstr(body, "\"OTA_CHECK\"")) {
-                force_ota = true;
-                strcpy(last_cmd_res, "Success: OTA Triggered");
-            }
-            if (strstr(body, "\"GET_STATUS\"") || strstr(body, "\"GET_HEALTH\"")) {
-                force_health_upload = true;
-                strcpy(last_cmd_res, "Success: Telemetry Refreshed");
-            }
-            if (strstr(body, "\"GET_NUM\"")) {
-                force_get_num = true;
-                strcpy(last_cmd_res, "Executing GET_NUM");
-            }
-            if (strstr(body, "\"FTP_BACKLOG\"")) {
-                force_ftp = true;
-                strcpy(last_cmd_res, "Success: FTP Backlog Triggered");
-            }
-            if (strstr(body, "\"FTP_DAILY\"")) {
-                force_ftp_daily = true;
-                strcpy(last_cmd_res, "Success: Daily Log Triggered");
-                const char* dTag = strstr(body, "\"p\"");
-                if (dTag) {
-                    const char* col = strchr(dTag, ':');
-                    if (col) {
-                        const char* q1 = strchr(col, '"');
-                        if (q1) { strncpy(ftp_daily_date, q1+1, 8); ftp_daily_date[8]='\0'; }
-                    }
-                }
-            }
-            if (strstr(body, "\"SET_WIFI_PASS\"")) {
-                const char* pTag = strstr(body, "\"p\"");
-                if (pTag) {
-                    const char* col = strchr(pTag, ':');
-                    if (col) {
-                        const char* q1 = strchr(col, '"');
-                        if (q1) {
-                            const char* q2 = strchr(q1 + 1, '"');
-                            if (q2) {
-                                int passLen = q2 - (q1 + 1);
-                                if (passLen >= 8 && passLen < 32) {
-                                    char newPass[32]; strncpy(newPass, q1+1, passLen); newPass[passLen] = '\0';
-                                    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
-                                        File f = SPIFFS.open("/wifi_pass.txt", FILE_WRITE);
-                                        if (f) { f.print(newPass); f.close(); strcpy(last_cmd_res, "Success: WiFi Pass Updated"); }
-                                        xSemaphoreGive(fsMutex);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if (strstr(body, "\"GET_GPS\"")) {
-                force_gps_refresh = true;
-                strcpy(last_cmd_res, "Success: GPS Refresh");
-            }
-            if (strstr(body, "\"CLEAR_FTP_QUEUE\"")) {
-                force_clear_ftp_queue = true;
-                strcpy(last_cmd_res, "Success: FTP Queue Cleared");
-            }
-            if (strstr(body, "\"DELETE_DATA\"")) {
-                force_delete_data = true;
-                strcpy(last_cmd_res, "Success: Data Wiped");
-            }
-            
-            const char* pTag = strstr(body, "\"INTERVAL\"");
-            if (pTag) {
-                const char* pSub = strstr(pTag, "\"p\"");
-                if (pSub) {
-                    const char* valStart = strchr(pSub, ':');
-                    if (valStart) {
-                        String valStr = "";
-                        for (int k = 1; valStart[k] != '\0'; k++) {
-                            if (isdigit(valStart[k])) valStr += valStart[k];
-                            else if (valStr.length() > 0) break;
-                        }
-                        if (valStr.length() > 0) {
-                            test_health_every_slot = (valStr.toInt() <= 15) ? 1 : 0;
-                            Preferences prefs; prefs.begin("sys-config", false);
-                            prefs.putInt("test_health", test_health_every_slot); prefs.end();
-                            snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: Interval Set (%d min)", valStr.toInt());
-                        }
-                    }
-                }
-            }
+          } else {
+            debugf("[Health] HTTPDATA payload write failed. Resp: '%s'\n", modem_response_buf);
           }
+        } else {
+          debugf("[Health] DOWNLOAD Fail. Resp: '%s'\n", modem_response_buf);
         }
+      } else {
+        debugln("[Health] [ERR] URL PARA Reject.");
       }
     } else {
-      debugln("[Health] DOWNLOAD Fail. Nuking Bearer Context...");
-      SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 1000);
-      SerialSIT.println("AT+CGACT=0,1"); waitForResponse("OK", 5000);
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
-      session_terminated = true;
+      debugln("[Health] [ERR] HTTPINIT Reject.");
     }
 
-    if (!session_terminated) {
-      SerialSIT.println("AT+HTTPTERM");
-      waitForResponse("OK", 1000);
-    }
+    SerialSIT.println("AT+HTTPTERM");
+    waitForResponse("OK", 1000);
     if (success) break;
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 
   SerialSIT.println("AT+CGEREP=2"); waitForResponse("OK", 1000);

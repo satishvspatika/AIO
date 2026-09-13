@@ -147,49 +147,30 @@ void rtcRead(void *pvParameters) {
       //        sampleNo   = (record_hr * 60 + record_min) / 15;
     }
 
-    // v5.75: Automatic Daily Sync & Drift Correction (H-04 Fix)
-    // Check if the daily rollover (midnight) has reset the rtc_daily_sync_done flag
-    // OR if hardware failure (badReads) suggests a network correction is needed.
-    bool auto_sync_needed = false;
-    portENTER_CRITICAL(&rtcTimeMux);
-    auto_sync_needed = !rtc_daily_sync_done;
-    portEXIT_CRITICAL(&rtcTimeMux);
-
-    if (badReads >= 10 || (auto_sync_needed && hr == 11)) { // v6.06: reduced from 40 (2min) to 10 (30s) for faster boot RTC sync
-      // v5.77: Coordination Guard — Do not sync if sleep is imminent or retry cap reached
-       if (__atomic_load_n(&sleep_sequence_active, __ATOMIC_ACQUIRE)) {
-        debugln("[RTC] Sleep imminent. Deferring sync.");
-      } else if (rtc_daily_sync_count >= 3) {
-        debugln("[RTC] Daily sync retry cap reached. Deferring.");
-      } else {
+    // v5.75: Automatic Daily Sync & Drift Correction
+    // RTC is synced silently via server time (sync_rtc_from_server_tm) during HTTP/TCP cycles.
+    // Standalone resync_time() is ONLY triggered if severe DS1307 hardware corruption occurs (badReads >= 40).
+    if (badReads >= 40) {
+      if (!__atomic_load_n(&sleep_sequence_active, __ATOMIC_ACQUIRE) && rtc_daily_sync_count < 3) {
         portENTER_CRITICAL(&syncMux);
         int mode_snap = sync_mode;
         portEXIT_CRITICAL(&syncMux);
         bool gprs_idle = ((mode_snap == eHttpStop || mode_snap == eSMSStop ||
-                           mode_snap == eExceptionHandled ||
-                           mode_snap == eSyncModeInitial) && // v6.06 fix: eSyncModeInitial = GPRS not yet started, safe to sync RTC
-                          !health_in_progress && !wifi_active);
+                           mode_snap == eExceptionHandled || mode_snap == eSyncModeInitial) &&
+                          !health_in_progress && !wifi_active &&
+                          !__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) &&
+                          !gprs_started);
         if (gprs_idle) {
-          if (badReads >= 40) debugln("[RTC] Too many bad reads — resyncing RTC");
-          else {
-            debugln("[RTC] Scheduled daily sync/drift correction triggered.");
-            rtc_daily_sync_count++; // Increment retry counter
-          }
+          debugln("[RTC] Hardware RTC bad reads cap exceeded — resyncing RTC");
+          rtc_daily_sync_count++;
           badReads = -1;
           resync_time();
-         } else if (!__atomic_load_n(&sleep_sequence_active, __ATOMIC_ACQUIRE)) {
-          // v5.88: Hardened Log Silencing — Only spam once every 60s
-          static unsigned long last_defer_msg_time = 0;
-          if (millis() - last_defer_msg_time > 60000) {
-            debugln("[RTC] Deferring sync, GPRS task is busy.");
-            last_defer_msg_time = millis();
-          }
         }
       }
     }
 
     esp_task_wdt_reset();
-    vTaskDelay(pdMS_TO_TICKS(3000)); // wait 3 seconds (v5.78 Hardening: reduced from 5s to prevent WDT race)
+    vTaskDelay(pdMS_TO_TICKS(3000));
   }
 }
 
@@ -233,7 +214,7 @@ void resync_time() {
     debugf("[RTC] AT Response: %s\n", modem_response_buf);
 
     vTaskDelay(5000 / portTICK_PERIOD_MS); 
-    SerialSIT.println("AT+CLBS=4");
+    SerialSIT.println("AT+CLBS=1");
     waitForResponse("+CLBS:", 10000);
     xSemaphoreGive(modemMutex);
   } else {

@@ -165,7 +165,7 @@
                     <span>🔄 Data & Reporting</span>
                     <span class="text-[9px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded font-bold">TIER 2</span>
                 </div>
-                <a href="/cmd/{{ stn_id }}/FTP_BACKLOG" class="btn-sm btn-t2-primary text-center" onclick="return confirm('Force immediate backlog upload for {{ stn_id }}?')">↑ Sync Backlog (FTP)</a>
+                <a href="/cmd/{{ stn_id }}/FTP_BACKLOG" class="btn-sm btn-t2-primary text-center" onclick="return confirm('Force immediate backlog upload for {{ stn_id }}?')">↑ Sync Backlog</a>
                 <button onclick="promptFtpDaily('{{ stn_id }}')" class="btn-sm btn-t2-secondary text-center">📅 Fetch Daily Log</button>
                 <div class="flex gap-1">
                     <a href="/cmd/{{ stn_id }}/INTERVAL?param=15" class="btn-sm btn-t2-sub flex-1 text-center" onclick="return confirm('Set 15-min interval?')">⏱ 15m Mode</a>
@@ -227,11 +227,20 @@
 
 <!-- History Table -->
 <div class="card p-4 mb-5">
-    <div class="flex justify-between items-center mb-3">
+    <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
         <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Historical Check-ins</h3>
-        <button onclick="deleteSelectedRecords()"
-            class="btn-sm bg-red-900/80 hover:bg-red-700 text-red-200 border border-red-600/50 hidden shadow-lg"
-            id="bulk-del-rec-btn">🗑 Delete Selected</button>
+        <div class="flex items-center gap-2">
+            <button onclick="deleteSelectedRecords()" disabled
+                class="btn-sm bg-red-600 hover:bg-red-700 text-white font-bold border border-red-500/80 px-2.5 py-1 text-[11px] rounded shadow-sm inline-flex items-center gap-1 opacity-40 cursor-not-allowed transition"
+                id="bulk-del-rec-btn" title="Select check-in rows below using checkboxes to delete selected">🗑 Delete Selected</button>
+            {% if history and history|length > 0 %}
+            <a href="/delete/history/{{ stn_id }}"
+                class="btn-sm bg-red-950/60 hover:bg-red-800 text-red-300 hover:text-white border border-red-800/60 hover:border-red-600 px-2.5 py-1 text-[11px] font-bold rounded shadow-sm inline-flex items-center gap-1 transition"
+                onclick="return confirm('WARNING: Clear ALL historical check-in records for station {{ stn_id }}? This action cannot be undone.')">
+                🧹 Clear Check-ins
+            </a>
+            {% endif %}
+        </div>
     </div>
     <div class="tbl-wrap">
         <table class="w-full text-left text-xs">
@@ -325,10 +334,19 @@
 
 <!-- Remote Command History -->
 <div class="card p-4 mb-5 border-blue-900/20">
-    <h3 class="text-xs font-bold text-blue-400 uppercase tracking-wider mb-3 flex justify-between items-center">
-        <span>⚡ Recently Sent Commands</span>
-        <span class="text-[9px] text-slate-500 normal-case font-normal">Last 10 entries</span>
-    </h3>
+    <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
+        <h3 class="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-2">
+            <span>⚡ Recently Sent Commands</span>
+            <span class="text-[9px] text-slate-500 normal-case font-normal">Last 10 entries</span>
+        </h3>
+        {% if commands and commands|length > 0 %}
+        <a href="/delete/command-history/{{ stn_id }}"
+            class="btn-sm bg-slate-800 hover:bg-red-900/80 text-slate-300 hover:text-red-200 border border-slate-700 hover:border-red-600/50 px-2.5 py-1 text-[11px] font-bold rounded shadow-sm inline-flex items-center gap-1 transition"
+            onclick="return confirm('Clear ALL command history for station {{ stn_id }}?')">
+            🗑 Clear Command History
+        </a>
+        {% endif %}
+    </div>
     <div class="overflow-hidden rounded border border-slate-800">
         <table class="w-full text-left text-[11px]">
             <thead class="bg-slate-800/50 text-slate-500 uppercase text-[9px] tracking-tighter">
@@ -447,9 +465,16 @@
     window.updateBulkRecBtn = function () {
         const btn = document.getElementById('bulk-del-rec-btn');
         if (!btn) return;
-        const anyChecked = document.querySelectorAll('.rec-checkbox:checked').length > 0;
-        if (anyChecked) btn.classList.remove('hidden');
-        else btn.classList.add('hidden');
+        const count = document.querySelectorAll('.rec-checkbox:checked').length;
+        if (count > 0) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-40', 'cursor-not-allowed');
+            btn.textContent = `🗑 Delete Selected (${count})`;
+        } else {
+            btn.disabled = true;
+            btn.classList.add('opacity-40', 'cursor-not-allowed');
+            btn.textContent = '🗑 Delete Selected';
+        }
     };
 
     window.deleteSelectedRecords = function () {
@@ -458,21 +483,50 @@
         if (ids.length === 0) return;
         if (!confirm(`WARNING: Permanently delete ${ids.length} selected record(s)? This cannot be undone.`)) return;
 
+        const btn = document.getElementById('bulk-del-rec-btn');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Deleting...';
+        }
+
         fetch('/delete/bulk-records', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ids: ids })
         })
-            .then(res => res.json())
-            .then(data => {
-                if (data.status === 'ok') {
+            .then(async res => {
+                if (res.status === 401) {
+                    alert("Session expired. Please log in again.");
+                    window.location.href = "/login";
+                    return;
+                }
+                if (res.ok) {
                     window.location.reload();
                 } else {
-                    alert('Error deleting records');
+                    let msg = 'Server error ' + res.status;
+                    try {
+                        const data = await res.json();
+                        msg = data.detail || data.msg || msg;
+                    } catch(e) {}
+                    alert('Error deleting records: ' + msg);
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.textContent = `🗑 Delete Selected (${ids.length})`;
+                    }
                 }
             })
-            .catch(err => alert("Failed to communicate with server."));
+            .catch(err => {
+                alert("Communication Error: " + (err.message || err));
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = `🗑 Delete Selected (${ids.length})`;
+                }
+            });
     };
+
+    document.addEventListener('DOMContentLoaded', () => {
+        updateBulkRecBtn();
+    });
 
     function promptFtpDaily(stnId) {
         const date = prompt("Enter Date in YYYYMMDD format (e.g. 20260228):");

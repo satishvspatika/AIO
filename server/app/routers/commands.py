@@ -107,17 +107,40 @@ def toggle_ota_lock(stn_id: str, db: Session = Depends(get_db)):
 
 @router.api_route("/delete/{stn_id}", methods=["GET", "POST"])
 def delete_station(stn_id: str, db: Session = Depends(get_db)):
-    from app.models import HealthReport, StationSettings
-    # v5.89 FINAL FIX: Padded String-Only targets
-    s = str(stn_id).strip()
-    target_ids = {s}
-    if s.isdigit():
-        target_ids.add(s.lstrip('0'))
-        target_ids.add(s.zfill(6))
-    
-    db.query(HealthReport).filter(HealthReport.stn_id.in_(list(target_ids))).delete(synchronize_session=False)
-    db.query(CommandQueue).filter(CommandQueue.stn_id.in_(list(target_ids))).delete(synchronize_session=False)
-    db.query(StationSettings).filter(StationSettings.stn_id.in_(list(target_ids))).delete(synchronize_session=False)
+    from app.models import HealthReport, StationSettings, CommandQueue
+    from sqlalchemy import text, bindparam
+    import re
+    s_raw = str(stn_id).strip()
+    expanded_targets = set()
+    include_null_or_empty = False
+
+    if not s_raw or s_raw.upper() in ("UNKNOWN", "NONE", "NULL", "0", "N/A"):
+        include_null_or_empty = True
+        expanded_targets.update(["UNKNOWN", "unknown", "Unknown", "0", "N/A", "NA", "none", "NULL", "None", ""])
+    else:
+        s_clean = re.sub(r'[^A-Z0-9]', '', s_raw.upper())
+        if s_clean: expanded_targets.add(s_clean)
+        expanded_targets.add(s_raw)
+        expanded_targets.add(s_raw.lower())
+        norm = s_clean.lstrip('0') if s_clean else "0"
+        if not norm: norm = "0"
+        expanded_targets.add(norm)
+        expanded_targets.add(norm.zfill(6))
+
+    target_list = list(expanded_targets)
+
+    if include_null_or_empty:
+        sql1 = text("DELETE FROM command_queue WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
+        sql2 = text("DELETE FROM health_reports WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
+        sql3 = text("DELETE FROM station_settings WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
+    else:
+        sql1 = text("DELETE FROM command_queue WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
+        sql2 = text("DELETE FROM health_reports WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
+        sql3 = text("DELETE FROM station_settings WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
+
+    db.execute(sql1, {"targets": target_list})
+    db.execute(sql2, {"targets": target_list})
+    db.execute(sql3, {"targets": target_list})
     db.commit()
     return RedirectResponse(url="/dashboard", status_code=303)
 
@@ -129,6 +152,62 @@ def delete_station_category(stn_id: str, unit_type: str, system: int, db: Sessio
     db.commit()
     return RedirectResponse(url="/summary", status_code=303)
 
+@router.api_route("/delete/history/{stn_id}", methods=["GET", "POST"])
+def clear_station_history(stn_id: str, db: Session = Depends(get_db)):
+    """Wipes all historical health check-in records, station settings, and command queue for a single station."""
+    from app.models import HealthReport, StationSettings, CommandQueue
+    from sqlalchemy import text, bindparam
+    import re
+    s_raw = str(stn_id).strip()
+    expanded_targets = set()
+    include_null_or_empty = False
+
+    if not s_raw or s_raw.upper() in ("UNKNOWN", "NONE", "NULL", "0", "N/A"):
+        include_null_or_empty = True
+        expanded_targets.update(["UNKNOWN", "unknown", "Unknown", "0", "N/A", "NA", "none", "NULL", "None", ""])
+    else:
+        s_clean = re.sub(r'[^A-Z0-9]', '', s_raw.upper())
+        if s_clean: expanded_targets.add(s_clean)
+        expanded_targets.add(s_raw)
+        expanded_targets.add(s_raw.lower())
+        norm = s_clean.lstrip('0') if s_clean else "0"
+        if not norm: norm = "0"
+        expanded_targets.add(norm)
+        expanded_targets.add(norm.zfill(6))
+
+    target_list = list(expanded_targets)
+
+    if include_null_or_empty:
+        sql1 = text("DELETE FROM health_reports WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
+        sql2 = text("DELETE FROM station_settings WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
+        sql3 = text("DELETE FROM command_queue WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
+    else:
+        sql1 = text("DELETE FROM health_reports WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
+        sql2 = text("DELETE FROM station_settings WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
+        sql3 = text("DELETE FROM command_queue WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
+
+    db.execute(sql1, {"targets": target_list})
+    db.execute(sql2, {"targets": target_list})
+    db.execute(sql3, {"targets": target_list})
+    db.commit()
+    return RedirectResponse(url="/dashboard", status_code=303)
+
+
+@router.api_route("/delete/command-history/{stn_id}", methods=["GET", "POST"])
+def clear_command_history(stn_id: str, db: Session = Depends(get_db)):
+    """Wipes all command history (both pending and executed) for a single station."""
+    from app.models import CommandQueue
+    s_raw = str(stn_id).strip()
+    target_ids = {s_raw}
+    if s_raw.isdigit():
+        target_ids.add(s_raw.lstrip('0'))
+        target_ids.add(s_raw.zfill(6))
+
+    db.query(CommandQueue).filter(CommandQueue.stn_id.in_(list(target_ids))).delete(synchronize_session=False)
+    db.commit()
+    return RedirectResponse(url=f"/station/{stn_id}", status_code=303)
+
+
 @router.api_route("/delete/record/{report_id}", methods=["GET", "POST"])
 def delete_record(report_id: int, db: Session = Depends(get_db)):
     record = db.query(HealthReport).filter_by(id=report_id).first()
@@ -136,6 +215,18 @@ def delete_record(report_id: int, db: Session = Depends(get_db)):
         stn_id = record.stn_id
         db.delete(record)
         db.commit()
+        
+        # Check if any health records remain for this station
+        s_raw = str(stn_id).strip()
+        target_ids = {s_raw}
+        if s_raw.isdigit():
+            target_ids.add(s_raw.lstrip('0'))
+            target_ids.add(s_raw.zfill(6))
+        remaining = db.query(HealthReport).filter(HealthReport.stn_id.in_(list(target_ids))).count()
+        if remaining == 0:
+            db.query(StationSettings).filter(StationSettings.stn_id.in_(list(target_ids))).delete(synchronize_session=False)
+            db.commit()
+            return RedirectResponse(url="/dashboard", status_code=303)
         return RedirectResponse(url=f"/station/{stn_id}", status_code=303)
     return RedirectResponse(url="/dashboard", status_code=303)
 
@@ -145,13 +236,27 @@ class BulkDeleteRecords(BaseModel):
 class BulkDeleteStations(BaseModel):
     stn_ids: List[str]
 
-@router.post("/delete/bulk-records")
+@router.api_route("/delete/bulk-records", methods=["GET", "POST"])
 def delete_bulk_records(payload: BulkDeleteRecords, db: Session = Depends(get_db)):
     try:
         if not payload.ids:
             return {"status": "ok", "deleted": 0}
-        # Surgical Delete of specific telemetry rows
+        from app.models import StationSettings
+        records = db.query(HealthReport).filter(HealthReport.id.in_(payload.ids)).all()
+        stn_ids = {r.stn_id for r in records if r.stn_id}
         db.query(HealthReport).filter(HealthReport.id.in_(payload.ids)).delete(synchronize_session=False)
+        db.commit()
+
+        # Clean up orphan StationSettings for any station that now has 0 health reports
+        for stn in stn_ids:
+            s_raw = str(stn).strip()
+            target_ids = {s_raw}
+            if s_raw.isdigit():
+                target_ids.add(s_raw.lstrip('0'))
+                target_ids.add(s_raw.zfill(6))
+            remaining = db.query(HealthReport).filter(HealthReport.stn_id.in_(list(target_ids))).count()
+            if remaining == 0:
+                db.query(StationSettings).filter(StationSettings.stn_id.in_(list(target_ids))).delete(synchronize_session=False)
         db.commit()
         return {"status": "ok", "deleted": len(payload.ids)}
     except Exception as e:
@@ -164,40 +269,56 @@ def delete_bulk_records(payload: BulkDeleteRecords, db: Session = Depends(get_db
 def delete_bulk_stations(payload: BulkDeleteStations, db: Session = Depends(get_db)):
     try:
         from app.models import HealthReport, CommandQueue, StationSettings
+        from sqlalchemy import text, bindparam
         import re
         
-        # v5.89 ULTIMATE NORMALIZATION: Ensure we delete all variants (001952, 1952, etc.)
         expanded_targets = set()
+        include_null_or_empty = False
+
         for stn in payload.stn_ids:
-            if stn is None: continue
+            if stn is None:
+                include_null_or_empty = True
+                continue
             s_raw = str(stn).strip()
-            if not s_raw: continue
+            if not s_raw or s_raw.upper() in ("UNKNOWN", "NONE", "NULL", "0", "N/A"):
+                include_null_or_empty = True
+                expanded_targets.update(["UNKNOWN", "unknown", "Unknown", "0", "N/A", "NA", "none", "NULL", "None", ""])
+                continue
             
-            # Clean non-alphanumeric
             s_clean = re.sub(r'[^A-Z0-9]', '', s_raw.upper())
-            if not s_clean: continue
+            if not s_clean:
+                include_null_or_empty = True
+                continue
             
-            # Add all possible matches
             expanded_targets.add(s_clean)
+            expanded_targets.add(s_raw)
+            expanded_targets.add(s_raw.lower())
+            expanded_targets.add(s_raw.upper())
             norm = s_clean.lstrip('0')
             if not norm: norm = "0"
             expanded_targets.add(norm)
             expanded_targets.add(norm.zfill(6))
-            expanded_targets.add(s_raw) # Just in case
 
-        if not expanded_targets:
+        if not expanded_targets and not include_null_or_empty:
             return {"status": "ok", "deleted": 0}
 
         target_list = list(expanded_targets)
-        
-        # v5.90: Atomic multi-table wipe
-        # Order matters: Delete transient data first, then master settings
-        q1 = db.query(CommandQueue).filter(CommandQueue.stn_id.in_(target_list)).delete(synchronize_session=False)
-        q2 = db.query(HealthReport).filter(HealthReport.stn_id.in_(target_list)).delete(synchronize_session=False)
-        q3 = db.query(StationSettings).filter(StationSettings.stn_id.in_(target_list)).delete(synchronize_session=False)
-        
+
+        if include_null_or_empty:
+            sql1 = text("DELETE FROM command_queue WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
+            sql2 = text("DELETE FROM health_reports WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
+            sql3 = text("DELETE FROM station_settings WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
+        else:
+            sql1 = text("DELETE FROM command_queue WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
+            sql2 = text("DELETE FROM health_reports WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
+            sql3 = text("DELETE FROM station_settings WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
+
+        db.execute(sql1, {"targets": target_list})
+        db.execute(sql2, {"targets": target_list})
+        db.execute(sql3, {"targets": target_list})
+
         db.commit()
-        return {"status": "ok", "deleted": len(payload.stn_ids), "tables_affected": [q1, q2, q3]}
+        return {"status": "ok", "deleted": len(payload.stn_ids)}
     except Exception as e:
         db.rollback()
         print(f"BULK STATION DELETE ERROR: {e}")

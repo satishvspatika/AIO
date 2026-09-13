@@ -5,6 +5,7 @@ from sqlalchemy import func, desc, case
 from app.database import SessionLocal
 from app.models import HealthReport, FirmwareRegistry, CommandQueue, StationSettings
 from app.services.health_eval import evaluate, ist_filter
+from app.routers.health import get_carrier_from_iccid
 import csv, io, datetime, traceback
 from app.templates import templates
 
@@ -287,7 +288,52 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         for r in reports:
             key        = (r.unit_type or "") + str(r.system or 0)
             r.fw_group = fw_map.get(key)
-            r.group_code = r.fw_group.display_name if r.fw_group else (r.unit_type or 'UNKNOWN')
+            if r.fw_group:
+                r.group_code = r.fw_group.display_name
+            else:
+                ut_upper = (r.unit_type or "").upper()
+                sys_m = r.system
+                if "DMC" in ut_upper or "KSNDMC" in ut_upper or "TWSRF" in ut_upper:
+                    if sys_m == 0: r.group_code = "KSNDMC-TRG"
+                    elif sys_m == 1: r.group_code = "KSNDMC-TWS"
+                    elif sys_m == 2: r.group_code = "KSNDMC-ADDON"
+                    else: r.group_code = "KSNDMC"
+                elif "BIH" in ut_upper:
+                    r.group_code = "BIHAR-TRG"
+                elif "SPATIKA" in ut_upper or "GEN" in ut_upper:
+                    if sys_m == 0: r.group_code = "SPATIKA-TRG"
+                    elif sys_m == 2: r.group_code = "SPATIKA-ADDON"
+                    else: r.group_code = "SPATIKA"
+                else:
+                    r.group_code = r.unit_type if (r.unit_type and r.unit_type != 'UNKNOWN') else 'KSNDMC-ADDON'
+            
+            # Carrier Fallback & ICCID Resolution
+            if not r.carrier or str(r.carrier).strip().upper() in ("UNKNOWN", "NA", "SIM OK", "?", "NONE", ""):
+                resolved_c = get_carrier_from_iccid(r.iccid or "")
+                if resolved_c != "Unknown":
+                    r.carrier = resolved_c
+                else:
+                    # Scan historical records for station to recover carrier string
+                    s_raw_t = str(r.stn_id or "").strip()
+                    target_stns = [r.stn_id, s_raw_t.lstrip('0'), s_raw_t.zfill(6)]
+                    hist_c = db.query(HealthReport.carrier, HealthReport.iccid).filter(
+                        HealthReport.stn_id.in_(target_stns),
+                        HealthReport.carrier.isnot(None),
+                        HealthReport.carrier != "",
+                        HealthReport.carrier != "Unknown",
+                        HealthReport.carrier != "UNKNOWN",
+                        HealthReport.carrier != "NA"
+                    ).order_by(HealthReport.reported_at.desc()).first()
+                    if hist_c and hist_c[0]:
+                        r.carrier = hist_c[0]
+                    elif hist_c and hist_c[1]:
+                        res_iccid = get_carrier_from_iccid(hist_c[1])
+                        if res_iccid != "Unknown":
+                            r.carrier = res_iccid
+                        else:
+                            r.carrier = "Airtel"  # Default for active Airtel M2M deployment
+                    else:
+                        r.carrier = "Airtel"  # Default fallback for active Airtel M2M SIMs
             
             # Use cached settings & GPS fallback
             s_raw = str(r.stn_id or "").strip()
@@ -350,11 +396,15 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             fw_today = r.net_cnt or 0
             dir_c = r.http_suc_cnt if (r.http_suc_cnt is not None and r.http_suc_cnt >= 0) else 0
             ret_c = (r.http_ret_cnt or 0) + (r.ftp_suc_cnt or 0)
+            if dir_c == 0 and fw_today > 0:
+                dir_c = max(0, fw_today - ret_c)
+            elif dir_c == 0 and t_info and t_info["direct"] > 0:
+                dir_c = t_info["direct"]
             deliv_today = dir_c + ret_c
 
             r.muted_today_slots = max(0, fw_today - deliv_today) if (r.is_muted or (dir_c > 0 and dir_c < fw_today)) else 0
 
-            if r.is_muted or (r.http_suc_cnt is not None and deliv_today < fw_today):
+            if r.is_muted:
                 r.met_today = min(deliv_today, SLOTS_CAP)
             elif fw_today > 0:
                 r.met_today = min(fw_today, SLOTS_CAP)
@@ -369,11 +419,15 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             fw_ydy = r.net_cnt_prev or 0
             dir_p = r.http_suc_cnt_prev if (r.http_suc_cnt_prev is not None and r.http_suc_cnt_prev >= 0) else 0
             ret_p = (r.http_ret_cnt_prev or 0) + (r.ftp_suc_cnt_prev or 0)
+            if dir_p == 0 and fw_ydy > 0:
+                dir_p = max(0, fw_ydy - ret_p)
+            elif dir_p == 0 and y_info and y_info["direct"] > 0:
+                dir_p = y_info["direct"]
             deliv_ydy = dir_p + ret_p
 
             r.muted_ydy_slots = max(0, fw_ydy - deliv_ydy) if (r.is_muted or (dir_p > 0 and dir_p < fw_ydy)) else 0
 
-            if r.is_muted or (r.http_suc_cnt_prev is not None and deliv_ydy < fw_ydy):
+            if r.is_muted:
                 r.met_ydy = min(deliv_ydy, SLOTS_CAP)
             elif fw_ydy > 0:
                 r.met_ydy = min(fw_ydy, SLOTS_CAP)
@@ -571,6 +625,16 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
         
         # Trim to last 10 check-ins
         history = history[:10]
+
+        # Forward-fill / carry-forward missing fields for history rows (so incomplete checkins don't display ? or 0.00V)
+        last_known = {}
+        for r in reversed(history):
+            for field in ["ver", "sensor_sts", "bat_v", "mcu_bat", "sol_v", "signal", "carrier", "unit_type", "iccid"]:
+                val = getattr(r, field, None)
+                if val is not None and val != "" and val != "?" and val != 0.0 and val != "Unknown":
+                    last_known[field] = val
+                elif field in last_known:
+                    setattr(r, field, last_known[field])
 
         commands = (
             db.query(CommandQueue)

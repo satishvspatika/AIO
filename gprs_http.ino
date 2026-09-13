@@ -487,6 +487,13 @@ void prepare_data_and_send() {
 
     if (data_mode == eCurrentData) {
       diag_first_http_count++;
+      if (temp_sampleNo >= 0 && temp_sampleNo < 96) {
+        diag_sent_mask_cur[temp_sampleNo / 32] |= (1UL << (temp_sampleNo % 32));
+      }
+    } else {
+      if (temp_sampleNo >= 0 && temp_sampleNo < 96) {
+        diag_sent_mask_prev[temp_sampleNo / 32] |= (1UL << (temp_sampleNo % 32));
+      }
     }
   }
   vTaskDelay(200 / portTICK_PERIOD_MS);
@@ -2023,7 +2030,7 @@ int send_at_cmd_data(char *payload, bool robust) {
         vTaskDelay(10 / portTICK_PERIOD_MS);
         SerialSIT.write((const uint8_t *)rawHttp, rawLen);
 
-        if (waitForResponse("+IPD", 15000) || strstr(modem_response_buf, "200 OK") != NULL || strstr(modem_response_buf, "Success") != NULL) {
+        if (waitForResponseNoFlush("+IPD", 15000) || strstr(modem_response_buf, "200 OK") != NULL || strstr(modem_response_buf, "Success") != NULL) {
           uint32_t respStart = millis();
           while (strstr(modem_response_buf, "200") == NULL && strstr(modem_response_buf, "Success") == NULL && (millis() - respStart < 3000)) {
             while (SerialSIT.available()) {

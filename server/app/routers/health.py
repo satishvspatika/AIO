@@ -32,7 +32,8 @@ _ALLOWED_FIELDS = {
     "http_present_fails", "http_cum_fails", "http_backlog_cnt", "last_cmd_id", 
     "mutex_fail", "calib", "gps", "carrier", "iccid", "last_cmd_res", "net_nuke",
     "dbg_tsk", "last_rst", "health_sts", "sensor_sts", "reg_fail_reason", 
-    "cdm_sts", "ota_fail_reason", "rf_res", "unsent_cnt", "zombie_cnt", "net_mode", "surv_mode", "muted"
+    "cdm_sts", "ota_fail_reason", "rf_res", "unsent_cnt", "zombie_cnt", "net_mode", "surv_mode", "muted",
+    "group", "network", "unit", "hw", "rf_cls_date"
 }
 
 # Known type hints — anything not listed defaults to TEXT
@@ -75,10 +76,10 @@ def get_carrier_from_iccid(iccid: str) -> str:
     if not iccid or len(iccid) < 6:
         return "Unknown"
     # Common Indian Issuer Identifiers (IIN)
-    if iccid.startswith(("899116", "899110")): return "Airtel"
-    if iccid.startswith("899100"): return "BSNL"
-    if iccid.startswith("899184"): return "Jio"
-    if iccid.startswith("899111"): return "Vi"
+    if iccid.startswith(("899116", "899110", "899145")): return "Airtel"
+    if iccid.startswith(("899100", "899170", "899130", "899150")): return "BSNL"
+    if iccid.startswith(("899184", "899185", "899186")): return "Jio"
+    if iccid.startswith(("899111", "899112")): return "Vi"
     return "Unknown"
 
 
@@ -107,7 +108,7 @@ def _auto_migrate(db: Session, data: dict, table: str = "health_reports"):
         col_type = _infer_sql_type(key, val)
         default  = "0" if col_type in ("INTEGER","REAL") else "''"
         try:
-            db.execute(text(f"ALTER TABLE {table} ADD COLUMN {key} {col_type} DEFAULT {default}"))
+            db.execute(text(f'ALTER TABLE {table} ADD COLUMN "{key}" {col_type} DEFAULT {default}'))
             db.commit()
             existing_cols.add(key)
             print(f"[AutoMigrate] ✅ Added column '{key}' ({col_type}) to {table}")
@@ -193,6 +194,35 @@ async def _process_health_data(data: dict, request: Request, db: Session):
     report_kwargs["carrier"] = carrier
     report_kwargs.setdefault("spiffs_total_kb", 4640)
     report_kwargs.setdefault("calib", "NA")
+
+    # Carry forward previous valid telemetry if missing in current report (e.g. telemetry endpoint checkins)
+    prev_report = db.query(HealthReport).filter_by(stn_id=stn_id).order_by(HealthReport.reported_at.desc()).first()
+    if prev_report:
+        if not report_kwargs.get("ver") and prev_report.ver:
+            report_kwargs["ver"] = prev_report.ver
+        if not report_kwargs.get("unit_type") or report_kwargs.get("unit_type") == "UNKNOWN":
+            if prev_report.unit_type: report_kwargs["unit_type"] = prev_report.unit_type
+        if report_kwargs.get("system") is None and prev_report.system is not None:
+            report_kwargs["system"] = prev_report.system
+        if not report_kwargs.get("bat_v") and prev_report.bat_v:
+            report_kwargs["bat_v"] = prev_report.bat_v
+        if not report_kwargs.get("mcu_bat") and prev_report.mcu_bat:
+            report_kwargs["mcu_bat"] = prev_report.mcu_bat
+        if report_kwargs.get("sol_v") is None and prev_report.sol_v is not None:
+            report_kwargs["sol_v"] = prev_report.sol_v
+        if not report_kwargs.get("sensor_sts") or report_kwargs.get("sensor_sts") == "?":
+            if prev_report.sensor_sts: report_kwargs["sensor_sts"] = prev_report.sensor_sts
+        if not report_kwargs.get("health_sts"):
+            if prev_report.health_sts: report_kwargs["health_sts"] = prev_report.health_sts
+        if not report_kwargs.get("carrier") or report_kwargs.get("carrier") == "Unknown":
+            if prev_report.carrier and prev_report.carrier != "Unknown":
+                report_kwargs["carrier"] = prev_report.carrier
+        if not report_kwargs.get("iccid") and prev_report.iccid:
+            report_kwargs["iccid"] = prev_report.iccid
+        if not report_kwargs.get("gps") and prev_report.gps:
+            report_kwargs["gps"] = prev_report.gps
+        if report_kwargs.get("signal") is None and prev_report.signal is not None:
+            report_kwargs["signal"] = prev_report.signal
 
     db.add(HealthReport(**report_kwargs))
 

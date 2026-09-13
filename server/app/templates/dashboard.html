@@ -148,7 +148,9 @@
             🔐 Set Wi-Fi Pass (Fleet)
         </button>
         {% endif %}
-        <button onclick="deleteSelectedStations()" class="btn-sm bg-red-900/80 hover:bg-red-700 text-red-200 border border-red-600/50 shadow-lg hidden" id="bulk-del-btn">🗑 Delete Selected</button>
+        <button onclick="deleteSelectedStations()" disabled
+            class="btn-sm bg-red-600 hover:bg-red-700 text-white font-bold border border-red-500/80 px-2.5 py-1 text-[11px] rounded shadow-sm inline-flex items-center gap-1 opacity-40 cursor-not-allowed transition"
+            id="bulk-del-btn" title="Select stations using checkboxes to delete selected">🗑 Delete Selected</button>
     </div>
 </div>
 
@@ -278,7 +280,7 @@
                     {% endif %}
                 </td>
 
-                {# ── TDY: live in-progress count + CDM badge + Muted differentiation ── #}
+                {# ── TDY: live in-progress count + Muted differentiation ── #}
                 <td class="p-2.5 font-mono text-center whitespace-nowrap" title="Today MET: Net records delivered to server (Direct HTTP / Backlog)">
                     <div class="flex flex-col items-center gap-0.5">
                         <div>
@@ -292,18 +294,11 @@
                             ⏸️ {{ r.muted_today_slots }} Muted
                         </span>
                         {% endif %}
-                        {# CDM badge: only show if PENDING or FAIL #}
-                        {% set cdm = r.cdm_sts or '' %}
-                        {% if cdm == 'PENDING' %}
-                        <span class="text-[8px] px-1 rounded bg-amber-950/60 border border-amber-600/50 text-amber-300" title="Closing Data Missing: Pending (08:30 record not yet due)">CDM⏳</span>
-                        {% elif cdm == 'FAIL' %}
-                        <span class="text-[8px] px-1 rounded bg-red-950/60 border border-red-600/50 text-red-300" title="Closing Data Missing: FAIL (08:30 record not received)">CDM✗</span>
-                        {% endif %}
                     </div>
                 </td>
 
-                {# ── YDY: closed-day count + PD / NDM quality flags ── #}
-                <td class="p-2.5 font-mono text-center whitespace-nowrap" title="Yesterday MET: Net records delivered. PD/NDM flags are for the CLOSED previous day.">
+                {# ── YDY: closed-day count + PD / CDM / NDM quality flags ── #}
+                <td class="p-2.5 font-mono text-center whitespace-nowrap" title="Yesterday MET: Net records delivered. PD/CDM/NDM flags are for the CLOSED previous day.">
                     <div class="flex flex-col items-center gap-0.5">
                         <div>
                             <span class="{% if r.met_ydy == 0 %}text-red-400{% elif r.met_ydy < 80 %}text-amber-400{% else %}text-slate-300{% endif %} font-bold">
@@ -316,13 +311,19 @@
                             ⏸️ {{ r.muted_ydy_slots }} Muted
                         </span>
                         {% endif %}
-                        {# PD / NDM issue badges only #}
+                        {# PD / CDM / NDM issue badges #}
                         <div class="flex gap-0.5 flex-wrap justify-center">
                             {% set ydy_nc = r.net_cnt_prev or 0 %}
                             {% if ydy_nc > 0 and ydy_nc < 86 %}
                             <span class="text-[8px] px-1 rounded bg-amber-950/60 border border-amber-600/50 text-amber-300" title="Partial Data: {{ ydy_nc }}/96 records received">PD({{ ydy_nc }})</span>
                             {% elif ydy_nc == 0 %}
                             <span class="text-[8px] px-1 rounded bg-red-950/60 border border-red-600/50 text-red-400" title="Previous day: No data received">PD✗</span>
+                            {% endif %}
+                            {% set cdm = r.cdm_sts or '' %}
+                            {% if cdm == 'PENDING' %}
+                            <span class="text-[8px] px-1 rounded bg-amber-950/60 border border-amber-600/50 text-amber-300" title="Closing Data Missing: Pending (08:30 record not yet due)">CDM⏳</span>
+                            {% elif cdm == 'FAIL' %}
+                            <span class="text-[8px] px-1 rounded bg-red-950/60 border border-red-600/50 text-red-300" title="Closing Data Missing: FAIL (08:30 record not received)">CDM✗</span>
                             {% endif %}
                             {% set ndm = r.ndm_cnt or 0 %}
                             {% if ndm > 18 %}
@@ -374,7 +375,7 @@
                             <!-- TIER 2: DATA & REPORTING -->
                             <div class="border-t border-slate-800 my-1"></div>
                             <div class="px-3 py-1 text-[9px] font-bold text-purple-400 uppercase tracking-wider">🔄 Data & Reporting</div>
-                            <a href="/cmd/{{ r.stn_id }}/FTP_BACKLOG" class="block px-3 py-1.5 text-xs text-purple-300 hover:bg-slate-800">↑ Sync Backlog (FTP)</a>
+                            <a href="/cmd/{{ r.stn_id }}/FTP_BACKLOG" class="block px-3 py-1.5 text-xs text-purple-300 hover:bg-slate-800">↑ Sync Backlog</a>
                             <button onclick="promptFtpDaily('{{ r.stn_id }}')" class="w-full text-left block px-3 py-1.5 text-xs text-purple-400 hover:bg-slate-800">📅 Fetch Daily Log</button>
                             <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=15" class="block px-3 py-1.5 text-xs text-amber-300 hover:bg-slate-800">⏱ 15-Min Reporting</a>
                             <a href="/cmd/{{ r.stn_id }}/INTERVAL?param=1440" class="block px-3 py-1.5 text-xs text-amber-400 hover:bg-slate-800">⏱ 24-Hour Reporting</a>
@@ -829,6 +830,7 @@
         // Set initial active state for Total Stations
         const firstCard = document.getElementById('card-all');
         if (firstCard) firstCard.classList.add('active-card', 'ring-4', 'ring-blue-500/50');
+        updateBulkDeleteBtn();
     });
 
     // 4. Bulk Delete Logic
@@ -846,11 +848,15 @@
     window.updateBulkDeleteBtn = function () {
         const btn = document.getElementById('bulk-del-btn');
         if (!btn) return;
-        const anyChecked = document.querySelectorAll('.stn-checkbox:checked').length > 0;
-        if (anyChecked) {
-            btn.classList.remove('hidden');
+        const count = document.querySelectorAll('.stn-checkbox:checked').length;
+        if (count > 0) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-40', 'cursor-not-allowed');
+            btn.textContent = `🗑 Delete Selected (${count})`;
         } else {
-            btn.classList.add('hidden');
+            btn.disabled = true;
+            btn.classList.add('opacity-40', 'cursor-not-allowed');
+            btn.textContent = '🗑 Delete Selected';
         }
     };
 
@@ -873,17 +879,20 @@
                 if (res.ok) {
                     window.location.reload();
                 } else {
-                    const data = await res.json();
-                    const msg = data.detail || 'Unknown server error';
+                    let msg = 'Server error ' + res.status;
+                    try {
+                        const data = await res.json();
+                        msg = data.detail || data.msg || msg;
+                    } catch(e) {}
                     alert('Error: ' + msg);
                     btn.disabled = false;
-                    btn.textContent = '🗑 Delete Selected';
+                    btn.textContent = `🗑 Delete Selected (${stn_ids.length})`;
                 }
             })
             .catch(err => {
-                alert("Communication Error: Could not reach server.");
+                alert("Communication Error: " + (err.message || err));
                 btn.disabled = false;
-                btn.textContent = '🗑 Delete Selected';
+                btn.textContent = `🗑 Delete Selected (${stn_ids.length})`;
             });
     };
     // Fleet-wide Wi-Fi Password Modal

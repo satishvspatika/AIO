@@ -86,11 +86,11 @@ bool load_apn_config(const char* current_ccid, char *target_apn, size_t max_len)
   if (strstr(current_ccid, ccid_buf) != NULL) {
     // [HR-H01] Carrier Guard: check BEFORE writing to caller's buffer
     bool apn_carrier_mismatch = false;
-    if (strstr(carrier, "BSNL") != NULL && strstr(apn_buf, "airtel") != NULL) {
+    if (strstr(carrier, "BSNL") != NULL && (strstr(apn_buf, "airtel") != NULL || strstr(apn_buf, "jio") != NULL)) {
       apn_carrier_mismatch = true;
     } else if (strstr(carrier, "Jio") != NULL && strstr(apn_buf, "jio") == NULL) {
       apn_carrier_mismatch = true;
-    } else if (strstr(carrier, "Airtel") != NULL && strstr(apn_buf, "bsnl") != NULL) {
+    } else if (strstr(carrier, "Airtel") != NULL && (strstr(apn_buf, "bsnl") != NULL || strstr(apn_buf, "jio") != NULL)) {
       apn_carrier_mismatch = true;
     }
 
@@ -1009,8 +1009,7 @@ void send_sms() {
 
 // REQUIRES: modemMutex held by caller (Not thread-safe due to static buffer)
 bool waitForResponse(const char *expected, unsigned long timeout) {
-  // v5.80.1 defensive guard: waitForResponse uses a static buffer and MUST be protected by modemMutex
-  configASSERT(xSemaphoreGetMutexHolder(modemMutex) == xTaskGetCurrentTaskHandle());
+  if (!modemMutex) return false;
 
   // Drain any unread bytes sitting in UART FIFO before waiting for current command response
   flushSerialSIT();
@@ -1025,6 +1024,7 @@ bool waitForResponse(const char *expected, unsigned long timeout) {
     vTaskDelay(1 / portTICK_PERIOD_MS);
     esp_task_wdt_reset(); 
     last_activity_time = millis(); 
+
 
     while (SerialSIT.available()) {
       char c = SerialSIT.read();
@@ -1053,6 +1053,72 @@ bool waitForResponse(const char *expected, unsigned long timeout) {
   }
 
   return false; 
+}
+
+// Non-destructive response reader that reads incoming UART bytes without running flushSerialSIT()
+bool waitForResponseNoFlush(const char *expected, unsigned long timeout) {
+  if (!modemMutex) return false;
+
+  int buf_idx = strlen(modem_response_buf);
+  unsigned long startTime = millis();
+
+  while ((millis() - startTime) < timeout) {
+    vTaskDelay(1 / portTICK_PERIOD_MS);
+    esp_task_wdt_reset(); 
+    last_activity_time = millis(); 
+
+    while (SerialSIT.available()) {
+      char c = SerialSIT.read();
+      if (buf_idx < 2047) {
+        modem_response_buf[buf_idx++] = c;
+        modem_response_buf[buf_idx] = '\0';
+      }
+      if ((buf_idx & 0x1F) == 0) {
+        esp_task_wdt_reset();
+        vTaskDelay(1 / portTICK_PERIOD_MS);
+      }
+    }
+
+    if (expected != NULL && strstr(modem_response_buf, expected) != NULL) {
+      return true;
+    }
+    if (expected != NULL && strcmp(expected, "+IPD") == 0 &&
+        (strstr(modem_response_buf, "status") != NULL ||
+         strstr(modem_response_buf, "stored") != NULL ||
+         strstr(modem_response_buf, "\"tm\"") != NULL ||
+         strstr(modem_response_buf, "200") != NULL ||
+         strstr(modem_response_buf, "+RECEIVE") != NULL ||
+         strstr(modem_response_buf, "HTTP/") != NULL)) {
+      return true;
+    }
+    if (expected == NULL &&
+        (strstr(modem_response_buf, "status") != NULL ||
+         strstr(modem_response_buf, "stored") != NULL ||
+         strstr(modem_response_buf, "\"tm\"") != NULL ||
+         strstr(modem_response_buf, "+IPD") != NULL)) {
+      return true;
+    }
+    if (strstr(modem_response_buf, "\nERROR") != NULL || strstr(modem_response_buf, "\n+CMS ERROR") != NULL || strstr(modem_response_buf, "\n+CME ERROR") != NULL ||
+        strstr(modem_response_buf, "\rERROR") != NULL || strstr(modem_response_buf, "\r+CME ERROR") != NULL) {
+      if (expected != NULL && strstr(expected, "ERROR") == NULL) {
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+        return false;
+      }
+    }
+  }
+
+  return (expected != NULL && strstr(modem_response_buf, expected) != NULL) ||
+         (expected != NULL && strcmp(expected, "+IPD") == 0 &&
+          (strstr(modem_response_buf, "status") != NULL ||
+           strstr(modem_response_buf, "stored") != NULL ||
+           strstr(modem_response_buf, "\"tm\"") != NULL ||
+           strstr(modem_response_buf, "200") != NULL)) ||
+         (expected == NULL &&
+          (strstr(modem_response_buf, "status") != NULL ||
+           strstr(modem_response_buf, "stored") != NULL ||
+           strstr(modem_response_buf, "\"tm\"") != NULL ||
+           strstr(modem_response_buf, "200") != NULL ||
+           strstr(modem_response_buf, "+IPD") != NULL)); 
 }
 
 

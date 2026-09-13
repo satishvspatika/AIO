@@ -675,6 +675,8 @@ void sync_rtc_from_http_header(const char *header_override = NULL);
 
 // MODEM / GPRS
 bool waitForResponse(const char *expected, unsigned long timeout);
+bool waitForResponseNoFlush(const char *expected, unsigned long timeout);
+void parse_health_response(const char* body);
 void disableWDT();
 void trim_whitespace(char *str);
 void saveYearToSPIFFS(int year);

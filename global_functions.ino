@@ -1176,23 +1176,14 @@ void reconstructSentMasks(bool alreadyLocked) {
   // v5.79: Torn Time Read Fix
   struct tm snapshot;
   getTimeSnapshot(&snapshot);
-  int cur_dd = snapshot.tm_mday, cur_mm = snapshot.tm_mon + 1, cur_yy = snapshot.tm_year + 1900;
-  int prev_dd = cur_dd, prev_mm = cur_mm, prev_yy = cur_yy;
-
-  int h = snapshot.tm_hour;
-  int m = snapshot.tm_min;
-  int calcSlot = h * 4 + m / 15;
-  calcSlot = (calcSlot + 61) % 96;
-
-  if (calcSlot <= 60) {
-    // Time is 08:45 AM or later:
-    // Current close date is Tomorrow. Previous close date is Today.
-    next_date(&cur_dd, &cur_mm, &cur_yy);
-  } else {
-    // Time is 00:00 to 08:30 AM:
-    // Current close date is Today. Previous close date is Yesterday.
-    previous_date(&prev_dd, &prev_mm, &prev_yy);
+  int cur_dd = rf_cls_dd, cur_mm = rf_cls_mm, cur_yy = rf_cls_yy;
+  if (cur_yy < 2025 || cur_mm < 1 || cur_mm > 12 || cur_dd < 1 || cur_dd > 31) {
+    cur_dd = snapshot.tm_mday; cur_mm = snapshot.tm_mon + 1; cur_yy = snapshot.tm_year + 1900;
+    int calcSlot = (snapshot.tm_hour * 4 + snapshot.tm_min / 15 + 61) % 96;
+    if (calcSlot <= 60) next_date(&cur_dd, &cur_mm, &cur_yy);
   }
+  int prev_dd = cur_dd, prev_mm = cur_mm, prev_yy = cur_yy;
+  previous_date(&prev_dd, &prev_mm, &prev_yy);
 
   snprintf(prevFile, sizeof(prevFile), "/%s_%04d%02d%02d.txt", cleanStn,
            prev_yy, prev_mm, prev_dd);
