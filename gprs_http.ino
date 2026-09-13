@@ -1029,7 +1029,8 @@ void send_http_data() {
   SerialSIT.println("AT+CGEREP=0");
   waitForResponse("OK", 1000);
 
-  // Pre-HTTP Diagnostic Audit
+#if DEBUG == 1
+  // Pre-HTTP Diagnostic Audit (Serial Logging Only)
   SerialSIT.println("AT+CSQ");
   waitForResponse("OK", 2000);
   if (!ota_silent_mode) {
@@ -1040,6 +1041,7 @@ void send_http_data() {
   if (!ota_silent_mode) {
     Serial.printf("[GPRS-AUDIT] Assigned IP (CID 1): %s\n", modem_response_buf);
   }
+#endif
 
   http_ready = true;
 
