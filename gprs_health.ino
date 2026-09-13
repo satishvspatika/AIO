@@ -1685,15 +1685,15 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
     }
 
     const char *health_hosts[2] = {
-#ifdef HEALTH_SERVER_IP
-      HEALTH_SERVER_IP,
-#else
-      HEALTH_SERVER_DOMAIN,
-#endif
 #ifdef HEALTH_SERVER_DOMAIN
-      HEALTH_SERVER_DOMAIN
+      HEALTH_SERVER_DOMAIN,
 #else
+      HEALTH_SERVER_IP,
+#endif
+#ifdef HEALTH_SERVER_IP
       HEALTH_SERVER_IP
+#else
+      HEALTH_SERVER_DOMAIN
 #endif
     };
 
@@ -1739,9 +1739,9 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
               vTaskDelay(10 / portTICK_PERIOD_MS);
               SerialSIT.write((const uint8_t *)httpRequest, reqLen);
 
-              if (waitForResponseNoFlush("+IPD", 15000) || strstr(modem_response_buf, "200 OK") != NULL || strstr(modem_response_buf, "status") != NULL || strstr(modem_response_buf, "stored") != NULL) {
+              if (waitForResponseNoFlush("+IPD", 15000) || strstr(modem_response_buf, "200 OK") != NULL || strstr(modem_response_buf, "status") != NULL || strstr(modem_response_buf, "stored") != NULL || strstr(modem_response_buf, "+IPCLOSE") != NULL) {
                   uint32_t respStart = millis();
-                  while (strstr(modem_response_buf, "status") == NULL && strstr(modem_response_buf, "stored") == NULL && strstr(modem_response_buf, "\"tm\"") == NULL && strstr(modem_response_buf, "200") == NULL && (millis() - respStart < 3000)) {
+                  while (strstr(modem_response_buf, "status") == NULL && strstr(modem_response_buf, "stored") == NULL && strstr(modem_response_buf, "\"tm\"") == NULL && strstr(modem_response_buf, "200") == NULL && strstr(modem_response_buf, "+IPCLOSE") == NULL && (millis() - respStart < 3000)) {
                     while (SerialSIT.available()) {
                       int len = strlen(modem_response_buf);
                       if (len < 2047) {
@@ -1754,7 +1754,7 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
                     vTaskDelay(20 / portTICK_PERIOD_MS);
                   }
 
-                  if (strstr(modem_response_buf, "200") != NULL || strstr(modem_response_buf, "status") != NULL || strstr(modem_response_buf, "stored") != NULL || strstr(modem_response_buf, "\"tm\"") != NULL) {
+                  if (strstr(modem_response_buf, "200") != NULL || strstr(modem_response_buf, "status") != NULL || strstr(modem_response_buf, "stored") != NULL || strstr(modem_response_buf, "\"tm\"") != NULL || strstr(modem_response_buf, "+IPCLOSE") != NULL) {
                       tcp_success = true;
                       success = true;
                       debugln("[Health] ✅ Direct TCP Delivered & Confirmed by Server (200 OK).");

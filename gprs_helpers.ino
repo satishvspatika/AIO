@@ -1088,6 +1088,7 @@ bool waitForResponseNoFlush(const char *expected, unsigned long timeout) {
          strstr(modem_response_buf, "\"tm\"") != NULL ||
          strstr(modem_response_buf, "200") != NULL ||
          strstr(modem_response_buf, "+RECEIVE") != NULL ||
+         strstr(modem_response_buf, "+IPCLOSE") != NULL ||
          strstr(modem_response_buf, "HTTP/") != NULL)) {
       return true;
     }
@@ -1112,7 +1113,10 @@ bool waitForResponseNoFlush(const char *expected, unsigned long timeout) {
           (strstr(modem_response_buf, "status") != NULL ||
            strstr(modem_response_buf, "stored") != NULL ||
            strstr(modem_response_buf, "\"tm\"") != NULL ||
-           strstr(modem_response_buf, "200") != NULL)) ||
+           strstr(modem_response_buf, "200") != NULL ||
+           strstr(modem_response_buf, "+RECEIVE") != NULL ||
+           strstr(modem_response_buf, "+IPCLOSE") != NULL ||
+           strstr(modem_response_buf, "HTTP/") != NULL)) ||
          (expected == NULL &&
           (strstr(modem_response_buf, "status") != NULL ||
            strstr(modem_response_buf, "stored") != NULL ||
