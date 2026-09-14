@@ -105,6 +105,98 @@ def toggle_ota_lock(stn_id: str, db: Session = Depends(get_db)):
     return RedirectResponse(url=f"/station/{stn_id}", status_code=303)
 
 
+class BulkDeleteRecords(BaseModel):
+    ids: List[int]
+
+class BulkDeleteStations(BaseModel):
+    stn_ids: List[str]
+
+@router.api_route("/delete/bulk-records", methods=["GET", "POST"])
+def delete_bulk_records(payload: BulkDeleteRecords, db: Session = Depends(get_db)):
+    try:
+        if not payload.ids:
+            return {"status": "ok", "deleted": 0}
+        from app.models import StationSettings, HealthReport
+        records = db.query(HealthReport).filter(HealthReport.id.in_(payload.ids)).all()
+        stn_ids = {r.stn_id for r in records if r.stn_id}
+        db.query(HealthReport).filter(HealthReport.id.in_(payload.ids)).delete(synchronize_session=False)
+        db.commit()
+
+        # Clean up orphan StationSettings for any station that now has 0 health reports
+        for stn in stn_ids:
+            s_raw = str(stn).strip()
+            target_ids = {s_raw}
+            if s_raw.isdigit():
+                target_ids.add(s_raw.lstrip('0'))
+                target_ids.add(s_raw.zfill(6))
+            remaining = db.query(HealthReport).filter(HealthReport.stn_id.in_(list(target_ids))).count()
+            if remaining == 0:
+                db.query(StationSettings).filter(StationSettings.stn_id.in_(list(target_ids))).delete(synchronize_session=False)
+        db.commit()
+        return {"status": "ok", "deleted": len(payload.ids)}
+    except Exception as e:
+        db.rollback()
+        print(f"BULK RECORD DELETE ERROR: {e}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Database error during record deletion: {str(e)}")
+
+@router.api_route("/delete/bulk-stations", methods=["GET", "POST"])
+def delete_bulk_stations(payload: BulkDeleteStations, db: Session = Depends(get_db)):
+    try:
+        from app.models import HealthReport, CommandQueue, StationSettings
+        from sqlalchemy import text, bindparam, or_
+        import re
+        
+        expanded_targets = set()
+        include_null_or_empty = False
+
+        for stn in payload.stn_ids:
+            if stn is None:
+                include_null_or_empty = True
+                continue
+            s_raw = str(stn).strip()
+            if not s_raw or s_raw.upper() in ("UNKNOWN", "NONE", "NULL", "0", "N/A"):
+                include_null_or_empty = True
+                expanded_targets.update(["UNKNOWN", "unknown", "Unknown", "0", "N/A", "NA", "none", "NULL", "None", ""])
+                continue
+            
+            s_clean = re.sub(r'[^A-Z0-9]', '', s_raw.upper())
+            if not s_clean:
+                include_null_or_empty = True
+                continue
+            
+            expanded_targets.add(s_clean)
+            expanded_targets.add(s_raw)
+            expanded_targets.add(s_raw.lower())
+            expanded_targets.add(s_raw.upper())
+            norm = s_clean.lstrip('0')
+            if not norm: norm = "0"
+            expanded_targets.add(norm)
+            expanded_targets.add(norm.zfill(6))
+
+        if not expanded_targets and not include_null_or_empty:
+            return {"status": "ok", "deleted": 0}
+
+        target_list = list(expanded_targets)
+
+        if include_null_or_empty:
+            db.query(CommandQueue).filter(or_(CommandQueue.stn_id.in_(target_list), CommandQueue.stn_id == None, CommandQueue.stn_id == '', CommandQueue.stn_id == 'None')).delete(synchronize_session=False)
+            db.query(HealthReport).filter(or_(HealthReport.stn_id.in_(target_list), HealthReport.stn_id == None, HealthReport.stn_id == '', HealthReport.stn_id == 'None')).delete(synchronize_session=False)
+            db.query(StationSettings).filter(or_(StationSettings.stn_id.in_(target_list), StationSettings.stn_id == None, StationSettings.stn_id == '', StationSettings.stn_id == 'None')).delete(synchronize_session=False)
+        else:
+            db.query(CommandQueue).filter(CommandQueue.stn_id.in_(target_list)).delete(synchronize_session=False)
+            db.query(HealthReport).filter(HealthReport.stn_id.in_(target_list)).delete(synchronize_session=False)
+            db.query(StationSettings).filter(StationSettings.stn_id.in_(target_list)).delete(synchronize_session=False)
+
+        db.commit()
+        return {"status": "ok", "deleted": len(payload.stn_ids)}
+    except Exception as e:
+        db.rollback()
+        print(f"BULK STATION DELETE ERROR: {e}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Database error during station wipe: {str(e)}")
+
+
 @router.api_route("/delete/{stn_id}", methods=["GET", "POST"])
 def delete_station(stn_id: str, db: Session = Depends(get_db)):
     from app.models import HealthReport, StationSettings, CommandQueue
@@ -128,19 +220,17 @@ def delete_station(stn_id: str, db: Session = Depends(get_db)):
         expanded_targets.add(norm.zfill(6))
 
     target_list = list(expanded_targets)
+    from sqlalchemy import or_
 
     if include_null_or_empty:
-        sql1 = text("DELETE FROM command_queue WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
-        sql2 = text("DELETE FROM health_reports WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
-        sql3 = text("DELETE FROM station_settings WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
+        db.query(CommandQueue).filter(or_(CommandQueue.stn_id.in_(target_list), CommandQueue.stn_id == None, CommandQueue.stn_id == '', CommandQueue.stn_id == 'None')).delete(synchronize_session=False)
+        db.query(HealthReport).filter(or_(HealthReport.stn_id.in_(target_list), HealthReport.stn_id == None, HealthReport.stn_id == '', HealthReport.stn_id == 'None')).delete(synchronize_session=False)
+        db.query(StationSettings).filter(or_(StationSettings.stn_id.in_(target_list), StationSettings.stn_id == None, StationSettings.stn_id == '', StationSettings.stn_id == 'None')).delete(synchronize_session=False)
     else:
-        sql1 = text("DELETE FROM command_queue WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
-        sql2 = text("DELETE FROM health_reports WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
-        sql3 = text("DELETE FROM station_settings WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
+        db.query(CommandQueue).filter(CommandQueue.stn_id.in_(target_list)).delete(synchronize_session=False)
+        db.query(HealthReport).filter(HealthReport.stn_id.in_(target_list)).delete(synchronize_session=False)
+        db.query(StationSettings).filter(StationSettings.stn_id.in_(target_list)).delete(synchronize_session=False)
 
-    db.execute(sql1, {"targets": target_list})
-    db.execute(sql2, {"targets": target_list})
-    db.execute(sql3, {"targets": target_list})
     db.commit()
     return RedirectResponse(url="/dashboard", status_code=303)
 
@@ -229,102 +319,6 @@ def delete_record(report_id: int, db: Session = Depends(get_db)):
             return RedirectResponse(url="/dashboard", status_code=303)
         return RedirectResponse(url=f"/station/{stn_id}", status_code=303)
     return RedirectResponse(url="/dashboard", status_code=303)
-
-class BulkDeleteRecords(BaseModel):
-    ids: List[int]
-
-class BulkDeleteStations(BaseModel):
-    stn_ids: List[str]
-
-@router.api_route("/delete/bulk-records", methods=["GET", "POST"])
-def delete_bulk_records(payload: BulkDeleteRecords, db: Session = Depends(get_db)):
-    try:
-        if not payload.ids:
-            return {"status": "ok", "deleted": 0}
-        from app.models import StationSettings
-        records = db.query(HealthReport).filter(HealthReport.id.in_(payload.ids)).all()
-        stn_ids = {r.stn_id for r in records if r.stn_id}
-        db.query(HealthReport).filter(HealthReport.id.in_(payload.ids)).delete(synchronize_session=False)
-        db.commit()
-
-        # Clean up orphan StationSettings for any station that now has 0 health reports
-        for stn in stn_ids:
-            s_raw = str(stn).strip()
-            target_ids = {s_raw}
-            if s_raw.isdigit():
-                target_ids.add(s_raw.lstrip('0'))
-                target_ids.add(s_raw.zfill(6))
-            remaining = db.query(HealthReport).filter(HealthReport.stn_id.in_(list(target_ids))).count()
-            if remaining == 0:
-                db.query(StationSettings).filter(StationSettings.stn_id.in_(list(target_ids))).delete(synchronize_session=False)
-        db.commit()
-        return {"status": "ok", "deleted": len(payload.ids)}
-    except Exception as e:
-        db.rollback()
-        print(f"BULK RECORD DELETE ERROR: {e}")
-        from fastapi import HTTPException
-        raise HTTPException(status_code=500, detail=f"Database error during record deletion: {str(e)}")
-
-@router.post("/delete/bulk-stations")
-def delete_bulk_stations(payload: BulkDeleteStations, db: Session = Depends(get_db)):
-    try:
-        from app.models import HealthReport, CommandQueue, StationSettings
-        from sqlalchemy import text, bindparam
-        import re
-        
-        expanded_targets = set()
-        include_null_or_empty = False
-
-        for stn in payload.stn_ids:
-            if stn is None:
-                include_null_or_empty = True
-                continue
-            s_raw = str(stn).strip()
-            if not s_raw or s_raw.upper() in ("UNKNOWN", "NONE", "NULL", "0", "N/A"):
-                include_null_or_empty = True
-                expanded_targets.update(["UNKNOWN", "unknown", "Unknown", "0", "N/A", "NA", "none", "NULL", "None", ""])
-                continue
-            
-            s_clean = re.sub(r'[^A-Z0-9]', '', s_raw.upper())
-            if not s_clean:
-                include_null_or_empty = True
-                continue
-            
-            expanded_targets.add(s_clean)
-            expanded_targets.add(s_raw)
-            expanded_targets.add(s_raw.lower())
-            expanded_targets.add(s_raw.upper())
-            norm = s_clean.lstrip('0')
-            if not norm: norm = "0"
-            expanded_targets.add(norm)
-            expanded_targets.add(norm.zfill(6))
-
-        if not expanded_targets and not include_null_or_empty:
-            return {"status": "ok", "deleted": 0}
-
-        target_list = list(expanded_targets)
-
-        if include_null_or_empty:
-            sql1 = text("DELETE FROM command_queue WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
-            sql2 = text("DELETE FROM health_reports WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
-            sql3 = text("DELETE FROM station_settings WHERE stn_id IN :targets OR stn_id IS NULL OR stn_id = '' OR stn_id = 'None'").bindparams(bindparam("targets", expanding=True))
-        else:
-            sql1 = text("DELETE FROM command_queue WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
-            sql2 = text("DELETE FROM health_reports WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
-            sql3 = text("DELETE FROM station_settings WHERE stn_id IN :targets").bindparams(bindparam("targets", expanding=True))
-
-        db.execute(sql1, {"targets": target_list})
-        db.execute(sql2, {"targets": target_list})
-        db.execute(sql3, {"targets": target_list})
-
-        db.commit()
-        return {"status": "ok", "deleted": len(payload.stn_ids)}
-    except Exception as e:
-        db.rollback()
-        print(f"BULK STATION DELETE ERROR: {e}")
-        from fastapi import HTTPException
-        raise HTTPException(status_code=500, detail=f"Database error during station wipe: {str(e)}")
-
 
 class WifiPassPayload(BaseModel):
     password: str

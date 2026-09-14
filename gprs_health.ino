@@ -1663,12 +1663,16 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
   } 
 
   bool success = false;
-  int max_attempts = 2;
+  // Dynamic max attempts: 1 attempt for 15-min pulse mode (to conserve battery), 2 attempts for 24-hour daily report
+  int max_attempts = (test_health_every_slot == 1) ? 1 : 2;
 
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
     debugf("[Health] Attempt %d/%d\n", attempt, max_attempts);
 
-    if (!verify_bearer_or_recover()) continue;
+    if (!verify_bearer_or_recover()) {
+      debugln("[Health] Bearer recovery failed. Aborting health attempt to preserve battery.");
+      break;
+    }
 
     // ----------------------------------------------------
     // Path 1: Direct TCP Socket Primary Transport (~300ms) - Exact A7672S Implementation

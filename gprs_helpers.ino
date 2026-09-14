@@ -235,7 +235,9 @@ bool try_activate_apn(const char *apn) {
     if (act_success) break;
     
     if (try_act == 0) {
-      debugln("[APN] CGACT Failed. Breather (1.5s) before retry...");
+      debugln("[APN] CGACT Failed. Pushing CGATT=1 & Breather (1.5s) before retry...");
+      SerialSIT.println("AT+CGATT=1");
+      waitForResponse("OK", 3000);
       vTaskDelay(1500 / portTICK_PERIOD_MS);
       flushSerialSIT();
     }
@@ -1038,17 +1040,18 @@ bool waitForResponse(const char *expected, unsigned long timeout) {
       }
     }
 
-    if (strstr(modem_response_buf, expected) != NULL) {
-      return true;
-    }
-    // Fail fast for current command response: If modem returned ERROR / +CMS ERROR / +CME ERROR
-    if (strstr(modem_response_buf, "\nERROR") != NULL || strstr(modem_response_buf, "\n+CMS ERROR") != NULL || strstr(modem_response_buf, "\n+CME ERROR") != NULL ||
-        strstr(modem_response_buf, "\rERROR") != NULL || strstr(modem_response_buf, "\r+CME ERROR") != NULL) {
-      if (strstr(expected, "ERROR") == NULL) {
+    // Fail fast: Check for explicit error responses first (unless expecting ERROR)
+    if (strstr(expected, "ERROR") == NULL) {
+      if (strstr(modem_response_buf, "\nERROR") != NULL || strstr(modem_response_buf, "\n+CMS ERROR") != NULL || strstr(modem_response_buf, "\n+CME ERROR") != NULL ||
+          strstr(modem_response_buf, "\rERROR") != NULL || strstr(modem_response_buf, "\r+CME ERROR") != NULL) {
         vTaskDelay(50 / portTICK_PERIOD_MS);
         flushSerialSIT();
         return false;
       }
+    }
+
+    if (strstr(modem_response_buf, expected) != NULL) {
+      return true;
     }
   }
 
