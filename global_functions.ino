@@ -809,6 +809,7 @@ void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
   int current_s_idx = snapshot.tm_hour * 4 + snapshot.tm_min / 15;
   current_s_idx = (current_s_idx + 61) % 96;
 
+  int ndm_missing = 0;
   for (int i = 0; i < 96; i++) {
     bool delivered = (mask[i / 32] & (1UL << (i % 32)));
 
@@ -822,9 +823,16 @@ void analyzeFileHealth(uint32_t *mask, int *outNetCount, bool *hasUnresolvedPD,
         // Night Data Tracking: 9:15 PM (Sample 50) to 6:00 AM (Sample 85) = 36 slots
         if (i >= 50 && i <= 85) {
           *hasUnresolvedNDM = true;
+          ndm_missing++;
         }
       }
     }
+  }
+
+  if (mask == diag_sent_mask_prev) {
+    diag_ndm_count_prev = ndm_missing;
+  } else {
+    diag_ndm_count = ndm_missing;
   }
 
   // v5.68: Threshold 86 (Only flag PD if more than 10 slots are missing)

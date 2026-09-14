@@ -394,13 +394,21 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
 
             t_info = met_today_map.get(r.stn_id)
             fw_today = r.net_cnt or 0
+            first_http = r.first_http if (r.first_http is not None and r.first_http >= 0) else 0
             ret_c = (r.http_ret_cnt or 0) + (r.ftp_suc_cnt or 0)
-            raw_suc_c = r.http_suc_cnt if (r.http_suc_cnt is not None and r.http_suc_cnt >= 0) else 0
-            dir_c = max(0, raw_suc_c - ret_c) if raw_suc_c >= ret_c else raw_suc_c
-            if dir_c == 0 and fw_today > 0:
-                dir_c = max(0, fw_today - ret_c)
-            elif dir_c == 0 and t_info and t_info["direct"] > 0:
-                dir_c = t_info["direct"]
+
+            if fw_today > 0:
+                if first_http > 0 and first_http <= fw_today:
+                    dir_c = first_http
+                    ret_c = max(ret_c, fw_today - first_http)
+                else:
+                    dir_c = max(0, fw_today - ret_c)
+            else:
+                raw_suc_c = r.http_suc_cnt if (r.http_suc_cnt is not None and r.http_suc_cnt >= 0) else 0
+                dir_c = max(0, raw_suc_c - ret_c) if raw_suc_c >= ret_c else raw_suc_c
+                if dir_c == 0 and t_info and t_info["direct"] > 0:
+                    dir_c = t_info["direct"]
+
             deliv_today = dir_c + ret_c
 
             r.muted_today_slots = max(0, fw_today - deliv_today) if (r.is_muted or (dir_c > 0 and dir_c < fw_today)) else 0
@@ -420,12 +428,19 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             fw_ydy = r.net_cnt_prev or 0
             ret_p = (r.http_ret_cnt_prev or 0) + (r.ftp_suc_cnt_prev or 0)
             raw_suc_p = r.http_suc_cnt_prev if (r.http_suc_cnt_prev is not None and r.http_suc_cnt_prev >= 0) else 0
-            dir_p = max(0, raw_suc_p - ret_p) if raw_suc_p >= ret_p else raw_suc_p
-            if dir_p == 0 and fw_ydy > 0:
+
+            if fw_ydy > 0:
                 dir_p = max(0, fw_ydy - ret_p)
-            elif dir_p == 0 and y_info and y_info["direct"] > 0:
-                dir_p = y_info["direct"]
+            else:
+                dir_p = max(0, raw_suc_p - ret_p) if raw_suc_p >= ret_p else raw_suc_p
+                if dir_p == 0 and y_info and y_info["direct"] > 0:
+                    dir_p = y_info["direct"]
+
             deliv_ydy = dir_p + ret_p
+
+            # Clear stale NDM flag if all 96 slots for yesterday are delivered
+            if fw_ydy >= 96:
+                r.ndm_cnt = 0
 
             r.muted_ydy_slots = max(0, fw_ydy - deliv_ydy) if (r.is_muted or (dir_p > 0 and dir_p < fw_ydy)) else 0
 

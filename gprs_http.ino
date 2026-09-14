@@ -507,6 +507,11 @@ void prepare_data_and_send() {
 
     if (data_mode == eCurrentData) {
       diag_first_http_count++;
+      if (isToday) {
+        diag_http_success_count++;
+      } else {
+        diag_http_success_count_prev++;
+      }
     } else if (data_mode == eUnsentData) {
       if (isToday) {
         diag_http_retry_count++;
@@ -2073,7 +2078,6 @@ int send_at_cmd_data(char *payload, bool robust) {
           }
           if (strstr(modem_response_buf, "200") != NULL || strstr(modem_response_buf, "Success") != NULL) {
             debugln("[HTTP] Direct TCP Socket POST Successful! Received 200 OK.");
-            diag_http_success_count++;
             SerialSIT.println("AT+CIPCLOSE=0");
             waitForResponse("OK", 2000);
             return 1;
