@@ -27,12 +27,13 @@ CONFIGS = [
     (0, "KSNDMC_TRG", "KSNDMC_TRG"),
     (0, "BIHAR_TRG", "BIHAR_TRG"),
     (2, "SPATIKA_GEN", "SPATIKA_GEN"),
+    (3, "SPATIKA_GEN", "SPATIKA_TWSRP"),
     (1, "KSNDMC_TWS", "KSNDMC_TWS"),
     (2, "KSNDMC_ADDON", "KSNDMC_ADDON"),
 ]
 
 # Configs that require Nuvoton UI (USE_NUVOTON_UI = 1) in addition to Matrix UI (USE_NUVOTON_UI = 0)
-NUVOTON_UI_CONFIGS = {"KSNDMC_TRG", "KSNDMC_TWS"}
+NUVOTON_UI_CONFIGS = {"KSNDMC_TRG", "BIHAR_TRG", "KSNDMC_TWS"}
 
 
 # Flash size variants available:
@@ -113,8 +114,20 @@ def update_config(system, unit, disable_webserver=False, use_nuvoton_ui=1):
     # Force TEST_HEALTH_DEFAULT 0 for official builds
     content = re.sub(r'#define TEST_HEALTH_DEFAULT \d+', '#define TEST_HEALTH_DEFAULT 0', content)
 
-    # Force ENABLE_HEALTH_REPORT 0 for official builds
-    content = re.sub(r'#define ENABLE_HEALTH_REPORT\s+\d+', '#define ENABLE_HEALTH_REPORT 0', content)
+    # Force ENABLE_HEALTH_REPORT 1 for official builds
+    content = re.sub(r'#define ENABLE_HEALTH_REPORT\s+\d+', '#define ENABLE_HEALTH_REPORT 1', content)
+
+    # Force ENABLE_HTTP_BACKLOG_FALLBACK 1 for official builds
+    content = re.sub(r'#define ENABLE_HTTP_BACKLOG_FALLBACK\s+\d+', '#define ENABLE_HTTP_BACKLOG_FALLBACK 1', content)
+
+    # Force ENABLE_CALIB_TEST 0 for official builds
+    content = re.sub(r'#define ENABLE_CALIB_TEST\s+\d+', '#define ENABLE_CALIB_TEST 0', content)
+
+    # Pressure sensor: Enable (1) ONLY for SYSTEM == 3 AND UNIT_CFG == "SPATIKA_GEN"
+    if system == 3 and unit == "SPATIKA_GEN":
+        content = re.sub(r'#define ENABLE_PRESSURE_SENSOR\s+\d+', '#define ENABLE_PRESSURE_SENSOR 1', content)
+    else:
+        content = re.sub(r'#define ENABLE_PRESSURE_SENSOR\s+\d+', '#define ENABLE_PRESSURE_SENSOR 0', content)
 
     # 4MB builds: disable WebServer
     if disable_webserver:
@@ -258,13 +271,15 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
             version_match = re.search(r'#define FIRMWARE_VERSION "([^"]+)"', config_content)
             firmware_version = version_match.group(1) if version_match else "UNKNOWN"
             
-            type_prefix = "TRG9" if system == 0 else ("TWS9" if system == 1 else "TWSRF9")
+            type_prefix = "TRG9" if system == 0 else ("TWS9" if system == 1 else ("TWSRP9" if system == 3 else "TWSRF9"))
             
             # Map specific strings based on logic in AIO9_5.0.ino
             if unit == "KSNDMC_TRG":
                 full_version = f"TRG9-DMC-{firmware_version}"
             elif unit == "BIHAR_TRG":
                 full_version = f"TRG9-BIH-{firmware_version}"
+            elif unit == "SPATIKA_GEN" and system == 3:
+                full_version = f"TWSRP9-GEN-{firmware_version}"
             elif unit == "SPATIKA_GEN" and system == 2:
                 full_version = f"TWSRF9-GEN-{firmware_version}"
             elif unit == "KSNDMC_TWS":
@@ -295,7 +310,7 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
             metadata = {
                 'config':           output_name,
                 'unit_cfg':         unit,
-                'system_type':      ['TRG', 'TWS', 'TWS-RF'][system] if system in [0,1,2] else str(system),
+                'system_type':      ['TRG', 'TWS', 'TWS-RF', 'TWSRP'][system] if system in [0,1,2,3] else str(system),
                 'flash_size':       flash_size,
                 'full_version':     full_version,
                 'binary_size_bytes':size,
@@ -327,7 +342,7 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
 
             # [BUILD-05] POST-COMPILATION IDENTITY CHECK
             # Verify that the generated version prefix matches the intended system type
-            expected_prefix = "TRG9" if system == 0 else ("TWS9" if system == 1 else "TWSRF9")
+            expected_prefix = "TRG9" if system == 0 else ("TWS9" if system == 1 else ("TWSRP9" if system == 3 else "TWSRF9"))
             if not full_version.startswith(expected_prefix):
                 print_error(f"IDENTITY MISMATCH: Config intended for {expected_prefix} but got {full_version}!")
                 print_error("Build Aborted to prevent corrupted release package.")
