@@ -485,13 +485,40 @@ void prepare_data_and_send() {
              diag_http_present_fails, diag_http_cum_fails,
              get_total_backlogs(false));
 
+    bool isToday = true;
+    if (temp_sampleNo >= 0 && temp_sampleNo < 96 && temp_year > 2024) {
+      int cur_dd = current_day, cur_mm = current_month, cur_yy = current_year;
+      int curr_h = (current_hour < 24) ? current_hour : 0;
+      int curr_m = (current_min < 60) ? current_min : 0;
+      int curr_sNum = (curr_h * 4 + curr_m / 15 + 61) % 96;
+      if (curr_sNum <= 60) {
+        next_date(&cur_dd, &cur_mm, &cur_yy);
+      }
+
+      int rec_dd = temp_day, rec_mm = temp_month, rec_yy = temp_year;
+      if (temp_sampleNo <= 60) {
+        next_date(&rec_dd, &rec_mm, &rec_yy);
+      }
+
+      isToday = (cur_yy == rec_yy && cur_mm == rec_mm && cur_dd == rec_dd);
+    } else {
+      isToday = (data_mode == eCurrentData);
+    }
+
     if (data_mode == eCurrentData) {
       diag_first_http_count++;
-      if (temp_sampleNo >= 0 && temp_sampleNo < 96) {
-        diag_sent_mask_cur[temp_sampleNo / 32] |= (1UL << (temp_sampleNo % 32));
+    } else if (data_mode == eUnsentData) {
+      if (isToday) {
+        diag_http_retry_count++;
+      } else {
+        diag_http_retry_count_prev++;
       }
-    } else {
-      if (temp_sampleNo >= 0 && temp_sampleNo < 96) {
+    }
+
+    if (temp_sampleNo >= 0 && temp_sampleNo < 96) {
+      if (isToday) {
+        diag_sent_mask_cur[temp_sampleNo / 32] |= (1UL << (temp_sampleNo % 32));
+      } else {
         diag_sent_mask_prev[temp_sampleNo / 32] |= (1UL << (temp_sampleNo % 32));
       }
     }
