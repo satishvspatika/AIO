@@ -394,8 +394,9 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
 
             t_info = met_today_map.get(r.stn_id)
             fw_today = r.net_cnt or 0
-            dir_c = r.http_suc_cnt if (r.http_suc_cnt is not None and r.http_suc_cnt >= 0) else 0
             ret_c = (r.http_ret_cnt or 0) + (r.ftp_suc_cnt or 0)
+            raw_suc_c = r.http_suc_cnt if (r.http_suc_cnt is not None and r.http_suc_cnt >= 0) else 0
+            dir_c = max(0, raw_suc_c - ret_c) if raw_suc_c >= ret_c else raw_suc_c
             if dir_c == 0 and fw_today > 0:
                 dir_c = max(0, fw_today - ret_c)
             elif dir_c == 0 and t_info and t_info["direct"] > 0:
@@ -417,8 +418,9 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
 
             y_info = met_ydy_map.get(r.stn_id)
             fw_ydy = r.net_cnt_prev or 0
-            dir_p = r.http_suc_cnt_prev if (r.http_suc_cnt_prev is not None and r.http_suc_cnt_prev >= 0) else 0
             ret_p = (r.http_ret_cnt_prev or 0) + (r.ftp_suc_cnt_prev or 0)
+            raw_suc_p = r.http_suc_cnt_prev if (r.http_suc_cnt_prev is not None and r.http_suc_cnt_prev >= 0) else 0
+            dir_p = max(0, raw_suc_p - ret_p) if raw_suc_p >= ret_p else raw_suc_p
             if dir_p == 0 and fw_ydy > 0:
                 dir_p = max(0, fw_ydy - ret_p)
             elif dir_p == 0 and y_info and y_info["direct"] > 0:
