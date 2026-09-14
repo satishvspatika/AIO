@@ -222,11 +222,12 @@ else
 fi
 
 # Create tag (or update if exists)
-if git tag -l | grep -q "^v${VERSION}$"; then
-    print_warning "Tag v${VERSION} already exists, skipping tag creation"
+TAG_NAME="${CUSTOM_TAG:-v${VERSION}}"
+if git tag -l | grep -q "^${TAG_NAME}$"; then
+    print_warning "Tag ${TAG_NAME} already exists, skipping tag creation"
 else
-    git tag -a "v${VERSION}" -m "Version ${VERSION}"
-    print_success "Git tag created: v${VERSION}"
+    git tag -a "${TAG_NAME}" -m "Version ${VERSION}: ${SUMMARY}"
+    print_success "Git tag created: ${TAG_NAME}"
 fi
 
 # 5. Build all configurations

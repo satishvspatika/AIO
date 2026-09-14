@@ -14,7 +14,7 @@
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 // SYSTEM 3 options: SPATIKA_GEN - AP
 
-#define FIRMWARE_VERSION "6.44"
+#define FIRMWARE_VERSION "6.45"
 
 #define ENABLE_HEALTH_REPORT                                                   \
   1 // Master Switch: Enable automated device health reporting
