@@ -103,7 +103,7 @@ elif echo "$UNIT_VAL" | grep -q "SPATIKA_GEN" && [ "$SYSTEM_VAL" = "0" ]; then
 
 elif echo "$UNIT_VAL" | grep -q "KSNDMC_ADDON" && [ "$SYSTEM_VAL" = "2" ]; then
     HTTP_HOST="rtdas.ksndmc.net"
-    HTTP_PATH="/tws_gprs/update_twsrf_data_v2"
+    HTTP_PATH="/tws_gprs/update_twsrf_data_v3"
     HTTP_KEY="rfclimate5p13"
     HTTP_PAYLOAD_STYLE="stn_no_twsrf"
     FTP_SERVER="ftp1.ksndmc.net"
@@ -282,12 +282,12 @@ elif [ "$HTTP_PAYLOAD_STYLE" = "stn_no_twsrf" ]; then
 cat >> "$OUTPUT_SCRIPT" << HEREDOC
 echo ""
 echo "[A] HTTP — Current Slot (\$SLOT_CSV)"
-PAYLOAD_CUR="stn_no=\${STATION_ID}&rec_time=\${SLOT_CSV}&key=$HTTP_KEY&rainfall=00.00&temp=028.5&humid=060.0&w_speed=00.25&w_dir=180&signal=-063&bat_volt=03.9&bat_volt2=03.9"
+PAYLOAD_CUR="stn_no=\${STATION_ID}&rec_time=\${SLOT_CSV}&rainfall=00.00&temp=028.5&humid=060.0&w_speed=00.25&w_dir=180&signal=-063&bat_volt=03.9&key=$HTTP_KEY"
 run_test "Current HTTP" "\$HTTP_URL" "\$PAYLOAD_CUR" "$HTTP_CONTENT_TYPE"
 
 echo ""
 echo "[B] HTTP — Backlog Slot (\$BACKLOG_CSV)"
-PAYLOAD_OLD="stn_no=\${STATION_ID}&rec_time=\${BACKLOG_CSV}&key=$HTTP_KEY&rainfall=01.00&temp=029.0&humid=058.0&w_speed=00.50&w_dir=90&signal=-075&bat_volt=03.8&bat_volt2=03.8"
+PAYLOAD_OLD="stn_no=\${STATION_ID}&rec_time=\${BACKLOG_CSV}&rainfall=01.00&temp=029.0&humid=058.0&w_speed=00.50&w_dir=90&signal=-075&bat_volt=03.8&key=$HTTP_KEY"
 run_test "Backlog HTTP" "\$HTTP_URL" "\$PAYLOAD_OLD" "$HTTP_CONTENT_TYPE"
 HEREDOC
 

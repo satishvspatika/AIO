@@ -798,6 +798,621 @@ int setup_ftp(int transMode) { // 0=Active(BSNL 2G), 1=Passive(Airtel 4G)
   return 0;
 }
 
+// Bounded memory search helper that does not stop at embedded null bytes (0x00)
+static const char *memfind(const char *buf, int bufLen, const char *target) {
+  if (!buf || !target || bufLen <= 0) return NULL;
+  int targetLen = strlen(target);
+  if (targetLen == 0 || targetLen > bufLen) return NULL;
+  for (int i = 0; i <= bufLen - targetLen; i++) {
+    if (memcmp(buf + i, target, targetLen) == 0) {
+      return buf + i;
+    }
+  }
+  return NULL;
+}
+
+static int filterIpdHeadersStateful(uint8_t *buf, int len, IpdFilterCtx &ctx) {
+  int writeIdx = 0;
+  for (int readIdx = 0; readIdx < len; readIdx++) {
+    uint8_t c = buf[readIdx];
+    if (ctx.state == IPDFS_PAYLOAD && ctx.payloadRemaining > 0) {
+      buf[writeIdx++] = c;
+      ctx.payloadRemaining--;
+      if (ctx.payloadRemaining == 0) {
+        ctx.state = IPDFS_NORMAL;
+      }
+      continue;
+    }
+
+    switch (ctx.state) {
+      case IPDFS_NORMAL:
+        if      (c == '\r') { ctx.state = IPDFS_SAW_CR; }
+        else if (c == '+')  { ctx.state = IPDFS_SAW_PLUS; }
+        else                { buf[writeIdx++] = c; }
+        break;
+
+      case IPDFS_SAW_CR:
+        if (c == '\n') { ctx.state = IPDFS_SAW_CRLF; }
+        else { buf[writeIdx++] = '\r'; buf[writeIdx++] = c; ctx.state = IPDFS_NORMAL; }
+        break;
+
+      case IPDFS_SAW_CRLF:
+        if (c == '+') { ctx.state = IPDFS_SAW_CRLF_PLUS; }
+        else { buf[writeIdx++]='\r'; buf[writeIdx++]='\n'; buf[writeIdx++]=c; ctx.state=IPDFS_NORMAL; }
+        break;
+
+      case IPDFS_SAW_CRLF_PLUS:
+        if (c == 'I') { ctx.state = IPDFS_SAW_CRLF_I; }
+        else { buf[writeIdx++]='\r'; buf[writeIdx++]='\n'; buf[writeIdx++]='+'; buf[writeIdx++]=c; ctx.state=IPDFS_NORMAL; }
+        break;
+
+      case IPDFS_SAW_CRLF_I:
+        if (c == 'P') { ctx.state = IPDFS_SAW_CRLF_IP; }
+        else { buf[writeIdx++]='\r'; buf[writeIdx++]='\n'; buf[writeIdx++]='+'; buf[writeIdx++]='I'; buf[writeIdx++]=c; ctx.state=IPDFS_NORMAL; }
+        break;
+
+      case IPDFS_SAW_CRLF_IP:
+        if (c == 'D') { ctx.state = IPDFS_READING_LEN; ctx.lenAccumulator = 0; }
+        else { buf[writeIdx++]='\r'; buf[writeIdx++]='\n'; buf[writeIdx++]='+'; buf[writeIdx++]='I'; buf[writeIdx++]='P'; buf[writeIdx++]=c; ctx.state=IPDFS_NORMAL; }
+        break;
+
+      case IPDFS_SAW_PLUS:
+        if (c == 'I') { ctx.state = IPDFS_SAW_I; }
+        else { buf[writeIdx++] = '+'; buf[writeIdx++] = c; ctx.state = IPDFS_NORMAL; }
+        break;
+
+      case IPDFS_SAW_I:
+        if (c == 'P') { ctx.state = IPDFS_SAW_IP; }
+        else { buf[writeIdx++]='+'; buf[writeIdx++]='I'; buf[writeIdx++]=c; ctx.state=IPDFS_NORMAL; }
+        break;
+
+      case IPDFS_SAW_IP:
+        if (c == 'D') { ctx.state = IPDFS_READING_LEN; ctx.lenAccumulator = 0; }
+        else { buf[writeIdx++]='+'; buf[writeIdx++]='I'; buf[writeIdx++]='P'; buf[writeIdx++]=c; ctx.state=IPDFS_NORMAL; }
+        break;
+
+      case IPDFS_READING_LEN:
+        if (c >= '0' && c <= '9') {
+          ctx.lenAccumulator = ctx.lenAccumulator * 10 + (c - '0');
+        } else if (c == ',') {
+          ctx.lenAccumulator = 0; // Comma separator in +IPD,0,1460: or +IPD,1460: — reset accumulator for actual length
+        } else if (c == ':') {
+          ctx.payloadRemaining = ctx.lenAccumulator;
+          ctx.lenAccumulator = 0;
+          ctx.state = (ctx.payloadRemaining > 0) ? IPDFS_PAYLOAD : IPDFS_NORMAL;
+        } else if (c == '\r') {
+          ctx.state = IPDFS_READING_LEN_CR;
+        } else if (c == '\n') {
+          ctx.payloadRemaining = ctx.lenAccumulator;
+          ctx.lenAccumulator = 0;
+          ctx.state = (ctx.payloadRemaining > 0) ? IPDFS_PAYLOAD : IPDFS_NORMAL;
+        } else if (c == ' ') {
+          // Ignore spaces in length header
+        } else {
+          ctx.lenAccumulator = 0;
+          ctx.state = IPDFS_NORMAL;
+        }
+        break;
+
+      case IPDFS_READING_LEN_CR:
+        // Handle optional '\n' after '\r' in +IPD,len\r\n framing
+        ctx.payloadRemaining = ctx.lenAccumulator;
+        ctx.lenAccumulator = 0;
+        if (c == '\n') {
+          ctx.state = (ctx.payloadRemaining > 0) ? IPDFS_PAYLOAD : IPDFS_NORMAL;
+        } else {
+          if (ctx.payloadRemaining > 0) {
+            buf[writeIdx++] = c;
+            ctx.payloadRemaining--;
+            ctx.state = (ctx.payloadRemaining > 0) ? IPDFS_PAYLOAD : IPDFS_NORMAL;
+          } else {
+            buf[writeIdx++] = c;
+            ctx.state = IPDFS_NORMAL;
+          }
+        }
+        break;
+
+      case IPDFS_PAYLOAD:
+        break;
+    }
+  }
+  return writeIdx;
+}
+
+// Mirrors the AT+NETOPEN?/AT+NETOPEN check-then-open pattern used in
+// gprs_health.ino and gprs_http.ino. Must be called after any AT+NETCLOSE
+// to rebuild the IP application layer before AT+CIPOPEN can succeed.
+// AT+CGACT (PDP bearer) and AT+NETOPEN (IP stack) are separate layers —
+// verify_bearer_or_recover() only covers CGACT, not NETOPEN.
+// Rebuilds the A7672S IP application layer after AT+NETCLOSE.
+// KEY: AT+NETOPEN sends "OK" immediately (command queued), then sends
+// "+NETOPEN: 0" asynchronously when the stack is actually ready.
+// We use waitForResponseNoFlush() to catch the URC WITHOUT discarding it
+// first (waitForResponse always calls flushSerialSIT() at entry, which
+// would wipe the pending URC before we could read it).
+static void ensureNetOpen() {
+  flushSerialSIT();
+  SerialSIT.println("AT+NETOPEN?");
+  waitForResponse("OK", 2000);
+  if (strstr(modem_response_buf, "+NETOPEN: 1") != NULL) {
+    Serial.println("[OTA-TCP] AT+NETOPEN: IP stack already open.");
+    return; // Already up, nothing to do
+  }
+  Serial.println("[OTA-TCP] IP stack closed — calling AT+NETOPEN...");
+  flushSerialSIT();
+  SerialSIT.println("AT+NETOPEN");
+  // Step 1: Wait for the immediate OK acknowledgment (command queued)
+  waitForResponseNoFlush("OK", 3000);
+  // Step 2: Wait for +NETOPEN: async URC (stack actually ready)
+  // Do NOT use waitForResponse here — its flushSerialSIT() would discard
+  // the +NETOPEN: 0 completion URC before we can read it.
+  bool netopen_ok = waitForResponseNoFlush("+NETOPEN:", 8000);
+  if (!netopen_ok) {
+    Serial.println("[OTA-TCP] NETOPEN URC timeout — stack may not be ready.");
+  } else {
+    Serial.printf("[OTA-TCP] NETOPEN result: %s\n",
+                  strstr(modem_response_buf, "+NETOPEN: 0") ? "OK" : "ERROR/already-open");
+  }
+  vTaskDelay(1000 / portTICK_PERIOD_MS); // Final settle
+}
+
+void fetchFromTcpAndUpdate(char *fileName, bool alreadyLocked) {
+  if (!alreadyLocked) {
+    if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(30000)) != pdTRUE) {
+      Serial.println("[OTA-TCP] Error: Modem Mutex Timeout - deferring download");
+      diag_modem_mutex_fails++;
+      return;
+    }
+  }
+
+  ota_silent_mode = true; // Silence background tasks/logs before binary streaming
+  char gprs_xmit_buf[350];
+  int total_no_of_bytes = 0;
+  int actual_downloaded = 0;
+
+  Serial.printf("[OTA-TCP] Starting Direct TCP Socket OTA for: %s\n", fileName);
+
+  // 1. Total Silence Protocol on Modem URCs to prevent UART text pollution
+  SerialSIT.println("ATE0"); waitForResponse("OK", 1000); // Disable echo to prevent request echo matching
+  SerialSIT.println("AT+CIPSRRIP=0"); waitForResponse("OK", 1000); // Suppress RECV FROM:<IP>:<PORT> header notifications
+  SerialSIT.println("AT+CREG=0"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CEREG=0"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CGEREP=0"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CGEV=0"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CNMI=0,0,0,0,0"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CIURC=0"); waitForResponse("OK", 1000);
+
+  // Ensure PDP Bearer is active
+  if (!verify_bearer_or_recover()) {
+    Serial.println("[OTA-TCP] Bearer Recovery Failed. Aborting OTA.");
+    if (!alreadyLocked) xSemaphoreGive(modemMutex);
+    ota_silent_mode = false;
+    Preferences p;
+    p.begin("ota-track", false);
+    p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
+    p.putString("fail_res", "Fail: Bearer Down");
+    p.end();
+    return;
+  }
+  // Ensure the IP application layer (NETOPEN) is up — separate from PDP bearer.
+  // OTA must not rely on health check having left NETOPEN open.
+  ensureNetOpen();
+
+  uint8_t *chunkBuf = (uint8_t *)malloc(4096);
+  if (!chunkBuf) {
+    Serial.println("[OTA-TCP] malloc failed!");
+    if (!alreadyLocked) xSemaphoreGive(modemMutex);
+    ota_silent_mode = false;
+    return;
+  }
+
+  bool magicChecked = false;
+  bool updateInitialized = false;
+  IpdFilterCtx ipdCtx; // Stateful IPD filter — persists across readBytes() calls within an attempt
+  int maxRetries = 20; // Increased to 20 to allow full ~1.4MB streaming even over lossy 2G networks
+  int cipopen_consecutive_fails = 0; // Track consecutive CIPOPEN failures for escalation
+  // Host fallback: try raw IP first (faster, no DNS), then domain if IP fails.
+  // Mirrors the proven two-host pattern in gprs_health.ino.
+  // The raw IP may be temporarily unreachable (NAT/load-balancer change) while
+  // the domain still resolves correctly — proven in the session log where the
+  // health check failed on IP but succeeded on domain seconds before OTA started.
+  const char *ota_hosts[2] = { HEALTH_SERVER_IP, HEALTH_SERVER_DOMAIN };
+  int hostIdx = 0; // Start with IP; rotate to domain on first CIPOPEN failure
+  const char *connHost = ota_hosts[hostIdx];
+
+  // Force close any lingering socket 0 from health check before starting OTA
+  SerialSIT.println("AT+CIPCLOSE=0,1"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CIPCLOSE=0"); waitForResponse("OK", 1000);
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+  for (int attempt = 0; attempt < maxRetries && (total_no_of_bytes == 0 || actual_downloaded < total_no_of_bytes); attempt++) {
+    esp_task_wdt_reset();
+    ipdCtx.reset(); // Fresh TCP connection each attempt — reset IPD framing state machine
+
+    if (attempt > 0) {
+      Serial.printf("[OTA-TCP] --- Attempt %d/%d: Resuming Range GET from byte %d / %d (host: %s) ---\n",
+                    attempt + 1, maxRetries, actual_downloaded, total_no_of_bytes, connHost);
+      SerialSIT.println("AT+CIPCLOSE=0,1"); waitForResponse("OK", 2000);
+      SerialSIT.println("AT+CIPCLOSE=0"); waitForResponse("OK", 2000);
+      vTaskDelay(5000 / portTICK_PERIOD_MS); // Preserved 5000ms settle delay to ensure SIMCOM A7672 fully tears down socket 0
+      if (!verify_bearer_or_recover()) {
+        Serial.println("[OTA-TCP] Bearer check failed during retry.");
+        continue;
+      }
+      // Extra settling gap after bearer confirm before touching socket layer
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+
+    // 2. Open Direct TCP Socket to Server (port 80)
+    Serial.printf("[OTA-TCP] Opening TCP socket 0 to %s:%s...\n", connHost, OTA_SERVER_PORT);
+    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CIPOPEN=0,\"TCP\",\"%s\",%s", connHost, OTA_SERVER_PORT);
+    SerialSIT.println(gprs_xmit_buf);
+
+    if (!waitForResponse("+CIPOPEN: 0,0", 15000)) {
+      Serial.printf("[OTA-TCP] CIPOPEN Failed (attempt %d, host: %s). Modem resp: '%s'\n",
+                    attempt + 1, connHost, modem_response_buf);
+      SerialSIT.println("AT+CIPCLOSE=0,1"); waitForResponse("OK", 2000);
+      SerialSIT.println("AT+CIPCLOSE=0"); waitForResponse("OK", 2000);
+      cipopen_consecutive_fails++;
+
+      if (cipopen_consecutive_fails >= 2) {
+        // Graduated escalation: NETCLOSE + PDP cycle + NETOPEN on 2nd+ consecutive failure.
+        // PDP cycle (CGACT=0,1) forces Airtel to issue a fresh NAT table entry.
+        Serial.println("[OTA-TCP] Consecutive CIPOPEN failures — NETCLOSE + PDP cycle + NETOPEN.");
+        SerialSIT.println("AT+NETCLOSE"); waitForResponse("OK", 3000);
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        esp_task_wdt_reset();
+        Serial.println("[OTA-TCP] Cycling PDP context for fresh NAT entry...");
+        SerialSIT.println("AT+CGACT=0,1"); waitForResponse("OK", 5000);
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        SerialSIT.println("AT+CGACT=1,1"); waitForResponse("OK", 10000);
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        esp_task_wdt_reset();
+        ensureNetOpen();               // Rebuild IP stack (waits for +NETOPEN: URC)
+        vTaskDelay(3000 / portTICK_PERIOD_MS); // Allow 3s for network stack settling after fresh NETOPEN
+        cipopen_consecutive_fails = 0; // Reset counter after full stack rebuild
+        // Also rotate host on deep escalation in case IP vs domain matters
+        hostIdx = (hostIdx + 1) % 2;
+        connHost = ota_hosts[hostIdx];
+        Serial.printf("[OTA-TCP] Rotating to host: %s\n", connHost);
+      } else {
+        // First failure: rotate host (IP→domain or domain→IP) before socket settle.
+        // This is the cheapest fix — if IP is unreachable the domain may work immediately.
+        hostIdx = (hostIdx + 1) % 2;
+        connHost = ota_hosts[hostIdx];
+        Serial.printf("[OTA-TCP] CIPOPEN failed — rotating to host: %s\n", connHost);
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
+        verify_bearer_or_recover();
+      }
+      continue;
+    }
+    cipopen_consecutive_fails = 0; // Successful CIPOPEN — reset counter
+    Serial.println("[OTA-TCP] Direct TCP Socket Connected Successfully!");
+
+    // 3. Formulate and Send HTTP GET Request (with Range if resuming)
+    char httpRequest[384];
+    if (actual_downloaded == 0) {
+      snprintf(httpRequest, sizeof(httpRequest),
+               "GET /builds/%s HTTP/1.1\r\n"
+               "Host: devhlt.spatika.net\r\n"
+               "User-Agent: ESP32-DirectTCP-OTA\r\n"
+               "Connection: close\r\n\r\n", fileName);
+    } else {
+      snprintf(httpRequest, sizeof(httpRequest),
+               "GET /builds/%s HTTP/1.1\r\n"
+               "Host: devhlt.spatika.net\r\n"
+               "Range: bytes=%d-\r\n"
+               "User-Agent: ESP32-DirectTCP-OTA\r\n"
+               "Connection: close\r\n\r\n", fileName, actual_downloaded);
+    }
+
+    int reqLen = strlen(httpRequest);
+    SerialSIT.println("ATE0"); waitForResponse("OK", 500); // Disable UART echo to prevent request echoing
+    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CIPSEND=0,%d", reqLen);
+    SerialSIT.println(gprs_xmit_buf);
+
+    if (!waitForResponse(">", 5000)) {
+      Serial.printf("[OTA-TCP] CIPSEND prompt (>) failed (attempt %d). Resp: '%s'\n", attempt + 1, modem_response_buf);
+      SerialSIT.println("AT+CIPCLOSE=0");
+      waitForResponse("OK", 1000);
+      continue;
+    }
+
+    vTaskDelay(20 / portTICK_PERIOD_MS);
+    SerialSIT.write((const uint8_t *)httpRequest, reqLen);
+    Serial.println("[OTA-TCP] HTTP GET Request Sent. Waiting for response header...");
+    vTaskDelay(50 / portTICK_PERIOD_MS); // Allow 50ms UART line settle time after transmit before reading response
+
+    // 4. Read HTTP Response Header from remote server
+    int bufLen = 0;
+    modem_response_buf[0] = '\0';
+    bool headerComplete = false;
+    unsigned long hStart = millis();
+
+    const char *hPtr = NULL;
+    while (millis() - hStart < 25000) {
+      esp_task_wdt_reset();
+      while (SerialSIT.available()) {
+        uint8_t rawBuf[128];
+        int toRead = min((int)SerialSIT.available(), (int)sizeof(rawBuf));
+        int n = SerialSIT.readBytes((char *)rawBuf, toRead);
+        if (n > 0) {
+          // Pass ALL incoming bytes (header & body alike) through continuous stateful IPD filter
+          int filtered = filterIpdHeadersStateful(rawBuf, n, ipdCtx);
+          for (int k = 0; k < filtered; k++) {
+            if (bufLen < (int)sizeof(modem_response_buf) - 1) {
+              uint8_t b = rawBuf[k];
+              // Retain exact raw byte in modem_response_buf (null byte appended at bufLen ensures C-string safety for strstr)
+              modem_response_buf[bufLen++] = (char)b;
+              modem_response_buf[bufLen] = '\0';
+            }
+          }
+
+          // Dynamic Garbage Pruning / Sliding Window for Header Search:
+          // Once hPtr is anchored at the HTTP response status line (e.g. "HTTP/1.1 200"),
+          // DO NOT search again to prevent embedded binary payload strings from corrupting hPtr.
+          if (!hPtr) {
+            hPtr = memfind(modem_response_buf, bufLen, "HTTP/1.1 200");
+            if (!hPtr) hPtr = memfind(modem_response_buf, bufLen, "HTTP/1.1 206");
+            if (!hPtr) hPtr = memfind(modem_response_buf, bufLen, "HTTP/1.0 200");
+            if (!hPtr) hPtr = memfind(modem_response_buf, bufLen, "HTTP/1.0 206");
+            if (!hPtr) hPtr = memfind(modem_response_buf, bufLen, "HTTP/1.1 2");
+            if (!hPtr) hPtr = memfind(modem_response_buf, bufLen, "HTTP/1.0 2");
+            if (!hPtr) {
+              const char *pErr = memfind(modem_response_buf, bufLen, "HTTP/1.1 ");
+              if (!pErr) pErr = memfind(modem_response_buf, bufLen, "HTTP/1.0 ");
+              if (pErr) {
+                const char *pGet = memfind(modem_response_buf, bufLen, "GET ");
+                if (pGet != NULL && pGet < pErr) {
+                  pErr = NULL; // Ignore echoed request line
+                }
+              }
+              if (pErr) hPtr = pErr;
+            }
+          }
+
+          if (hPtr != NULL) {
+            int shift = hPtr - modem_response_buf;
+            if (shift > 0) {
+              memmove(modem_response_buf, hPtr, bufLen - shift);
+              bufLen -= shift;
+              modem_response_buf[bufLen] = '\0';
+              hPtr = modem_response_buf; // Anchored cleanly at start of buffer
+            }
+          } else if (bufLen > 256) {
+            // Pre-header noise pruning while waiting for response status line
+            int keep = 32;
+            memmove(modem_response_buf, modem_response_buf + bufLen - keep, keep);
+            bufLen = keep;
+            modem_response_buf[bufLen] = '\0';
+          }
+        }
+      }
+
+      if (hPtr != NULL) {
+        int rLen = bufLen - (hPtr - modem_response_buf);
+        if (memfind(hPtr, rLen, "\r\n\r\n") != NULL ||
+            memfind(hPtr, rLen, "\n\n") != NULL ||
+            memfind(hPtr, rLen, "\r\n\n") != NULL) {
+          headerComplete = true;
+          break;
+        }
+      }
+      vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+
+    if (!headerComplete || !hPtr) {
+      Serial.printf("[OTA-TCP] Header Timeout / Incomplete (attempt %d, read %d bytes). Buffer: '%.200s'\n",
+                    attempt + 1, bufLen, modem_response_buf);
+      SerialSIT.println("AT+CIPCLOSE=0");
+      waitForResponse("OK", 1000);
+      continue;
+    }
+
+    if (memfind(hPtr, bufLen - (hPtr - modem_response_buf), "200") == NULL &&
+        memfind(hPtr, bufLen - (hPtr - modem_response_buf), "206") == NULL) {
+      Serial.printf("[OTA-TCP] HTTP Status Non-200/206 (attempt %d). Header:\n%.200s\n", attempt + 1, hPtr);
+      SerialSIT.println("AT+CIPCLOSE=0");
+      waitForResponse("OK", 1000);
+      break;
+    }
+
+    if (actual_downloaded == 0) {
+      const char *clPtr = memfind(hPtr, bufLen - (hPtr - modem_response_buf), "Content-Length:");
+      if (!clPtr) clPtr = memfind(hPtr, bufLen - (hPtr - modem_response_buf), "content-length:");
+      if (clPtr) {
+        total_no_of_bytes = atoi(clPtr + 15);
+      }
+      Serial.printf("[OTA-TCP] Verified total file size = %d bytes\n", total_no_of_bytes);
+
+      if (total_no_of_bytes <= 100000) {
+        Serial.printf("[OTA-TCP] Invalid File Size (%d bytes). Aborting.\n", total_no_of_bytes);
+        SerialSIT.println("AT+CIPCLOSE=0");
+        waitForResponse("OK", 1000);
+        break;
+      }
+
+      if (!Update.begin(total_no_of_bytes, U_FLASH)) {
+        Serial.printf("[OTA-TCP] Update.begin failed: %s\n", Update.errorString());
+        SerialSIT.println("AT+CIPCLOSE=0");
+        waitForResponse("OK", 1000);
+        break;
+      }
+      updateInitialized = true;
+      ota_writing_active = true;
+      Serial.println("[OTA-TCP] Partition update initialized. Beginning direct streaming...");
+    }
+
+    // Process leftover binary payload bytes in modem_response_buf after HTTP header.
+    // Note: modem_response_buf was already filtered by filterIpdHeadersStateful during header reading.
+    int headerSkip = 4;
+    const char *headerEnd = memfind(hPtr, bufLen - (hPtr - modem_response_buf), "\r\n\r\n");
+    if (!headerEnd) {
+      headerEnd = memfind(hPtr, bufLen - (hPtr - modem_response_buf), "\n\n");
+      headerSkip = 2;
+    }
+    if (!headerEnd) {
+      headerEnd = memfind(hPtr, bufLen - (hPtr - modem_response_buf), "\r\n\n");
+      headerSkip = 3;
+    }
+
+    if (headerEnd != NULL) {
+      headerEnd += headerSkip; // Skip HTTP header separator
+
+      // On initial attempt (actual_downloaded == 0), verify 0xE9 magic byte at exact body start
+      if (!magicChecked) {
+        if (headerEnd < modem_response_buf + bufLen && (uint8_t)(*headerEnd) == 0xE9) {
+          magicChecked = true;
+          Serial.println("[OTA-TCP] Verified 0xE9 Magic Byte at exact body start!");
+        } else {
+          Serial.printf("[OTA-TCP] Body start byte 0x%02X (Expected 0xE9). Waiting for stream...\n",
+                        headerEnd < modem_response_buf + bufLen ? (uint8_t)(*headerEnd) : 0x00);
+        }
+      }
+
+      int headerLen = headerEnd - modem_response_buf;
+      int leftoverBytes = bufLen - headerLen;
+
+      if (leftoverBytes > 0 && magicChecked) {
+        uint8_t *leftoverData = (uint8_t *)headerEnd;
+        int bytesToWrite = min(leftoverBytes, total_no_of_bytes - actual_downloaded);
+        size_t written = Update.write(leftoverData, bytesToWrite);
+        if (written == (size_t)bytesToWrite) {
+          actual_downloaded += written;
+          if (attempt == 0) {
+            Serial.printf("[OTA-TCP] Processed %d initial binary payload bytes cleanly.\n", (int)written);
+          } else {
+            Serial.printf("[OTA-TCP] Resumed: Processed %d pre-buffered header bytes.\n", (int)written);
+          }
+        }
+      }
+    }
+
+    // 5. Direct TCP Binary Streaming Loop
+    unsigned long lastReadTime = millis();
+    int lastLoggedPct = (int)((float)actual_downloaded * 100.0 / total_no_of_bytes);
+
+    while (actual_downloaded < total_no_of_bytes) {
+      esp_task_wdt_reset();
+
+      if (millis() - lastReadTime > 90000) {
+        Serial.printf("[OTA-TCP] Stream Timeout (90s without data)! Downloaded %d of %d bytes.\n", actual_downloaded, total_no_of_bytes);
+        break; // Break inner stream loop, try Range GET resume in outer loop
+      }
+
+      if (SerialSIT.available()) {
+        int toRead = min((int)SerialSIT.available(), 4096);
+        int bytesRead = SerialSIT.readBytes((char *)chunkBuf, toRead);
+
+        if (bytesRead > 0) {
+          lastReadTime = millis();
+          bytesRead = filterIpdHeadersStateful(chunkBuf, bytesRead, ipdCtx);
+          if (bytesRead <= 0) continue;
+
+          if (!magicChecked) {
+            if ((uint8_t)chunkBuf[0] == 0xE9) {
+              magicChecked = true;
+              Serial.println("[OTA-TCP] Verified 0xE9 Magic Byte at stream start!");
+            } else {
+              Serial.printf("[OTA-TCP] Invalid Magic Byte: 0x%02X (Expected 0xE9). Aborting OTA!\n", (uint8_t)chunkBuf[0]);
+              actual_downloaded = 0;
+              break;
+            }
+          }
+
+          int bytesToWrite = min(bytesRead, total_no_of_bytes - actual_downloaded);
+          size_t written = Update.write(chunkBuf, bytesToWrite);
+          if (written != (size_t)bytesToWrite) {
+            Serial.printf("[OTA-TCP] Flash Write Error: wrote %u / %d bytes. Error: %s\n", written, bytesToWrite, Update.errorString());
+            actual_downloaded = 0;
+            break;
+          }
+
+          actual_downloaded += bytesToWrite;
+
+          int currentPct = (int)((float)actual_downloaded * 100.0 / total_no_of_bytes);
+          if (currentPct >= lastLoggedPct + 10 || actual_downloaded == total_no_of_bytes) {
+            Serial.printf("[OTA-TCP] Progress: %d / %d bytes (%d%%)\n", actual_downloaded, total_no_of_bytes, currentPct);
+            lastLoggedPct = currentPct;
+          }
+        }
+      } else {
+        vTaskDelay(5 / portTICK_PERIOD_MS);
+      }
+    } // End inner stream loop
+  } // End outer attempt loop
+
+  free(chunkBuf);
+  SerialSIT.println("AT+CIPCLOSE=0");
+  waitForResponse("OK", 1000);
+
+  // Restore ATE1 command echo for normal AT command usage
+  SerialSIT.println("ATE1"); waitForResponse("OK", 1000);
+
+  // 6. Finalize OTA & Save Confirmation into NVS
+  if (updateInitialized && actual_downloaded == total_no_of_bytes) {
+    if (Update.end(true)) {
+      Serial.println("[OTA-TCP] Flash COMPLETE and VERIFIED SUCCESSFUL!");
+
+      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        File firm = SPIFFS.open("/firmware.doc", FILE_WRITE);
+        if (firm) {
+          firm.print(UNIT_VER);
+          firm.close();
+        }
+        xSemaphoreGive(fsMutex);
+      }
+
+      Preferences p;
+      p.begin("ota-track", false);
+      p.putString("status", "success");
+      char succMsg[64];
+      snprintf(succMsg, sizeof(succMsg), "Success: OTA %s Installed", UNIT_VER);
+      p.putString("last_cmd_res", succMsg);
+      p.putInt("last_cmd_id", last_cmd_id);
+      p.end();
+
+      Serial.println("[OTA-TCP] Rebooting in 3s into updated firmware...");
+      vTaskDelay(3000 / portTICK_PERIOD_MS);
+      ESP.restart();
+    } else {
+      int errCode = Update.getError();
+      Serial.printf("[OTA-TCP] Update.end FAILED. Code: %d, Str: %s\n", errCode, Update.errorString());
+      Preferences p;
+      p.begin("ota-track", false);
+      p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
+      char resBuf[32];
+      snprintf(resBuf, sizeof(resBuf), "Fail: End Code %d", errCode);
+      p.putString("fail_res", resBuf);
+      p.end();
+    }
+  } else {
+    Serial.printf("[OTA-TCP] Incomplete OTA: %d / %d bytes downloaded. Aborting.\n", actual_downloaded, total_no_of_bytes);
+    if (updateInitialized) Update.abort();
+    Preferences p;
+    p.begin("ota-track", false);
+    p.putInt("fail_cnt", p.getInt("fail_cnt", 0) + 1);
+    p.putString("fail_res", "Fail: Stream Incomplete");
+    p.end();
+  }
+
+  ota_writing_active = false;
+  ota_silent_mode = false;
+  if (!alreadyLocked) xSemaphoreGive(modemMutex);
+
+  // Restore Modem URCs
+  SerialSIT.println("AT+CREG=1"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CEREG=1"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CGEREP=2"); waitForResponse("OK", 1000);
+  SerialSIT.println("AT+CNMI=2,1,0,0,0"); waitForResponse("OK", 1000);
+
+  ota_writing_active = false;
+  ota_silent_mode = false;
+
+  if (!alreadyLocked) xSemaphoreGive(modemMutex);
+  Serial.println("[OTA-TCP] Direct TCP OTA process finished.");
+}
+
 void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked) {
   if (!alreadyLocked) {
     if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(30000)) != pdTRUE) {
@@ -853,11 +1468,18 @@ void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked) {
     debugln(
         "[OTA] CID binding warning: No OK received, but continuing anyway.");
   }
+  // Use domain for URL (more reliable than raw IP if DNS/routing changes)
   snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
-           "AT+HTTPPARA=\"URL\",\"http://%s:%s/builds/%s\"", HEALTH_SERVER_IP,
+           "AT+HTTPPARA=\"URL\",\"http://%s:%s/builds/%s\"", HEALTH_SERVER_DOMAIN,
            OTA_SERVER_PORT, fileName);
   SerialSIT.println(gprs_xmit_buf);
   if (!waitForResponse("OK", 2000)) {
+    // Fallback: try raw IP
+    snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
+             "AT+HTTPPARA=\"URL\",\"http://%s:%s/builds/%s\"", HEALTH_SERVER_IP,
+             OTA_SERVER_PORT, fileName);
+    SerialSIT.println(gprs_xmit_buf);
+    waitForResponse("OK", 2000);
     debugln("[OTA] URL setup failed. Aborting.");
     SerialSIT.println("AT+HTTPTERM");
     waitForResponse("OK", 2000);
@@ -1029,9 +1651,16 @@ void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked) {
     waitForResponse("OK", 2000);
     snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
              "AT+HTTPPARA=\"URL\",\"http://%s:%s/builds/%s\"",
-             HEALTH_SERVER_IP, OTA_SERVER_PORT, fileName);
+             HEALTH_SERVER_DOMAIN, OTA_SERVER_PORT, fileName);
     SerialSIT.println(gprs_xmit_buf);
-    waitForResponse("OK", 2000);
+    if (!waitForResponse("OK", 2000)) {
+      // Fallback to raw IP
+      snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf),
+               "AT+HTTPPARA=\"URL\",\"http://%s:%s/builds/%s\"",
+               HEALTH_SERVER_IP, OTA_SERVER_PORT, fileName);
+      SerialSIT.println(gprs_xmit_buf);
+      waitForResponse("OK", 2000);
+    }
 
     // Set Range
     int r_start = actual_downloaded;

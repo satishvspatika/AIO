@@ -406,12 +406,12 @@ void prepare_data_and_send() {
     } else {
       snprintf(
           http_data, sizeof(http_data),
-          "stn_no=%s&rec_time=%04d-%02d-%02d,%02d:%02d&key=%s&rainfall=%05."
-          "1f&temp=%s&humid=%s&w_speed=%s&w_dir=%s&signal=%04d&"
-          "bat_volt=%s&bat_volt2=%s",
+          "stn_no=%s&rec_time=%04d-%02d-%02d,%02d:%02d&rainfall=%05."
+          "1f&temp=%s&humid=%s&w_speed=%s&w_dir=%s&signal=%d&"
+          "bat_volt=%s&key=%s",
           cleanStn, temp_year, temp_month, temp_day, temp_hr, temp_min,
-          httpSet[http_no].Key, temp_crf, sample_temp, sample_hum, sample_avgWS,
-          sample_WD, temp_sig, sample_bat, sample_bat);
+          temp_crf, sample_temp, sample_hum, sample_avgWS, sample_WD, temp_sig,
+          sample_bat, httpSet[http_no].Key);
     }
   }
 #endif
@@ -2064,7 +2064,7 @@ int send_at_cmd_data(char *payload, bool robust) {
 
         if (waitForResponseNoFlush("+IPD", 15000) || strstr(modem_response_buf, "200 OK") != NULL || strstr(modem_response_buf, "Success") != NULL) {
           uint32_t respStart = millis();
-          while (strstr(modem_response_buf, "200") == NULL && strstr(modem_response_buf, "Success") == NULL && (millis() - respStart < 3000)) {
+          while (strstr(modem_response_buf, "200") == NULL && strstr(modem_response_buf, "Success") == NULL && (millis() - respStart < 8000)) {
             while (SerialSIT.available()) {
               int len = strlen(modem_response_buf);
               if (len < 2047) {

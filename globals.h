@@ -621,6 +621,7 @@ extern char time_now[6];
  */
 
 // Task Prototypes
+bool draw_current_page();
 void lcdkeypad(void *pvParameters);
 void gprs(void *pvParameters);
 void tempHum(void *pvParameters);
@@ -665,6 +666,7 @@ void process_sms(char msg_no);
 void retrieveOwnNumber(char* outBuf, size_t outSize, bool alreadyLocked = false);
 int setup_ftp(int transMode = 0);
 void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked = false);
+void fetchFromTcpAndUpdate(char *fileName, bool alreadyLocked = false);
 void copyFromSPIFFSToFS(char *dateFile, bool alreadyLocked = false);
 void saveGPS();
 void loadGPS();
@@ -802,4 +804,31 @@ extern struct http_params httpSet[12];
 
 // Function Prototypes for Tasks defined in other files
 void scheduler(void *parameter);
+
+// ==================== STATEFUL IPD HEADER FILTER TYPES ====================
+// Declared here (globals.h) so they are visible across all .ino files.
+// Arduino IDE only auto-forwards function prototypes, not struct/enum types.
+enum IpdFilterState {
+  IPDFS_NORMAL = 0,
+  IPDFS_SAW_CR,
+  IPDFS_SAW_CRLF,
+  IPDFS_SAW_CRLF_PLUS,
+  IPDFS_SAW_CRLF_I,
+  IPDFS_SAW_CRLF_IP,
+  IPDFS_SAW_PLUS,
+  IPDFS_SAW_I,
+  IPDFS_SAW_IP,
+  IPDFS_READING_LEN,
+  IPDFS_READING_LEN_CR,
+  IPDFS_PAYLOAD
+};
+
+struct IpdFilterCtx {
+  IpdFilterState state;
+  int payloadRemaining;
+  int lenAccumulator;
+  IpdFilterCtx() : state(IPDFS_NORMAL), payloadRemaining(0), lenAccumulator(0) {}
+  void reset() { state = IPDFS_NORMAL; payloadRemaining = 0; lenAccumulator = 0; }
+};
+
 #endif

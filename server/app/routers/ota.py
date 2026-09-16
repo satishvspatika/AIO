@@ -77,6 +77,10 @@ async def ota_upload(
                         raise HTTPException(status_code=413, detail="Payload too large. Max 2.5MB strict ceiling.")
                     b.write(chunk)
             shutil.move(tmp, dest)  # Atomic rename — safe even if upload fails mid-way
+            try:
+                shutil.copyfile(dest, os.path.join(BUILDS_DIR, "firmware.bin"))
+            except Exception:
+                pass
         
         fw.filename = fw_filename
         db.commit()
@@ -133,6 +137,10 @@ async def station_individual_ota(
             b.write(chunk)
             
     shutil.move(tmp, dest)
+    try:
+        shutil.copyfile(dest, os.path.join(BUILDS_DIR, "firmware.bin"))
+    except Exception:
+        pass
     # Queue an OTA command specifically for this station
     db.add(CommandQueue(stn_id=stn_id, cmd="OTA_CHECK", cmd_param=filename))
     db.commit()

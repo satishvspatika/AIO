@@ -432,7 +432,7 @@ struct http_params httpSet[12] = {
     {"104.211.5.142", "104.211.5.142", "/esprain", "3002", SEC_EX_SIT, "json"},
     {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", SEC_EX_SIT, "x-www-form-urlencoded"},
     {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_tws_data_v3", "80", SEC_KS_TWS, "x-www-form-urlencoded"}, 
-    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_twsrf_data_v2", "80", SEC_KS_ADDON, "x-www-form-urlencoded"}, 
+    {"rtdas.ksndmc.net", "117.216.42.181", "/tws_gprs/update_twsrf_data_v3", "80", SEC_KS_ADDON, "x-www-form-urlencoded"}, 
     {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_tws_data_v2", "80", SEC_KS_TWS, "x-www-form-urlencoded"}, 
     {"rtdas.spatika.net", "144.91.104.105", "/tws_gprs/update_twsrf_data_v2", "80", SEC_KS_ADDON, "x-www-form-urlencoded"}, 
     {"rtdas.spatika.net", "89.32.144.163", "/tws_gprs/twsrf_gen", "80", SEC_SPT_TWS_RF, "x-www-form-urlencoded"}, 
@@ -761,6 +761,21 @@ void setup() {
     prefs.putInt("fail_cnt", 0);
     prefs.putString("fail_res", "NONE");
     prefs.putString("last_ver", FIRMWARE_VERSION);
+
+    char saved_res[64] = {0};
+    prefs.getString("last_cmd_res", saved_res, sizeof(saved_res)-1);
+    if (strlen(saved_res) > 0) {
+      strncpy(last_cmd_res, saved_res, sizeof(last_cmd_res)-1);
+      last_cmd_res[sizeof(last_cmd_res)-1] = '\0';
+      prefs.putString("last_cmd_res", "");
+    } else {
+      snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: OTA %s Installed", FIRMWARE_VERSION);
+    }
+    int saved_id = prefs.getInt("last_cmd_id", 0);
+    if (saved_id > 0) {
+      last_cmd_id = saved_id;
+      prefs.putInt("last_cmd_id", 0);
+    }
 
     // v5.60: Time-aware reset for Version Change
     int ver_hr = 10;

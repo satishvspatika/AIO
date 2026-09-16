@@ -57,11 +57,11 @@ Data was previously "invisible" on the server despite a successful "PUT" by the 
 ---
 
 ## 3. KSNDMC_ADDON (SYSTEM 2: TWS-RF)
-*Strictly enforces the 63-byte multiplier.*
-
-*   **Filename Pattern:** `TWSRF_<STN_ID>_<YYMMDD>_<HHMMSS>.kwd`
-*   **Required Total Length:** **63 Bytes** (including `\r\n`)
-*   **Specimen Record (Absolute Truth):**  
+*   **HTTP Endpoint (v3):** `http://rtdas.ksndmc.net/tws_gprs/update_twsrf_data_v3`
+*   **HTTP Payload Parameters:** `stn_no=1063&rec_time=2026-09-15,14:45&rainfall=0.5&temp=23.6&humid=89.5&w_speed=1.5&w_dir=234&signal=-67&bat_volt=12.5&key=rfclimate5p13`
+*   **FTP Filename Pattern:** `TWSRF_<STN_ID>_<YYMMDD>_<HHMMSS>.kwd`
+*   **Required Total Length (FTP):** **63 Bytes** (including `\r\n`)
+*   **Specimen FTP Record (Absolute Truth):**  
     `000297;2025-08-21,09:45;000.0;+26.8;070.7;00.2;260;-079;13.58`
 *   **Hardening Rules:**
     *   **Temperature:** Must use **Width 5** (`%05.1f`) to allow for the sign/space column.

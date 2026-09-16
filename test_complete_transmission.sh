@@ -49,8 +49,8 @@ echo "  → Current: $(curl -s -X POST -d "$PAYLOAD_CUR" "$URL_KS_TWS")"
 
 # 4. KSNDMC_ADDON (SYSTEM 2) - URL ENCODED
 echo -e "\n[4] KSNDMC_ADDON (ID: 001941)"
-URL_KS_ADDON="http://rtdas.ksndmc.net/tws_gprs/update_twsrf_data_v2"
-PAYLOAD_CUR="stn_no=001941&rec_time=$NOW_CSV&key=rfclimate5p13&rainfall=001.2&temp=28.5&humid=45.2&w_speed=01.25&w_dir=180&signal=-051&bat_volt=04.1&bat_volt2=04.1"
+URL_KS_ADDON="http://rtdas.ksndmc.net/tws_gprs/update_twsrf_data_v3"
+PAYLOAD_CUR="stn_no=001941&rec_time=$NOW_CSV&rainfall=001.2&temp=28.5&humid=45.2&w_speed=01.25&w_dir=180&signal=-051&bat_volt=04.1&key=rfclimate5p13"
 echo "  → Current: $(curl -s -X POST -d "$PAYLOAD_CUR" "$URL_KS_ADDON")"
 
 # 5. SPATIKA_GEN (SYSTEM 2) - URL ENCODED

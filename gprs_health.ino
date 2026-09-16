@@ -942,7 +942,7 @@ void process_sms(char msg_no) {
             1) { // +CCLK: \"23/08/01,09:54:35+00\"
           debug("Firmware file is ");
           debugln(temp1);
-          fetchFromHttpAndUpdate(temp1, true);
+          fetchFromTcpAndUpdate(temp1, true);
         }
       }
 
@@ -1187,6 +1187,7 @@ void get_gps_coordinates(bool alreadyLocked) {
   if (lati == 0.0 || longi == 0.0) {
     loadGPS();
   }
+  verify_bearer_or_recover(); // Ensure network bearer is active before health telemetry
   if (locked_by_us) xSemaphoreGive(modemMutex);
 }
 
@@ -1368,6 +1369,24 @@ void parse_health_response(const char* body) {
     if (strstr(body, "\"OTA_CHECK\"")) {
         force_ota = true;
         strcpy(last_cmd_res, "Success: OTA Triggered");
+        ota_cmd_param[0] = '\0'; // Clear previous parameter before parsing
+        const char* pTag = strstr(body, "\"p\"");
+        if (pTag) {
+            const char* col = strchr(pTag, ':');
+            if (col) {
+                const char* q1 = strchr(col, '"');
+                if (q1) {
+                    const char* q2 = strchr(q1 + 1, '"');
+                    if (q2 && (q2 > q1 + 1)) {
+                        size_t len = q2 - (q1 + 1);
+                        if (len >= sizeof(ota_cmd_param)) len = sizeof(ota_cmd_param) - 1;
+                        strncpy(ota_cmd_param, q1 + 1, len);
+                        ota_cmd_param[len] = '\0';
+                        debugf("[CMD] Parsed OTA filename parameter: %s\n", ota_cmd_param);
+                    }
+                }
+            }
+        }
     }
     if (strstr(body, "\"GET_STATUS\"") || strstr(body, "\"GET_HEALTH\"")) {
         force_health_upload = true;
@@ -1689,15 +1708,15 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
     }
 
     const char *health_hosts[2] = {
-#ifdef HEALTH_SERVER_DOMAIN
-      HEALTH_SERVER_DOMAIN,
-#else
-      HEALTH_SERVER_IP,
-#endif
 #ifdef HEALTH_SERVER_IP
-      HEALTH_SERVER_IP
+      HEALTH_SERVER_IP,
 #else
+      HEALTH_SERVER_DOMAIN,
+#endif
+#ifdef HEALTH_SERVER_DOMAIN
       HEALTH_SERVER_DOMAIN
+#else
+      HEALTH_SERVER_IP
 #endif
     };
 
@@ -1741,11 +1760,13 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
 
           if (waitForResponse(">", 5000)) {
               vTaskDelay(10 / portTICK_PERIOD_MS);
+              modem_response_buf[0] = '\0'; // Clear buffer before response accumulation
               SerialSIT.write((const uint8_t *)httpRequest, reqLen);
 
-              if (waitForResponseNoFlush("+IPD", 15000) || strstr(modem_response_buf, "200 OK") != NULL || strstr(modem_response_buf, "status") != NULL || strstr(modem_response_buf, "stored") != NULL || strstr(modem_response_buf, "+IPCLOSE") != NULL) {
+              if (waitForResponseNoFlush("+IPD", 15000)) {
                   uint32_t respStart = millis();
-                  while (strstr(modem_response_buf, "status") == NULL && strstr(modem_response_buf, "stored") == NULL && strstr(modem_response_buf, "\"tm\"") == NULL && strstr(modem_response_buf, "200") == NULL && strstr(modem_response_buf, "+IPCLOSE") == NULL && (millis() - respStart < 3000)) {
+                  // Wait for complete JSON body (ends with '}') or connection termination before parsing
+                  while (strstr(modem_response_buf, "}") == NULL && (millis() - respStart < 6000)) {
                     while (SerialSIT.available()) {
                       int len = strlen(modem_response_buf);
                       if (len < 2047) {
@@ -1758,10 +1779,11 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
                     vTaskDelay(20 / portTICK_PERIOD_MS);
                   }
 
-                  if (strstr(modem_response_buf, "200") != NULL || strstr(modem_response_buf, "status") != NULL || strstr(modem_response_buf, "stored") != NULL || strstr(modem_response_buf, "\"tm\"") != NULL || strstr(modem_response_buf, "+IPCLOSE") != NULL) {
+                  if (strstr(modem_response_buf, "200") != NULL || strstr(modem_response_buf, "status") != NULL || strstr(modem_response_buf, "stored") != NULL || strstr(modem_response_buf, "\"tm\"") != NULL) {
                       tcp_success = true;
                       success = true;
                       debugln("[Health] ✅ Direct TCP Delivered & Confirmed by Server (200 OK).");
+                      debugf("[Health] Server Response Body:\n%s\n", modem_response_buf);
                       parse_health_response(modem_response_buf);
                       SerialSIT.println("AT+CIPCLOSE=0");
                       waitForResponse("OK", 1000);
@@ -1806,7 +1828,7 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
       SerialSIT.println("AT+HTTPPARA=\"CID\",1");
       waitForResponse("OK", 1000);
       char ht_url[150];
-      snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_DOMAIN, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
+      snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_IP, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
       debugf("[Health] Prepared URL: %s\n", ht_url);
       flushSerialSIT(); 
       SerialSIT.println(ht_url);

@@ -591,11 +591,14 @@ void gprs(void *pvParameters) {
       http_ready = false;
       vTaskDelay(2000 / portTICK_PERIOD_MS); // Stabilize modem stack
       if (strlen(ota_cmd_param) > 0) {
-        fetchFromHttpAndUpdate(ota_cmd_param);
+        Serial.printf("[CMD] Initiating TCP OTA download for target: %s\n", ota_cmd_param);
+        fetchFromTcpAndUpdate(ota_cmd_param);
       } else {
         char defaultUpdate[] = "firmware.bin";
-        fetchFromHttpAndUpdate(defaultUpdate);
+        Serial.printf("[CMD] Initiating TCP OTA download for fallback: %s\n", defaultUpdate);
+        fetchFromTcpAndUpdate(defaultUpdate);
       }
+      ota_cmd_param[0] = '\0';
       force_ota = false;
       if (!force_reboot) {
         health_in_progress =

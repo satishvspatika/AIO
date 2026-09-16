@@ -14,41 +14,32 @@
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 // SYSTEM 3 options: SPATIKA_GEN - AP
 
-#define FIRMWARE_VERSION "6.45"
+#define FIRMWARE_VERSION "6.46"
 
-#define ENABLE_HEALTH_REPORT                                                   \
-  1 // Master Switch: Enable automated device health reporting
-#define TEST_HEALTH_DEFAULT                                                    \
-  1 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)
+#define ENABLE_HEALTH_REPORT 1 // Master Switch: Enable automated device health reporting
+#define TEST_HEALTH_DEFAULT 0 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)
 
 // --- 2. COMPILE OPTIONS ---
-#define USE_NUVOTON_UI                                                         \
-  0 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
+#define USE_NUVOTON_UI 0 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
 #ifndef LCD_I2C_ADDR
 #define LCD_I2C_ADDR 0x27 // 0x27 (Default PCF8574T) or 0x3F (PCF8574AT)
 #endif
-#define DEBUG 0 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
-#define ENABLE_WEBSERVER                                                       \
-  1 // 0: Disable, 1: Enable (requires 8MB flash partition)
+#define DEBUG 1 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
+#define ENABLE_WEBSERVER 1 // 0: Disable, 1: Enable (requires 8MB flash partition)
 
 // --- 3. HARDWARE CAPABILITIES ---
 #define ENABLE_PRESSURE_SENSOR 0 // 0: Disable BMP/BME routines, 1: Enable
-#define DEFAULT_RF_RESOLUTION                                                  \
-  0.5 // Factory default rain resolution (0.50mm / 0.25mm)
+#define DEFAULT_RF_RESOLUTION 0.5 // Factory default rain resolution (0.50mm / 0.25mm)
 #define WIND_TEETH_COUNT 2.0 // H-02: Customizable anemometer teeth divisor
-#define WIND_SAMPLING_US                                                       \
-  1000 // ULP wakeup period in microseconds (1000 = 1ms for high-res pulse
-       // sampling)
+#define WIND_SAMPLING_US 1000 // ULP wakeup period in microseconds
 #define WIND_DEBOUNCE_CYCLES 1 // Pulse stability cycles (1 = 1 loop @ 1ms)
-#define WIND_DIR_ADC_MAX                                                       \
-  4095 // Full 12-bit ESP32 ADC max (3.3V) for full 360 degree wind vane range
+#define WIND_DIR_ADC_MAX 4095 // Full 12-bit ESP32 ADC max (3.3V)
 #define ENABLE_CALIB_TEST 0 // 1: IMD CALIB TEST in UI, 0: Field deployment mode
 
 // --- 4. NETWORK BEHAVIOR ---
 #define FILLGAP 1
 #define FTP_CHUNK_SIZE 15 // v5.52 ENH-2: Standardized chunk size for backlog
-#define ENABLE_HTTP_BACKLOG_FALLBACK                                           \
-  1 // 1: Migrate to HTTP (Spatika), 0: APN Swap to airtelgprs.com (KSNDMC)
+#define ENABLE_HTTP_BACKLOG_FALLBACK 1 // 1: Migrate to HTTP (Spatika), 0: APN Swap to airtelgprs.com (KSNDMC)
 
 #include "secrets.h"
 
