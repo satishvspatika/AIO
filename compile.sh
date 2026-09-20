@@ -52,8 +52,8 @@ fi
     --build-property "build.partitions=custom" \
     --build-property "build.custom_partitions=$(pwd)/$PARTITION_FILE" \
     --build-property "upload.maximum_size=1769472" \
-    --build-path "$BUILD_PATH" \
-    --export-binaries \
+    --output-dir "$BUILD_PATH" \
+    --clean \
     .
 
 BUILD_RESULT=$?
@@ -65,7 +65,6 @@ if [ $PATCHED -eq 1 ]; then
 fi
 
 if [ $BUILD_RESULT -eq 0 ]; then
-    cp build/esp32.esp32.esp32/AIO9_5.0.ino*.bin "$BUILD_PATH/" 2>/dev/null || true
     echo ""
     echo "--- Compilation Successful (v${FW_VER} / ${FLASH_SIZE}) ---"
     echo "Binary: $BUILD_PATH/AIO9_5.0.ino.bin"

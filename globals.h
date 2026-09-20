@@ -120,6 +120,7 @@ extern RTC_DATA_ATTR uint8_t ulp_code_reserve[2092];
 void graceful_modem_shutdown();
 void start_deep_sleep();
 void flushSerialSIT();
+void drainUntilQuiet(unsigned long maxWaitMs = 1500);
 bool verify_bearer_or_recover();
 int send_at_cmd_data(char *payload, bool robust);
 void get_signal_strength();

@@ -14,7 +14,7 @@
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 // SYSTEM 3 options: SPATIKA_GEN - AP
 
-#define FIRMWARE_VERSION "6.46"
+#define FIRMWARE_VERSION "6.47"
 
 #define ENABLE_HEALTH_REPORT 1 // Master Switch: Enable automated device health reporting
 #define TEST_HEALTH_DEFAULT 0 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)

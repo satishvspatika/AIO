@@ -282,9 +282,13 @@ async def _process_health_data(data: dict, request: Request, db: Session):
     cmd, cmd_param, cmd_id = "", "", 0
     target_ids = {stn_id}
     s_raw = str(stn_id).strip()
-    if s_raw.isdigit():
-        target_ids.add(s_raw.lstrip('0'))
-        target_ids.add(s_raw.zfill(6))
+    digits = re.findall(r'\d+', s_raw)
+    for d in digits:
+        target_ids.add(d)
+        norm_d = d.lstrip('0')
+        if norm_d:
+            target_ids.add(norm_d)
+            target_ids.add(norm_d.zfill(6))
 
     pending = db.query(CommandQueue).filter(
         CommandQueue.stn_id.in_(list(target_ids)),

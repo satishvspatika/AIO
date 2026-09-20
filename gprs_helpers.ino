@@ -481,6 +481,21 @@ void flushSerialSIT() {
   }
 }
 
+void drainUntilQuiet(unsigned long maxWaitMs) {
+  unsigned long start = millis();
+  unsigned long lastByteSeen = millis();
+  while (millis() - start < maxWaitMs) {
+    if (SerialSIT.available()) {
+      SerialSIT.read();
+      lastByteSeen = millis();
+    } else if (millis() - lastByteSeen > 300) {
+      return; // 300ms of genuine silence — actually done, not just unlucky timing
+    }
+    esp_task_wdt_reset();
+    vTaskDelay(1 / portTICK_PERIOD_MS);
+  }
+}
+
 /**
  * v5.75: Spatika Multi-Platform Header Sync (IST)
  * 
@@ -1086,13 +1101,8 @@ bool waitForResponseNoFlush(const char *expected, unsigned long timeout) {
       return true;
     }
     if (expected != NULL && strcmp(expected, "+IPD") == 0 &&
-        (strstr(modem_response_buf, "status") != NULL ||
-         strstr(modem_response_buf, "stored") != NULL ||
-         strstr(modem_response_buf, "\"tm\"") != NULL ||
-         strstr(modem_response_buf, "200") != NULL ||
-         strstr(modem_response_buf, "+RECEIVE") != NULL ||
-         strstr(modem_response_buf, "+IPCLOSE") != NULL ||
-         strstr(modem_response_buf, "HTTP/") != NULL)) {
+        (strstr(modem_response_buf, "+IPD") != NULL ||
+         strstr(modem_response_buf, "HTTP/1.") != NULL)) {
       return true;
     }
     if (expected == NULL &&
@@ -1113,13 +1123,8 @@ bool waitForResponseNoFlush(const char *expected, unsigned long timeout) {
 
   return (expected != NULL && strstr(modem_response_buf, expected) != NULL) ||
          (expected != NULL && strcmp(expected, "+IPD") == 0 &&
-          (strstr(modem_response_buf, "status") != NULL ||
-           strstr(modem_response_buf, "stored") != NULL ||
-           strstr(modem_response_buf, "\"tm\"") != NULL ||
-           strstr(modem_response_buf, "200") != NULL ||
-           strstr(modem_response_buf, "+RECEIVE") != NULL ||
-           strstr(modem_response_buf, "+IPCLOSE") != NULL ||
-           strstr(modem_response_buf, "HTTP/") != NULL)) ||
+          (strstr(modem_response_buf, "+IPD") != NULL ||
+           strstr(modem_response_buf, "HTTP/1.") != NULL)) ||
          (expected == NULL &&
           (strstr(modem_response_buf, "status") != NULL ||
            strstr(modem_response_buf, "stored") != NULL ||

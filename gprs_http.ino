@@ -2054,6 +2054,8 @@ int send_at_cmd_data(char *payload, bool robust) {
     SerialSIT.println(openCmd);
 
     if (waitForResponse("+CIPOPEN: 0,0", 15000)) {
+      SerialSIT.println("ATE0");
+      waitForResponse("OK", 1000);
       char sendCmd[32];
       snprintf(sendCmd, sizeof(sendCmd), "AT+CIPSEND=0,%d", rawLen);
       SerialSIT.println(sendCmd);

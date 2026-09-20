@@ -1527,7 +1527,7 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
 
   // Prepare Payload
   char cleanStn[16];
-  strncpy(cleanStn, station_name, 15);
+  strncpy(cleanStn, (ftp_station[0] != '\0') ? ftp_station : station_name, 15);
   cleanStn[15] = '\0';
   int slen = strlen(cleanStn);
   while (slen > 0 && cleanStn[slen - 1] == ' ') { cleanStn[slen - 1] = '\0'; slen--; }
@@ -1753,6 +1753,8 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
       
       if (waitForResponse("+CIPOPEN: 0,0", 15000)) {
           debugf("[Health] TCP Connected successfully to %s.\n", connHost);
+          SerialSIT.println("ATE0");
+          waitForResponse("OK", 1000);
 
           char sendCmd[32];
           snprintf(sendCmd, sizeof(sendCmd), "AT+CIPSEND=0,%d", reqLen);
@@ -1763,7 +1765,7 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
               modem_response_buf[0] = '\0'; // Clear buffer before response accumulation
               SerialSIT.write((const uint8_t *)httpRequest, reqLen);
 
-              if (waitForResponseNoFlush("+IPD", 15000)) {
+              if (waitForResponseNoFlush("+IPD", 25000)) {
                   uint32_t respStart = millis();
                   // Wait for complete JSON body (ends with '}') or connection termination before parsing
                   while (strstr(modem_response_buf, "}") == NULL && (millis() - respStart < 6000)) {

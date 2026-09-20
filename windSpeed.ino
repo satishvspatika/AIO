@@ -1,5 +1,5 @@
-#define INST_DURATION_SEC 2
-#define BUFFER_SIZE 3
+#define INST_DURATION_SEC 5
+#define BUFFER_SIZE 6
 
 void windSpeed(void *pvParameters) {
   esp_task_wdt_add(NULL);

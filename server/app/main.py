@@ -54,8 +54,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Determine if path is protected UI route
         protected_prefixes = ("/dashboard", "/station", "/cmd", "/ota", "/delete", "/clear-queue", "/clear-ota-queue", "/toggle-ota-lock", "/summary", "/csv")
         
-        # Skip auth for builds (so ESP32 can download binaries)
-        if request.url.path.startswith("/builds"):
+        # Skip auth for builds and API command queues
+        if request.url.path.startswith("/builds") or request.url.path.startswith("/cmd/"):
             return await call_next(request)
 
         # Is the requested URL one of the protected ones?
@@ -186,22 +186,12 @@ async def serve_firmware(filename: str, request: Request):
         )
     else:
         # Full file request (e.g. for size check via HEAD/GET)
-        async def iter_full():
-            async with aiofiles.open(filepath, "rb") as f:
-                while True:
-                    import asyncio
-                    data = await f.read(32768)
-                    if not data:
-                        break
-                    yield data
-
-        return StreamingResponse(
-            iter_full(),
-            status_code=200,
+        from fastapi.responses import FileResponse
+        return FileResponse(
+            filepath,
+            media_type="application/octet-stream",
             headers={
-                "Content-Length": str(file_size),
                 "Accept-Ranges": "bytes",
-                "Content-Type": "application/octet-stream",
             }
         )
 
