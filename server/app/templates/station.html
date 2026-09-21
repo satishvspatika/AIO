@@ -253,7 +253,9 @@
                     <th class="p-3">Firmware</th>
                     <th class="p-3">Batt / Sol</th>
                     <th class="p-3">Signal</th>
-                    <th class="p-3">Net Sent</th>
+                    <th class="p-3">Live HTTP Sent</th>
+                    <th class="p-3">Backlog Sent</th>
+                    <th class="p-3">Net Sent (Total)</th>
                     <th class="p-3">HTTP Fails</th>
                     <th class="p-3 text-right"></th>
                 </tr>
@@ -305,8 +307,12 @@
                     <td class="p-3 {% if r.signal and r.signal > -75 %}text-green-400{% else %}text-yellow-400{% endif %}">
                         {{ r.signal or '-' }}
                     </td>
-                    <!-- Net sent today -->
-                    <td class="p-3 font-mono text-slate-200">{{ r.net_cnt or 0 }}</td>
+                    <!-- Live HTTP Sent -->
+                    <td class="p-3 font-mono text-green-300 font-bold" title="Live 15-min slots delivered today">{{ r.http_suc_cnt or 0 }}</td>
+                    <!-- Backlog Sent (Recovered) -->
+                    <td class="p-3 font-mono text-purple-300 font-bold" title="Backlog slots successfully recovered today">{{ r.http_ret_cnt or 0 }}</td>
+                    <!-- Net Sent (Total) -->
+                    <td class="p-3 font-mono text-slate-200 font-bold" title="Total delivered records today (Live + Backlog)">{{ r.net_cnt or ((r.http_suc_cnt or 0) + (r.http_ret_cnt or 0)) }}</td>
                     <!-- HTTP Fails — only highlight when non-zero -->
                     <td class="p-3 text-[11px] leading-tight">
                         {% if r.http_present_fails and r.http_present_fails > 0 %}

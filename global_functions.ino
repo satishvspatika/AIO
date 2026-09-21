@@ -1164,8 +1164,8 @@ void reconstructSentMasks(bool alreadyLocked) {
     return;
   }
 
-  // v7.80: Allow recovery on Deep Sleep if counters are zero (RTC Wiped)
-  if (rtc_get_reset_reason(0) == DEEPSLEEP_RESET && diag_pd_count > 0) {
+  // v7.80: Ensure mask is scanned if cur mask is uninitialized (diag_sent_mask_cur[0] == 0)
+  if (rtc_get_reset_reason(0) == DEEPSLEEP_RESET && diag_pd_count > 0 && (diag_sent_mask_cur[0] != 0 || diag_sent_mask_cur[1] != 0)) {
     if (!alreadyLocked)
       xSemaphoreGive(fsMutex);
     return;

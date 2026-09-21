@@ -223,6 +223,16 @@ async def _process_health_data(data: dict, request: Request, db: Session):
             report_kwargs["gps"] = prev_report.gps
         if report_kwargs.get("signal") is None and prev_report.signal is not None:
             report_kwargs["signal"] = prev_report.signal
+        if not report_kwargs.get("net_cnt") and prev_report.net_cnt:
+            report_kwargs["net_cnt"] = prev_report.net_cnt
+        if not report_kwargs.get("net_cnt_prev") and prev_report.net_cnt_prev:
+            report_kwargs["net_cnt_prev"] = prev_report.net_cnt_prev
+        if not report_kwargs.get("http_suc_cnt") and prev_report.http_suc_cnt:
+            report_kwargs["http_suc_cnt"] = prev_report.http_suc_cnt
+        if not report_kwargs.get("http_ret_cnt") and prev_report.http_ret_cnt:
+            report_kwargs["http_ret_cnt"] = prev_report.http_ret_cnt
+        if report_kwargs.get("http_backlog_cnt") is None and prev_report.http_backlog_cnt is not None:
+            report_kwargs["http_backlog_cnt"] = prev_report.http_backlog_cnt
 
     db.add(HealthReport(**report_kwargs))
 
