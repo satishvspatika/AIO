@@ -8,7 +8,7 @@
 
 // --- 1. CORE SYSTEM IDENTITY ---
 #define SYSTEM 0
-#define UNIT_CFG "KSNDMC_TRG"
+#define UNIT_CFG "BIHAR_TRG"
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
@@ -24,7 +24,7 @@
 #ifndef LCD_I2C_ADDR
 #define LCD_I2C_ADDR 0x27 // 0x27 (Default PCF8574T) or 0x3F (PCF8574AT)
 #endif
-#define DEBUG 1 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
+#define DEBUG 0 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
 #define ENABLE_WEBSERVER 1 // 0: Disable, 1: Enable (requires 8MB flash partition)
 
 // --- 3. HARDWARE CAPABILITIES ---

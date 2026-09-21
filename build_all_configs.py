@@ -246,17 +246,25 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
     if result.returncode == 0:
         print_success("Compilation successful")
         
-        # Explicit binary file selection (matches v5.74 style resilience)
-        binary = config_build_dir / f"{SKETCH_DIR.name}.ino.bin"
-        if not binary.exists():
-            binary = SKETCH_DIR / f"{SKETCH_DIR.name}.ino.bin"
-        if not binary.exists():
-            cached_bins = list(config_build_dir.glob("**/*.bin")) + list(SKETCH_DIR.glob("**/*.bin"))
-            for cb in cached_bins:
-                if "bootloader" not in cb.name and "partitions" not in cb.name and "qc" not in cb.name and cb.stat().st_size > 500000:
+        # Explicit binary file selection (resilient locator)
+        binary = None
+        for b_cand in [
+            config_build_dir / f"{SKETCH_DIR.name}.ino.bin",
+            config_build_dir / f"{SKETCH_DIR.name}.bin",
+            SKETCH_DIR / f"{SKETCH_DIR.name}.ino.bin",
+            SKETCH_DIR / f"{SKETCH_DIR.name}.bin"
+        ]:
+            if b_cand.exists():
+                binary = b_cand
+                break
+
+        if not binary:
+            for cb in config_build_dir.glob("**/*.bin"):
+                if "bootloader" not in cb.name and "partitions" not in cb.name and "boot_app" not in cb.name and cb.stat().st_size > 500000:
                     binary = cb
                     break
-        if binary.exists():
+
+        if binary and binary.exists():
             firmware_path = output_dir / "firmware.bin"
             shutil.copy(binary, firmware_path)
             
