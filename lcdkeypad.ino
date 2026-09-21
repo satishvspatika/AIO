@@ -195,6 +195,9 @@ void IRAM_ATTR lcdTimer() {
 
 // v5.60: Central drawing function - differential to eliminate flicker
 bool draw_current_page() {
+  if (sd_ota_lcd_active) {
+    return false; // Skip UI drawing while SD firmware update controls LCD
+  }
   if (lcdkeypad_start == 0) {
     return false; // Display powered off/inactive. Do NOT attempt I2C LCD access!
   }
@@ -615,6 +618,11 @@ void lcdkeypad(void *pvParameters) {
 
   for (;;) {
     esp_task_wdt_reset();
+
+    if (sd_ota_lcd_active) {
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+      continue;
+    }
 
     // Dynamic LCD Timeout Extension when GPRS status changes
     static bool last_gprs_active_state = false;
