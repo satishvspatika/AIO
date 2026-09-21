@@ -129,6 +129,19 @@ def update_config(system, unit, disable_webserver=False, use_nuvoton_ui=1):
     else:
         content = re.sub(r'#define ENABLE_PRESSURE_SENSOR\s+\d+', '#define ENABLE_PRESSURE_SENSOR 0', content)
 
+    # RF Resolution & Anemometer Teeth per System hardware variant:
+    if system in (1, 3):
+        # Full Weather Stations (TWS / TWSRP) use 0.25mm rain tipping bucket & 4-teeth anemometer
+        content = re.sub(r'#define DEFAULT_RF_RESOLUTION\s+[0-9.]+', '#define DEFAULT_RF_RESOLUTION 0.25', content)
+        content = re.sub(r'#define WIND_TEETH_COUNT\s+[0-9.]+', '#define WIND_TEETH_COUNT 4.0', content)
+    else:
+        # TRG Rain Gauge units use 0.50mm rain tipping bucket
+        content = re.sub(r'#define DEFAULT_RF_RESOLUTION\s+[0-9.]+', '#define DEFAULT_RF_RESOLUTION 0.5', content)
+        if system == 2:
+            content = re.sub(r'#define WIND_TEETH_COUNT\s+[0-9.]+', '#define WIND_TEETH_COUNT 4.0', content)
+        else:
+            content = re.sub(r'#define WIND_TEETH_COUNT\s+[0-9.]+', '#define WIND_TEETH_COUNT 2.0', content)
+
     # 4MB builds: disable WebServer
     if disable_webserver:
         content = re.sub(r'#define ENABLE_WEBSERVER \d+', '#define ENABLE_WEBSERVER 0', content)

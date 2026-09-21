@@ -7,8 +7,8 @@
  * ========================================================================= */
 
 // --- 1. CORE SYSTEM IDENTITY ---
-#define SYSTEM 0
-#define UNIT_CFG "KSNDMC_TRG"
+#define SYSTEM 1
+#define UNIT_CFG "KSNDMC_TWS"
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
