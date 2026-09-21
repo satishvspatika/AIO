@@ -222,6 +222,11 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
     config_build_dir = SKETCH_DIR / "build" / f"config_{tagged_name}"
     config_build_dir.mkdir(parents=True, exist_ok=True)
 
+    # Clean any leftover exported root binaries in SKETCH_DIR before building
+    for old_b in SKETCH_DIR.glob("*.ino.bin"):
+        try: old_b.unlink()
+        except Exception: pass
+
     # Compile
     print_info(f"Compiling for {flash_size} flash... (Build path: {config_build_dir.name})")
     log_file = output_dir / "build.log"
@@ -246,7 +251,7 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
     if result.returncode == 0:
         print_success("Compilation successful")
         
-        # Explicit binary file selection (resilient locator)
+        # Resilient binary locator: search config_build_dir first
         binary = None
         for b_cand in [
             config_build_dir / f"{SKETCH_DIR.name}.ino.bin",
@@ -267,6 +272,11 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
         if binary and binary.exists():
             firmware_path = output_dir / "firmware.bin"
             shutil.copy(binary, firmware_path)
+
+            # Cleanup export in root SKETCH_DIR after copy so next config gets fresh binary
+            for root_bin in SKETCH_DIR.glob("*.ino.bin"):
+                try: root_bin.unlink()
+                except Exception: pass
             
             size = firmware_path.stat().st_size
             size_mb = size / (1024 * 1024)
