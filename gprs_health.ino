@@ -1536,150 +1536,135 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
   if (last_cmd_id > 0) snprintf(feedback, sizeof(feedback), ",\"last_cmd_id\":%d,\"last_cmd_res\":\"%s\"", last_cmd_id, last_cmd_res);
 
   memset(gprs_payload, 0, sizeof(gprs_payload));
-  if (cmdPollOnly) {
-    snprintf(gprs_payload, sizeof(gprs_payload),
-        "{\"stn_id\":\"%s\",\"cmd_poll\":1,\"token\":\"%s\"%s}",
-        cleanStn, TELEMETRY_TOKEN, feedback);
-    xSemaphoreGive(fsMutex);
-  } else {
-    if (diag_pd_count == 0 && current_year > 2024) reconstructSentMasks(true);
-    checkRainfallIntegrity();
+  if (diag_pd_count == 0 && current_year > 2024) reconstructSentMasks(true);
+  checkRainfallIntegrity();
 
-    bool unresolvedPD = false, unresolvedNDM = false;
-    bool dummyPD = false, dummyNDM = false;
-    analyzeFileHealth(diag_sent_mask_cur, &diag_net_data_count, &dummyPD, &dummyNDM);
-    analyzeFileHealth(diag_sent_mask_prev, &diag_net_data_count_prev, &unresolvedPD, &unresolvedNDM);
-    if (diag_http_success_count == 0 && diag_net_data_count > 0) {
-      diag_http_success_count = (diag_net_data_count > diag_http_retry_count) ? (diag_net_data_count - diag_http_retry_count) : diag_net_data_count;
-    }
-    if (diag_http_success_count_prev == 0 && diag_net_data_count_prev > 0) {
-      diag_http_success_count_prev = (diag_net_data_count_prev > diag_http_retry_count_prev) ? (diag_net_data_count_prev - diag_http_retry_count_prev) : diag_net_data_count_prev;
-    }
+  bool unresolvedPD = false, unresolvedNDM = false;
+  bool dummyPD = false, dummyNDM = false;
+  analyzeFileHealth(diag_sent_mask_cur, &diag_net_data_count, &dummyPD, &dummyNDM);
+  analyzeFileHealth(diag_sent_mask_prev, &diag_net_data_count_prev, &unresolvedPD, &unresolvedNDM);
+  if (diag_http_success_count == 0 && diag_net_data_count > 0) {
+    diag_http_success_count = (diag_net_data_count > diag_http_retry_count) ? (diag_net_data_count - diag_http_retry_count) : diag_net_data_count;
+  }
+  if (diag_http_success_count_prev == 0 && diag_net_data_count_prev > 0) {
+    diag_http_success_count_prev = (diag_net_data_count_prev > diag_http_retry_count_prev) ? (diag_net_data_count_prev - diag_http_retry_count_prev) : diag_net_data_count_prev;
+  }
 
-    char h_status[256] = "";
+  char h_status[256] = "";
 #define H_FAULT(f) do { \
-      size_t _rem = sizeof(h_status) - strlen(h_status) - 1; \
-      if (h_status[0] != '\0' && _rem > 1) strncat(h_status, "_", _rem--); \
-      _rem = sizeof(h_status) - strlen(h_status) - 1; \
-      if (_rem > 0) strncat(h_status, f, _rem); \
-    } while (0)
+    size_t _rem = sizeof(h_status) - strlen(h_status) - 1; \
+    if (h_status[0] != '\0' && _rem > 1) strncat(h_status, "_", _rem--); \
+    _rem = sizeof(h_status) - strlen(h_status) - 1; \
+    if (_rem > 0) strncat(h_status, f, _rem); \
+  } while (0)
 
-    if (diag_last_reset_reason == 15) H_FAULT("BROWNOUT");
-    if (diag_last_reset_reason == 7 || diag_last_reset_reason == 8 || diag_last_reset_reason == 9 || diag_last_reset_reason == 13 || diag_last_reset_reason == 16) H_FAULT("WDOG");
-    if (!diag_rtc_battery_ok || current_year < 2025) H_FAULT("RTC_FAIL");
-    if (unresolvedPD) H_FAULT("PD");
-    if (strcmp(diag_cdm_status, "OK") != 0 && current_hour >= 9 && diag_last_rollover_day > 0) H_FAULT("CDM");
-    if (unresolvedNDM || (dummyNDM && current_hour >= 6)) H_FAULT("NDM");
-    if (lati == 0.0 && longi == 0.0) H_FAULT("NO_GPS");
-    if (live_post_muted) H_FAULT("MUTED");
+  if (diag_last_reset_reason == 15) H_FAULT("BROWNOUT");
+  if (diag_last_reset_reason == 7 || diag_last_reset_reason == 8 || diag_last_reset_reason == 9 || diag_last_reset_reason == 13 || diag_last_reset_reason == 16) H_FAULT("WDOG");
+  if (!diag_rtc_battery_ok || current_year < 2025) H_FAULT("RTC_FAIL");
+  if (unresolvedPD) H_FAULT("PD");
+  if (strcmp(diag_cdm_status, "OK") != 0 && current_hour >= 9 && diag_last_rollover_day > 0) H_FAULT("CDM");
+  if (unresolvedNDM || (dummyNDM && current_hour >= 6)) H_FAULT("NDM");
+  if (lati == 0.0 && longi == 0.0) H_FAULT("NO_GPS");
+  if (live_post_muted) H_FAULT("MUTED");
 
-    if (diag_temp_cv) H_FAULT("TEMP_STUCK");
-    if (diag_hum_cv) H_FAULT("HUM_STUCK");
-    if (diag_ws_cv) H_FAULT("WS_STUCK");
-    if (diag_temp_erv || diag_temp_erz) H_FAULT("TEMP_UNREAL");
-    if (diag_hum_erv || diag_hum_erz) H_FAULT("HUM_UNREAL");
-    if (diag_ws_erv) H_FAULT("WS_UNREAL");
-    if (diag_wd_fail) H_FAULT("WD_FAIL");
-    if (diag_rain_jump) H_FAULT("RAIN_SPIKE");
-    if (diag_rain_reset) H_FAULT("RAIN_RESET");
-    if (diag_rain_calc_invalid) H_FAULT("RAIN_CALC");
+  if (diag_temp_cv) H_FAULT("TEMP_STUCK");
+  if (diag_hum_cv) H_FAULT("HUM_STUCK");
+  if (diag_ws_cv) H_FAULT("WS_STUCK");
+  if (diag_temp_erv || diag_temp_erz) H_FAULT("TEMP_UNREAL");
+  if (diag_hum_erv || diag_hum_erz) H_FAULT("HUM_UNREAL");
+  if (diag_ws_erv) H_FAULT("WS_UNREAL");
+  if (diag_wd_fail) H_FAULT("WD_FAIL");
+  if (diag_rain_jump) H_FAULT("RAIN_SPIKE");
+  if (diag_rain_reset) H_FAULT("RAIN_RESET");
+  if (diag_rain_calc_invalid) H_FAULT("RAIN_CALC");
 
-    if (strcmp(diag_crash_task, "NONE") != 0) {
-      char crash_info[32];
-      snprintf(crash_info, sizeof(crash_info), "CRASH-%s", diag_crash_task);
-      H_FAULT(crash_info);
-    }
-    if (h_status[0] == '\0') strcpy(h_status, "OK");
+  if (strcmp(diag_crash_task, "NONE") != 0) {
+    char crash_info[32];
+    snprintf(crash_info, sizeof(crash_info), "CRASH-%s", diag_crash_task);
+    H_FAULT(crash_info);
+  }
+  if (h_status[0] == '\0') strcpy(h_status, "OK");
 
-    char sensor_info[48];
+  char sensor_info[48];
 #if SYSTEM == 0
-    if (diag_rain_jump) snprintf(sensor_info, sizeof(sensor_info), "RF-ERJ");
-    else if (diag_rain_reset) snprintf(sensor_info, sizeof(sensor_info), "RF-RESET");
-    else if (diag_rain_calc_invalid) snprintf(sensor_info, sizeof(sensor_info), "RF-CALC");
-    else snprintf(sensor_info, sizeof(sensor_info), "RF-OK");
+  if (diag_rain_jump) snprintf(sensor_info, sizeof(sensor_info), "RF-ERJ");
+  else if (diag_rain_reset) snprintf(sensor_info, sizeof(sensor_info), "RF-RESET");
+  else if (diag_rain_calc_invalid) snprintf(sensor_info, sizeof(sensor_info), "RF-CALC");
+  else snprintf(sensor_info, sizeof(sensor_info), "RF-OK");
 #else
-    char th_st[16] = "TH-OK", ws_st[16] = "WS-OK", wd_st[16] = "WD-OK";
-    if (hdcType == HDC_UNKNOWN) strcpy(th_st, "TH-FAIL");
-    else if (diag_temp_cv || diag_hum_cv) strcpy(th_st, "TH-CV");
-    else if (diag_temp_erz || diag_hum_erz) strcpy(th_st, "TH-ERZ");
-    else if (diag_temp_erv || diag_hum_erv) strcpy(th_st, "TH-ERV");
+  char th_st[16] = "TH-OK", ws_st[16] = "WS-OK", wd_st[16] = "WD-OK";
+  if (hdcType == HDC_UNKNOWN) strcpy(th_st, "TH-FAIL");
+  else if (diag_temp_cv || diag_hum_cv) strcpy(th_st, "TH-CV");
+  else if (diag_temp_erz || diag_hum_erz) strcpy(th_st, "TH-ERZ");
+  else if (diag_temp_erv || diag_hum_erv) strcpy(th_st, "TH-ERV");
 
-    if (!ws_ok) strcpy(ws_st, "WS-FAIL");
-    else if (diag_ws_cv) strcpy(ws_st, "WS-CV");
-    else if (diag_ws_erv) strcpy(ws_st, "WS-ERV");
+  if (!ws_ok) strcpy(ws_st, "WS-FAIL");
+  else if (diag_ws_cv) strcpy(ws_st, "WS-CV");
+  else if (diag_ws_erv) strcpy(ws_st, "WS-ERV");
 
-    if (!wd_ok || diag_wd_fail) strcpy(wd_st, "WD-FAIL");
+  if (!wd_ok || diag_wd_fail) strcpy(wd_st, "WD-FAIL");
 
-    snprintf(sensor_info, sizeof(sensor_info), "%s,%s,%s", th_st, ws_st, wd_st);
+  snprintf(sensor_info, sizeof(sensor_info), "%s,%s,%s", th_st, ws_st, wd_st);
 #endif
 
-    char gps_str[32];
-    if (abs(lati) < 0.00001 && abs(longi) < 0.00001) snprintf(gps_str, sizeof(gps_str), "NA");
-    else snprintf(gps_str, sizeof(gps_str), "%.8f,%.8f", lati, longi);
+  char gps_str[32];
+  if (abs(lati) < 0.00001 && abs(longi) < 0.00001) snprintf(gps_str, sizeof(gps_str), "NA");
+  else snprintf(gps_str, sizeof(gps_str), "%.8f,%.8f", lati, longi);
 
-    int spiffs_used = SPIFFS.usedBytes() / 1024;
-    int spiffs_total = SPIFFS.totalBytes() / 1024;
-    int unsent_count = countStored("/unsent.txt") + countStored("/ftpunsent.txt");
+  int spiffs_used = SPIFFS.usedBytes() / 1024;
+  int spiffs_total = SPIFFS.totalBytes() / 1024;
+  int unsent_count = countStored("/unsent.txt") + countStored("/ftpunsent.txt");
 
-    char rf_cls_date_str[16];
-    if (rf_cls_yy >= 2025 && rf_cls_mm >= 1 && rf_cls_mm <= 12 && rf_cls_dd >= 1 && rf_cls_dd <= 31) {
-      snprintf(rf_cls_date_str, sizeof(rf_cls_date_str), "%04d-%02d-%02d", rf_cls_yy, rf_cls_mm, rf_cls_dd);
-    } else {
-      struct tm snapshot;
-      getTimeSnapshot(&snapshot);
-      int cur_dd = snapshot.tm_mday, cur_mm = snapshot.tm_mon + 1, cur_yy = snapshot.tm_year + 1900;
-      int calcSlot = (snapshot.tm_hour * 4 + snapshot.tm_min / 15 + 61) % 96;
-      if (calcSlot <= 60) next_date(&cur_dd, &cur_mm, &cur_yy);
-      snprintf(rf_cls_date_str, sizeof(rf_cls_date_str), "%04d-%02d-%02d", cur_yy, cur_mm, cur_dd);
-    }
+  char rf_cls_date_str[16];
+  if (rf_cls_yy >= 2025 && rf_cls_mm >= 1 && rf_cls_mm <= 12 && rf_cls_dd >= 1 && rf_cls_dd <= 31) {
+    snprintf(rf_cls_date_str, sizeof(rf_cls_date_str), "%04d-%02d-%02d", rf_cls_yy, rf_cls_mm, rf_cls_dd);
+  } else {
+    struct tm snapshot;
+    getTimeSnapshot(&snapshot);
+    int cur_dd = snapshot.tm_mday, cur_mm = snapshot.tm_mon + 1, cur_yy = snapshot.tm_year + 1900;
+    int calcSlot = (snapshot.tm_hour * 4 + snapshot.tm_min / 15 + 61) % 96;
+    if (calcSlot <= 60) next_date(&cur_dd, &cur_mm, &cur_yy);
+    snprintf(rf_cls_date_str, sizeof(rf_cls_date_str), "%04d-%02d-%02d", cur_yy, cur_mm, cur_dd);
+  }
 
-    char sim_or_iccid[32];
-    if (strlen(sim_msisdn) >= 5 && strcmp(sim_msisdn, "NA") != 0 && strcmp(sim_msisdn, "Not Found") != 0) {
-      strncpy(sim_or_iccid, sim_msisdn, sizeof(sim_or_iccid) - 1);
-    } else {
-      strncpy(sim_or_iccid, cached_iccid, sizeof(sim_or_iccid) - 1);
-    }
-    sim_or_iccid[sizeof(sim_or_iccid) - 1] = '\0';
+  char calib_report[48] = "NA";
+  if (calib_year > 2000) {
+    snprintf(calib_report, sizeof(calib_report), "CLB-%s (%04d-%02d-%02d)",
+             (calib_sts == 1 ? "OK" : "FAIL"), calib_year, calib_month,
+             calib_day);
+  }
 
-    char calib_report[48] = "NA";
-    if (calib_year > 2000) {
-      snprintf(calib_report, sizeof(calib_report), "CLB-%s (%04d-%02d-%02d)",
-               (calib_sts == 1 ? "OK" : "FAIL"), calib_year, calib_month,
-               calib_day);
-    }
+  snprintf(gprs_payload, sizeof(gprs_payload),
+      "{\"stn_id\":\"%s\",\"unit_type\":\"%s\",\"system\":%d,"
+      "\"health_sts\":\"%s\",\"sensor_sts\":\"%s\",\"rtc_ok\":%d,\"sd_ok\":%d,"
+      "\"bat_v\":%.2f,\"mcu_bat\":%.2f,\"sol_v\":%.2f,\"signal\":%d,"
+      "\"net_cnt\":%d,\"net_cnt_prev\":%d,\"cdm_sts\":\"%s\","
+      "\"pd_cnt\":%d,\"ndm_cnt\":%d,"
+      "\"spiffs_kb\":%d,\"spiffs_total_kb\":%d,\"unsent_count\":%d,"
+      "\"reset_reason\":%d,\"ver\":\"%s\",\"iccid\":\"%s\",\"carrier\":\"%s\",\"gps\":\"%s\","
+      "\"calib\":\"%s\",\"rf_res\":%.2f,\"rf_cls_date\":\"%s\","
+      "\"reg_fails\":%d,\"reg_fail_reason\":\"%s\","
+      "\"http_suc_cnt\":%d,\"http_ret_cnt\":%d,\"ftp_suc_cnt\":%d,"
+      "\"http_suc_cnt_prev\":%d,\"http_ret_cnt_prev\":%d,\"ftp_suc_cnt_prev\":%d,"
+      "\"http_present_fails\":%d,\"http_cum_fails\":%d,\"http_backlog_cnt\":%d,"
+      "\"mutex_fail\":%d,\"ota_fails\":%d,\"ota_fail_reason\":\"%s\","
+      "\"cmd_poll\":%d,\"token\":\"%s\"%s}", 
+      cleanStn, UNIT, SYSTEM,
+      h_status, sensor_info, (diag_rtc_battery_ok ? 1 : 0), (sd_card_ok ? 1 : 0),
+      li_bat_val, bat_3v3_val, solar_val, signal_lvl,
+      diag_net_data_count, diag_net_data_count_prev, diag_cdm_status,
+      (unresolvedPD ? 1 : 0), diag_ndm_count_prev,
+      spiffs_used, spiffs_total, unsent_count,
+      diag_last_reset_reason, UNIT_VER, cached_iccid, carrier, gps_str,
+      calib_report, RF_RESOLUTION, rf_cls_date_str,
+      diag_gprs_fails, diag_reg_fail_type,
+      diag_http_success_count, diag_http_retry_count, diag_ftp_success_count,
+      diag_http_success_count_prev, diag_http_retry_count_prev, diag_ftp_success_count_prev,
+      diag_http_present_fails, diag_http_cum_fails, get_total_backlogs(true),
+      diag_modem_mutex_fails, ota_fail_count, ota_fail_reason,
+      (cmdPollOnly ? 1 : 0), TELEMETRY_TOKEN, feedback);
 
-    snprintf(gprs_payload, sizeof(gprs_payload),
-        "{\"stn_id\":\"%s\",\"unit_type\":\"%s\",\"system\":%d,"
-        "\"health_sts\":\"%s\",\"sensor_sts\":\"%s\",\"rtc_ok\":%d,\"sd_ok\":%d,"
-        "\"bat_v\":%.2f,\"mcu_bat\":%.2f,\"sol_v\":%.2f,\"signal\":%d,"
-        "\"net_cnt\":%d,\"net_cnt_prev\":%d,\"cdm_sts\":\"%s\","
-        "\"pd_cnt\":%d,\"ndm_cnt\":%d,"
-        "\"spiffs_kb\":%d,\"spiffs_total_kb\":%d,\"unsent_count\":%d,"
-        "\"reset_reason\":%d,\"ver\":\"%s\",\"iccid\":\"%s\",\"carrier\":\"%s\",\"gps\":\"%s\","
-        "\"calib\":\"%s\",\"rf_res\":%.2f,\"rf_cls_date\":\"%s\","
-        "\"reg_fails\":%d,\"reg_fail_reason\":\"%s\","
-        "\"http_suc_cnt\":%d,\"http_ret_cnt\":%d,\"ftp_suc_cnt\":%d,"
-        "\"http_suc_cnt_prev\":%d,\"http_ret_cnt_prev\":%d,\"ftp_suc_cnt_prev\":%d,"
-        "\"http_present_fails\":%d,\"http_cum_fails\":%d,\"http_backlog_cnt\":%d,"
-        "\"mutex_fail\":%d,\"ota_fails\":%d,\"ota_fail_reason\":\"%s\","
-        "\"token\":\"%s\"%s}", 
-        cleanStn, UNIT, SYSTEM,
-        h_status, sensor_info, (diag_rtc_battery_ok ? 1 : 0), (sd_card_ok ? 1 : 0),
-        li_bat_val, bat_3v3_val, solar_val, signal_lvl,
-        diag_net_data_count, diag_net_data_count_prev, diag_cdm_status,
-        (unresolvedPD ? 1 : 0), diag_ndm_count_prev,
-        spiffs_used, spiffs_total, unsent_count,
-        diag_last_reset_reason, UNIT_VER, cached_iccid, carrier, gps_str,
-        calib_report, RF_RESOLUTION, rf_cls_date_str,
-        diag_gprs_fails, diag_reg_fail_type,
-        diag_http_success_count, diag_http_retry_count, diag_ftp_success_count,
-        diag_http_success_count_prev, diag_http_retry_count_prev, diag_ftp_success_count_prev,
-        diag_http_present_fails, diag_http_cum_fails, get_total_backlogs(true),
-        diag_modem_mutex_fails, ota_fail_count, ota_fail_reason,
-        TELEMETRY_TOKEN, feedback);
-
-    xSemaphoreGive(fsMutex); 
-  } 
+  xSemaphoreGive(fsMutex); 
 
   bool success = false;
   // Dynamic max attempts: 1 attempt for 15-min pulse mode (to conserve battery), 2 attempts for 24-hour daily report

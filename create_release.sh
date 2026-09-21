@@ -305,33 +305,43 @@ echo -e "  3. Upload ZIP to GitHub Releases (optional)"
 # 9. Send email notification (with confirmation)
 print_header "Step 7: Email Release Package"
 
+PKG_OPTION="both"
+
 if [ "$NON_INTERACTIVE" = true ]; then
     SEND_EMAIL="y"
 else
+    echo -e "${YELLOW}Select package option to email/attach:${NC}"
+    echo -e "  1) Nuvoton UI package only (AIO9_v${VERSION}_NUVOTON.zip)"
+    echo -e "  2) Matrix UI package only (AIO9_v${VERSION}_MATRIX.zip)"
+    echo -e "  3) Both Nuvoton & Matrix packages (Recommended)"
+    echo -e "${YELLOW}Enter choice (1/2/3, or press Enter for Both):${NC}"
+    read -r PKG_CHOICE
+    if [ "$PKG_CHOICE" = "1" ]; then PKG_OPTION="nuvoton";
+    elif [ "$PKG_CHOICE" = "2" ]; then PKG_OPTION="matrix";
+    elif [ "$PKG_CHOICE" = "3" ]; then PKG_OPTION="both";
+    fi
+
     echo -e "${YELLOW}Send release package via email?${NC}"
     echo -e "  To: satishv.spatika@gmail.com"
-    echo -e "  Attachments:"
-    echo -e "    - Release ZIP: AIO9_v${VERSION}.zip (${ZIP_SIZE})"
-    echo -e "    - Factory ZIP: AIO9_Factory_Flash_Files.zip (${FACTORY_ZIP_SIZE})"
-    echo -e "    - Release Notes: ${RELEASE_NOTES}"
+    echo -e "  Package Choice: ${PKG_OPTION^^}"
     echo -e "\n${YELLOW}Send email? (y/n):${NC}"
     read -r SEND_EMAIL
 fi
 
 if [ "$SEND_EMAIL" = "y" ] || [ "$SEND_EMAIL" = "Y" ]; then
-    if [ -f "$ZIP_FILE" ]; then
-        python3 send_release_email.py "$VERSION" "$ZIP_FILE" "$RELEASE_NOTES" "$SUMMARY" "${RELEASE_DIR}/v${VERSION}" "satishv.spatika@gmail.com" "$FACTORY_ZIP"
+    if [ -f "$ZIP_FILE" ] || [ -f "${RELEASE_DIR}/AIO9_v${VERSION}_NUVOTON.zip" ] || [ -f "${RELEASE_DIR}/AIO9_v${VERSION}_MATRIX.zip" ]; then
+        python3 send_release_email.py "$VERSION" "$ZIP_FILE" "$RELEASE_NOTES" "$SUMMARY" "${RELEASE_DIR}/v${VERSION}" "satishv.spatika@gmail.com" "$FACTORY_ZIP" --pkg "$PKG_OPTION"
         
         if [ $? -eq 0 ]; then
             print_success "Email sent successfully"
         else
-            print_warning "Email preparation completed. Check /tmp for manual sending instructions."
+            print_warning "Email preparation completed. Check logs for details."
         fi
     else
         print_error "Cannot send email: ZIP file not found"
     fi
 else
-    print_warning "Skipped email. Run manually: python3 send_release_email.py $VERSION $ZIP_FILE $RELEASE_NOTES \"$SUMMARY\" \"${RELEASE_DIR}/v${VERSION}\" \"satishv.spatika@gmail.com\" \"$FACTORY_ZIP\""
+    print_warning "Skipped email. Run manually: python3 send_release_email.py $VERSION $ZIP_FILE $RELEASE_NOTES \"$SUMMARY\" \"${RELEASE_DIR}/v${VERSION}\" \"satishv.spatika@gmail.com\" \"$FACTORY_ZIP\" --pkg $PKG_OPTION"
 fi
 
 echo -e "\n${GREEN}🎉 Release v${VERSION} is ready for deployment!${NC}\n"

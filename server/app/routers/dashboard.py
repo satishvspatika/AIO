@@ -646,7 +646,7 @@ async def station_detail(stn_id: str, request: Request, db: Session = Depends(ge
         # Forward-fill / carry-forward missing fields for history rows (so incomplete checkins don't display ? or 0.00V)
         last_known = {}
         for r in reversed(history):
-            for field in ["ver", "sensor_sts", "bat_v", "mcu_bat", "sol_v", "signal", "carrier", "unit_type", "iccid"]:
+            for field in ["ver", "sensor_sts", "bat_v", "mcu_bat", "sol_v", "signal", "carrier", "unit_type", "iccid", "net_cnt", "http_suc_cnt", "http_ret_cnt", "http_backlog_cnt"]:
                 val = getattr(r, field, None)
                 if val is not None and val != "" and val != "?" and val != 0.0 and val != "Unknown":
                     last_known[field] = val

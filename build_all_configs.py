@@ -130,17 +130,12 @@ def update_config(system, unit, disable_webserver=False, use_nuvoton_ui=1):
         content = re.sub(r'#define ENABLE_PRESSURE_SENSOR\s+\d+', '#define ENABLE_PRESSURE_SENSOR 0', content)
 
     # RF Resolution & Anemometer Teeth per System hardware variant:
-    if system in (1, 3):
-        # Full Weather Stations (TWS / TWSRP) use 0.25mm rain tipping bucket & 4-teeth anemometer
-        content = re.sub(r'#define DEFAULT_RF_RESOLUTION\s+[0-9.]+', '#define DEFAULT_RF_RESOLUTION 0.25', content)
+    # All configurations use 0.50mm rain resolution default
+    content = re.sub(r'#define DEFAULT_RF_RESOLUTION\s+[0-9.]+', '#define DEFAULT_RF_RESOLUTION 0.5', content)
+    if system in (1, 2, 3):
         content = re.sub(r'#define WIND_TEETH_COUNT\s+[0-9.]+', '#define WIND_TEETH_COUNT 4.0', content)
     else:
-        # TRG Rain Gauge units use 0.50mm rain tipping bucket
-        content = re.sub(r'#define DEFAULT_RF_RESOLUTION\s+[0-9.]+', '#define DEFAULT_RF_RESOLUTION 0.5', content)
-        if system == 2:
-            content = re.sub(r'#define WIND_TEETH_COUNT\s+[0-9.]+', '#define WIND_TEETH_COUNT 4.0', content)
-        else:
-            content = re.sub(r'#define WIND_TEETH_COUNT\s+[0-9.]+', '#define WIND_TEETH_COUNT 2.0', content)
+        content = re.sub(r'#define WIND_TEETH_COUNT\s+[0-9.]+', '#define WIND_TEETH_COUNT 2.0', content)
 
     # 4MB builds: disable WebServer
     if disable_webserver:
@@ -584,24 +579,51 @@ def main():
 
             print_success(f"Release v{firmware_version} package complete.")
             
-            # 4. Create ZIP archive of the release bundle
+            # 4. Create ZIP archives of the release bundles (Combined, Nuvoton-only, Matrix-only)
             try:
                 import zipfile
+                
+                # A) Combined archive (all configs)
                 zip_filename = external_base.parent / f"AIO9_v{firmware_version}.zip"
-                
-                print(f"→ Creating release archive: {zip_filename.name}")
-                
+                print(f"→ Creating release archive (Combined): {zip_filename.name}")
                 with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                    # Walk through all files in the release directory
                     for root, dirs, files in os.walk(external_base):
                         for file in files:
                             file_path = Path(root) / file
-                            # Calculate relative path from external_base parent
                             arcname = file_path.relative_to(external_base.parent)
                             zipf.write(file_path, arcname)
-                
                 zip_size = zip_filename.stat().st_size / (1024 * 1024)
-                print_success(f"Release archive created: {zip_filename.name} ({zip_size:.2f} MB)")
+                print_success(f"Combined release archive created: {zip_filename.name} ({zip_size:.2f} MB)")
+
+                # B) Nuvoton-only archive
+                nuv_zip_filename = external_base.parent / f"AIO9_v{firmware_version}_NUVOTON.zip"
+                print(f"→ Creating release archive (Nuvoton UI): {nuv_zip_filename.name}")
+                with zipfile.ZipFile(nuv_zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for root, dirs, files in os.walk(external_base):
+                        for file in files:
+                            file_path = Path(root) / file
+                            rel_to_base = file_path.relative_to(external_base)
+                            top_dir = rel_to_base.parts[0] if len(rel_to_base.parts) > 1 else ""
+                            if top_dir == "" or "_NUV_" in top_dir or top_dir == "flash_files":
+                                arcname = file_path.relative_to(external_base.parent)
+                                zipf.write(file_path, arcname)
+                nuv_zip_size = nuv_zip_filename.stat().st_size / (1024 * 1024)
+                print_success(f"Nuvoton release archive created: {nuv_zip_filename.name} ({nuv_zip_size:.2f} MB)")
+
+                # C) Matrix-only archive
+                mat_zip_filename = external_base.parent / f"AIO9_v{firmware_version}_MATRIX.zip"
+                print(f"→ Creating release archive (Matrix UI): {mat_zip_filename.name}")
+                with zipfile.ZipFile(mat_zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for root, dirs, files in os.walk(external_base):
+                        for file in files:
+                            file_path = Path(root) / file
+                            rel_to_base = file_path.relative_to(external_base)
+                            top_dir = rel_to_base.parts[0] if len(rel_to_base.parts) > 1 else ""
+                            if top_dir == "" or "_MAT_" in top_dir or top_dir == "flash_files":
+                                arcname = file_path.relative_to(external_base.parent)
+                                zipf.write(file_path, arcname)
+                mat_zip_size = mat_zip_filename.stat().st_size / (1024 * 1024)
+                print_success(f"Matrix release archive created: {mat_zip_filename.name} ({mat_zip_size:.2f} MB)")
 
                 # 5. Create standalone Factory Flash Files ZIP archive
                 try:

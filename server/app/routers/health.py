@@ -196,43 +196,57 @@ async def _process_health_data(data: dict, request: Request, db: Session):
     report_kwargs.setdefault("calib", "NA")
 
     # Carry forward previous valid telemetry if missing in current report (e.g. telemetry endpoint checkins)
-    prev_report = db.query(HealthReport).filter_by(stn_id=stn_id).order_by(HealthReport.reported_at.desc()).first()
-    if prev_report:
-        if not report_kwargs.get("ver") and prev_report.ver:
-            report_kwargs["ver"] = prev_report.ver
-        if not report_kwargs.get("unit_type") or report_kwargs.get("unit_type") == "UNKNOWN":
-            if prev_report.unit_type: report_kwargs["unit_type"] = prev_report.unit_type
-        if report_kwargs.get("system") is None and prev_report.system is not None:
-            report_kwargs["system"] = prev_report.system
-        if not report_kwargs.get("bat_v") and prev_report.bat_v:
-            report_kwargs["bat_v"] = prev_report.bat_v
-        if not report_kwargs.get("mcu_bat") and prev_report.mcu_bat:
-            report_kwargs["mcu_bat"] = prev_report.mcu_bat
-        if report_kwargs.get("sol_v") is None and prev_report.sol_v is not None:
-            report_kwargs["sol_v"] = prev_report.sol_v
-        if not report_kwargs.get("sensor_sts") or report_kwargs.get("sensor_sts") == "?":
-            if prev_report.sensor_sts: report_kwargs["sensor_sts"] = prev_report.sensor_sts
-        if not report_kwargs.get("health_sts"):
-            if prev_report.health_sts: report_kwargs["health_sts"] = prev_report.health_sts
-        if not report_kwargs.get("carrier") or report_kwargs.get("carrier") == "Unknown":
-            if prev_report.carrier and prev_report.carrier != "Unknown":
-                report_kwargs["carrier"] = prev_report.carrier
-        if not report_kwargs.get("iccid") and prev_report.iccid:
-            report_kwargs["iccid"] = prev_report.iccid
-        if not report_kwargs.get("gps") and prev_report.gps:
-            report_kwargs["gps"] = prev_report.gps
-        if report_kwargs.get("signal") is None and prev_report.signal is not None:
-            report_kwargs["signal"] = prev_report.signal
-        if not report_kwargs.get("net_cnt") and prev_report.net_cnt:
-            report_kwargs["net_cnt"] = prev_report.net_cnt
-        if not report_kwargs.get("net_cnt_prev") and prev_report.net_cnt_prev:
-            report_kwargs["net_cnt_prev"] = prev_report.net_cnt_prev
-        if not report_kwargs.get("http_suc_cnt") and prev_report.http_suc_cnt:
-            report_kwargs["http_suc_cnt"] = prev_report.http_suc_cnt
-        if not report_kwargs.get("http_ret_cnt") and prev_report.http_ret_cnt:
-            report_kwargs["http_ret_cnt"] = prev_report.http_ret_cnt
-        if report_kwargs.get("http_backlog_cnt") is None and prev_report.http_backlog_cnt is not None:
-            report_kwargs["http_backlog_cnt"] = prev_report.http_backlog_cnt
+    s_raw_id = str(stn_id).strip()
+    target_ids = {stn_id}
+    if s_raw_id.isdigit():
+        target_ids.add(s_raw_id.lstrip('0'))
+        target_ids.add(s_raw_id.zfill(6))
+
+    valid_prev = db.query(HealthReport).filter(
+        HealthReport.stn_id.in_(list(target_ids)),
+        HealthReport.bat_v > 0
+    ).order_by(HealthReport.reported_at.desc()).first()
+
+    if not valid_prev:
+        valid_prev = db.query(HealthReport).filter(
+            HealthReport.stn_id.in_(list(target_ids))
+        ).order_by(HealthReport.reported_at.desc()).first()
+
+    if valid_prev:
+        if (not report_kwargs.get("ver") or report_kwargs.get("ver") in ("5.00", "UNKNOWN")) and valid_prev.ver:
+            report_kwargs["ver"] = valid_prev.ver
+        if (not report_kwargs.get("unit_type") or report_kwargs.get("unit_type") == "UNKNOWN") and valid_prev.unit_type:
+            report_kwargs["unit_type"] = valid_prev.unit_type
+        if report_kwargs.get("system") is None and valid_prev.system is not None:
+            report_kwargs["system"] = valid_prev.system
+        if (not report_kwargs.get("bat_v") or report_kwargs.get("bat_v") == 0.0) and valid_prev.bat_v:
+            report_kwargs["bat_v"] = valid_prev.bat_v
+        if (not report_kwargs.get("mcu_bat") or report_kwargs.get("mcu_bat") == 0.0) and valid_prev.mcu_bat:
+            report_kwargs["mcu_bat"] = valid_prev.mcu_bat
+        if (report_kwargs.get("sol_v") is None or report_kwargs.get("sol_v") == 0.0) and valid_prev.sol_v is not None:
+            report_kwargs["sol_v"] = valid_prev.sol_v
+        if (not report_kwargs.get("sensor_sts") or report_kwargs.get("sensor_sts") == "?") and valid_prev.sensor_sts:
+            report_kwargs["sensor_sts"] = valid_prev.sensor_sts
+        if not report_kwargs.get("health_sts") and valid_prev.health_sts:
+            report_kwargs["health_sts"] = valid_prev.health_sts
+        if (not report_kwargs.get("carrier") or report_kwargs.get("carrier") in ("Unknown", "UNKNOWN", "NA")) and valid_prev.carrier:
+            report_kwargs["carrier"] = valid_prev.carrier
+        if not report_kwargs.get("iccid") and valid_prev.iccid:
+            report_kwargs["iccid"] = valid_prev.iccid
+        if not report_kwargs.get("gps") and valid_prev.gps:
+            report_kwargs["gps"] = valid_prev.gps
+        if report_kwargs.get("signal") is None and valid_prev.signal is not None:
+            report_kwargs["signal"] = valid_prev.signal
+        if not report_kwargs.get("net_cnt") and valid_prev.net_cnt:
+            report_kwargs["net_cnt"] = valid_prev.net_cnt
+        if not report_kwargs.get("net_cnt_prev") and valid_prev.net_cnt_prev:
+            report_kwargs["net_cnt_prev"] = valid_prev.net_cnt_prev
+        if not report_kwargs.get("http_suc_cnt") and valid_prev.http_suc_cnt:
+            report_kwargs["http_suc_cnt"] = valid_prev.http_suc_cnt
+        if not report_kwargs.get("http_ret_cnt") and valid_prev.http_ret_cnt:
+            report_kwargs["http_ret_cnt"] = valid_prev.http_ret_cnt
+        if report_kwargs.get("http_backlog_cnt") is None and valid_prev.http_backlog_cnt is not None:
+            report_kwargs["http_backlog_cnt"] = valid_prev.http_backlog_cnt
 
     db.add(HealthReport(**report_kwargs))
 
