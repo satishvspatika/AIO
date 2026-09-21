@@ -537,20 +537,19 @@ def main():
         try:
             external_base.mkdir(parents=True, exist_ok=True)
             
-            # 1. Copy Configurations
-            for config_dir in OUTPUT_BASE.iterdir():
-                if config_dir.is_dir():
+            # 1. Copy Configurations (search recursively using rglob)
+            for config_dir in OUTPUT_BASE.rglob("*"):
+                if config_dir.is_dir() and (config_dir / "firmware.bin").exists():
                     source_bin = config_dir / "firmware.bin"
                     source_ver = config_dir / "fw_version.txt"
-                    if source_bin.exists():
-                        target_dir = external_base / config_dir.name
-                        target_dir.mkdir(parents=True, exist_ok=True)
-                        shutil.copy(source_bin, target_dir / "firmware.bin")
-                        if source_ver.exists():
-                            shutil.copy(source_ver, target_dir / "fw_version.txt")
-                        source_meta = config_dir / "metadata.json"
-                        if source_meta.exists():
-                            shutil.copy(source_meta, target_dir / "metadata.json")
+                    target_dir = external_base / config_dir.name
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copy(source_bin, target_dir / "firmware.bin")
+                    if source_ver.exists():
+                        shutil.copy(source_ver, target_dir / "fw_version.txt")
+                    source_meta = config_dir / "metadata.json"
+                    if source_meta.exists():
+                        shutil.copy(source_meta, target_dir / "metadata.json")
             
             # 2. Copy flash_files (Required for ESPTool)
             source_flash = SKETCH_DIR / "flash_files"
