@@ -173,13 +173,12 @@ extern float RF_RESOLUTION;
 #define MINUTES_PER_SAMPLE 15
 
 // Signal strength constants
-#define SIGNAL_STRENGTH_NO_DATA                                                \
-  -142 // Shifted below -140 to avoid real signal overlap
-#define SIGNAL_STRENGTH_GAP_FILLED -143   
-#define SIGNAL_STRENGTH_MISSING_DATA -141 // Official "No Data" marker
-#define SIGNAL_STRENGTH_PREV_DAY_GAP -144 
-#define SIGNAL_STRENGTH_MIN_RANGE -140
-#define SIGNAL_STRENGTH_MAX_RANGE -110
+#define SIGNAL_STRENGTH_MISSING_DATA -103 // Official "No Data" marker
+#define SIGNAL_STRENGTH_NO_DATA      -103 // No Data marker
+#define SIGNAL_STRENGTH_GAP_FILLED   -104 // Gap filled marker
+#define SIGNAL_STRENGTH_PREV_DAY_GAP -105 // Previous day gap marker
+#define SIGNAL_STRENGTH_MIN_RANGE    -110
+#define SIGNAL_STRENGTH_MAX_RANGE    -50
 
 // Temperature/Humidity constants
 #define TEMP_OFFSET_CORRECTION 2.1

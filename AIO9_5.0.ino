@@ -526,10 +526,13 @@ void setup() {
   }
   
   // v5.85 P10 CRITICAL: Clear power-saving holds from Deep Sleep
+  gpio_hold_dis(GPIO_NUM_4);
   gpio_hold_dis(GPIO_NUM_26);
   gpio_hold_dis(GPIO_NUM_32);
   gpio_hold_dis(GPIO_NUM_16); 
   gpio_hold_dis(GPIO_NUM_17);
+  rtc_gpio_deinit(GPIO_NUM_4);
+  rtc_gpio_deinit(GPIO_NUM_32);
   rtc_gpio_deinit(GPIO_NUM_27); // Re-map keypad to digital IO
   pinMode(27, INPUT_PULLUP);    // v5.85: Force pull-up early for set_wakeup_reason()
 
@@ -665,7 +668,7 @@ void setup() {
     test_health_every_slot = prefs.getInt("test_health", TEST_HEALTH_DEFAULT);
     live_post_muted = prefs.getBool("muted", false);
     debug("Health Mode: ");
-    debugln(test_health_every_slot == 1 ? "PULSE (15m)" : "DAILY (11am)");
+    debugln(test_health_every_slot == 1 ? "PULSE (15m)" : (test_health_every_slot == 0 ? "TWICE DAILY (1am & 1pm)" : "DISABLED"));
     if (live_post_muted) {
       debugln("[BOOT] ⏸️ Primary Server Live Transmissions MUTED (Loaded from NVS).");
     }
@@ -1012,6 +1015,17 @@ void setup() {
     active_res = DEFAULT_RF_RESOLUTION; // First boot or corrupted file: use compile-time default
   }
   rf_res_changed = false;
+
+  // Cross-sync active_res to BOTH NVS and SPIFFS to ensure full immunity against single-medium wipes
+  {
+    Preferences rfPrefs;
+    rfPrefs.begin("sys-config", false);
+    rfPrefs.putFloat("rf_res", active_res);
+    rfPrefs.end();
+
+    File f = SPIFFS.open("/rf_res.txt", FILE_WRITE);
+    if (f) { f.print(active_res, 2); f.close(); }
+  }
 
   // Update rf_fw.txt to track current compile-time default (for cross-flash detection only)
   {
@@ -1490,11 +1504,11 @@ void setup() {
 
   // v7.95: CRITICAL RACE FIX — Initialize ULP and anchors BEFORE creating tasks.
   // This prevents the scheduler from reading uninitialized ULP RAM or stale 
-  // [ULP Preservation]: Only preserve ULP pulse counts during actual Deep Sleep wakeups (DEEPSLEEP_RESET).
-  // On Power-On, Software Reset (SD OTA), or HW Reset, reset counts to 0 to prevent huge garbage values on LCD.
-  uint16_t preserved_rf = (rr == DEEPSLEEP_RESET) ? rf_count.val : 0;
+  // [ULP Preservation]: Preserve ULP pulse counts on Deep Sleep, SW Reset, and HW Reset.
+  // Only reset counts to 0 on cold Power-On Reset (POWERON_RESET).
+  uint16_t preserved_rf = (rr == POWERON_RESET) ? 0 : rf_count.val;
 #if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
-  uint32_t preserved_wind = (rr == DEEPSLEEP_RESET) ? wind_count.val : 0;
+  uint32_t preserved_wind = (rr == POWERON_RESET) ? 0 : wind_count.val;
 #endif
 
   debugf("[ULP] Sampling Period set to %dus (%dHz)\n", ULP_WAKEUP_TC, 1000000/ULP_WAKEUP_TC);
@@ -1510,16 +1524,15 @@ void setup() {
   // v7.94: FINAL HARDWARE ANCHOR
   // We MUST anchor the 'last_raw' counters to the CURRENT hardware state
   // AFTER any ULP code loads or version-based resets.
-  // CRITICAL FIX: Only do this on FRESH BOOT, otherwise we clear all pulses
-  // accumulated during Deep Sleep before the scheduler can read them!
-  if ((rr == POWERON_RESET || rr == EXT_CPU_RESET || rr == SW_CPU_RESET) && !healer_reboot_in_progress) {
+  // Only do this on COLD POWERON_RESET to prevent wiping accumulated pulses on soft reboot!
+  if (rr == POWERON_RESET && !healer_reboot_in_progress) {
     last_raw_wind_count = wind_count.val;
     last_raw_rf_count = rf_count.val;
     last_sched_wind_pulses_32 = total_wind_pulses_32;
     last_sched_rf_pulses_32 = total_rf_pulses_32;
     debugf2("[BOOT] ULP Anchors Synced: Wind=%u, Rain=%u\n", last_raw_wind_count, last_raw_rf_count);
   } else {
-    debugf2("[BOOT] Preserved ULP Anchors during sleep wakeup. Wind=%u, Rain=%u\n", last_raw_wind_count, last_raw_rf_count);
+    debugf2("[BOOT] Preserved ULP Anchors during warm boot. Wind=%u, Rain=%u\n", last_raw_wind_count, last_raw_rf_count);
   }
 
   xTaskCreatePinnedToCore(rtcRead, "rtcReadTask", 8192, NULL, 2, &rtcRead_h,
@@ -1962,14 +1975,7 @@ void initialize_hw() {
     if (strlen(sd_ver) > 0 && (strcasecmp(sd_ver, FIRMWARE_VERSION) == 0 || strstr(sd_ver, FIRMWARE_VERSION) != NULL || strcasecmp(sd_ver, stored_ver) == 0)) {
       debugf("[OTA] SD version '%s' matches active/stored version '%s'. Skipping update.\n", sd_ver, FIRMWARE_VERSION);
       needUpdate = false;
-
-      // Ensure SD binary is renamed so older firmware upgrades don't re-trigger
-      char done_path[64];
-      snprintf(done_path, sizeof(done_path), "%s.installed", bin_path);
-      if (SD.exists(done_path)) SD.remove(done_path);
-      if (SD.rename(bin_path, done_path)) {
-        debugf("[OTA] Marked SD binary as installed: %s -> %s\n", bin_path, done_path);
-      }
+      // SD binary preserved so same SD card can update multiple boards.
     } else {
       // Version differs or unknown: Calculate MD5 hash of firmware.bin on SD card to confirm
       File firmware = SD.open(bin_path, FILE_READ);
@@ -1989,12 +1995,7 @@ void initialize_hw() {
       if (strlen(sd_md5) > 0 && strcasecmp(sd_md5, stored_md5) == 0) {
         debugln("[OTA] Binary MD5 matches stored hash. Firmware already installed. Skipping update.");
         needUpdate = false;
-        char done_path[64];
-        snprintf(done_path, sizeof(done_path), "%s.installed", bin_path);
-        if (SD.exists(done_path)) SD.remove(done_path);
-        if (SD.rename(bin_path, done_path)) {
-          debugf("[OTA] Marked SD binary as installed: %s -> %s\n", bin_path, done_path);
-        }
+        // SD binary preserved for multi-unit SD card updates.
       } else {
         debugf("[OTA] New firmware detected (SD: '%s' vs Active: '%s'). Proceeding with update...\n", sd_ver, FIRMWARE_VERSION);
         needUpdate = true;
@@ -2012,9 +2013,11 @@ void initialize_hw() {
             vTaskDelay(100 / portTICK_PERIOD_MS);
 #if USE_NUVOTON_UI == 1
             Serial1.begin(9600, SERIAL_8N1, 14, 4);
-            vTaskDelay(200 / portTICK_PERIOD_MS);
+            vTaskDelay(300 / portTICK_PERIOD_MS);
             lcd.backlight();
             lcd.clear();
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+            lcd.setCursor(0, 0);
             lcd.print("SD FW UPDATING..");
             lcd.setCursor(0, 1);
             lcd.print("PROGRESS:   0%  ");
@@ -2076,16 +2079,11 @@ void initialize_hw() {
                   verWrite.close();
                 }
 
-                // Close SD handle and rename binary on SD card to prevent re-flashing on subsequent boots
+                // Close SD handle. Binary preserved on SD card for multi-unit deployment.
                 firmware.close();
-                char done_path[64];
-                snprintf(done_path, sizeof(done_path), "%s.installed", bin_path);
-                if (SD.exists(done_path)) SD.remove(done_path);
-                if (SD.rename(bin_path, done_path)) {
-                  debugf("[OTA] Renamed SD binary %s -> %s to prevent repeated updates.\n", bin_path, done_path);
-                }
-
-                debugln("[OTA] SD Update Successful. SD card reusable for multi-unit deployment.");
+                debugln("[OTA] SD Update Successful. Stored MD5/Version in SPIFFS to prevent re-flashing.");
+                delay(2000);
+                ESP.restart();
                 delay(2000);
                 ESP.restart();
               } else {
@@ -2346,9 +2344,9 @@ void ULP_COUNTING(uint32_t us) {
   if (reason == 1) {
     debugln("[ULP] Hard Power-On. Wiping ULP counters.");
     rf_count.val = 0;
-    cur_state.val = 0;
-    prev_state.val = 0;
-    debounced_state.val = 0;
+    cur_state.val = 1;       // Pin 34 is pulled HIGH by external resistor
+    prev_state.val = 1;
+    debounced_state.val = 1;
     debounce_cnt.val = 0;
     wind_count.val = 0;
     wind_prev_state.val = 0;
@@ -2363,6 +2361,11 @@ void ULP_COUNTING(uint32_t us) {
     validate_ulp_counters();
   }
 
+  // Force calib_mode_flag = 0 if /calib.txt is absent so normal RF counting is active
+  if (!SPIFFS.exists("/calib.txt")) {
+    calib_mode_flag.val = 0;
+  }
+
   // RTC_SLOW_MEM[13] = 0; // REMOVED: Potential memory corruption source
   ulp_set_wakeup_period(0, us);
   const ulp_insn_t ulp_rf[] = {
@@ -2375,7 +2378,7 @@ void ULP_COUNTING(uint32_t us) {
       // processing
       // and also start a debouncing algo. init decbounce_cnt
       // --- RAINFALL SECTION (Falling Edge 1 -> 0) ---
-      I_GPIO_READ(GPIO_NUM_34), // R0 = current state
+      I_GPIO_READ(GPIO_NUM_34), // R0 = current state of GPIO 34 (RTC_IO 4)
 
       I_MOVI(R3, 0), I_LD(R1, R3, U_PREV_STATE), // R1 = prev_state
 
@@ -2424,7 +2427,7 @@ void ULP_COUNTING(uint32_t us) {
 
       // --- WIND SECTION (Rising Edge 0 -> 1) ---
       M_LABEL(4),
-      I_GPIO_READ(GPIO_NUM_35), // R0 = current state
+      I_GPIO_READ(GPIO_NUM_35), // R0 = current state of GPIO 35 (RTC_IO 5)
       I_MOVI(R3, 0), I_LD(R1, R3, U_WIND_PREV_STATE), // R1 = prev_state
 
       I_MOVR(R2, R0),     // R2 = current state

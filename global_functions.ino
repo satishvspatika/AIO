@@ -54,6 +54,15 @@ void start_deep_sleep() {
     return;
   }
 
+#if USE_NUVOTON_UI == 1
+  if (wired == 1) {
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+      lcd.clear();
+      lcd.noBacklight();
+      xSemaphoreGive(i2cMutex);
+    }
+  }
+#else
   if (wired == 1) {
     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) ==
         pdTRUE) {
@@ -74,6 +83,7 @@ void start_deep_sleep() {
       }
     }
   }
+#endif
 
   // CRITICAL: Ensure ULP counts into the main RF bucket during sleep!
   calib_mode_flag.val = 0;
@@ -123,13 +133,29 @@ void start_deep_sleep() {
       // Prevents PCF8574 ESD diodes from corrupting in-flight RTC/HDC transactions
       Wire.end();                  // Release SDA/SCL before PCF8574 loses power
 #if USE_NUVOTON_UI == 1
-      Serial1.end();               // Release UART pins to prevent back-powering Nuvoton
-      digitalWrite(32, HIGH);      // Keep Nuvoton powered during deep sleep for key scanning
+      lcd.clear();
+      lcd.noBacklight();
+      vTaskDelay(50 / portTICK_PERIOD_MS);
+      Serial1.flush();
+
+      // Configure GPIO 4 (TXD) and GPIO 32 (VCC) to LOW in RTC domain to eliminate parasitic back-feed into Nuvoton RX
+      rtc_gpio_init(GPIO_NUM_4);
+      rtc_gpio_set_direction(GPIO_NUM_4, RTC_GPIO_MODE_OUTPUT_ONLY);
+      rtc_gpio_set_level(GPIO_NUM_4, 0);
+      rtc_gpio_hold_en(GPIO_NUM_4);
+
+      // Cut GPIO 32 5V power rail in RTC domain to keep backlight 100% OFF during deep sleep
+      rtc_gpio_init(GPIO_NUM_32);
+      rtc_gpio_set_direction(GPIO_NUM_32, RTC_GPIO_MODE_OUTPUT_ONLY);
+      rtc_gpio_set_level(GPIO_NUM_32, 0);
+      rtc_gpio_hold_en(GPIO_NUM_32);
+
+      Serial1.end(); // Safely close Serial1 after RTC hold is active
 #else
       digitalWrite(32, LOW);       // Cut power to standalone LCD during deep sleep
+      gpio_hold_en(GPIO_NUM_32);
 #endif
       // Hardware Hold: Capture the state for the duration of the sleep
-      gpio_hold_en(GPIO_NUM_32);
       gpio_hold_en(GPIO_NUM_26); // Modem was cut in graceful_modem_shutdown()
       gpio_hold_en(GPIO_NUM_16); // v5.70: Fix H-02 ESD diode bleed through UART pins
       gpio_hold_en(GPIO_NUM_17);
@@ -147,11 +173,26 @@ void start_deep_sleep() {
       portEXIT_CRITICAL(&rtcTimeMux);
 
 #if USE_NUVOTON_UI == 1
-      digitalWrite(32, HIGH);      // Fallback: keep Nuvoton powered
+      lcd.clear();
+      lcd.noBacklight();
+      vTaskDelay(50 / portTICK_PERIOD_MS);
+      Serial1.flush();
+
+      rtc_gpio_init(GPIO_NUM_4);
+      rtc_gpio_set_direction(GPIO_NUM_4, RTC_GPIO_MODE_OUTPUT_ONLY);
+      rtc_gpio_set_level(GPIO_NUM_4, 0);
+      rtc_gpio_hold_en(GPIO_NUM_4);
+
+      rtc_gpio_init(GPIO_NUM_32);
+      rtc_gpio_set_direction(GPIO_NUM_32, RTC_GPIO_MODE_OUTPUT_ONLY);
+      rtc_gpio_set_level(GPIO_NUM_32, 0);
+      rtc_gpio_hold_en(GPIO_NUM_32);
+
+      Serial1.end();
 #else
       digitalWrite(32, LOW);       // Fallback cut if mutex totally hung / Path B power down
-#endif
       gpio_hold_en(GPIO_NUM_32);
+#endif
       gpio_hold_en(GPIO_NUM_26);
       gpio_hold_en(GPIO_NUM_16);
       gpio_hold_en(GPIO_NUM_17);
@@ -268,11 +309,14 @@ void start_deep_sleep() {
 void validate_ulp_counters() {
   bool corrupted = false;
 
-  // [Task 2.3 Fix]: Removed arbitrary forced-limits (e.g. > 65000) on wind_count and rf_count.
-  // ULP counters are increment-only 16-bit values. They naturally overflow from 65535 to 0.
-  // The scheduler calculates delta via `(65536 + current - prev)`, perfectly handling one wrap.
-  // Forcing them to 0 mid-count artificially destroys the delta, causing massive data drops.
-  // We only check calib_count since it's a diagnostic tool, not critical data.
+  // Calib mode flag should only be 0 or 1. Reset if corrupted or in normal deployment
+  if (calib_mode_flag.val > 1 || ENABLE_CALIB_TEST == 0) {
+    if (calib_mode_flag.val != 0) {
+      debugf1("[ULP] Calib mode flag reset from %u to 0\n", calib_mode_flag.val);
+      calib_mode_flag.val = 0;
+      corrupted = true;
+    }
+  }
 
   // Calib count shouldn't exceed 1000
   if (calib_count.val > 1000) {
@@ -1220,6 +1264,34 @@ void reconstructSentMasks(bool alreadyLocked) {
   diag_ndm_count = countNightStored(curFile);
   new_current_cumRF = restoreRainfall(curFile);
 
+  // v7.87: Multi-station / re-flash fallback: scan SPIFFS for any extra files ending with today's or yesterday's date suffix
+  char curSuffix[16], prevSuffix[16];
+  snprintf(curSuffix, sizeof(curSuffix), "_%04d%02d%02d.txt", cur_yy, cur_mm, cur_dd);
+  snprintf(prevSuffix, sizeof(prevSuffix), "_%04d%02d%02d.txt", prev_yy, prev_mm, prev_dd);
+
+  File spiffsRoot = SPIFFS.open("/");
+  if (spiffsRoot) {
+    File file = spiffsRoot.openNextFile();
+    while (file) {
+      String fname = file.name();
+      if (!fname.startsWith("/")) fname = "/" + fname;
+      if (!file.isDirectory() && fname != curFile && fname != prevFile) {
+        if (fname.endsWith(curSuffix)) {
+          scanFileToMask(fname.c_str(), diag_sent_mask_cur);
+          diag_pd_count += countStored(fname.c_str());
+          diag_ndm_count += countNightStored(fname.c_str());
+          float r = restoreRainfall(fname.c_str());
+          if (r > new_current_cumRF) new_current_cumRF = r;
+        } else if (fname.endsWith(prevSuffix)) {
+          scanFileToMask(fname.c_str(), diag_sent_mask_prev);
+          diag_pd_count_prev += countStored(fname.c_str());
+          diag_ndm_count_prev += countNightStored(fname.c_str());
+        }
+      }
+      file = spiffsRoot.openNextFile();
+    }
+  }
+
   // 2. Subtract records that are currently in 'Unsent' files
   subtractUnsentFromMask("/unsent.txt");
   subtractUnsentFromMask("/ftpunsent.txt");
@@ -1693,11 +1765,14 @@ bool is_physical_button_pressed() {
   if (millis() - last_nuvoton_power_off_time < 1000) {
     return false; // ignore transient spikes during Nuvoton power discharge
   }
+  // If Nuvoton is powered ON (GPIO 32 HIGH), direct digitalRead works cleanly
+  if (digitalRead(32) == HIGH) {
+    return (digitalRead(27) == LOW);
+  }
   // When Nuvoton is unpowered, its ESD diode clamps GPIO27 to ~0.7V.
   // The ESP32 12-bit ADC reads 0V as 0 and 3.3V as 4095.
   // 0.7V translates to around 868.
   // When the physical button is pressed, it connects GPIO27 directly to GND (0V / ADC < 200).
-  // We MUST use the legacy API (adc2_get_raw) to avoid driver_ng conflicts in Core 3.x.
   int val = 4095;
   if (!wifi_active) {
     rtc_gpio_init(GPIO_NUM_27);
@@ -1706,15 +1781,12 @@ bool is_physical_button_pressed() {
     rtc_gpio_pulldown_dis(GPIO_NUM_27);
 
     if (adc2_get_raw(ADC2_CHANNEL_7, ADC_WIDTH_BIT_12, &val) != ESP_OK) {
-      val = 4095; // default to unpressed if read failed
+      val = (digitalRead(27) == LOW) ? 0 : 4095; // Fallback to digitalRead on ADC2 contention
     }
 
     rtc_gpio_deinit(GPIO_NUM_27);
     pinMode(27, INPUT_PULLUP);
   } else {
-    // If WiFi is active, ADC2 cannot be used. But since WiFi is active,
-    // Nuvoton is already powered ON and the screen is active, so we fallback
-    // to digitalRead to avoid conflicts.
     val = (digitalRead(27) == LOW) ? 0 : 4095;
   }
   return (val < 200);

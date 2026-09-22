@@ -1448,6 +1448,29 @@ void parse_health_response(const char* body) {
         strcpy(last_cmd_res, "Success: Data Wiped");
     }
     
+    const char* rfTag = strstr(body, "\"SET_RF_RES\"");
+    if (rfTag) {
+        const char* pSub = strstr(rfTag, "\"p\"");
+        if (pSub) {
+            const char* valStart = strchr(pSub, ':');
+            if (valStart) {
+                float new_val = (float)atof(valStart + 1);
+                if (fabsf(new_val - 0.25f) < 0.05f || fabsf(new_val - 0.50f) < 0.05f) {
+                    float target_res = (fabsf(new_val - 0.25f) < 0.05f) ? 0.25f : 0.50f;
+                    RF_RESOLUTION = target_res;
+                    Preferences rfPrefs; rfPrefs.begin("sys-config", false);
+                    rfPrefs.putFloat("rf_res", target_res); rfPrefs.end();
+                    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+                        File f = SPIFFS.open("/rf_res.txt", FILE_WRITE);
+                        if (f) { f.print(target_res, 2); f.close(); }
+                        xSemaphoreGive(fsMutex);
+                    }
+                    snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: RF Res Set (%.2fmm)", target_res);
+                }
+            }
+        }
+    }
+
     const char* pTag = strstr(body, "\"INTERVAL\"");
     if (pTag) {
         const char* pSub = strstr(pTag, "\"p\"");

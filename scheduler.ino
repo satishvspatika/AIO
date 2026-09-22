@@ -2495,6 +2495,12 @@ void scheduler(void *pvParameters) {
           if (sd_card_ok && sd1)
             sd1.close();
 
+          // v7.88 Fix: Re-index sent mask if a new daily file was created/gap-filled so Health Report NetCount is 100% accurate
+          if (!curFileExists) {
+            backfill_done = false;
+            reconstructSentMasks();
+          }
+
             // Removed premature closing brace (SPIFFS not present)
 
             // file1 and sd1 closed above to keep in scope

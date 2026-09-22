@@ -7,30 +7,30 @@
  * ========================================================================= */
 
 // --- 1. CORE SYSTEM IDENTITY ---
-#define SYSTEM 1
-#define UNIT_CFG "KSNDMC_TWS"
+#define SYSTEM 2
+#define UNIT_CFG "KSNDMC_ADDON"
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 // SYSTEM 3 options: SPATIKA_GEN - AP
 
-#define FIRMWARE_VERSION "6.49"
+#define FIRMWARE_VERSION "6.50"
 
 #define ENABLE_HEALTH_REPORT 1 // Master Switch: Enable automated device health reporting
-#define TEST_HEALTH_DEFAULT 0 // Default frequency: 1 (Every 15 mins), 0 (Daily at 11am), 2 (Disabled)
+#define TEST_HEALTH_DEFAULT 1 // Frequency: 0 (Twice Daily at 1am & 1pm), 1 (Every 15 mins), 2 (Disabled)
 
 // --- 2. COMPILE OPTIONS ---
 #define USE_NUVOTON_UI 0 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
 #ifndef LCD_I2C_ADDR
 #define LCD_I2C_ADDR 0x27 // 0x27 (Default PCF8574T) or 0x3F (PCF8574AT)
 #endif
-#define DEBUG 0 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
+#define DEBUG 1 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
 #define ENABLE_WEBSERVER 1 // 0: Disable, 1: Enable (requires 8MB flash partition)
 
 // --- 3. HARDWARE CAPABILITIES ---
 #define ENABLE_PRESSURE_SENSOR 0 // 0: Disable BMP/BME routines, 1: Enable
-#define DEFAULT_RF_RESOLUTION 0.25 // Factory default rain resolution (0.50mm / 0.25mm)
-#define WIND_TEETH_COUNT 4.0 // H-02: Customizable anemometer teeth divisor
+#define DEFAULT_RF_RESOLUTION 0.5 // Factory default rain resolution (0.50mm / 0.25mm)
+#define WIND_TEETH_COUNT 2.0 // H-02: Customizable anemometer teeth divisor
 #define WIND_SAMPLING_US 1000 // ULP wakeup period in microseconds
 #define WIND_DEBOUNCE_CYCLES 1 // Pulse stability cycles (1 = 1 loop @ 1ms)
 #define WIND_DIR_ADC_MAX 4095 // Full 12-bit ESP32 ADC max (3.3V)

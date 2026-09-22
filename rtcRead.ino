@@ -95,6 +95,15 @@ void rtcRead(void *pvParameters) {
     }
     fail_count = 0;
 
+    // Check DS1307 Clock Halt (CH) bit 7 in Register 0x00
+    if (data[0] & 0x80) {
+      debugln("[RTC] Clock Halt bit set! Restarting oscillator...");
+      Wire.beginTransmission(RTC_ADDRESS);
+      Wire.write(0x00);
+      Wire.write(data[0] & 0x7F);
+      Wire.endTransmission();
+    }
+
     sec = bcdToDec(data[0] & 0x7F);
     mi = bcdToDec(data[1]);
     hr = bcdToDec(data[2] & 0x3F);
@@ -116,6 +125,7 @@ void rtcRead(void *pvParameters) {
       debugln(badReads);
     } else {
       badReads = 0;
+      rtc_daily_sync_count = 0; // Reset sync count on valid RTC read
       rtcReady = true;
       timeSyncRequired = false;
 
@@ -150,6 +160,9 @@ void rtcRead(void *pvParameters) {
     // v5.75: Automatic Daily Sync & Drift Correction
     // RTC is synced silently via server time (sync_rtc_from_server_tm) during HTTP/TCP cycles.
     // Standalone resync_time() is ONLY triggered if severe DS1307 hardware corruption occurs (badReads >= 40).
+    // v5.75: Automatic Daily Sync & Drift Correction
+    // RTC is synced silently via server time (sync_rtc_from_server_tm) during HTTP/TCP cycles.
+    // Standalone resync_time() is ONLY triggered if severe DS1307 hardware corruption occurs (badReads >= 40).
     if (badReads >= 40) {
       if (!__atomic_load_n(&sleep_sequence_active, __ATOMIC_ACQUIRE) && rtc_daily_sync_count < 3) {
         portENTER_CRITICAL(&syncMux);
@@ -166,6 +179,13 @@ void rtcRead(void *pvParameters) {
           badReads = -1;
           resync_time();
         }
+      } else if (badReads >= 60) {
+        // v6.50 Healer Guard: If invalid RTC data persists (>60 bad reads = ~3 mins) and resync attempts fail/cap,
+        // trigger Healer reboot to recover hardware/modem cleanly.
+        debugln("[RTC] [HEALER] Persistent Invalid RTC data (>60 bad reads). Triggering Healer Reboot...");
+        healer_reboot_in_progress = true;
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        ESP.restart();
       }
     }
 
@@ -203,6 +223,8 @@ void resync_time() {
   gprs_started = true;
   portEXIT_CRITICAL(&syncMux);
 
+  bool synced_time = false;
+
   // M-NEW-3: Pet WDT before and after the 15s blocking take
   esp_task_wdt_reset();
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
@@ -216,6 +238,82 @@ void resync_time() {
     vTaskDelay(5000 / portTICK_PERIOD_MS); 
     SerialSIT.println("AT+CLBS=1");
     waitForResponse("+CLBS:", 10000);
+    response_char = modem_response_buf;
+    debugf("[RTC] Modem +CLBS Response: %s\n", response_char);
+
+    double resync_lat = 0.0, resync_lon = 0.0;
+    char date_str[16] = {0}, time_str[16] = {0};
+    if (parse_clbs_response(response_char, resync_lat, resync_lon, date_str, time_str)) {
+      lati = resync_lat;
+      longi = resync_lon;
+      gps_latitude = resync_lat;
+      gps_longitude = resync_lon;
+      saveGPS();
+
+      if (strlen(date_str) >= 8 && strlen(time_str) >= 8) {
+        if (sscanf(date_str, "%d/%d/%d", &year1, &month1, &day1) == 3 &&
+            sscanf(time_str, "%d:%d:%d", &hour1, &minute1, &seconds1) == 3) {
+          if (year1 < 100) year1 += 2000;
+          if (year1 >= 2025 && year1 <= 2060) {
+            debugln("[RTC] CLBS data parsed successfully (Manual)");
+            parse_and_convert_clbs_response(response_char, year1, month1,
+                                            day1, hour1, minute1, seconds1);
+            badReads = 0;
+            synced_time = true;
+          }
+        }
+      }
+    }
+
+    // Fallback: If +CLBS failed, query AT+CCLK? for network time
+    if (!synced_time) {
+      debugln("[RTC] +CLBS failed/invalid. Querying AT+CCLK? for network time...");
+      SerialSIT.println("AT+CCLK?");
+      if (waitForResponse("+CCLK:", 5000)) {
+        response_char = modem_response_buf;
+        debugf("[RTC] Modem +CCLK Response: %s\n", response_char);
+        const char *cclk_ptr = strstr(response_char, "+CCLK:");
+        if (cclk_ptr) {
+          const char *q1 = strchr(cclk_ptr, '"');
+          if (q1) {
+            int c_yy = 0, c_mm = 0, c_dd = 0, c_hr = 0, c_mi = 0, c_se = 0;
+            if (sscanf(q1 + 1, "%d/%d/%d,%d:%d:%d", &c_yy, &c_mm, &c_dd, &c_hr, &c_mi, &c_se) == 6) {
+              c_yy += 2000;
+              if (c_yy >= 2025 && c_yy <= 2060 && c_mm >= 1 && c_mm <= 12 && c_dd >= 1 && c_dd <= 31) {
+                debugf("[RTC] Network CCLK time parsed: %04d-%02d-%02d %02d:%02d:%02d\n", c_yy, c_mm, c_dd, c_hr, c_mi, c_se);
+                if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+                  rtc.adjust(DateTime(c_yy, c_mm, c_dd, c_hr, c_mi, c_se));
+                  xSemaphoreGive(i2cMutex);
+                }
+                portENTER_CRITICAL(&rtcTimeMux);
+                current_year = c_yy; current_month = c_mm; current_day = c_dd;
+                current_hour = c_hr; current_min = c_mi; current_sec = c_se;
+                portEXIT_CRITICAL(&rtcTimeMux);
+                badReads = 0;
+                synced_time = true;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!synced_time) {
+      debugln("[RTC] [WARN] Both +CLBS and +CCLK failed. Falling back to HTTP Health server time sync...");
+#if ENABLE_HEALTH_REPORT == 1
+      if (send_health_report(false, true)) {
+        if (badReads == 0 || (current_year >= 2025 && current_year <= 2060)) {
+          synced_time = true;
+          debugln("[RTC] ✅ HTTP Health Server timestamp successfully synced RTC!");
+        }
+      }
+#endif
+    }
+
+    if (!synced_time) {
+      debugln("[RTC] [WARN] All time resync methods (+CLBS, +CCLK, HTTP) failed for this attempt.");
+    }
+
     xSemaphoreGive(modemMutex);
   } else {
     debugln("[RTC] Error: Modem Mutex Timeout - deferring resync");
@@ -231,36 +329,6 @@ void resync_time() {
     portEXIT_CRITICAL(&syncMux);
     
     return;
-  }
-  
-  vTaskDelay(200 / portTICK_PERIOD_MS);
-  response_char = modem_response_buf;
-  vTaskDelay(200 / portTICK_PERIOD_MS);
-  debugf("[RTC] Modem +CLBS Response: %s\n", response_char);
-
-  double resync_lat = 0.0, resync_lon = 0.0;
-  char date_str[16] = {0}, time_str[16] = {0};
-  if (parse_clbs_response(response_char, resync_lat, resync_lon, date_str, time_str)) {
-    lati = resync_lat;
-    longi = resync_lon;
-    gps_latitude = resync_lat;
-    gps_longitude = resync_lon;
-    saveGPS();
-
-    if (strlen(date_str) >= 8 && strlen(time_str) >= 8) {
-      if (sscanf(date_str, "%d/%d/%d", &year1, &month1, &day1) == 3 &&
-          sscanf(time_str, "%d:%d:%d", &hour1, &minute1, &seconds1) == 3) {
-        if (year1 < 100) year1 += 2000;
-        debugln("[RTC] CLBS data parsed successfully (Manual)");
-        parse_and_convert_clbs_response(response_char, year1, month1,
-                                        day1, hour1, minute1, seconds1);
-        badReads = 0;
-      } else {
-        debugln("[RTC] Error: Date/Time parsing failed");
-      }
-    }
-  } else {
-    debugln("Error: +CLBS not valid in response - will retry later");
   }
 
   // Phase 14 Fix: Ensure the activity flags are ALWAYS cleared if 

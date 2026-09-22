@@ -354,29 +354,30 @@ void gprs(void *pvParameters) {
           snap_day = current_day;
           portEXIT_CRITICAL(&rtcTimeMux);
 
-          // v5.48 Daily Health Triggering (11:00 AM Primary)
+          // Twice-Daily Health Triggering (1:00 AM & 1:00 PM)
           bool is_health_time = false;
 #if ENABLE_HEALTH_REPORT == 1
           if (test_health_every_slot == 1) {
             is_health_time = true; // Every 15 mins
           } else if (test_health_every_slot == 0) {
-            if (snap_hour == 11 && health_last_sent_day != snap_day) {
-              is_health_time = true; // Daily 11 AM
-            } else if (snap_hour == 12 && snap_min < 20 && health_last_sent_day != snap_day) {
-              is_health_time = true; // v5.66: Graceful fallback for 11AM BSNL network congestion
+            // Window 1: 1:00 AM (Hour 1), Window 2: 1:00 PM (Hour 13)
+            if ((snap_hour == 1 || snap_hour == 13) && health_last_sent_hour != snap_hour) {
+              is_health_time = true;
+            } else if ((snap_hour == 2 || snap_hour == 14) && snap_min < 20 && health_last_sent_hour != (snap_hour - 1)) {
+              is_health_time = true; // Graceful fallback for network congestion
             }
           }
           // If test_health_every_slot == 2, it remains false (Disabled)
 #endif
 
           // v5.66: CDM True-Failure Fallback Check
-          // If the Morning closing data (08:30) and Health windows (11:00-12:20) both pass
+          // If the Morning closing data (08:30) and Health windows (01:00 / 13:00) both pass
           // without success, the closing window is permanently missed for this day.
           // v5.86: Only flag FAIL if we've been awake for >2 hours since a fresh boot
           // This prevents false alarms during mid-day maintenance reboots.
           bool reboot_grace = (millis() < (2 * 60 * 60 * 1000UL));
 
-          if (strcmp(diag_cdm_status, "PENDING") == 0 && snap_hour >= 13 && 
+          if (strcmp(diag_cdm_status, "PENDING") == 0 && snap_hour >= 15 && 
               health_last_sent_day != snap_day && !reboot_grace) {
             strcpy(diag_cdm_status, "FAIL");
             debugln("[Health] CDM window entirely missed today. Flagging FAIL.");
@@ -393,14 +394,14 @@ void gprs(void *pvParameters) {
             get_gps_coordinates(true);
           }
 
-          // v5.55: One-time sensor fault trigger (Non-11:00 AM)
+          // v5.55: One-time sensor fault trigger (Non-scheduled window)
           bool is_sensor_fault_trigger = false;
           bool has_sensor_issue = diag_temp_cv || diag_hum_cv || diag_ws_cv || 
                                  diag_temp_erv || diag_hum_erv || diag_ws_erv || 
                                  diag_temp_erz || diag_hum_erz || diag_rain_jump ||
                                  diag_rain_reset || diag_rain_calc_invalid;
 
-          if (has_sensor_issue && !diag_sensor_fault_sent_today && current_hour != 11) {
+          if (has_sensor_issue && !diag_sensor_fault_sent_today && (current_hour != 1 && current_hour != 13)) {
               is_sensor_fault_trigger = true;
               debugln("[Health] [CRIT] Sensor issue detected! Triggering one-time fault report.");
           }
@@ -504,13 +505,15 @@ void gprs(void *pvParameters) {
             debugln("[GPRS] Automations finished. Checking for Piggybacked Commands...");
           } else {
 #if ENABLE_HEALTH_REPORT == 1
-            // If full health is not scheduled, do a lightweight command poll
-            debugln("[Health] Checking for remote commands...");
-            send_health_report(false, true, true); // useJitter=false, alreadyLocked=true, cmdPollOnly=true
-            if (force_health_upload) {
-              debugln("[Health] Command GET_STATUS received! Uploading full health report...");
-              force_health_upload = false;
-              send_health_report(false, true, false); // Upload full report!
+            // 15-minute command polling HTTP ping ONLY runs if test_health_every_slot == 1 (Pulse mode)
+            if (test_health_every_slot == 1) {
+              debugln("[Health] Checking for remote commands...");
+              send_health_report(false, true, true); // useJitter=false, alreadyLocked=true, cmdPollOnly=true
+              if (force_health_upload) {
+                debugln("[Health] Command GET_STATUS received! Uploading full health report...");
+                force_health_upload = false;
+                send_health_report(false, true, false); // Upload full report!
+              }
             }
 #endif
           }

@@ -17,12 +17,12 @@ int calib_initial = 0;
   }
   void NuvotonLCD::clear() {
       Serial1.write(0x01);
-      vTaskDelay(2 / portTICK_PERIOD_MS);
+      vTaskDelay(10 / portTICK_PERIOD_MS);
   }
   void NuvotonLCD::setCursor(uint8_t col, uint8_t row) {
       uint8_t addr = (uint8_t)(row * 64 + col + 128);
       Serial1.write(addr);
-      vTaskDelay(1 / portTICK_PERIOD_MS);
+      vTaskDelay(5 / portTICK_PERIOD_MS);
   }
   void NuvotonLCD::print(const char* str) {
       if (!str) return;
@@ -86,6 +86,10 @@ int calib_initial = 0;
   }
   
   void configure_keypad() {
+    rtc_gpio_hold_dis(GPIO_NUM_4);
+    rtc_gpio_deinit(GPIO_NUM_4);
+    rtc_gpio_hold_dis(GPIO_NUM_32);
+    rtc_gpio_deinit(GPIO_NUM_32);
     Serial1.begin(9600, SERIAL_8N1, 14, 4);
   }
 #else
@@ -645,13 +649,12 @@ void lcdkeypad(void *pvParameters) {
       debugln("[UI] Deferred LCD power cut pending...");
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
 #if USE_NUVOTON_UI == 1
-        debugln("[UI] Cutting power to Nuvoton on pin 32 (idle)...");
+        debugln("[UI] Blanking Nuvoton LCD screen (idle)...");
+        lcd.clear();
         lcd.noBacklight();
-        vTaskDelay(200 / portTICK_PERIOD_MS);
-        digitalWrite(32, LOW); // Cut power to Nuvoton
-        Serial1.end();         // End Serial1 to prevent pin leakage
+        digitalWrite(32, HIGH); // Maintain power to Nuvoton to prevent cold boot reset
         last_nuvoton_power_off_time = millis();
-        debugln("[UI] Nuvoton power cut complete.");
+        debugln("[UI] Nuvoton screen blank complete.");
 #else
         digitalWrite(32, LOW); // Turn OFF power to LCD (5V) safely
         // Reset the I2C peripheral purely to re-float the pins and avoid diode drops
@@ -676,18 +679,12 @@ void lcdkeypad(void *pvParameters) {
         // User pressed physical button (KEY_5 / EXT0 wakeup)
         wakeupKey = '5'; 
         vTaskDelay(200 / portTICK_PERIOD_MS); // Debounce
-      } else if (Serial1.available()) {
+      } else if (!__atomic_load_n(&sleep_sequence_active, __ATOMIC_ACQUIRE) && Serial1.available()) {
         int c = Serial1.read();
         while (Serial1.available()) Serial1.read(); // Drain duplicate boot/wakeup bytes
         if (c >= '1' && c <= '6') wakeupKey = translate_nuvoton_key((char)c);
       }
       bool verified_press = (wakeupKey != '\0');
-      
-      // Mask electrical "Ghost" presses
-      if (verified_press && schedulerBusy && wakeupKey == '\0') {
-         debugln("[UI] Masking electrical ghost-press during background GPRS task.");
-         verified_press = false; 
-      }
       
       if (verified_press) {
          wakeup_reason_is = ext0;
@@ -698,10 +695,9 @@ void lcdkeypad(void *pvParameters) {
       char wakeupKey = keypad.getKey();
       bool verified_press = (wakeupKey != NO_KEY);
       
-      // v5.68 Hardware Ghosting Fix: If the physical power switch for the LCD/Keypad is OFF,
-      // the data pins will float and keypad.getKey() hallucinate random keys (like '6').
-      // We ping the LCD expander (0x27) to verify the bus is electrically alive.
-      if (wakeupKey != NO_KEY) {
+      // Hardware Ghosting Check: Only ping LCD expander if LCD 5V power (pin 32) is HIGH.
+      // When LCD power is OFF (pin 32 LOW), pinging 0x27/0x3F will always NACK and incorrectly drop real keys.
+      if (wakeupKey != NO_KEY && digitalRead(32) == HIGH) {
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
 #ifndef LCD_I2C_ADDR
 #define LCD_I2C_ADDR 0x27
@@ -711,35 +707,19 @@ void lcdkeypad(void *pvParameters) {
             uint8_t alt_addr = (LCD_I2C_ADDR == 0x27) ? 0x3F : 0x27;
             Wire.beginTransmission(alt_addr);
             if (Wire.endTransmission() != 0) {
-              // No ACK from LCD at 0x27 or 0x3F. Ignore ghost key.
+              // No ACK from LCD at 0x27 or 0x3F while powered. Ignore ghost key.
               wakeupKey = NO_KEY;
+              verified_press = false;
             }
           }
           xSemaphoreGive(i2cMutex);
         }
       }
 
-        // v5.78 Hardening: Mask electrical "Ghost" presses during background GPRS cycles.
-        // If the scheduler is busy and the press didn't resolve to a physical key immediately,
-        // it is almost certainly a modem-induced voltage dip on the interrupt line.
-        if (verified_press && schedulerBusy && wakeupKey == NO_KEY) {
-           debugln("[UI] Masking electrical ghost-press during background GPRS task.");
-           verified_press = false; 
-        }
-
-        if (verified_press) {
-          vTaskDelay(20 / portTICK_PERIOD_MS); // v5.98: Increased to 20ms for stronger EMI rejection
-          if (keypad.getState() != PRESSED) {
-             // If the key didn't stay pressed, it was almost certainly a noise spike. Reject.
-             debugln("[UI] Rejecting noise spike/transient keypress.");
-             verified_press = false;
-             wakeupKey = NO_KEY;
-          } else {
-             // Key is stable or went back to NO_KEY (valid short press)
-             wakeup_reason_is = ext0;
-             savedWakeupKey = wakeupKey;
-             debugf("[UI] Verified Key: %c\n", (wakeupKey != NO_KEY ? wakeupKey : 'P'));
-          }
+      if (verified_press) {
+         wakeup_reason_is = ext0;
+         savedWakeupKey = wakeupKey;
+         debugf("[UI] Verified Key: %c\n", (wakeupKey != NO_KEY ? wakeupKey : 'P'));
       }
 #endif
     }
@@ -825,9 +805,8 @@ void lcdkeypad(void *pvParameters) {
           show_now = 1;
           xSemaphoreGive(i2cMutex);
         } else {
-          debugln("[UI] I2C Mutex Timeout on LCD Init - Attempting bus recovery...");
-          recoverI2CBus(false);
-          lcdkeypad_start = 0; // v5.85: Fallback to OFF if absolutely blocked
+          debugln("[UI] I2C Mutex Timeout on LCD Init - Will retry render on next pass...");
+          show_now = 1;
         }
 #endif
       } else {
@@ -921,7 +900,7 @@ void lcdkeypad(void *pvParameters) {
       #define NO_KEY '\0'
       #endif
       key = NO_KEY;
-      if (Serial1.available()) {
+      if (!__atomic_load_n(&sleep_sequence_active, __ATOMIC_ACQUIRE) && Serial1.available()) {
         int c = Serial1.read();
         if (c >= '1' && c <= '6') {
           key = translate_nuvoton_key((char)c);
@@ -1054,12 +1033,11 @@ void lcdkeypad(void *pvParameters) {
             debugln("[UI] TURN OFF LCD selected and SET pressed. Cutting Nuvoton power...");
             lcdkeypad_start = 0; 
 #if USE_NUVOTON_UI == 1
+            lcd.clear();
             lcd.noBacklight();
-            vTaskDelay(200 / portTICK_PERIOD_MS);
-            digitalWrite(32, LOW); // Cut power to Nuvoton
-            Serial1.end();         // End Serial1 to prevent pin leakage
+            digitalWrite(32, HIGH);
             last_nuvoton_power_off_time = millis();
-            debugln("[UI] Nuvoton power cut complete.");
+            debugln("[UI] Nuvoton screen off complete.");
 #else
             digitalWrite(32, LOW);
 #endif
