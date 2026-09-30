@@ -931,6 +931,13 @@ void send_http_data() {
   }
   set_sys_status("SENDING HTTP");
 
+  // Determine primary target server index based on server_mode (0: S1, 1: S2, 2: Dual Broadcast)
+  if (server_mode == 1) {
+    http_no = 1;
+  } else {
+    http_no = 0;
+  }
+
   // Clear any stale TCP errors from previous runs to prevent false-positive
   // network nuke loops
   diag_http_fail_reason[0] = '\0';
@@ -1121,6 +1128,14 @@ void send_http_data() {
     debugln();
     debug("**** Storing Last Logged Data as ");
     debugln(signature);
+
+    // Dual Broadcast Mode (server_mode == 2): Transmit to Secondary Server 2
+    if (server_mode == 2 && httpSet[1].serverName[0] != '\0') {
+      debugln("[GPRS] Dual Broadcast Mode: Transmitting to Secondary Server 2...");
+      http_no = 1;
+      prepare_data_and_send();
+      http_no = 0; // Restore primary index
+    }
 
     /*
      * SENDING 8:30 as well as UNSENT DATA IF FILE EXISTS ...

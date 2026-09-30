@@ -140,6 +140,9 @@ extern char
     UNIT[15]; // (Initialized secretly in .ino via UNIT_CFG to avoid ODR issues)
 extern int test_health_every_slot;
 extern float RF_RESOLUTION;
+extern RTC_DATA_ATTR int server_mode; // 0: Server 1 Only, 1: Server 2 Only, 2: Dual Broadcast (Both)
+void set_station_id(const char* new_id);
+void set_server_config(int srv_index, const char* param_str);
 
 /************************************************************************************************/
 

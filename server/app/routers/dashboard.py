@@ -478,8 +478,10 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             if r.reported_at:
                 delta     = now - r.reported_at
                 mins      = int(delta.total_seconds() / 60)
+                r.mins_ago = mins
                 r.time_ago = f"{mins}m ago" if mins < 60 else f"{mins // 60}h {mins % 60}m ago"
             else:
+                r.mins_ago = 999999
                 r.time_ago = "?"
 
             # Pending command badge

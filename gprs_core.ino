@@ -505,15 +505,13 @@ void gprs(void *pvParameters) {
             debugln("[GPRS] Automations finished. Checking for Piggybacked Commands...");
           } else {
 #if ENABLE_HEALTH_REPORT == 1
-            // 15-minute command polling HTTP ping ONLY runs if test_health_every_slot == 1 (Pulse mode)
-            if (test_health_every_slot == 1) {
-              debugln("[Health] Checking for remote commands...");
-              send_health_report(false, true, true); // useJitter=false, alreadyLocked=true, cmdPollOnly=true
-              if (force_health_upload) {
-                debugln("[Health] Command GET_STATUS received! Uploading full health report...");
-                force_health_upload = false;
-                send_health_report(false, true, false); // Upload full report!
-              }
+            // Active-Slot Command Polling: Runs fast command check during every active wake-up slot before deep sleep
+            debugln("[Health] Active Slot: Checking for remote commands...");
+            send_health_report(false, true, true); // useJitter=false, alreadyLocked=true, cmdPollOnly=true
+            if (force_health_upload) {
+              debugln("[Health] Command feedback / GET_STATUS received! Uploading full health report...");
+              force_health_upload = false;
+              send_health_report(false, true, false); // Upload full report!
             }
 #endif
           }

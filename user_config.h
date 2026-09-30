@@ -7,20 +7,20 @@
  * ========================================================================= */
 
 // --- 1. CORE SYSTEM IDENTITY ---
-#define SYSTEM 2
-#define UNIT_CFG "KSNDMC_ADDON"
+#define SYSTEM 0
+#define UNIT_CFG "KSNDMC_TRG"
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 // SYSTEM 3 options: SPATIKA_GEN - AP
 
-#define FIRMWARE_VERSION "6.50"
+#define FIRMWARE_VERSION "6.51"
 
 #define ENABLE_HEALTH_REPORT 1 // Master Switch: Enable automated device health reporting
-#define TEST_HEALTH_DEFAULT 1 // Frequency: 0 (Twice Daily at 1am & 1pm), 1 (Every 15 mins), 2 (Disabled)
+#define TEST_HEALTH_DEFAULT 0 // Frequency: 0 (Twice Daily at 1am & 1pm), 1 (Every 15 mins), 2 (Disabled)
 
 // --- 2. COMPILE OPTIONS ---
-#define USE_NUVOTON_UI 0 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
+#define USE_NUVOTON_UI 1 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
 #ifndef LCD_I2C_ADDR
 #define LCD_I2C_ADDR 0x27 // 0x27 (Default PCF8574T) or 0x3F (PCF8574AT)
 #endif
@@ -50,6 +50,13 @@
 #define HEALTH_SERVER_PORT "80"
 #define OTA_SERVER_PORT "80"
 #define HEALTH_SERVER_PATH "/health"
+
+// Server 2 Secondary Endpoint Configuration
+#define SERVER2_DOMAIN "devhlt.spatika.net"
+#define SERVER2_IP "75.119.148.192"
+#define SERVER2_PORT "80"
+#define SERVER2_PATH "/health"
+#define SERVER2_KEY "spatika2026"
 
 // Note: Secure keys (SEC_*) and FTP passwords (FTP_PASS_*) have been moved
 // to secrets.h for security. Do not add plain-text secrets back here.

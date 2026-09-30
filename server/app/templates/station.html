@@ -147,9 +147,9 @@
             <span class="text-[10px] text-slate-500 font-mono">STN ID: {{ stn_id }}</span>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
             <!-- TIER 1: TELEMETRY (Blue Family Shades) -->
-            <div class="card-tier-telemetry p-3.5 rounded-xl flex flex-col space-y-2">
+            <div class="card-tier-telemetry p-3 rounded-xl flex flex-col space-y-2">
                 <div class="text-[11px] font-black text-blue-400 uppercase tracking-wider flex items-center justify-between border-b border-blue-500/20 pb-1.5 mb-1">
                     <span>📊 Telemetry & Status</span>
                     <span class="text-[9px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded font-bold">TIER 1</span>
@@ -160,7 +160,7 @@
             </div>
 
             <!-- TIER 2: DATA & REPORTING (Purple Family Shades) -->
-            <div class="card-tier-data p-3.5 rounded-xl flex flex-col space-y-2">
+            <div class="card-tier-data p-3 rounded-xl flex flex-col space-y-2">
                 <div class="text-[11px] font-black text-purple-400 uppercase tracking-wider flex items-center justify-between border-b border-purple-500/20 pb-1.5 mb-1">
                     <span>🔄 Data & Reporting</span>
                     <span class="text-[9px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded font-bold">TIER 2</span>
@@ -169,7 +169,7 @@
                 <button onclick="promptFtpDaily('{{ stn_id }}')" class="btn-sm btn-t2-secondary text-center">📅 Fetch Daily Log</button>
                 <div class="flex gap-1">
                     <a href="/cmd/{{ stn_id }}/INTERVAL?param=15" class="btn-sm btn-t2-sub flex-1 text-center" onclick="return confirm('Set 15-min interval?')">⏱ 15m Mode</a>
-                    <a href="/cmd/{{ stn_id }}/INTERVAL?param=1440" class="btn-sm btn-t2-sub flex-1 text-center" onclick="return confirm('Set 24-hr interval?')">⏱ 24h Mode</a>
+                    <a href="/cmd/{{ stn_id }}/INTERVAL?param=1440" class="btn-sm btn-t2-sub flex-1 text-center" onclick="return confirm('Set Twice-Daily / 24-hr interval?')">⏱ Twice-Daily / 24h</a>
                 </div>
                 <div class="flex gap-1">
                     <a href="/cmd/{{ stn_id }}/SET_RF_RES?param=0.25" class="btn-sm btn-t2-sub flex-1 text-center" onclick="return confirm('Set tip resolution to 0.25mm?')">🎛 0.25 mm</a>
@@ -181,11 +181,23 @@
                 </div>
             </div>
 
-            <!-- TIER 3: MAINTENANCE (Amber Family Shades) -->
-            <div class="card-tier-maint p-3.5 rounded-xl flex flex-col space-y-2">
+            <!-- TIER 3: STATION & SERVER CONFIG (Cyan Family Shades) -->
+            <div class="card-tier-telemetry p-3 rounded-xl flex flex-col space-y-2 border border-cyan-700/40 bg-cyan-950/20">
+                <div class="text-[11px] font-black text-cyan-400 uppercase tracking-wider flex items-center justify-between border-b border-cyan-500/20 pb-1.5 mb-1">
+                    <span>⚙️ Remote Config</span>
+                    <span class="text-[9px] bg-cyan-500/20 text-cyan-300 px-1.5 py-0.5 rounded font-bold">TIER 3</span>
+                </div>
+                <button onclick="promptSetStationId('{{ stn_id }}')" class="btn-sm bg-cyan-900/60 hover:bg-cyan-800 text-cyan-200 border border-cyan-700/50 text-center font-bold">🆔 Set Station ID</button>
+                <button onclick="promptSetServer1('{{ stn_id }}')" class="btn-sm bg-emerald-900/60 hover:bg-emerald-800 text-emerald-200 border border-emerald-700/50 text-center font-bold">🌐 Set Server 1 URL</button>
+                <button onclick="promptSetServer2('{{ stn_id }}')" class="btn-sm bg-teal-900/60 hover:bg-teal-800 text-teal-200 border border-teal-700/50 text-center font-bold">🌐 Set Server 2 URL</button>
+                <button onclick="promptSetServerMode('{{ stn_id }}')" class="btn-sm bg-sky-900/60 hover:bg-sky-800 text-sky-200 border border-sky-700/50 text-center font-bold">🔀 Set Server Mode</button>
+            </div>
+
+            <!-- TIER 4: MAINTENANCE (Amber Family Shades) -->
+            <div class="card-tier-maint p-3 rounded-xl flex flex-col space-y-2">
                 <div class="text-[11px] font-black text-amber-400 uppercase tracking-wider flex items-center justify-between border-b border-amber-500/20 pb-1.5 mb-1">
                     <span>🛠 Maintenance & Queue</span>
-                    <span class="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-bold">TIER 3</span>
+                    <span class="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-bold">TIER 4</span>
                 </div>
                 <a href="/toggle-ota-lock/{{ stn_id }}" class="btn-sm btn-t3-primary text-center" onclick="return confirm('Toggle OTA Lock for {{ stn_id }}?')">{% if is_exempt %}🔓 OTA Locked{% else %}🔒 Lock OTA{% endif %}</a>
                 <a href="/clear-ota-queue/{{ stn_id }}" class="btn-sm btn-t3-secondary text-center" onclick="return confirm('Clear pending OTA commands for {{ stn_id }}?')">❌ Clear OTA Queue</a>
@@ -196,11 +208,11 @@
                 {% endif %}
             </div>
 
-            <!-- TIER 4: DANGER ZONE (Red Family Shades) -->
-            <div class="card-tier-danger p-3.5 rounded-xl flex flex-col space-y-2">
+            <!-- TIER 5: DANGER ZONE (Red Family Shades) -->
+            <div class="card-tier-danger p-3 rounded-xl flex flex-col space-y-2">
                 <div class="text-[11px] font-black text-red-400 uppercase tracking-wider flex items-center justify-between border-b border-red-500/20 pb-1.5 mb-1">
                     <span>🚨 Danger Zone</span>
-                    <span class="text-[9px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded font-bold">TIER 4</span>
+                    <span class="text-[9px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded font-bold">TIER 5</span>
                 </div>
                 <a href="/cmd/{{ stn_id }}/REBOOT" class="btn-sm btn-t4-primary text-center" onclick="return confirm('Reboot {{ stn_id }}?')">↺ Reboot Device</a>
                 <a href="/cmd/{{ stn_id }}/DELETE_DATA" class="btn-sm btn-t4-secondary text-center" onclick="return confirm('CRITICAL: Remote factory reset on {{ stn_id }}. Proceed?')">⚠ Factory Reset</a>
@@ -556,6 +568,66 @@
                 if(res.ok) window.location.reload();
                 else alert("Failed to queue PAUSE_LIVE_POST");
             });
+        }
+    }
+
+    function promptSetStationId(stnId) {
+        const newId = prompt(`Enter new 6-digit Station ID for ${stnId}:`, stnId);
+        if (newId !== null && newId.trim()) {
+            const formatted = newId.trim().padStart(6, '0');
+            if (confirm(`Confirm queuing SET_STATION_ID command to update station ${stnId} -> ${formatted}?`)) {
+                fetch(`/cmd/${stnId}/SET_STATION_ID?param=${encodeURIComponent(formatted)}`, { method: "POST" })
+                .then(res => {
+                    if (res.ok) alert(`SET_STATION_ID (${formatted}) queued successfully!`);
+                    else alert("Failed to queue SET_STATION_ID command");
+                    window.location.reload();
+                });
+            }
+        }
+    }
+
+    function promptSetServer1(stnId) {
+        const s1 = prompt(`Enter Primary Server URL / Endpoint for station ${stnId}:`, "http://devhlt.spatika.net/health");
+        if (s1 !== null && s1.trim()) {
+            if (confirm(`Confirm setting Server 1 to: ${s1.trim()}?`)) {
+                fetch(`/cmd/${stnId}/SET_SERVER_1?param=${encodeURIComponent(s1.trim())}`, { method: "POST" })
+                .then(res => {
+                    if (res.ok) alert("SET_SERVER_1 queued successfully!");
+                    else alert("Failed to queue SET_SERVER_1 command");
+                    window.location.reload();
+                });
+            }
+        }
+    }
+
+    function promptSetServer2(stnId) {
+        const s2 = prompt(`Enter Secondary Server URL / Endpoint for station ${stnId}:`, "http://secondary.spatika.net/health");
+        if (s2 !== null && s2.trim()) {
+            if (confirm(`Confirm setting Server 2 to: ${s2.trim()}?`)) {
+                fetch(`/cmd/${stnId}/SET_SERVER_2?param=${encodeURIComponent(s2.trim())}`, { method: "POST" })
+                .then(res => {
+                    if (res.ok) alert("SET_SERVER_2 queued successfully!");
+                    else alert("Failed to queue SET_SERVER_2 command");
+                    window.location.reload();
+                });
+            }
+        }
+    }
+
+    function promptSetServerMode(stnId) {
+        const mode = prompt(`Enter Server Mode for station ${stnId}:\n0 = Server 1 Only (Primary)\n1 = Server 2 Only (Secondary)\n2 = Dual Broadcast (Both Servers)`, "0");
+        if (mode !== null && ["0", "1", "2"].includes(mode.trim())) {
+            const labels = {"0": "Server 1 Only", "1": "Server 2 Only", "2": "Dual Broadcast to Both"};
+            if (confirm(`Confirm setting Server Mode to: ${labels[mode.trim()]}?`)) {
+                fetch(`/cmd/${stnId}/SET_SERVER_MODE?param=${mode.trim()}`, { method: "POST" })
+                .then(res => {
+                    if (res.ok) alert("SET_SERVER_MODE queued successfully!");
+                    else alert("Failed to queue SET_SERVER_MODE command");
+                    window.location.reload();
+                });
+            }
+        } else if (mode !== null) {
+            alert("Invalid mode! Please enter 0, 1, or 2.");
         }
     }
 

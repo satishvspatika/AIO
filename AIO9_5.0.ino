@@ -88,6 +88,7 @@ char ftpdaily_file[50] = "";
 
 // v5.66: GPRS Counters (Moved from globals.h)
 int http_no = 0, msg_sent = 0;
+RTC_DATA_ATTR int server_mode = 0; // 0: Server 1 Only, 1: Server 2 Only, 2: Dual Broadcast
 int rssiIndex = 0, rssiEndIndex = 0, registration = 0;
 volatile int retries = 0;               // cross-task: written by GPRS, read by scheduler
 volatile int unsent_count = 0, success_count = 0; // cross-task shared counters
@@ -667,11 +668,38 @@ void setup() {
     }
     test_health_every_slot = prefs.getInt("test_health", TEST_HEALTH_DEFAULT);
     live_post_muted = prefs.getBool("muted", false);
+    server_mode = prefs.getInt("srv_mode", 0);
     debug("Health Mode: ");
     debugln(test_health_every_slot == 1 ? "PULSE (15m)" : (test_health_every_slot == 0 ? "TWICE DAILY (1am & 1pm)" : "DISABLED"));
+    debugf("Server Mode: %d (%s)\n", server_mode, (server_mode == 0 ? "Server 1 Only" : (server_mode == 1 ? "Server 2 Only" : "Dual Broadcast")));
     if (live_post_muted) {
       debugln("[BOOT] ⏸️ Primary Server Live Transmissions MUTED (Loaded from NVS).");
     }
+    
+    // Load Server 1 & Server 2 overrides from NVS if set
+    Preferences pSrv1; pSrv1.begin("srv-0", true);
+    String s1_h = pSrv1.getString("host", "");
+    String s1_p = pSrv1.getString("port", "");
+    String s1_path = pSrv1.getString("path", "");
+    String s1_k = pSrv1.getString("key", "");
+    pSrv1.end();
+    if (s1_h.length() > 0) { strncpy(httpSet[0].serverName, s1_h.c_str(), sizeof(httpSet[0].serverName)-1); strncpy(httpSet[0].IP, s1_h.c_str(), sizeof(httpSet[0].IP)-1); }
+    if (s1_p.length() > 0) strncpy(httpSet[0].Port, s1_p.c_str(), sizeof(httpSet[0].Port)-1);
+    if (s1_path.length() > 0) strncpy(httpSet[0].Link, s1_path.c_str(), sizeof(httpSet[0].Link)-1);
+    if (s1_k.length() > 0) strncpy(httpSet[0].Key, s1_k.c_str(), sizeof(httpSet[0].Key)-1);
+
+    Preferences pSrv2; pSrv2.begin("srv-1", true);
+    String s2_h = pSrv2.getString("host", SERVER2_DOMAIN);
+    String s2_p = pSrv2.getString("port", SERVER2_PORT);
+    String s2_path = pSrv2.getString("path", SERVER2_PATH);
+    String s2_k = pSrv2.getString("key", SERVER2_KEY);
+    pSrv2.end();
+    strncpy(httpSet[1].serverName, s2_h.c_str(), sizeof(httpSet[1].serverName)-1);
+    strncpy(httpSet[1].IP, s2_h.c_str(), sizeof(httpSet[1].IP)-1);
+    strncpy(httpSet[1].Port, s2_p.c_str(), sizeof(httpSet[1].Port)-1);
+    strncpy(httpSet[1].Link, s2_path.c_str(), sizeof(httpSet[1].Link)-1);
+    strncpy(httpSet[1].Key, s2_k.c_str(), sizeof(httpSet[1].Key)-1);
+    strcpy(httpSet[1].Format, "json");
     
     strcpy(ftp_station, station_name);
   } else {
@@ -1971,9 +1999,40 @@ void initialize_hw() {
       }
     }
 
-    // Fast-skip: If SD version string matches active version or stored version, skip heavy MD5 calculation
-    if (strlen(sd_ver) > 0 && (strcasecmp(sd_ver, FIRMWARE_VERSION) == 0 || strstr(sd_ver, FIRMWARE_VERSION) != NULL || strcasecmp(sd_ver, stored_ver) == 0)) {
-      debugf("[OTA] SD version '%s' matches active/stored version '%s'. Skipping update.\n", sd_ver, FIRMWARE_VERSION);
+    // Normalize sd_ver: trim leading 'v' or 'V' if present (e.g. "v6.50" -> "6.50")
+    const char* norm_sd_ver = sd_ver;
+    if ((norm_sd_ver[0] == 'v' || norm_sd_ver[0] == 'V') && isdigit((unsigned char)norm_sd_ver[1])) {
+      norm_sd_ver++;
+    }
+
+    // Fast-skip: Compare SD version string with active unit identity (UNIT_VER) & FIRMWARE_VERSION
+    bool verMatch = false;
+    if (strlen(norm_sd_ver) > 0) {
+      // 1. Direct exact match against UNIT_VER or stored_ver
+      if (strcasecmp(norm_sd_ver, UNIT_VER) == 0 ||
+          (strlen(stored_ver) > 0 && strcasecmp(norm_sd_ver, stored_ver) == 0 && strcasecmp(stored_ver, UNIT_VER) == 0)) {
+        verMatch = true;
+      } else {
+        // 2. Backward-compatible check for legacy bare version strings and older formats without UI suffix
+        const char* pVer = strstr(norm_sd_ver, FIRMWARE_VERSION);
+        if (pVer != NULL) {
+          int prefix_len = pVer - norm_sd_ver;
+          if (prefix_len == 0) {
+            // Bare version string (e.g. "6.50" or "v6.50") with no system prefix -> Backward-compatible match
+            verMatch = true;
+          } else {
+            // Has system prefix (e.g. "TWS9-DMC-6.50-N" vs "TRG9-DMC-6.50-N")
+            // Fast-skip ONLY if active unit's UNIT_VER starts with the exact same system prefix
+            if (strncasecmp(UNIT_VER, norm_sd_ver, prefix_len) == 0) {
+              verMatch = true;
+            }
+          }
+        }
+      }
+    }
+
+    if (verMatch) {
+      debugf("[OTA] SD version '%s' matches active unit '%s'. Skipping update.\n", sd_ver, UNIT_VER);
       needUpdate = false;
       // SD binary preserved so same SD card can update multiple boards.
     } else {
@@ -1989,15 +2048,15 @@ void initialize_hw() {
         firmware.close();
       }
 
-      debugf("[OTA] SD File: %s | SD MD5: %s | Stored MD5: %s | SD Ver: '%s' | Active Ver: '%s'\n",
-             bin_path, sd_md5, stored_md5, sd_ver, FIRMWARE_VERSION);
+      debugf("[OTA] SD File: %s | SD MD5: %s | Stored MD5: %s | SD Ver: '%s' | Active Unit: '%s'\n",
+             bin_path, sd_md5, stored_md5, sd_ver, UNIT_VER);
 
       if (strlen(sd_md5) > 0 && strcasecmp(sd_md5, stored_md5) == 0) {
         debugln("[OTA] Binary MD5 matches stored hash. Firmware already installed. Skipping update.");
         needUpdate = false;
         // SD binary preserved for multi-unit SD card updates.
       } else {
-        debugf("[OTA] New firmware detected (SD: '%s' vs Active: '%s'). Proceeding with update...\n", sd_ver, FIRMWARE_VERSION);
+        debugf("[OTA] New firmware detected (SD: '%s' vs Active Unit: '%s'). Proceeding with update...\n", sd_ver, UNIT_VER);
         needUpdate = true;
       }
     }

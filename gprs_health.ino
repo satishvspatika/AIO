@@ -1337,6 +1337,92 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
     xSemaphoreGive(modemMutex); 
 }
 
+void set_station_id(const char* new_id) {
+    if (new_id == NULL || new_id[0] == '\0') return;
+    
+    char clean_id[16] = {0};
+    strncpy(clean_id, new_id, sizeof(clean_id) - 1);
+    trim_whitespace(clean_id);
+    
+    // Canonical 6-digit zero padding for TRG / TWS numeric IDs
+#if (SYSTEM == 0 || SYSTEM == 1 || SYSTEM == 2)
+    if (strlen(clean_id) == 4 && isDigitStr(clean_id)) {
+        char padded[16];
+        snprintf(padded, sizeof(padded), "00%s", clean_id);
+        strncpy(clean_id, padded, sizeof(clean_id) - 1);
+    }
+#endif
+
+    if (strlen(clean_id) == 0) return;
+
+    strncpy(station_name, clean_id, sizeof(station_name) - 1);
+    station_name[sizeof(station_name) - 1] = '\0';
+    strncpy(ftp_station, station_name, sizeof(ftp_station) - 1);
+    ftp_station[sizeof(ftp_station) - 1] = '\0';
+
+    // Persist to NVS
+    Preferences prefs;
+    prefs.begin("sys-config", false);
+    prefs.putString("station", station_name);
+    prefs.end();
+
+    // Persist to SPIFFS files
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+        File f1 = SPIFFS.open("/station.txt", FILE_WRITE);
+        if (f1) { f1.println(station_name); f1.close(); }
+        File f2 = SPIFFS.open("/station.doc", FILE_WRITE);
+        if (f2) { f2.println(station_name); f2.close(); }
+        xSemaphoreGive(fsMutex);
+    }
+
+    snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: Station ID set to %s", station_name);
+    force_health_upload = true;
+    debugf("[CMD] Station ID updated & persisted to %s\n", station_name);
+}
+
+void set_server_config(int srv_index, const char* param_str) {
+    if (srv_index < 0 || srv_index > 1 || param_str == NULL || param_str[0] == '\0') return;
+    
+    char host_buf[64] = {0};
+    char port_buf[8] = {0};
+    char path_buf[64] = {0};
+    char key_buf[15] = {0};
+
+    const char* h_ptr = strstr(param_str, "host=");
+    if (h_ptr) sscanf(h_ptr, "host=%63[^;]", host_buf);
+    
+    const char* p_ptr = strstr(param_str, "port=");
+    if (p_ptr) sscanf(p_ptr, "port=%7[^;]", port_buf);
+    
+    const char* path_ptr = strstr(param_str, "path=");
+    if (path_ptr) sscanf(path_ptr, "path=%63[^;]", path_buf);
+    
+    const char* k_ptr = strstr(param_str, "key=");
+    if (k_ptr) sscanf(k_ptr, "key=%14[^;]", key_buf);
+
+    if (host_buf[0] != '\0') {
+        strncpy(httpSet[srv_index].serverName, host_buf, sizeof(httpSet[srv_index].serverName) - 1);
+        strncpy(httpSet[srv_index].IP, host_buf, sizeof(httpSet[srv_index].IP) - 1);
+    }
+    if (port_buf[0] != '\0') strncpy(httpSet[srv_index].Port, port_buf, sizeof(httpSet[srv_index].Port) - 1);
+    if (path_buf[0] != '\0') strncpy(httpSet[srv_index].Link, path_buf, sizeof(httpSet[srv_index].Link) - 1);
+    if (key_buf[0] != '\0') strncpy(httpSet[srv_index].Key, key_buf, sizeof(httpSet[srv_index].Key) - 1);
+
+    Preferences prefs;
+    char ns[16];
+    snprintf(ns, sizeof(ns), "srv-%d", srv_index);
+    prefs.begin(ns, false);
+    if (host_buf[0] != '\0') prefs.putString("host", host_buf);
+    if (port_buf[0] != '\0') prefs.putString("port", port_buf);
+    if (path_buf[0] != '\0') prefs.putString("path", path_buf);
+    if (key_buf[0] != '\0') prefs.putString("key", key_buf);
+    prefs.end();
+
+    snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: Server %d updated", srv_index + 1);
+    force_health_upload = true;
+    debugf("[CMD] Server %d updated: host=%s port=%s path=%s\n", srv_index + 1, httpSet[srv_index].serverName, httpSet[srv_index].Port, httpSet[srv_index].Link);
+}
+
 void parse_health_response(const char* body) {
     if (body == NULL || body[0] == '\0') return;
 
@@ -1358,12 +1444,14 @@ void parse_health_response(const char* body) {
         live_post_muted = true;
         Preferences pMute; pMute.begin("sys-config", false); pMute.putBool("muted", true); pMute.end();
         strcpy(last_cmd_res, "Success: Primary Transmissions Muted");
+        force_health_upload = true;
         debugln("[CMD] Primary server live transmissions MUTED.");
     }
     if (strstr(body, "\"RESUME_LIVE_POST\"") || strstr(body, "\"RESUME_TX\"") || strstr(body, "\"RESUME_KSNDMC\"")) {
         live_post_muted = false;
         Preferences pMute; pMute.begin("sys-config", false); pMute.putBool("muted", false); pMute.end();
         strcpy(last_cmd_res, "Success: Primary Transmissions Resumed");
+        force_health_upload = true;
         debugln("[CMD] Primary server live transmissions RESUMED.");
     }
     if (strstr(body, "\"OTA_CHECK\"")) {
@@ -1426,7 +1514,7 @@ void parse_health_response(const char* body) {
                             char newPass[32]; strncpy(newPass, q1+1, passLen); newPass[passLen] = '\0';
                             if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
                                 File f = SPIFFS.open("/wifi_pass.txt", FILE_WRITE);
-                                if (f) { f.print(newPass); f.close(); strcpy(last_cmd_res, "Success: WiFi Pass Updated"); }
+                                if (f) { f.print(newPass); f.close(); strcpy(last_cmd_res, "Success: WiFi Pass Updated"); force_health_upload = true; }
                                 xSemaphoreGive(fsMutex);
                             }
                         }
@@ -1448,6 +1536,91 @@ void parse_health_response(const char* body) {
         strcpy(last_cmd_res, "Success: Data Wiped");
     }
     
+    // Command: SET_STATION_ID / SET_STN_ID
+    if (strstr(body, "\"SET_STATION_ID\"") || strstr(body, "\"SET_STN_ID\"")) {
+        const char* pTag = strstr(body, "\"p\"");
+        if (pTag) {
+            const char* col = strchr(pTag, ':');
+            if (col) {
+                const char* q1 = strchr(col, '"');
+                if (q1) {
+                    const char* q2 = strchr(q1 + 1, '"');
+                    if (q2 && (q2 > q1 + 1)) {
+                        char stn_buf[16];
+                        size_t slen = q2 - (q1 + 1);
+                        if (slen >= sizeof(stn_buf)) slen = sizeof(stn_buf) - 1;
+                        strncpy(stn_buf, q1 + 1, slen);
+                        stn_buf[slen] = '\0';
+                        set_station_id(stn_buf);
+                    }
+                }
+            }
+        }
+    }
+
+    // Command: SET_SERVER_1
+    if (strstr(body, "\"SET_SERVER_1\"")) {
+        const char* pTag = strstr(body, "\"p\"");
+        if (pTag) {
+            const char* col = strchr(pTag, ':');
+            if (col) {
+                const char* q1 = strchr(col, '"');
+                if (q1) {
+                    const char* q2 = strchr(q1 + 1, '"');
+                    if (q2 && (q2 > q1 + 1)) {
+                        char s1_buf[150];
+                        size_t len = q2 - (q1 + 1);
+                        if (len >= sizeof(s1_buf)) len = sizeof(s1_buf) - 1;
+                        strncpy(s1_buf, q1 + 1, len);
+                        s1_buf[len] = '\0';
+                        set_server_config(0, s1_buf);
+                    }
+                }
+            }
+        }
+    }
+
+    // Command: SET_SERVER_2
+    if (strstr(body, "\"SET_SERVER_2\"")) {
+        const char* pTag = strstr(body, "\"p\"");
+        if (pTag) {
+            const char* col = strchr(pTag, ':');
+            if (col) {
+                const char* q1 = strchr(col, '"');
+                if (q1) {
+                    const char* q2 = strchr(q1 + 1, '"');
+                    if (q2 && (q2 > q1 + 1)) {
+                        char s2_buf[150];
+                        size_t len = q2 - (q1 + 1);
+                        if (len >= sizeof(s2_buf)) len = sizeof(s2_buf) - 1;
+                        strncpy(s2_buf, q1 + 1, len);
+                        s2_buf[len] = '\0';
+                        set_server_config(1, s2_buf);
+                    }
+                }
+            }
+        }
+    }
+
+    // Command: SET_SERVER_MODE (0: Server 1 Only, 1: Server 2 Only, 2: Dual Broadcast)
+    if (strstr(body, "\"SET_SERVER_MODE\"")) {
+        const char* pTag = strstr(body, "\"p\"");
+        if (pTag) {
+            const char* col = strchr(pTag, ':');
+            if (col) {
+                int mode_val = atoi(col + 1);
+                if (mode_val >= 0 && mode_val <= 2) {
+                    server_mode = mode_val;
+                    Preferences pSrv; pSrv.begin("sys-config", false);
+                    pSrv.putInt("srv_mode", server_mode); pSrv.end();
+                    snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: Server Mode set to %d", server_mode);
+                    force_health_upload = true;
+                    debugf("[CMD] Server Routing Mode updated & persisted to %d\n", server_mode);
+                }
+            }
+        }
+    }
+
     const char* rfTag = strstr(body, "\"SET_RF_RES\"");
     if (rfTag) {
         const char* pSub = strstr(rfTag, "\"p\"");
@@ -1466,6 +1639,7 @@ void parse_health_response(const char* body) {
                         xSemaphoreGive(fsMutex);
                     }
                     snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: RF Res Set (%.2fmm)", target_res);
+                    force_health_upload = true;
                 }
             }
         }
@@ -1487,6 +1661,7 @@ void parse_health_response(const char* body) {
                     Preferences prefs; prefs.begin("sys-config", false);
                     prefs.putInt("test_health", test_health_every_slot); prefs.end();
                     snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: Interval Set (%d min)", valStr.toInt());
+                    force_health_upload = true;
                 }
             }
         }
@@ -1750,6 +1925,7 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
           "Host: %s\r\n"
           "Content-Type: application/json\r\n"
           "Content-Length: %d\r\n"
+          "Accept-Encoding: identity\r\n"
           "Connection: close\r\n\r\n"
           "%s", HEALTH_SERVER_PATH, hostHeader, payloadLen, gprs_payload);
 
@@ -1780,7 +1956,9 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
                     while (SerialSIT.available()) {
                       int len = strlen(modem_response_buf);
                       if (len < 2047) {
-                        modem_response_buf[len] = SerialSIT.read();
+                        char c = SerialSIT.read();
+                        if (c == '\0') c = ' '; // Sanitize null bytes to prevent premature string truncation
+                        modem_response_buf[len] = c;
                         modem_response_buf[len + 1] = '\0';
                       } else {
                         SerialSIT.read();
@@ -1838,7 +2016,11 @@ bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
       SerialSIT.println("AT+HTTPPARA=\"CID\",1");
       waitForResponse("OK", 1000);
       char ht_url[150];
-      snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_IP, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
+      if (atoi(HEALTH_SERVER_PORT) == 80) {
+        snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s%s\"", HEALTH_SERVER_IP, HEALTH_SERVER_PATH);
+      } else {
+        snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_IP, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
+      }
       debugf("[Health] Prepared URL: %s\n", ht_url);
       flushSerialSIT(); 
       SerialSIT.println(ht_url);

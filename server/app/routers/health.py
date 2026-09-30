@@ -288,6 +288,8 @@ async def _process_health_data(data: dict, request: Request, db: Session):
     if last_cmd_id > 0 and last_cmd_res and last_cmd_res != "N/A":
         cmd_rec = db.query(CommandQueue).filter_by(id=last_cmd_id).first()
         if cmd_rec:
+            if not cmd_rec.executed_at:
+                cmd_rec.executed_at = now_utc
             cmd_rec.result = last_cmd_res
             cmd_rec.completed_at = now_utc
             if cmd_rec.cmd in ("PAUSE_LIVE_POST", "PAUSE_TX", "PAUSE_KSNDMC"):

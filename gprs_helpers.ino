@@ -1045,6 +1045,7 @@ bool waitForResponse(const char *expected, unsigned long timeout) {
 
     while (SerialSIT.available()) {
       char c = SerialSIT.read();
+      if (c == '\0') c = ' '; // Sanitize null bytes to prevent string search truncation
       if (buf_idx < 2047) { // Prevent unbounded growth
         modem_response_buf[buf_idx++] = c;
         modem_response_buf[buf_idx] = '\0';
@@ -1087,6 +1088,7 @@ bool waitForResponseNoFlush(const char *expected, unsigned long timeout) {
 
     while (SerialSIT.available()) {
       char c = SerialSIT.read();
+      if (c == '\0') c = ' '; // Sanitize null bytes to prevent string search truncation
       if (buf_idx < 2047) {
         modem_response_buf[buf_idx++] = c;
         modem_response_buf[buf_idx] = '\0';
