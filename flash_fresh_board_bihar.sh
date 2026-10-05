@@ -44,6 +44,9 @@ if [ -z "$PORT" ]; then
     exit 1
 fi
 
+UI_UPPER=$(echo "$UI" | tr '[:lower:]' '[:upper:]')
+FLASH_LOWER=$(echo "$FLASH_SIZE" | tr '[:upper:]' '[:lower:]')
+
 CONFIG_DIR="BIHAR_TRG_${UI_UPPER}_${FLASH_LOWER}"
 VERSION=$(grep '#define FIRMWARE_VERSION' user_config.h 2>/dev/null | sed 's/.*"\(.*\)".*/\1/' | sed 's/^v//')
 VERSION=${VERSION:-6.51}
