@@ -28,19 +28,20 @@ def build_settings_table(release_dir, pkg_filter=None):
         return "YES" if v else "NO"
 
     lines = []
-    lines.append("=" * 66)
+    lines.append("=" * 115)
     lines.append("  COMPILE-TIME SETTINGS PER CONFIGURATION")
-    lines.append("=" * 66)
-    lines.append(f"  {'Config':<22} {'Debug':<6} {'WebSrv':<7} {'Nuvoton':<8} {'HealthRpt':<10} {'RF Res':>7} {'Size MB':>8}")
-    lines.append(f"  {'-'*22} {'-'*5} {'-'*6} {'-'*7} {'-'*9} {'-'*7} {'-'*7}")
+    lines.append("=" * 115)
+    lines.append(f"  {'ZIP Folder Name':<26} {'Configuration':<16} {'Flash':<6} {'UI Display':<10} {'Debug':<6} {'WebSrv':<7} {'Health Report Freq':<24} {'RF Res':>7} {'Size':>7}")
+    lines.append(f"  {'-'*26} {'-'*16} {'-'*6} {'-'*10} {'-'*5} {'-'*6} {'-'*24} {'-'*7} {'-'*7}")
 
     found = False
     for meta_file in sorted(release_path.rglob("metadata.json")):
         try:
             with open(meta_file) as f:
                 m = json.load(f)
-            cfg    = m.get('config', meta_file.parent.name)
-            nuv    = m.get('use_nuvoton_ui')
+            cfg        = m.get('config', meta_file.parent.name)
+            folder_name= meta_file.parent.name
+            nuv        = m.get('use_nuvoton_ui')
 
             if pkg_filter in ["nuvoton", "nuv"] and not nuv:
                 continue
@@ -48,28 +49,101 @@ def build_settings_table(release_dir, pkg_filter=None):
                 continue
 
             found = True
-            flash  = m.get('flash_size', '?')
-            label  = f"{cfg}_{flash}"
+            flash  = m.get('flash_size', '?').upper()
+            ui_lbl = "Nuvoton" if nuv else "Matrix"
             debug  = yn(m.get('debug'))
             wsrv   = yn(m.get('enable_webserver'))
-            hrpt   = yn(m.get('enable_health_report'))
+            hrpt_freq = "Twice Daily (1am & 1pm)" if m.get('enable_health_report') else "Disabled"
             rf     = f"{m.get('rf_resolution_mm','--')} mm"
             sz_b   = m.get('binary_size_bytes', 0)
-            sz_mb  = f"{sz_b/(1024*1024):.2f}" if sz_b else "--"
-            lines.append(f"  {label:<22} {debug:<6} {wsrv:<7} {yn(nuv):<8} {hrpt:<10} {rf:>7} {sz_mb:>7}")
+            sz_mb  = f"{sz_b/(1024*1024):.2f} MB" if sz_b else "--"
+            lines.append(f"  {folder_name:<26} {cfg:<16} {flash:<6} {ui_lbl:<10} {debug:<6} {wsrv:<7} {hrpt_freq:<24} {rf:>7} {sz_mb:>7}")
         except Exception:
             continue
 
     if not found:
         lines.append("  (No metadata.json files found in release directory matching filter)")
 
-    lines.append("=" * 66)
+    lines.append("=" * 115)
     lines.append("")
-    lines.append("  NOTE: These settings were FORCED by the build script regardless")
-    lines.append("  of what was set in user_config.h at the time. DEBUG is always")
-    lines.append("  set to 0 for production builds. WebServer is disabled on 4MB.")
-    lines.append("=" * 66)
+    lines.append("  NOTE: Health Report frequency is set to Twice Daily (1:00 AM & 1:00 PM)")
+    lines.append("  for all production builds to save battery. Switchable to 15-min pulse")
+    lines.append("  remotely anytime via server command INTERVAL?param=15.")
+    lines.append("=" * 115)
     return "\n".join(lines)
+
+def build_settings_html_table(release_dir, pkg_filter=None):
+    """Scan release_dir for per-config metadata.json files and return a clean HTML table."""
+    release_path = Path(release_dir) if release_dir else None
+    if not release_path or not release_path.exists():
+        return ""
+
+    def yn(v):
+        if v is None: return "--"
+        return "YES" if v else "NO"
+
+    rows = []
+    for meta_file in sorted(release_path.rglob("metadata.json")):
+        try:
+            with open(meta_file) as f:
+                m = json.load(f)
+            cfg        = m.get('config', meta_file.parent.name)
+            folder_name= meta_file.parent.name
+            nuv        = m.get('use_nuvoton_ui')
+
+            if pkg_filter in ["nuvoton", "nuv"] and not nuv:
+                continue
+            if pkg_filter in ["matrix", "mat"] and nuv:
+                continue
+
+            flash  = m.get('flash_size', '?').upper()
+            ui_lbl = "Nuvoton UART" if nuv else "Matrix I2C"
+            debug  = yn(m.get('debug'))
+            wsrv   = yn(m.get('enable_webserver'))
+            hrpt_freq = "Twice Daily (1am & 1pm)" if m.get('enable_health_report') else "Disabled"
+            rf     = f"{m.get('rf_resolution_mm','--')} mm"
+            sz_b   = m.get('binary_size_bytes', 0)
+            sz_mb  = f"{sz_b/(1024*1024):.2f} MB" if sz_b else "--"
+
+            rows.append(f"""
+            <tr style="border-bottom: 1px solid #e2e8f0; background-color: #ffffff;">
+                <td style="padding: 10px; font-family: monospace; font-weight: bold; color: #1a202c;">{folder_name}</td>
+                <td style="padding: 10px; color: #2d3748;">{cfg}</td>
+                <td style="padding: 10px; text-align: center; color: #2d3748;">{flash}</td>
+                <td style="padding: 10px; color: #2d3748;">{ui_lbl}</td>
+                <td style="padding: 10px; text-align: center; color: #e53e3e;">{debug}</td>
+                <td style="padding: 10px; text-align: center; color: #38a169;">{wsrv}</td>
+                <td style="padding: 10px; color: #2b6cb0; font-weight: 500;">{hrpt_freq}</td>
+                <td style="padding: 10px; text-align: right; color: #2d3748;">{rf}</td>
+                <td style="padding: 10px; text-align: right; color: #2d3748; font-family: monospace;">{sz_mb}</td>
+            </tr>""")
+        except Exception:
+            continue
+
+    if not rows:
+        return "<p>(No metadata files found matching filter)</p>"
+
+    table_html = f"""
+    <table style="border-collapse: collapse; width: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 13px; margin: 15px 0; border: 1px solid #cbd5e0; border-radius: 6px; overflow: hidden;">
+        <thead>
+            <tr style="background-color: #1a365d; color: #ffffff; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+                <th style="padding: 12px 10px;">ZIP Folder Name</th>
+                <th style="padding: 12px 10px;">Configuration</th>
+                <th style="padding: 12px 10px; text-align: center;">Flash</th>
+                <th style="padding: 12px 10px;">UI Display</th>
+                <th style="padding: 12px 10px; text-align: center;">Debug</th>
+                <th style="padding: 12px 10px; text-align: center;">WebSrv</th>
+                <th style="padding: 12px 10px;">Health Report Freq</th>
+                <th style="padding: 12px 10px; text-align: right;">RF Res</th>
+                <th style="padding: 12px 10px; text-align: right;">Size</th>
+            </tr>
+        </thead>
+        <tbody>
+            {''.join(rows)}
+        </tbody>
+    </table>
+    """
+    return table_html
 
 def send_release_email(version, zip_file, release_notes_file, summary, release_dir=None, recipient_emails=None, factory_zip_file=None, pkg_choice="both"):
     # Email configuration
@@ -121,7 +195,7 @@ def send_release_email(version, zip_file, release_notes_file, summary, release_d
     print(f"   Subject: {SUBJECT}")
 
     # Create message container
-    msg = MIMEMultipart()
+    msg = MIMEMultipart('mixed')
     msg['From'] = SENDER_EMAIL
     msg['To'] = ", ".join(TO_EMAILS)
     if CC_EMAILS:
@@ -138,6 +212,7 @@ def send_release_email(version, zip_file, release_notes_file, summary, release_d
 
     # Build per-config settings table with package filter
     settings_table = build_settings_table(release_dir, pkg_filter=pkg_choice)
+    settings_html  = build_settings_html_table(release_dir, pkg_filter=pkg_choice)
 
     # Determine which zip files to attach based on pkg_choice
     pkg_choice_lower = (pkg_choice or "both").lower()
@@ -164,8 +239,11 @@ def send_release_email(version, zip_file, release_notes_file, summary, release_d
 
     attached_names = [os.path.basename(z) for z in zip_files_to_attach]
 
-    # Email Body
-    body = f"""Hello Team,
+    # Alternative part for plain text + HTML
+    msg_alt = MIMEMultipart('alternative')
+
+    # Plain Text Body
+    plain_body = f"""Hello Team,
 
 A new firmware release is ready for deployment.
 
@@ -174,46 +252,101 @@ DATE: {datetime.now().strftime("%B %d, %Y")}
 PACKAGE TYPE: {pkg_choice.upper()}
 SUMMARY: {summary}
 
-============================================================
+===========================================================================================================
 RELEASE NOTES
-============================================================
+===========================================================================================================
 
 {release_notes_md}
 
-============================================================
+===========================================================================================================
 COMPILE-TIME SETTINGS (What was compiled in/out)
-============================================================
+===========================================================================================================
 
 {settings_table}
 
-============================================================
+===========================================================================================================
 PACKAGE CONTENTS
-============================================================
+===========================================================================================================
 
-The attached ZIP file(s) ({', '.join(attached_names)}) contain the pre-compiled configurations listed in the compile-time settings table above.
+The attached ZIP file(s) ({', '.join(attached_names)}) contain the pre-compiled configurations listed in the table above.
 
 Each config folder contains:
   firmware.bin     — pre-compiled binary (flash at offset 0x10000)
-  fw_version.txt   — full version string (e.g. TRG9-DMC-6.49-N)
+  fw_version.txt   — full version string (e.g. TRG9-DMC-6.51-N)
   metadata.json    — machine-readable compile settings
 
 Additionally, for new board factory flashing, the standalone package (AIO9_Factory_Flash_Files.zip) contains:
   bootloader.bin, partitions.bin, boot_app0.bin, flash scripts, and FACTORY_FLASH_GUIDE.md.
 
-============================================================
-DEPLOYMENT
-============================================================
-
-1. Extract ZIP.
-2. Open factory_tool.html in Chrome via local HTTP server.
-3. Select the device Profile (TRG / TWS / TWS-RF) and Config.
-4. Select the release folder — build info will be shown automatically.
-5. Connect the board and click Start Programming.
-
 Best regards,
 Spatika AIO Release Automation
 """
-    msg.attach(MIMEText(body, 'plain'))
+
+    # HTML Body with Styled Table
+    # Escape basic Markdown headings in release_notes_md for simple HTML view
+    rn_html = release_notes_md.replace("\n# ", "\n<h1>").replace("\n## ", "\n<h2>").replace("\n### ", "\n<h3>").replace("\n", "<br>")
+
+    html_body = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <style>
+            body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #2d3748; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; }}
+            .header {{ background-color: #1a365d; color: white; padding: 20px; border-radius: 8px; margin-bottom: 25px; }}
+            .header h1 {{ margin: 0; font-size: 24px; }}
+            .meta {{ font-size: 14px; margin-top: 10px; color: #e2e8f0; }}
+            .section {{ margin-bottom: 30px; background: #f7fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; }}
+            .section-title {{ font-size: 18px; font-weight: bold; color: #2b6cb0; border-bottom: 2px solid #2b6cb0; padding-bottom: 8px; margin-top: 0; margin-bottom: 15px; }}
+            .note-box {{ background-color: #ebf8ff; border-left: 4px solid #3182ce; padding: 12px; font-size: 13px; color: #2c5282; margin: 10px 0; border-radius: 4px; }}
+            ul {{ padding-left: 20px; }}
+            code {{ font-family: monospace; background: #edf2f7; padding: 2px 6px; border-radius: 4px; font-size: 13px; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>AIO9_5.0 Firmware Release v{version}</h1>
+            <div class="meta">
+                <strong>Date:</strong> {datetime.now().strftime("%B %d, %Y")} | 
+                <strong>Package:</strong> {pkg_choice.upper()} | 
+                <strong>Summary:</strong> {summary}
+            </div>
+        </div>
+
+        <div class="section">
+            <h2 class="section-title">📋 Compile-Time Settings per Configuration</h2>
+            {settings_html}
+            <div class="note-box">
+                ℹ️ <strong>Health Report Frequency:</strong> Set to <strong>Twice Daily (1:00 AM & 1:00 PM)</strong> for all production builds to maximize battery lifetime. Switchable to 15-minute pulse mode remotely anytime via server command <code>INTERVAL?param=15</code>.
+            </div>
+        </div>
+
+        <div class="section">
+            <h2 class="section-title">📝 Release Notes</h2>
+            <div style="background: white; padding: 15px; border-radius: 6px; border: 1px solid #edf2f7;">
+                {rn_html}
+            </div>
+        </div>
+
+        <div class="section">
+            <h2 class="section-title">📦 Package Contents & Deployment</h2>
+            <p>The attached ZIP files (<code>{', '.join(attached_names)}</code>) contain the pre-compiled binaries listed above.</p>
+            <ul>
+                <li><code>firmware.bin</code> — Application binary (Flash offset: 0x10000)</li>
+                <li><code>fw_version.txt</code> — Firmware identity string</li>
+                <li><code>metadata.json</code> — Machine-readable build parameters</li>
+            </ul>
+            <p><strong>Factory Flashing:</strong> Use <code>AIO9_Factory_Flash_Files.zip</code> containing bootloader binaries, 16MB partition tables, and <code>flash_fresh_board*.sh</code> scripts.</p>
+        </div>
+
+        <p style="font-size: 12px; color: #718096; margin-top: 30px;">Sent automatically by Spatika AIO Release Automation System.</p>
+    </body>
+    </html>
+    """
+
+    msg_alt.attach(MIMEText(plain_body, 'plain'))
+    msg_alt.attach(MIMEText(html_body, 'html'))
+    msg.attach(msg_alt)
 
     # Attach selected Release ZIP file(s)
     for zf in zip_files_to_attach:

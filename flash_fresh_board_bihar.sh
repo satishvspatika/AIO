@@ -44,12 +44,13 @@ if [ -z "$PORT" ]; then
     exit 1
 fi
 
-UI_UPPER=$(echo "$UI" | tr '[:lower:]' '[:upper:]')
-FLASH_LOWER=$(echo "$FLASH_SIZE" | tr '[:upper:]' '[:lower:]')
-
+CONFIG_DIR="BIHAR_TRG_${UI_UPPER}_${FLASH_LOWER}"
 VERSION=$(grep '#define FIRMWARE_VERSION' user_config.h 2>/dev/null | sed 's/.*"\(.*\)".*/\1/' | sed 's/^v//')
 VERSION=${VERSION:-6.51}
 FIRMWARE="/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5/v${VERSION}/${CONFIG_DIR}/firmware.bin"
+if [ ! -f "$FIRMWARE" ]; then
+    FIRMWARE="./builds/${CONFIG_DIR}/firmware.bin"
+fi
 
 if [ "$FLASH_LOWER" = "16mb" ]; then
     BOOTLOADER="./flash_files/16mb/bootloader.bin"

@@ -5,13 +5,10 @@
 # Set high baud rate for maximum speed (50+ boards batch)
 BAUD=921600
 
-# Binaries to flash (16MB Bootloader, 16MB Partition Table & 16MB Matrix UI Firmware)
-BOOTLOADER="./flash_files/16mb/bootloader.bin"
-PARTITIONS="./flash_files/16mb/partitions.bin"
-BOOT_APP0="./flash_files/boot_app0.bin"
-VERSION=$(grep '#define FIRMWARE_VERSION' user_config.h 2>/dev/null | sed 's/.*"\(.*\)".*/\1/' | sed 's/^v//')
-VERSION=${VERSION:-6.51}
-FIRMWARE="/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5/v${VERSION}/KSNDMC_TRG_MAT_16mb/firmware.bin"
+# Usage: ./flash_fresh_board_KSNDMC_TRG.sh [PORT] [UI: MAT|NUV] [FLASH: 16mb|8mb]
+RAW_ARG1=$1
+UI=${2:-MAT}          # MAT (Matrix I2C) or NUV (Nuvoton UART)
+FLASH_SIZE=${3:-16mb} # 16mb or 8mb
 
 # Smart Auto-Detection of Connected USB Port
 detect_port() {
@@ -38,14 +35,36 @@ detect_port() {
     fi
 }
 
-PORT=$(detect_port "$1")
+PORT=$(detect_port "$RAW_ARG1")
 
 if [ -z "$PORT" ]; then
     echo "❌ Error: No connected ESP32 USB serial device found!"
     echo "   Please plug in your ESP32 board via USB cable and try again."
-    echo "   Usage: ./flash_fresh_board_KSNDMC_TRG.sh [PORT]"
+    echo "   Usage: ./flash_fresh_board_KSNDMC_TRG.sh [PORT] [UI: MAT|NUV] [FLASH: 16mb|8mb]"
     exit 1
 fi
+
+UI_UPPER=$(echo "$UI" | tr '[:lower:]' '[:upper:]')
+FLASH_LOWER=$(echo "$FLASH_SIZE" | tr '[:upper:]' '[:lower:]')
+
+CONFIG_DIR="KSNDMC_TRG_${UI_UPPER}_${FLASH_LOWER}"
+VERSION=$(grep '#define FIRMWARE_VERSION' user_config.h 2>/dev/null | sed 's/.*"\(.*\)".*/\1/' | sed 's/^v//')
+VERSION=${VERSION:-6.51}
+FIRMWARE="/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5/v${VERSION}/${CONFIG_DIR}/firmware.bin"
+if [ ! -f "$FIRMWARE" ]; then
+    FIRMWARE="./builds/${CONFIG_DIR}/firmware.bin"
+fi
+
+if [ "$FLASH_LOWER" = "16mb" ]; then
+    BOOTLOADER="./flash_files/16mb/bootloader.bin"
+    PARTITIONS="./flash_files/16mb/partitions.bin"
+    FLASH_SIZE_ARG="16MB"
+else
+    BOOTLOADER="./flash_files/8mb/bootloader.bin"
+    PARTITIONS="./flash_files/8mb/partitions.bin"
+    FLASH_SIZE_ARG="8MB"
+fi
+BOOT_APP0="./flash_files/boot_app0.bin"
 
 if [ ! -f "$FIRMWARE" ]; then
     echo "❌ Error: Firmware binary not found at $FIRMWARE"

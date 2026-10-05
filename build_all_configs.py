@@ -183,7 +183,7 @@ def extract_build_defines(config_h_path):
     calib_val       = get_int('ENABLE_CALIB_TEST')
     fw_ver_val      = get_str('FIRMWARE_VERSION')
 
-    health_freq_map = {0: 'Daily (11am)', 1: 'Every 15 mins', 2: 'Disabled'}
+    health_freq_map = {0: 'Twice Daily (1am & 1pm)', 1: 'Every 15 mins', 2: 'Disabled'}
 
     return {
         'firmware_version':    fw_ver_val or 'UNKNOWN',
