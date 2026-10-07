@@ -931,11 +931,18 @@ void send_http_data() {
   }
   set_sys_status("SENDING HTTP");
 
-  // Determine primary target server index based on server_mode (0: S1, 1: S2, 2: Dual Broadcast)
-  if (server_mode == 1) {
-    http_no = 1;
-  } else {
-    http_no = 0;
+  // Lock target profile index to the unit's configured primary profile index
+  if (primary_http_no >= 0 && primary_http_no < (int)(sizeof(httpSet) / sizeof(httpSet[0]))) {
+    http_no = primary_http_no;
+  }
+
+  struct http_params primary_backup;
+  bool is_server2_override = false;
+  if (server_mode == 1 && secondaryServer.serverName[0] != '\0' && http_no >= 0) {
+    primary_backup = httpSet[http_no];
+    httpSet[http_no] = secondaryServer;
+    is_server2_override = true;
+    debugln("[GPRS] Server Mode 1: Routing transmission to Secondary Server 2...");
   }
 
   // Clear any stale TCP errors from previous runs to prevent false-positive
@@ -1040,6 +1047,7 @@ void send_http_data() {
     debugf("[GPRS] PDP context inactive or IP invalid for CID %d. Triggering bearer recovery...\n", check_cid);
     if (!verify_bearer_or_recover()) {
       debugln("[GPRS] FATAL: Full bearer recovery failed. Aborting HTTP send.");
+      if (is_server2_override && http_no >= 0) httpSet[http_no] = primary_backup;
       xSemaphoreGive(modemMutex);
       return;
     }
@@ -1130,11 +1138,12 @@ void send_http_data() {
     debugln(signature);
 
     // Dual Broadcast Mode (server_mode == 2): Transmit to Secondary Server 2
-    if (server_mode == 2 && httpSet[1].serverName[0] != '\0') {
+    if (server_mode == 2 && secondaryServer.serverName[0] != '\0' && http_no >= 0) {
       debugln("[GPRS] Dual Broadcast Mode: Transmitting to Secondary Server 2...");
-      http_no = 1;
+      struct http_params orig_params = httpSet[http_no];
+      httpSet[http_no] = secondaryServer;
       prepare_data_and_send();
-      http_no = 0; // Restore primary index
+      httpSet[http_no] = orig_params; // Restore primary profile
     }
 
     /*
@@ -1512,6 +1521,10 @@ void send_http_data() {
     portENTER_CRITICAL(&syncMux);
     sync_mode = eHttpStop;
     portEXIT_CRITICAL(&syncMux);
+  }
+
+  if (is_server2_override && http_no >= 0) {
+    httpSet[http_no] = primary_backup;
   }
 } // end of send_http_data
 

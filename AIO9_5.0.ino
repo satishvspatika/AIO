@@ -89,6 +89,8 @@ char ftpdaily_file[50] = "";
 // v5.66: GPRS Counters (Moved from globals.h)
 int http_no = 0, msg_sent = 0;
 RTC_DATA_ATTR int server_mode = 0; // 0: Server 1 Only, 1: Server 2 Only, 2: Dual Broadcast
+RTC_DATA_ATTR int primary_http_no = 0;
+struct http_params secondaryServer = {SERVER2_DOMAIN, SERVER2_IP, SERVER2_PATH, SERVER2_PORT, SERVER2_KEY, "json"};
 int rssiIndex = 0, rssiEndIndex = 0, registration = 0;
 volatile int retries = 0;               // cross-task: written by GPRS, read by scheduler
 volatile int unsent_count = 0, success_count = 0; // cross-task shared counters
@@ -676,30 +678,19 @@ void setup() {
       debugln("[BOOT] ⏸️ Primary Server Live Transmissions MUTED (Loaded from NVS).");
     }
     
-    // Load Server 1 & Server 2 overrides from NVS if set
-    Preferences pSrv1; pSrv1.begin("srv-0", true);
-    String s1_h = pSrv1.getString("host", "");
-    String s1_p = pSrv1.getString("port", "");
-    String s1_path = pSrv1.getString("path", "");
-    String s1_k = pSrv1.getString("key", "");
-    pSrv1.end();
-    if (s1_h.length() > 0) { strncpy(httpSet[0].serverName, s1_h.c_str(), sizeof(httpSet[0].serverName)-1); strncpy(httpSet[0].IP, s1_h.c_str(), sizeof(httpSet[0].IP)-1); }
-    if (s1_p.length() > 0) strncpy(httpSet[0].Port, s1_p.c_str(), sizeof(httpSet[0].Port)-1);
-    if (s1_path.length() > 0) strncpy(httpSet[0].Link, s1_path.c_str(), sizeof(httpSet[0].Link)-1);
-    if (s1_k.length() > 0) strncpy(httpSet[0].Key, s1_k.c_str(), sizeof(httpSet[0].Key)-1);
-
+    // Load Server 2 override from NVS if set
     Preferences pSrv2; pSrv2.begin("srv-1", true);
     String s2_h = pSrv2.getString("host", SERVER2_DOMAIN);
     String s2_p = pSrv2.getString("port", SERVER2_PORT);
     String s2_path = pSrv2.getString("path", SERVER2_PATH);
     String s2_k = pSrv2.getString("key", SERVER2_KEY);
     pSrv2.end();
-    strncpy(httpSet[1].serverName, s2_h.c_str(), sizeof(httpSet[1].serverName)-1);
-    strncpy(httpSet[1].IP, s2_h.c_str(), sizeof(httpSet[1].IP)-1);
-    strncpy(httpSet[1].Port, s2_p.c_str(), sizeof(httpSet[1].Port)-1);
-    strncpy(httpSet[1].Link, s2_path.c_str(), sizeof(httpSet[1].Link)-1);
-    strncpy(httpSet[1].Key, s2_k.c_str(), sizeof(httpSet[1].Key)-1);
-    strcpy(httpSet[1].Format, "json");
+    strncpy(secondaryServer.serverName, s2_h.c_str(), sizeof(secondaryServer.serverName)-1);
+    strncpy(secondaryServer.IP, s2_h.c_str(), sizeof(secondaryServer.IP)-1);
+    strncpy(secondaryServer.Port, s2_p.c_str(), sizeof(secondaryServer.Port)-1);
+    strncpy(secondaryServer.Link, s2_path.c_str(), sizeof(secondaryServer.Link)-1);
+    strncpy(secondaryServer.Key, s2_k.c_str(), sizeof(secondaryServer.Key)-1);
+    strcpy(secondaryServer.Format, "json");
     
     strcpy(ftp_station, station_name);
   } else {
@@ -1239,6 +1230,20 @@ void setup() {
     debugln("!!! FATAL: http_no OOB for SYSTEM 1/2/3 !!!"); 
   }
 #endif
+
+  primary_http_no = http_no;
+  if (primary_http_no >= 0 && primary_http_no < (int)(sizeof(httpSet)/sizeof(httpSet[0]))) {
+    Preferences pSrv1; pSrv1.begin("srv-0", true);
+    String s1_h = pSrv1.getString("host", "");
+    String s1_p = pSrv1.getString("port", "");
+    String s1_path = pSrv1.getString("path", "");
+    String s1_k = pSrv1.getString("key", "");
+    pSrv1.end();
+    if (s1_h.length() > 0) { strncpy(httpSet[primary_http_no].serverName, s1_h.c_str(), sizeof(httpSet[primary_http_no].serverName)-1); strncpy(httpSet[primary_http_no].IP, s1_h.c_str(), sizeof(httpSet[primary_http_no].IP)-1); }
+    if (s1_p.length() > 0) strncpy(httpSet[primary_http_no].Port, s1_p.c_str(), sizeof(httpSet[primary_http_no].Port)-1);
+    if (s1_path.length() > 0) strncpy(httpSet[primary_http_no].Link, s1_path.c_str(), sizeof(httpSet[primary_http_no].Link)-1);
+    if (s1_k.length() > 0) strncpy(httpSet[primary_http_no].Key, s1_k.c_str(), sizeof(httpSet[primary_http_no].Key)-1);
+  }
 
   debugln();
 

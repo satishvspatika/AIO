@@ -1400,13 +1400,24 @@ void set_server_config(int srv_index, const char* param_str) {
     const char* k_ptr = strstr(param_str, "key=");
     if (k_ptr) sscanf(k_ptr, "key=%14[^;]", key_buf);
 
-    if (host_buf[0] != '\0') {
-        strncpy(httpSet[srv_index].serverName, host_buf, sizeof(httpSet[srv_index].serverName) - 1);
-        strncpy(httpSet[srv_index].IP, host_buf, sizeof(httpSet[srv_index].IP) - 1);
+    if (srv_index == 0) {
+        int target_idx = (primary_http_no >= 0 && primary_http_no < (int)(sizeof(httpSet)/sizeof(httpSet[0]))) ? primary_http_no : 0;
+        if (host_buf[0] != '\0') {
+            strncpy(httpSet[target_idx].serverName, host_buf, sizeof(httpSet[target_idx].serverName) - 1);
+            strncpy(httpSet[target_idx].IP, host_buf, sizeof(httpSet[target_idx].IP) - 1);
+        }
+        if (port_buf[0] != '\0') strncpy(httpSet[target_idx].Port, port_buf, sizeof(httpSet[target_idx].Port) - 1);
+        if (path_buf[0] != '\0') strncpy(httpSet[target_idx].Link, path_buf, sizeof(httpSet[target_idx].Link) - 1);
+        if (key_buf[0] != '\0') strncpy(httpSet[target_idx].Key, key_buf, sizeof(httpSet[target_idx].Key) - 1);
+    } else {
+        if (host_buf[0] != '\0') {
+            strncpy(secondaryServer.serverName, host_buf, sizeof(secondaryServer.serverName) - 1);
+            strncpy(secondaryServer.IP, host_buf, sizeof(secondaryServer.IP) - 1);
+        }
+        if (port_buf[0] != '\0') strncpy(secondaryServer.Port, port_buf, sizeof(secondaryServer.Port) - 1);
+        if (path_buf[0] != '\0') strncpy(secondaryServer.Link, path_buf, sizeof(secondaryServer.Link) - 1);
+        if (key_buf[0] != '\0') strncpy(secondaryServer.Key, key_buf, sizeof(secondaryServer.Key) - 1);
     }
-    if (port_buf[0] != '\0') strncpy(httpSet[srv_index].Port, port_buf, sizeof(httpSet[srv_index].Port) - 1);
-    if (path_buf[0] != '\0') strncpy(httpSet[srv_index].Link, path_buf, sizeof(httpSet[srv_index].Link) - 1);
-    if (key_buf[0] != '\0') strncpy(httpSet[srv_index].Key, key_buf, sizeof(httpSet[srv_index].Key) - 1);
 
     Preferences prefs;
     char ns[16];
@@ -1420,7 +1431,11 @@ void set_server_config(int srv_index, const char* param_str) {
 
     snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: Server %d updated", srv_index + 1);
     force_health_upload = true;
-    debugf("[CMD] Server %d updated: host=%s port=%s path=%s\n", srv_index + 1, httpSet[srv_index].serverName, httpSet[srv_index].Port, httpSet[srv_index].Link);
+    int cur_p_idx = (primary_http_no >= 0 && primary_http_no < (int)(sizeof(httpSet)/sizeof(httpSet[0]))) ? primary_http_no : 0;
+    debugf("[CMD] Server %d updated: host=%s port=%s path=%s\n", srv_index + 1, 
+           (srv_index == 0 ? httpSet[cur_p_idx].serverName : secondaryServer.serverName),
+           (srv_index == 0 ? httpSet[cur_p_idx].Port : secondaryServer.Port),
+           (srv_index == 0 ? httpSet[cur_p_idx].Link : secondaryServer.Link));
 }
 
 void parse_health_response(const char* body) {
