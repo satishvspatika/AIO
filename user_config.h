@@ -20,7 +20,7 @@
 #define TEST_HEALTH_DEFAULT 0 // Frequency: 0 (Twice Daily at 1am & 1pm), 1 (Every 15 mins), 2 (Disabled)
 
 // --- 2. COMPILE OPTIONS ---
-#define USE_NUVOTON_UI 0 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
+#define USE_NUVOTON_UI 1 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
 #ifndef LCD_I2C_ADDR
 #define LCD_I2C_ADDR 0x27 // 0x27 (Default PCF8574T) or 0x3F (PCF8574AT)
 #endif
