@@ -793,7 +793,7 @@ void webServer(void *pvParameters);
 
 struct http_params {
   char serverName[64];
-  char IP[20];   // v5.55: Added static IP for DNS fallback
+  char IP[64];   // Scaled to 64 to safely accommodate both IPv4/IPv6 and domain names
   char Link[64]; // This is the URL path
   char Port[8];
   char Key[15];

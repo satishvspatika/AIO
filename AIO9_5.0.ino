@@ -418,7 +418,7 @@ ui_data_t ui_data[FLD_COUNT] = {
 struct http_params httpSet[7] = {
     {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80", SEC_KS_TRG_OLD, "x-www-form-urlencoded"}, 
     {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80", SEC_KS_TRG_NEW, "x-www-form-urlencoded"}, 
-    {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085", SEC_BIH_GOV, "json"}, 
+    {BIHAR_ACTIVE_DOMAIN, BIHAR_ACTIVE_IP, BIHAR_ACTIVE_PATH, BIHAR_ACTIVE_PORT, SEC_BIH_GOV, "json"}, 
     {"rtdasbih.spatika.net", "185.250.105.225", "/trg_gprs/upload_bih_trg_data_new", "80", SEC_BIH_SPT, "json"}, 
     {"104.211.5.142", "104.211.5.142", "/esprain", "3002", SEC_EX_SIT, "json"},
     {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", SEC_EX_SIT, "x-www-form-urlencoded"},
@@ -430,7 +430,7 @@ struct http_params httpSet[7] = {
 struct http_params httpSet[12] = {
     {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v2", "80", SEC_KS_TRG_OLD, "x-www-form-urlencoded"}, 
     {"rtdas.ksndmc.net", "117.216.42.181", "/trg_gprs/update_data_sit_v3", "80", SEC_KS_TRG_NEW, "x-www-form-urlencoded"}, 
-    {"rtdasbmsk.spatika.net", "164.100.130.199", "/Home/UpdateTRGData", "8085", SEC_BIH_GOV, "json"}, 
+    {BIHAR_ACTIVE_DOMAIN, BIHAR_ACTIVE_IP, BIHAR_ACTIVE_PATH, BIHAR_ACTIVE_PORT, SEC_BIH_GOV, "json"}, 
     {"rtdasbih.spatika.net", "185.250.105.225", "/trg_gprs/upload_bih_trg_data_new", "80", SEC_BIH_SPT, "json"}, 
     {"104.211.5.142", "104.211.5.142", "/esprain", "3002", SEC_EX_SIT, "json"},
     {"104.211.5.142", "104.211.5.142", "/dmc_trg_data", "3003", SEC_EX_SIT, "x-www-form-urlencoded"},

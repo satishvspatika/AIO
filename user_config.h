@@ -8,23 +8,23 @@
 
 // --- 1. CORE SYSTEM IDENTITY ---
 #define SYSTEM 0
-#define UNIT_CFG "KSNDMC_TRG"
+#define UNIT_CFG "BIHAR_TRG"
 // SYSTEM 0 options: KSNDMC_TRG, BIHAR_TRG, SPATIKA_GEN
 // SYSTEM 1 options: KSNDMC_TWS, KSNDMC_TWS-AP
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 // SYSTEM 3 options: SPATIKA_GEN - AP
 
-#define FIRMWARE_VERSION "6.52"
+#define FIRMWARE_VERSION "6.53"
 
 #define ENABLE_HEALTH_REPORT 1 // Master Switch: Enable automated device health reporting
 #define TEST_HEALTH_DEFAULT 0 // Frequency: 0 (Twice Daily at 1am & 1pm), 1 (Every 15 mins), 2 (Disabled)
 
 // --- 2. COMPILE OPTIONS ---
-#define USE_NUVOTON_UI 1 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
+#define USE_NUVOTON_UI 0 // 1: Use Nuvoton UART LCD/Keypad, 0: Use I2C/GPIO Matrix
 #ifndef LCD_I2C_ADDR
 #define LCD_I2C_ADDR 0x27 // 0x27 (Default PCF8574T) or 0x3F (PCF8574AT)
 #endif
-#define DEBUG 1 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
+#define DEBUG 0 // 1: Enable Serial Logs (Dev), 0: Production (Saves ROM)
 #define ENABLE_WEBSERVER 1 // 0: Disable, 1: Enable (requires 8MB flash partition)
 
 // --- 3. HARDWARE CAPABILITIES ---
@@ -50,6 +50,33 @@
 #define HEALTH_SERVER_PORT "80"
 #define OTA_SERVER_PORT "80"
 #define HEALTH_SERVER_PATH "/health"
+
+// Bihar TRG Server Selection
+// 0: rtdasbmsk.spatika.net (Govt Server - 164.100.130.199:8085)
+// 1: bmskinhs.spatika.net (INHS Server - Port 8085)
+#define BIHAR_SERVER_SELECT 1 // 0: rtdasbmsk.spatika.net, 1: bmskinhs.spatika.net
+
+#define BIHAR_SERVER1_DOMAIN "rtdasbmsk.spatika.net"
+#define BIHAR_SERVER1_IP     "164.100.130.199"
+#define BIHAR_SERVER1_PORT   "8085"
+#define BIHAR_SERVER1_PATH   "/Home/UpdateTRGData"
+
+#define BIHAR_SERVER2_DOMAIN "bmskinhs.spatika.net"
+#define BIHAR_SERVER2_IP     "bmskinhs.spatika.net" // Resolved by modem DNS (or replace with direct IP once assigned)
+#define BIHAR_SERVER2_PORT   "8085"
+#define BIHAR_SERVER2_PATH   "/Home/UpdateTRGData"
+
+#if (BIHAR_SERVER_SELECT == 1)
+  #define BIHAR_ACTIVE_DOMAIN BIHAR_SERVER2_DOMAIN
+  #define BIHAR_ACTIVE_IP     BIHAR_SERVER2_IP
+  #define BIHAR_ACTIVE_PORT   BIHAR_SERVER2_PORT
+  #define BIHAR_ACTIVE_PATH   BIHAR_SERVER2_PATH
+#else
+  #define BIHAR_ACTIVE_DOMAIN BIHAR_SERVER1_DOMAIN
+  #define BIHAR_ACTIVE_IP     BIHAR_SERVER1_IP
+  #define BIHAR_ACTIVE_PORT   BIHAR_SERVER1_PORT
+  #define BIHAR_ACTIVE_PATH   BIHAR_SERVER1_PATH
+#endif
 
 // Server 2 Secondary Endpoint Configuration
 #define SERVER2_DOMAIN "devhlt.spatika.net"
