@@ -14,9 +14,9 @@
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 // SYSTEM 3 options: SPATIKA_GEN - AP
 
-#define FIRMWARE_VERSION "6.53"
+#define FIRMWARE_VERSION "6.55"
 
-#define ENABLE_HEALTH_REPORT 1 // Master Switch: Enable automated device health reporting
+#define ENABLE_HEALTH_REPORT 0 // Master Switch: Enable automated device health reporting
 #define TEST_HEALTH_DEFAULT 0 // Frequency: 0 (Twice Daily at 1am & 1pm), 1 (Every 15 mins), 2 (Disabled)
 
 // --- 2. COMPILE OPTIONS ---
@@ -61,8 +61,8 @@
 #define BIHAR_SERVER1_PORT   "8085"
 #define BIHAR_SERVER1_PATH   "/Home/UpdateTRGData"
 
-#define BIHAR_SERVER2_DOMAIN "bmskinhs.spatika.net"
-#define BIHAR_SERVER2_IP     "bmskinhs.spatika.net" // Resolved by modem DNS (or replace with direct IP once assigned)
+#define BIHAR_SERVER2_DOMAIN "bmsknew.spatika.net"
+#define BIHAR_SERVER2_IP     "bmsknew.spatika.net" // Resolved by modem DNS (or replace with direct IP once assigned)
 #define BIHAR_SERVER2_PORT   "8085"
 #define BIHAR_SERVER2_PATH   "/Home/UpdateTRGData"
 
