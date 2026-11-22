@@ -1,5 +1,7 @@
 # AIO9 v6.62 (22 Nov 2026): replaces 6.60 and 6.61 (never released)
 
+> **Superseded by v6.63** (SD card update fixes). Use v6.63.
+
 **Type:** production (DEBUG 0), 8 MB flash. **Not yet run on a unit.**
 
 ## Builds
@@ -90,4 +92,4 @@ app slots; `flash_files/16mb/` held the 8 MB table). The old files are in `flash
 | 6b | SD: any Matrix card in a Nuvoton unit (and the reverse) | `SD FW REFUSED: OTHER HARDWARE`, unit keeps running its firmware; no message on later timer wakes |
 | 7 | Day after install | Health report with power-ons on the office page |
 
-Backups: 6.59 sources `.backup_v6.59_otawait/`, 6.61 sources `.backup_v6.61_sdcheck/`.
+Sources: commit fbb06b0 on `main`.

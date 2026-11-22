@@ -14,7 +14,7 @@
 // SYSTEM 2 options: KSNDMC_ADDON, SPATIKA_GEN
 // SYSTEM 3 options: SPATIKA_GEN - AP
 
-#define FIRMWARE_VERSION "6.62"
+#define FIRMWARE_VERSION "6.63"
 
 // v6.57: the daily health report goes with the 13:00 OTA check (health_day.ino), as on the LPC
 // units. The separate Spatika health server (Contabo) and its remote commands are gone.

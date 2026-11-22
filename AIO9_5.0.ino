@@ -27,6 +27,7 @@
 #include <driver/adc.h>
 #include <rom/rtc.h>
 #include <esp_flash.h>
+#include "esp_ota_ops.h"   // v6.63: esp_app_get_description(), esp_ota_get_partition_description()
 
 
 int wired = 1; // Integrated is 1 or Standalone LCD module is 0
@@ -1296,6 +1297,7 @@ void setup() {
               if (!(strcmp(n, "station.txt") == 0 || strcmp(n, "rf_fw.txt") == 0 || 
                     strcmp(n, "station.doc") == 0 || strcmp(n, "rf_res.txt") == 0 || 
                     strcmp(n, "firmware.doc") == 0 || strcmp(n, "sd_fw_md5.txt") == 0 ||
+                    strcmp(n, "sd_fw_img.txt") == 0 ||
                     strcmp(n, "sd_fw_ver.txt") == 0)) {
                   debugf("[OTA] Removing incompatible structure: %s\n", n);
                   char full_path[128];
@@ -1700,6 +1702,46 @@ static void sd_fw_lcd_message(const char *l1, const char *l2) {
 #endif
 }
 
+
+// v6.63: one line of a small SPIFFS text file into buf ("" if missing)
+static void sd_read_spiffs_line(const char *path, char *buf, size_t n) {
+  buf[0] = '\0';
+  if (!SPIFFS.exists(path)) return;
+  File f = SPIFFS.open(path, FILE_READ);
+  if (!f) return;
+  int r = f.readBytesUntil('\n', buf, n - 1);
+  buf[r] = '\0';
+  trim_whitespace(buf);
+  f.close();
+}
+
+// v6.63: true when a card's fw_version.txt names the firmware this unit runs, as a whole name:
+// "TRG9-DMC-6.63-N" (UNIT_VER), "TRG9-DMC-6.63" (no display suffix), "6.63", "v6.63" or "6.63-N".
+// Up to 6.62 the version was looked for anywhere in the name, so a 6.56 unit skipped a "6.56b" card.
+static bool sd_ver_is_running(const char *v) {
+  if ((v[0] == 'v' || v[0] == 'V') && isdigit((unsigned char)v[1])) v++;
+  if (v[0] == '\0') return false;
+  if (strcasecmp(v, UNIT_VER) == 0 || strcasecmp(v, FIRMWARE_VERSION) == 0) return true;
+  char t[72];
+  snprintf(t, sizeof(t), "%s%s", v, UI_SUFFIX);                  // "TRG9-DMC-6.63" + "-N"
+  if (strcasecmp(t, UNIT_VER) == 0) return true;
+  snprintf(t, sizeof(t), "%s%s", FIRMWARE_VERSION, UI_SUFFIX);   // bare "6.63-N"
+  return strcasecmp(v, t) == 0;
+}
+
+// v6.63: an image by the first 4 bytes of its ELF SHA-256 (the same ID the office OTA uses)
+static uint32_t sd_desc_id(const esp_app_desc_t *d) {
+  return ((uint32_t)d->app_elf_sha256[0] << 24) | ((uint32_t)d->app_elf_sha256[1] << 16) |
+         ((uint32_t)d->app_elf_sha256[2] << 8) | d->app_elf_sha256[3];
+}
+static uint32_t sd_running_image_id() { return sd_desc_id(esp_app_get_description()); }
+static uint32_t sd_boot_image_id() {   // the image just written, once Update.end() has set it to boot
+  esp_app_desc_t d;
+  const esp_partition_t *p = esp_ota_get_boot_partition();
+  if (p == NULL || esp_ota_get_partition_description(p, &d) != ESP_OK) return 0;
+  return sd_desc_id(&d);
+}
+
 void progressCallBack(size_t currSize, size_t totalSize) {
   debugf2("CALLBACK:  Update process at %d of %d bytes...\n", currSize,
             totalSize);
@@ -2019,42 +2061,21 @@ void initialize_hw() {
       }
     }
 
-    // Normalize sd_ver: trim leading 'v' or 'V' if present (e.g. "v6.50" -> "6.50")
-    const char* norm_sd_ver = sd_ver;
-    if ((norm_sd_ver[0] == 'v' || norm_sd_ver[0] == 'V') && isdigit((unsigned char)norm_sd_ver[1])) {
-      norm_sd_ver++;
-    }
+    // v6.63: whole-name version match (sd_ver_is_running)
+    // Skips are said on the LCD at power-on only: a card left in the unit must not hold up every key wake
+    const bool power_on = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED);
+    bool same_file_again = false;   // the stored MD5 matches, but the unit runs other firmware now
+    char stored_img[16] = {0};
 
-    // Fast-skip: Compare SD version string with active unit identity (UNIT_VER) & FIRMWARE_VERSION
-    bool verMatch = false;
-    if (strlen(norm_sd_ver) > 0) {
-      // 1. Direct exact match against UNIT_VER or stored_ver
-      if (strcasecmp(norm_sd_ver, UNIT_VER) == 0 ||
-          (strlen(stored_ver) > 0 && strcasecmp(norm_sd_ver, stored_ver) == 0 && strcasecmp(stored_ver, UNIT_VER) == 0)) {
-        verMatch = true;
-      } else {
-        // 2. Backward-compatible check for legacy bare version strings and older formats without UI suffix
-        const char* pVer = strstr(norm_sd_ver, FIRMWARE_VERSION);
-        if (pVer != NULL) {
-          int prefix_len = pVer - norm_sd_ver;
-          if (prefix_len == 0) {
-            // Bare version string (e.g. "6.50" or "v6.50") with no system prefix -> Backward-compatible match
-            verMatch = true;
-          } else {
-            // Has system prefix (e.g. "TWS9-DMC-6.50-N" vs "TRG9-DMC-6.50-N")
-            // Fast-skip ONLY if active unit's UNIT_VER starts with the exact same system prefix
-            if (strncasecmp(UNIT_VER, norm_sd_ver, prefix_len) == 0) {
-              verMatch = true;
-            }
-          }
-        }
-      }
-    }
-
-    if (verMatch) {
+    if (sd_ver_is_running(sd_ver)) {
       debugf("[OTA] SD version '%s' matches active unit '%s'. Skipping update.\n", sd_ver, UNIT_VER);
       needUpdate = false;
       // SD binary preserved so same SD card can update multiple boards.
+      if (power_on) {
+        sd_fw_lcd_message("SD FW SKIPPED:  ", "SAME VERSION    ");
+        delay(2000);
+        sd_ota_lcd_active = false;
+      }
     } else {
       // Version differs or unknown: Calculate MD5 hash of firmware.bin on SD card to confirm
       File firmware = SD.open(bin_path, FILE_READ);
@@ -2072,9 +2093,39 @@ void initialize_hw() {
              bin_path, sd_md5, stored_md5, sd_ver, UNIT_VER);
 
       if (strlen(sd_md5) > 0 && strcasecmp(sd_md5, stored_md5) == 0) {
-        debugln("[OTA] Binary MD5 matches stored hash. Firmware already installed. Skipping update.");
-        needUpdate = false;
-        // SD binary preserved for multi-unit SD card updates.
+        // v6.63: this file was installed from a card before. Believe it only while the unit still runs that
+        // image: a USB flash since then keeps SPIFFS, and up to 6.62 such a unit ignored the card for good.
+        // /sd_fw_img.txt holds the installed image ID; "R" after it means it was already installed a second
+        // time, so an image that does not stay (rolled back) is not written again at every boot.
+        bool installed;
+        bool retried = false, runs = false;
+        sd_read_spiffs_line("/sd_fw_img.txt", stored_img, sizeof(stored_img));
+        if (stored_img[0] != '\0') {
+          runs = (strtoul(stored_img, NULL, 16) == sd_running_image_id());
+          retried = (strchr(stored_img, 'R') != NULL);
+          installed = runs || retried;
+          if (runs && retried) {   // it did stay: clear the mark
+            File iw = SPIFFS.open("/sd_fw_img.txt", FILE_WRITE);
+            if (iw) { iw.printf("%08lX", (unsigned long)sd_running_image_id()); iw.close(); }
+          }
+        } else {
+          // installed by 6.62 or older: only that card's fw_version.txt is known
+          installed = (stored_ver[0] == '\0') || sd_ver_is_running(stored_ver);
+        }
+        if (installed) {
+          debugln("[OTA] Binary MD5 matches stored hash. Firmware already installed. Skipping update.");
+          needUpdate = false;
+          // SD binary preserved for multi-unit SD card updates.
+          if (power_on) {
+            sd_fw_lcd_message("SD FW SKIPPED:  ", (retried && !runs) ? "TRIED TWICE     " : "ALREADY INSTALLD");
+            delay(2000);
+            sd_ota_lcd_active = false;
+          }
+        } else {
+          debugf("[OTA] SD firmware was installed before, but this unit now runs '%s': installing it again.\n", UNIT_VER);
+          needUpdate = true;
+          same_file_again = true;
+        }
       } else {
         debugf("[OTA] New firmware detected (SD: '%s' vs Active Unit: '%s'). Proceeding with update...\n", sd_ver, UNIT_VER);
         needUpdate = true;
@@ -2201,6 +2252,12 @@ void initialize_hw() {
                   verWrite.print(sd_ver);
                   verWrite.close();
                 }
+                // v6.63: and the image it is, to tell later whether the unit still runs it
+                File imgWrite = SPIFFS.open("/sd_fw_img.txt", FILE_WRITE);
+                if (imgWrite) {
+                  imgWrite.printf("%08lX%s", (unsigned long)sd_boot_image_id(), same_file_again ? "R" : "");
+                  imgWrite.close();
+                }
 
                 // Close SD handle. Binary preserved on SD card for multi-unit deployment.
                 firmware.close();
@@ -2229,6 +2286,11 @@ void initialize_hw() {
 #endif
                 delay(3000);
               }
+            } else {
+              // v6.63: said on the LCD (up to 6.62 it stayed at "PROGRESS: 0%" and the unit carried on)
+              debugf("[OTA] SD update could not start (%u bytes): %s\n", (unsigned)firmware.size(), Update.errorString());
+              sd_fw_lcd_message("SD FW FAILED!   ", "CANNOT START    ");
+              delay(3000);
             }
             sd_ota_lcd_active = false;
             if (firmware) firmware.close();
