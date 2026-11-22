@@ -600,10 +600,9 @@ def main():
                 print_success("Flash files (bootloader/partitions) copied.")
 
             # 3. Copy Version-Specific Release Notes
-            source_notes = SKETCH_DIR / f"RELEASE_NOTES_v{firmware_version}.md"
-            if not source_notes.exists():
-                source_notes = SKETCH_DIR / "RELEASE_NOTES.md" # Fallback
-                
+            # Notes live in RELEASE/v<ver>/ (root copies were retired 22 Nov 2026)
+            source_notes = SKETCH_DIR / "RELEASE" / f"v{firmware_version}" / f"RELEASE_NOTES_v{firmware_version}.md"
+
             if source_notes.exists():
                 shutil.copy(source_notes, external_base / "RELEASE_NOTES.md")
                 print_success(f"Release Notes copied to: {external_base / 'RELEASE_NOTES.md'}")
