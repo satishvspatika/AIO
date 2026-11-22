@@ -127,11 +127,6 @@ void scheduler(void *pvParameters) {
     }
 
     // v5.52: Absolute Silence Protocol — Pause task during OTA to prevent
-    // crosstalk
-    while (ota_silent_mode) {
-      vTaskDelay(2000 / portTICK_PERIOD_MS);
-      esp_task_wdt_reset();
-    }
 
     if (!rtcReady) {
       esp_task_wdt_reset();
@@ -199,11 +194,24 @@ void scheduler(void *pvParameters) {
       // Turner-Fix: Atomic protection for sync_mode
       portENTER_CRITICAL(&syncMux);
       if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
-          sync_mode != eStartupGPS && sync_mode != eHealthStart) {
+          sync_mode != eStartupGPS) {
         sync_mode = eHttpTrigger; // v5.48: Mark as Busy
       }
       __atomic_store_n(&schedulerBusy, true, __ATOMIC_RELEASE); // v5.65: Lock system awake during 15-min processing
       portEXIT_CRITICAL(&syncMux);
+
+      // v6.56 M-1: close the books on the previous slot. Survival Mode keeps the modem
+      // off on purpose, so those slots are not counted as failures. Outside the
+      // critical section: ota_confirm_step() reads flash, which must never happen with
+      // interrupts off (it tripped the interrupt watchdog on every boot of an OTA image).
+      // v6.61: nor are slots stopped by SMS (VARSHA STOP): sending nothing is what was asked for
+      if (heal_slot_delivered || low_bat_mode_active || live_post_muted) {
+        heal_undelivered_slots = 0;
+      } else if (heal_undelivered_slots < 9999) {
+        heal_undelivered_slots++;
+      }
+      ota_confirm_step(); // v6.56: confirms (or rolls back) a new image on trial
+      heal_slot_delivered = false;
 
       // v6.88: FS Collision Guard - Wait if OTA is writing to SPIFFS
       if (ota_writing_active) {
@@ -381,19 +389,14 @@ void scheduler(void *pvParameters) {
       // (race condition on first wakeup — windSpeed task has 5s boot delay).
       // Direct ULP read compensates for the stabilization gap.
       {
-        uint16_t current_ulp_wind = wind_count.val;
-        uint16_t ulp_delta =
-            (current_ulp_wind >= last_raw_wind_count)
-                ? (current_ulp_wind - last_raw_wind_count)
-                : (65536 + current_ulp_wind - last_raw_wind_count);
+        // v6.56 M-4: read, difference and update in one critical section (see windSpeed.ino)
+        uint16_t ulp_delta;
+        portENTER_CRITICAL(&windMux);
+        ulp_delta = (uint16_t)(wind_count.val - last_raw_wind_count); // 16-bit wrap safe
+        last_raw_wind_count += ulp_delta;
+        total_wind_pulses_32 += ulp_delta;
+        portEXIT_CRITICAL(&windMux);
         if (ulp_delta > 0) {
-          // v5.65: Use atomic critical section to prevent race with windSpeed
-          // task
-          portENTER_CRITICAL(&windMux);
-          total_wind_pulses_32 += ulp_delta;
-          last_raw_wind_count =
-              current_ulp_wind; // Sync so windSpeed task doesn't double-count
-          portEXIT_CRITICAL(&windMux);
           debugf1("[SCHED] Seeded %d ULP wind pulses from direct ULP read.\n",
                   ulp_delta);
         }
@@ -450,19 +453,15 @@ void scheduler(void *pvParameters) {
       debugln("Scheduler: RTC Sync acquired.");
 
       // v5.85: P6 - Low Battery Survival Mode (3.4V threshold)
+      // v6.56 H-6: every slot is stored for the backlog. The "every 4th slot try the
+      // modem" window was never reached (the brownout gate at TRIGGER_HTTP blocks the
+      // network below 3.4 V), and that slot was not queued, so its record was never sent.
       if (li_bat_val > 0.5f && li_bat_val < 3.4f) {
         __atomic_store_n(&low_bat_mode_active, true, __ATOMIC_RELEASE);
-        low_bat_skip_count++;
-        if (low_bat_skip_count < 4) {
-          debugln(
-              "[PWR] Survival Mode (3.4V): Storing locally, skipping modem.");
-          skip_primary_http = true;
-          signal_lvl = SIGNAL_STRENGTH_MISSING_DATA; // v5.85: Explicit MISSING_DATA marker
-        } else {
-          low_bat_skip_count = 0; // Every 4th slot: allow modem
-          debugln(
-              "[PWR] Survival Mode window: Allowing periodic modem attempt.");
-        }
+        if (low_bat_skip_count < 9999) low_bat_skip_count++;
+        debugln("[PWR] Survival Mode (3.4V): Storing locally, modem off.");
+        skip_primary_http = true;
+        signal_lvl = SIGNAL_STRENGTH_MISSING_DATA; // v5.85: Explicit MISSING_DATA marker
       } else {
         __atomic_store_n(&low_bat_mode_active, false, __ATOMIC_RELEASE);
         low_bat_skip_count = 0;
@@ -931,12 +930,12 @@ void scheduler(void *pvParameters) {
           new_current_cumRF = 0;
           total_rf_pulses_32 = 0;
           last_sched_rf_pulses_32 = 0;
-          last_raw_rf_count = rf_count.val;
+          // v6.56 H-1: last_raw_rf_count keeps the value set at this slot's capture.
+          // Re-reading rf_count.val here would drop tips counted since the capture.
           portENTER_CRITICAL(&rtcTimeMux);
           rtc_daily_cum_rf = 0.0;
           portEXIT_CRITICAL(&rtcTimeMux);
 
-          diag_sensor_fault_sent_today = false; // Reset daily fault report flag
           diag_first_http_count = 0;
           diag_wd_fail = false; // Reset WD diagnostic for new day
           // NOTE: rtc_daily_cum_rf, diag_http_success_count,
@@ -952,20 +951,6 @@ void scheduler(void *pvParameters) {
           diag_ws_same_count = 0;
           debugln("[SCHED] Rollover Complete.");
 
-          // [LTS-3] v5.72 Hardened: DailyFTP Staging Cleanup - M-NEW-1 Fix
-          // (Protect with Mutex)
-          int pd = rf_cls_dd, pm = rf_cls_mm, py = rf_cls_yy;
-          previous_date(&pd, &pm, &py);
-          char yesterday_ftp[50];
-          snprintf(yesterday_ftp, sizeof(yesterday_ftp),
-                   "/dailyftp_%04d%02d%02d.txt", py, pm, pd);
-          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-            if (SPIFFS.exists(yesterday_ftp)) {
-              SPIFFS.remove(yesterday_ftp);
-              debugln("[LTS] Yesterday's DailyFTP staging file pruned.");
-            }
-            xSemaphoreGive(fsMutex);
-          }
         } // End of destructive reset
       }
 
@@ -1367,7 +1352,11 @@ void scheduler(void *pvParameters) {
             true; // v5.71 FIX: Track lock state for global release (NEW-3)
 
         // TIER 1 DATA SANCTITY: Brownout Protection
-        if (li_bat_val < 3.4f && li_bat_val > 0.5f) {
+        // v6.56 H-6: was 3.4 V, the same as Survival Mode, so a low battery stored
+        // nothing at all although Survival Mode said "Storing locally". A flash write is
+        // a few mA (the modem's 2 A bursts are the brownout risk, and the modem stays off
+        // below 3.4 V): records are kept down to FLASH_WRITE_MIN_V.
+        if (li_bat_val < FLASH_WRITE_MIN_V && li_bat_val > 0.5f) {
           debugln("[PWR] CRITICAL: Battery too low for flash write. Aborting "
                   "to prevent brownout/corruption.");
           portENTER_CRITICAL(&syncMux);
@@ -1444,18 +1433,12 @@ void scheduler(void *pvParameters) {
 
         if ((sampleNo - last_sampleNo > 1) || skip_primary_http) {
 #if FILLGAP == 1
-#if SYSTEM == 0
+          // v6.56: every system's gap records go to /unsent.txt (TWS trimmed the old
+          // /ftpunsent.txt here, so its real backlog was never trimmed on this path)
           snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
           if (SPIFFS.exists(unsent_file)) {
-            pruneFile(unsent_file, (300 * record_length), false);
+            pruneFile(unsent_file, (BACKLOG_MAX_RECORDS * record_length), false);
           }
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
-          snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-          if (SPIFFS.exists(ftpunsent_file)) {
-            pruneFile(ftpunsent_file, (300 * record_length), false);
-          }
-#endif
 #endif
           debugln("Gap filling for loop started... ");
           for (int q = last_sampleNo + 1; q <= sampleNo; q++) {
@@ -1801,21 +1784,12 @@ void scheduler(void *pvParameters) {
 #if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
               if (q < sampleNo &&
                   q != last_ftp_unsent_sampleNo && q != last_unsent_sampleNo) { // [FTP-03] Persistent Dedup
-#if ENABLE_HTTP_BACKLOG_FALLBACK == 1
                 File funs_p = SPIFFS.open("/unsent.txt", FILE_APPEND);
                 if (funs_p) {
                   funs_p.print(append_text);
                   funs_p.close();
                 }
                 last_unsent_sampleNo = q;
-#else
-                File funs_p = SPIFFS.open("/ftpunsent.txt", FILE_APPEND);
-                if (funs_p) {
-                  funs_p.print(ftpappend_text);
-                  funs_p.close();
-                }
-                last_ftp_unsent_sampleNo = q; // Mark as written
-#endif
               }
 #endif
 #endif
@@ -1923,7 +1897,7 @@ void scheduler(void *pvParameters) {
           debugln("Primary skipped mid-day. Queuing CURRENT record to "
                   "unsent.txt...");
           if (last_unsent_sampleNo != sampleNo) { // v5.72: Dedup guard
-            pruneFile(unsent_file, (300 * record_length), fs_locked);
+            pruneFile(unsent_file, (BACKLOG_MAX_RECORDS * record_length), fs_locked);
             if (!fs_locked &&
                 xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
               File mid_unsent = SPIFFS.open(unsent_file, FILE_APPEND);
@@ -1950,9 +1924,8 @@ void scheduler(void *pvParameters) {
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
           debugln("Primary skipped mid-day. Queuing CURRENT record to backlog...");
-#if ENABLE_HTTP_BACKLOG_FALLBACK == 1
           if (last_unsent_sampleNo != sampleNo) {
-            pruneFile("/unsent.txt", (300 * record_length), fs_locked);
+            pruneFile("/unsent.txt", (BACKLOG_MAX_RECORDS * record_length), fs_locked);
             if (!fs_locked &&
                 xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
               File mid_unsent = SPIFFS.open("/unsent.txt", FILE_APPEND);
@@ -1973,33 +1946,6 @@ void scheduler(void *pvParameters) {
               last_unsent_sampleNo = sampleNo;
             }
           }
-#else
-          if (last_ftp_unsent_sampleNo != sampleNo) { // [FTP-03] Persistent Dedup
-            pruneFile(ftpunsent_file, (300 * record_length), fs_locked);
-            if (!fs_locked &&
-                xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-              File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-              if (mid_ftp) {
-                mid_ftp.print(ftpappend_text);
-                mid_ftp.close();
-                if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
-              }
-              xSemaphoreGive(fsMutex);
-              last_ftp_unsent_sampleNo = sampleNo;
-            } else if (fs_locked) {
-              File mid_ftp = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-              if (mid_ftp) {
-                mid_ftp.print(ftpappend_text);
-                mid_ftp.close();
-                if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
-              }
-              last_ftp_unsent_sampleNo = sampleNo;
-            }
-          } else {
-            debugln("[SCHED] Record already in ftpunsent.txt. Skipping "
-                    "duplicate append.");
-          }
-#endif
 #endif
         }
 
@@ -2187,7 +2133,6 @@ void scheduler(void *pvParameters) {
               }
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
-#if ENABLE_HTTP_BACKLOG_FALLBACK == 1
               snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
               File unsent = SPIFFS.open(unsent_file, FILE_APPEND);
               if (unsent) {
@@ -2198,21 +2143,6 @@ void scheduler(void *pvParameters) {
                 }
                 unsent.close();
               }
-#else
-              snprintf(ftpunsent_file, sizeof(ftpunsent_file),
-                       "/ftpunsent.txt");
-              File ftpunsent = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-              if (ftpunsent) {
-                if (last_ftp_unsent_sampleNo != sampleNo) { // [FTP-03] Persistent Dedup
-                    ftpunsent.print(ftpappend_text);
-                    if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
-                    last_ftp_unsent_sampleNo = sampleNo;
-                } else {
-                    debugln("[SCHED] Rollover record already in ftpunsent.txt. Skipping duplicate.");
-                }
-                ftpunsent.close();
-              }
-#endif
 #endif
               last_unsent_sampleNo = sampleNo;
             } else {
@@ -2419,16 +2349,14 @@ void scheduler(void *pvParameters) {
 
             // v5.77 Hardened: FTP Backlog Queuing Rules
             // 1. SYSTEM 0 (TRG): Only queue if primary HTTP is skipped (e.g. no SIM). 
-            // 2. SYSTEM 1/2 (TWS): ALWAYS queue to ftpunsent.txt as FTP is the robust sync layer.
+            // 2. SYSTEM 1/2/3 (TWS): the same rule (v6.56: one HTTP backlog, FTP removed).
             bool should_queue_ftp = (data_writing_initiated == 1);
-#if SYSTEM == 0 || ENABLE_HTTP_BACKLOG_FALLBACK == 1
             should_queue_ftp = should_queue_ftp && skip_primary_http;
-#endif
             if (should_queue_ftp) {
               if (last_unsent_sampleNo != sampleNo) { // v5.72: Dedup guard
                 debugln("[SCHED] Queuing record to FTP backlog.");
 #if SYSTEM == 0
-                pruneFile(unsent_file, (300 * record_length), true);
+                pruneFile(unsent_file, (BACKLOG_MAX_RECORDS * record_length), true);
                 File uf = SPIFFS.open(unsent_file, FILE_APPEND);
                 if (uf) {
                   uf.print(append_text);
@@ -2436,9 +2364,8 @@ void scheduler(void *pvParameters) {
                 }
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
-#if ENABLE_HTTP_BACKLOG_FALLBACK == 1
                 if (SPIFFS.exists("/unsent.txt")) {
-                  pruneFile("/unsent.txt", (300 * record_length), true);
+                  pruneFile("/unsent.txt", (BACKLOG_MAX_RECORDS * record_length), true);
                 }
                 File fuf = SPIFFS.open("/unsent.txt", FILE_APPEND);
                 if (fuf) {
@@ -2448,21 +2375,6 @@ void scheduler(void *pvParameters) {
                   }
                   fuf.close();
                 }
-#else
-                if (SPIFFS.exists(ftpunsent_file)) {
-                  pruneFile(ftpunsent_file, (300 * record_length), true);
-                }
-                File fuf = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-                if (fuf) {
-                  if (last_ftp_unsent_sampleNo != sampleNo) { // [FTP-03] Persistent Dedup
-                      fuf.print(ftpappend_text);
-                      last_ftp_unsent_sampleNo = sampleNo;
-                  } else {
-                      debugln("[SCHED] Current record already in ftpunsent.txt. Skipping duplicate.");
-                  }
-                  fuf.close();
-                }
-#endif
 #endif
                 last_unsent_sampleNo = sampleNo;
               } else {
@@ -2527,13 +2439,7 @@ void scheduler(void *pvParameters) {
             snprintf(temp_file, sizeof(temp_file), "/%s_%04d%02d%02d.txt",
                      station_name, previous_rfclose_year,
                      previous_rfclose_month, previous_rfclose_day);
-#if SYSTEM == 0
             snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
-#endif
-
-#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
-            snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-#endif
 
             debugln();
             // debug("SEARCHING FOR ...  ");
@@ -2966,7 +2872,6 @@ void scheduler(void *pvParameters) {
 #endif
 #if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
                   if (q != last_ftp_unsent_sampleNo && q != last_unsent_sampleNo) { // [FTP-03] Persistent Dedup
-#if ENABLE_HTTP_BACKLOG_FALLBACK == 1
                     File funs_p = SPIFFS.open("/unsent.txt", FILE_APPEND);
                     if (funs_p) {
                       funs_p.print(append_text);
@@ -2974,15 +2879,6 @@ void scheduler(void *pvParameters) {
                       if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
                     }
                     last_unsent_sampleNo = q;
-#else
-                    File funs_p = SPIFFS.open("/ftpunsent.txt", FILE_APPEND);
-                    if (funs_p) {
-                      funs_p.print(ftpappend_text);
-                      funs_p.close();
-                      if (diag_backlog_total < 999999) diag_backlog_total++; // [H-03]
-                    }
-                    last_ftp_unsent_sampleNo = q;
-#endif
                   }
 #endif
 #endif
@@ -3023,6 +2919,7 @@ void scheduler(void *pvParameters) {
       }
 #if SYSTEM == 0
       strcpy(store_text, append_text);
+      health_note_slot(append_text, li_bat_val); // v6.57: the day's battery figures
       debugln();
       debug("append_text->store_text : Used for storing in unsent file is: ");
       debugln(store_text);
@@ -3069,6 +2966,7 @@ void scheduler(void *pvParameters) {
 
 #if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
       strcpy(store_text, append_text);
+      health_note_slot(append_text, li_bat_val); // v6.57: the day's battery figures
       debugln();
       debug("append_text->store_text : Used for internal status: ");
       debugln(store_text);
@@ -3108,37 +3006,7 @@ void scheduler(void *pvParameters) {
           xSemaphoreGive(fsMutex);
         }
       }
-      { // Scope for ftp_file
-        snprintf(temp_file, sizeof(temp_file), "/dailyftp_%04d%02d%02d.txt",
-                 rf_cls_yy, rf_cls_mm, rf_cls_dd);
-
-        if (sampleNo != 0) {
-          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-            pruneFile(temp_file, 98 * record_length, true); // v6.09: Size cap staging file to prevent disk full
-            File ftp_file = SPIFFS.open(temp_file, FILE_APPEND);
-            if (ftp_file) {
-              ftp_file.print(
-                  ftpappend_text); // v7.70: Use FTP format (semicolons)
-              ftp_file.close();
-            } else {
-              debugln("Failed to open daily ftp file for appending");
-            }
-            xSemaphoreGive(fsMutex);
-          }
-        } else {
-          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-            File ftp_file = SPIFFS.open(temp_file, FILE_WRITE);
-            if (ftp_file) {
-              ftp_file.print(
-                  ftpappend_text); // v7.70: Use FTP format (semicolons)
-              ftp_file.close();
-            } else {
-              debugln("Failed to open daily ftp file for writing");
-            }
-            xSemaphoreGive(fsMutex);
-          }
-        }
-      }
+      // v6.56: the daily FTP staging copy (/dailyftp_<date>.txt) is no longer written (FTP removed)
 
       debugln();
       debug("append_text written to lastrecorded_<stationname>.txt is : ");
@@ -3169,13 +3037,12 @@ void scheduler(void *pvParameters) {
 
 // RF
 #if (SYSTEM == 0) || (SYSTEM == 2) || (SYSTEM == 3)
-      rf_count.val =
-          0; // Need to make it zero to capture instantaneous RF every 15 mins
-      last_raw_rf_count = 0; // v6.08: Reset anchor to 0 to prevent negative delta spikes/ignored tips
-      total_rf_pulses_32 = 0;       // v6.09: Reset accumulator to prevent carryover
-      last_sched_rf_pulses_32 = 0;  // v6.09: Reset scheduler anchor
-      rf_value =
-          0; // Need to make it zero to capture instantaneous RF every 15 mins
+      // v6.56 H-1: The ULP counter is NOT zeroed here any more. This slot's tips were
+      // taken as a delta at the top of the slot (last_raw_rf_count = curr_rf_raw), so
+      // tips that fell while this slot was being processed (GPRS wait, file writes)
+      // now count in the next slot instead of being thrown away. Zeroing rf_count.val
+      // from the CPU could also race the ULP's own read-modify-write of the counter.
+      rf_value = 0;
 #endif
 
       if (sampleNo == MAX_SAMPLE_NO) {
@@ -3302,7 +3169,6 @@ void scheduler(void *pvParameters) {
       }
 
 // UNSENT DATA
-#if SYSTEM == 0
       snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
       if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
         if (SPIFFS.exists(unsent_file)) {
@@ -3338,43 +3204,6 @@ void scheduler(void *pvParameters) {
       }
 #endif
 
-#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
-      snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-        if (SPIFFS.exists(ftpunsent_file)) {
-          File file4 = SPIFFS.open(ftpunsent_file, FILE_READ);
-          if (file4) {
-            int total_records = 0;
-            char temp_cnt_buf[128];
-            while (file4.available()) {
-              int r_len = file4.readBytesUntil('\n', temp_cnt_buf, sizeof(temp_cnt_buf) - 1);
-              if (r_len > 10) {
-                total_records++;
-              }
-            }
-            debugf("\n--- UNSENT DATA START (Total Records: %d) ---\n", total_records);
-            if (file4.size() > 0) {
-              int seekPos = (file4.size() > 500) ? file4.size() - 500 : 0;
-              file4.seek(seekPos);
-              if (seekPos > 0) {
-                file4.readStringUntil('\n'); // skip partial line at seek offset
-              }
-              char tail_buf[512];
-              int r = file4.readBytes(tail_buf, sizeof(tail_buf) - 1);
-              tail_buf[r] = '\0';
-              debugln("   ... [Tail Content] ...");
-              debug(tail_buf);
-              debugln("-----------------------");
-            }
-            file4.close();
-            debugln("--- UNSENT DATA END ---\n");
-          }
-        }
-        xSemaphoreGive(fsMutex);
-      }
-#endif
-#endif
-
       debugln();
 
     TRIGGER_HTTP: // Label for duplicate/invalid skip jump
@@ -3406,7 +3235,7 @@ void scheduler(void *pvParameters) {
           portEXIT_CRITICAL(&syncMux);
 
           while ((snap_sync_mode == eSMSStart || snap_sync_mode == eGPSStart ||
-                  snap_sync_mode == eHealthStart || snap_sync_mode == eStartupGPS) &&
+                  snap_sync_mode == eStartupGPS) &&
                  manual_wait_timeout < 150) {
             if (manual_wait_timeout % 10 == 0) {
               debugln("Waiting for Manual Task (SMS/GPS) to finish...");
@@ -3428,7 +3257,7 @@ void scheduler(void *pvParameters) {
           bool going_idle = false;
           portENTER_CRITICAL(&syncMux);
           if (sync_mode != eSMSStart && sync_mode != eGPSStart &&
-              sync_mode != eStartupGPS && sync_mode != eHealthStart) {
+              sync_mode != eStartupGPS) {
             if (is_valid_window || timeSyncRequired) {
               sync_mode =
                   eHttpBegin; // Force connection check on boot/duplicate
@@ -3458,16 +3287,6 @@ void scheduler(void *pvParameters) {
           portEXIT_CRITICAL(&syncMux);
           __atomic_store_n(&httpInitiated, true, __ATOMIC_RELEASE);
           data_writing_initiated = 0;
-
-          // v5.41 Test Mode: Send Health Report every slot
-#if ENABLE_HEALTH_REPORT == 1
-          if (test_health_every_slot == 1) {
-            debugln(
-                "[SCHEDULER] Test Mode: Queuing Health Report (every slot)");
-            // The health report will be called in the GPRS task after data
-            // upload
-          }
-#endif
         }
       } // End of Brownout Guard else-block
 
@@ -3508,6 +3327,13 @@ void scheduler(void *pvParameters) {
 
   } // for loop
 } // scheduler
+
+// v6.56 H-1: Tips counted since the last slot capture (for live LCD/web display).
+// rf_count.val is no longer zeroed each slot, so display the delta from the anchor.
+uint16_t rf_pulses_since_slot() {
+  uint16_t now_raw = rf_count.val;
+  return (uint16_t)(now_raw - last_raw_rf_count);
+}
 
 void next_date(int *Nd, int *Nm, int *Ny) {
   // v5.65: Guard against uninitialized months from bad RTC reads

@@ -846,114 +846,45 @@ void get_a7672s() {
   gprs_pdp_ready = false;
 }
 
-void process_sms(char msg_no) {
-  char *csqstr, c, *ptr, msg_rcvd_number[100] = {0};
-  int i, response_no;
-
-  // new
-  char *msg_body, msg_recd_no[20] = {0}, temp[20] = {0}, temp1[20] = {0},
-                  temp2[40] = {0};
-  char gprs_xmit_buf[300];
-
-  int cmd_no, cmd_no_loop;
-  int offset_cnt;
-  offset_cnt = 0;
-
-  SerialSIT.println("AT+CMGF=1");
-  waitForResponse("OK", 10000);
-
-  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CMGR=%d", msg_no);
-  SerialSIT.println(gprs_xmit_buf);
-  if (waitForResponse("OK", 6000)) {
-    const char *response_char = modem_response_buf;
-
-    if (strstr(response_char, "REC UNREAD") && strstr(response_char, "VARSHA")) {
-      debug("SMS: Valid command (VARSHA) received: ");
-      debugln(response_char);
-    // Extract the sender's number regardless of country code or length
-    // The format is: +CMGR: "STATUS","NUMBER","","TIME"
-    char *firstQuote = strchr(response_char, ',');
-    if (firstQuote != NULL) {
-      char *startQuote = strchr(firstQuote, '"');
-      if (startQuote != NULL) {
-        char *endQuote = strchr(startQuote + 1, '"');
-        if (endQuote != NULL) {
-          int numLen = endQuote - (startQuote + 1);
-          if (numLen > 0 && numLen < 20) {
-            strncpy(msg_rcvd_number, startQuote + 1, numLen);
-            msg_rcvd_number[numLen] = '\0';
-            debug("Extracted Number: ");
-            debugln(msg_rcvd_number);
-          }
-        }
-      }
-    }
-
-    if (strlen(msg_rcvd_number) == 0) {
-      debugln("Error: Could not extract number from SMS response");
-      return;
-    }
-
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-
-    // new
-    msg_body = strstr(response_char, "VARSHA");
-    offset_cnt = read_line(msg_body, temp, sizeof(temp),
-                           0x20); // 'VARSHA' is removed
-                                  // offset_cnt at end of line
-    msg_body += offset_cnt;
-
-    offset_cnt = read_line(msg_body, temp, sizeof(temp),
-                           0x20); // command is read into temp
-    msg_body += offset_cnt;
-
-    if (strstr(response_char, "GET_STATUS")) {
-      prepare_and_send_status(msg_rcvd_number, true);
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
-    } else if (strstr(response_char, "GET_GPS")) {
-      get_lat_long_date_time(msg_rcvd_number,
-                             true); // modemMutex held by send_sms() loop
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
-    } else if (strstr(response_char, "SEND_FTP_DAILY_DATA")) {
-      /*
-       * dateStPtr = strstr(gprs_response, "DATE=");
-       * sscanf(dateStPtr, "DATE=%s", &datevale);
-       */
-      send_daily = 1;
-      char *dtPtr;
-      int y1, m1, d1;
-      dtPtr = strstr(response_char, "DATE");
-      if (dtPtr != NULL) {
-        if (sscanf(dtPtr, "DATE=%04d-%02d-%02d", &y1, &m1, &d1) == 3) {
-          char requestedDate[20];
-          snprintf(requestedDate, sizeof(requestedDate), "%04d%02d%02d", y1, m1,
-                   d1);
-          debug(" Date is ");
-          debugln(requestedDate);
-          copyFromSPIFFSToFS(requestedDate, true); // temp1 is date
-        }
-      }
-    } else if (strstr(response_char, "SET_FW_FNAME")) {
-      // VARSHA SET_FW_FOR_LPC FILE=firmware.bin
-      char *filePtr = strstr(response_char, "FILE");
-      if (filePtr != NULL) {
-        // Safe string parse to prevent stack corruption
-        if (sscanf(filePtr, "FILE=%19s", temp1) ==
-            1) { // +CCLK: \"23/08/01,09:54:35+00\"
-          debug("Firmware file is ");
-          debugln(temp1);
-          fetchFromTcpAndUpdate(temp1, true);
-        }
-      }
-
-    } else {
-
-      // debug("No message recd ");
-      // debugln(response);
-      }
-      vTaskDelay(100 / portTICK_PERIOD_MS);
-    }
+// v6.56b: one SMS send, as the LPC unit does it (AIO_LPC sim7600_driver.c send_sms_to_number):
+// the command ends on a single CR (println added CR LF, which reached the text after the '>'),
+// the text has no trailing CR/LF (a CR opens a new input line), 100 ms before Ctrl+Z, a longer
+// wait for the network, and the modem's own answer is logged when it is refused.
+// REQUIRES: modemMutex held by caller.
+bool sms_send_text(const char *number, const char *text, unsigned long confirm_ms) {
+  SerialSIT.print("AT+CMGF=1\r");
+  waitForResponse("OK", 2000);
+  SerialSIT.print("AT+CSCA?\r");
+  if (waitForResponse("OK", 1000)) {
+    debug("[SMS] SMS centre: ");
+    debugln(modem_response_buf);
   }
+  debug("[SMS] To: ");
+  debugln(number);
+  char cmd[48];
+  snprintf(cmd, sizeof(cmd), "AT+CMGS=\"%s\"\r", number);
+  SerialSIT.print(cmd);
+  if (!waitForResponse(">", 15000)) {
+    debug("[SMS] No '>' prompt. Modem said: ");
+    debugln(modem_response_buf);
+    SerialSIT.write(0x1B);            // leave text input mode
+    waitForResponse("OK", 1000);
+    return false;
+  }
+  size_t len = strlen(text);
+  while (len > 0 && (text[len - 1] == '\r' || text[len - 1] == '\n')) len--;
+  vTaskDelay(50 / portTICK_PERIOD_MS);
+  SerialSIT.write((const uint8_t *)text, len);
+  vTaskDelay(100 / portTICK_PERIOD_MS); // breather before the transmit surge
+  SerialSIT.write(0x1A);                // Ctrl+Z: send
+  if (waitForResponse("+CMGS:", confirm_ms)) {
+    debug("[SMS] Sent: ");
+    debugln(modem_response_buf);
+    return true;
+  }
+  debug("[SMS] FAILED. Modem said: ");
+  debugln(modem_response_buf[0] ? modem_response_buf : "(nothing, timed out)");
+  return false;
 }
 
 void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
@@ -963,7 +894,7 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
       debugln("[SMS] FAILED: Modem Busy. Deferring Status request.");
       // Find the active LCD field to show busy status
       for (int i = 0; i < FLD_COUNT; i++) {
-        if (i == FLD_SEND_STATUS || i == FLD_SEND_HEALTH) {
+        if (i == FLD_SEND_STATUS) {
           strcpy(ui_data[i].bottomRow, "MODEM BUSY      ");
           show_now = 1;
         }
@@ -1067,42 +998,11 @@ void prepare_and_send_status(char *gsm_no, bool alreadyLocked) {
 
   debug("Status response prepared is ");
   debugln(status_response);
-  // first give send sms command
-
-  SerialSIT.println("AT+CMGF=1");
-  waitForResponse("OK", 1000);
-
-  // Optional but helpful for BSNL: Check Service Center
-  SerialSIT.println("AT+CSCA?");
-  waitForResponse("OK", 500);
-
-  debug("Mobile number to be sent to is : ");
-  debugln(gsm_no);
-
-  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CMGS=\"%s\"\r", gsm_no);
-  SerialSIT.println(gprs_xmit_buf);
-  debug("Waiting for '>' prompt...");
-  if (waitForResponse(">", 3000)) {
-    debugln(" Received!");
-    flushSerialSIT(); // v5.81: Ensure clean UART pipe for Ctrl+Z termination
-    SerialSIT.print(status_response); 
-    vTaskDelay(100 / portTICK_PERIOD_MS); // Breather delay before RF transmit surge
-    SerialSIT.write(0x1A); // Send Ctrl+Z (ASCII 26) to commit SMS
-    debug("Waiting for +CMGS confirmation...");
-    if (waitForResponse("+CMGS:", 20000)) {
-       debugln(" Done.");
-       debug("Response of AT+CMGS is ");
-       debugln(modem_response_buf);
-       msg_sent = 1;
-       debugln("SUCCESS IN SENDING MSG");
-    } else {
-       debugln(" Done.");
-       debug("Response of AT+CMGS is ");
-       debugln(modem_response_buf);
-       debugln("FAILED TO SEND MSG - No +CMGS in response");
-    }
+  if (sms_send_text(gsm_no, status_response, 60000)) {
+    msg_sent = 1;
+    debugln("SUCCESS IN SENDING MSG");
   } else {
-    debugln(" TIMEOUT! No '>' prompt received.");
+    debugln("FAILED TO SEND MSG");
   }
 
   if (!alreadyLocked)
@@ -1159,16 +1059,10 @@ void get_gps_coordinates(bool alreadyLocked) {
               sscanf(time_buf, "%d:%d:%d", &hr, &mi, &ss) == 3) {
             int full_year = 2000 + yy;
             if (full_year >= 2025 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
-              debugf("[GPS] Network Time Sync: %04d-%02d-%02d %02d:%02d:%02d\n", full_year, mm, dd, hr, mi, ss);
-              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                rtc.adjust(DateTime(full_year, mm, dd, hr, mi, ss));
-                xSemaphoreGive(i2cMutex);
-                
-                portENTER_CRITICAL(&rtcTimeMux);
-                current_year = full_year; current_month = mm; current_day = dd;
-                current_hour = hr; current_min = mi; current_sec = ss;
-                portEXIT_CRITICAL(&rtcTimeMux);
-              }
+              debugf("[GPS] Network Time Sync (UTC): %04d-%02d-%02d %02d:%02d:%02d\n", full_year, mm, dd, hr, mi, ss);
+              // v6.56 M-6: +CLBS time is UTC: set the RTC to IST (it was written raw,
+              // 5 h 30 min behind, by this path only)
+              set_rtc_from_utc(full_year, mm, dd, hr, mi, ss);
             }
           }
         }
@@ -1244,16 +1138,10 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
               sscanf(time_buf, "%d:%d:%d", &hr, &mi, &ss) == 3) {
             int full_year = 2000 + yy;
             if (full_year >= 2025 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
-              debugf("[GPS] Network Time Sync (Manual): %04d-%02d-%02d %02d:%02d:%02d\n", full_year, mm, dd, hr, mi, ss);
-              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                rtc.adjust(DateTime(full_year, mm, dd, hr, mi, ss));
-                xSemaphoreGive(i2cMutex);
-                
-                portENTER_CRITICAL(&rtcTimeMux);
-                current_year = full_year; current_month = mm; current_day = dd;
-                current_hour = hr; current_min = mi; current_sec = ss;
-                portEXIT_CRITICAL(&rtcTimeMux);
-              }
+              debugf("[GPS] Network Time Sync (Manual, UTC): %04d-%02d-%02d %02d:%02d:%02d\n", full_year, mm, dd, hr, mi, ss);
+              // v6.56 M-6: +CLBS time is UTC: set the RTC to IST (it was written raw,
+              // 5 h 30 min behind, by this path only)
+              set_rtc_from_utc(full_year, mm, dd, hr, mi, ss);
             }
           }
         }
@@ -1303,30 +1191,11 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
   debug("Status response for GET_GPS is ");
   debugln(status_response);
 
-  SerialSIT.println("AT+CMGF=1");
-  waitForResponse("OK", 5000);
-
-  snprintf(gprs_xmit_buf, sizeof(gprs_xmit_buf), "AT+CMGS=\"%s\"\r", gsm_no);
-  SerialSIT.println(gprs_xmit_buf);
-  debug("Waiting for '>' prompt...");
-  if (waitForResponse(">", 15000)) {
-    debugln(" Received!");
-    flushSerialSIT();
-    SerialSIT.print(status_response);
-    SerialSIT.write(0x1A); // Send Ctrl+Z (ASCII 26) to commit SMS
-    debug("Waiting for +CMGS confirmation...");
-    if (waitForResponse("+CMGS:", 35000)) {
-      debugln(" Done.");
-      debug("Response of AT+CMGS is ");
-      debugln(modem_response_buf);
-      msg_sent = 1;
-      debugln("SUCCESS IN SENDING GPS");
-    } else {
-      debugln(" Done.");
-      debugln("FAILED TO SEND GPS - No +CMGS in response");
-    }
+  if (sms_send_text(gsm_no, status_response, 60000)) {
+    msg_sent = 1;
+    debugln("SUCCESS IN SENDING GPS");
   } else {
-    debugln(" TIMEOUT! No '>' prompt received.");
+    debugln("FAILED TO SEND GPS");
   }
 
   vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -1337,13 +1206,15 @@ void get_lat_long_date_time(char *gsm_no, bool alreadyLocked) {
     xSemaphoreGive(modemMutex); 
 }
 
-void set_station_id(const char* new_id) {
+// Station ID (SMS SET_STN_ID; the keypad has its own path). wipe: the old station's records and
+// backlog are removed first, as the keypad does on an ID change (they would go out under the new ID).
+void set_station_id(const char* new_id, bool wipe) {
     if (new_id == NULL || new_id[0] == '\0') return;
-    
+
     char clean_id[16] = {0};
     strncpy(clean_id, new_id, sizeof(clean_id) - 1);
     trim_whitespace(clean_id);
-    
+
     // Canonical 6-digit zero padding for TRG / TWS numeric IDs
 #if (SYSTEM == 0 || SYSTEM == 1 || SYSTEM == 2)
     if (strlen(clean_id) == 4 && isDigitStr(clean_id)) {
@@ -1355,758 +1226,71 @@ void set_station_id(const char* new_id) {
 
     if (strlen(clean_id) == 0) return;
 
+    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+        if (wipe) {
+            SPIFFS.remove("/unsent.txt");
+            SPIFFS.remove("/unsent_pointer.txt");
+            File root = SPIFFS.open("/");
+            File file = root.openNextFile();
+            while (file) {
+                char n[64];
+                snprintf(n, sizeof(n), "%s%s", file.name()[0] == '/' ? "" : "/", file.name());
+                file.close();
+                const size_t len = strlen(n);
+                if (len > 4 && strcmp(n + len - 4, ".txt") == 0 && strcmp(n, "/station.txt") != 0 &&
+                    strcmp(n, "/rf_fw.txt") != 0 && strcmp(n, "/rf_res.txt") != 0) {
+                    SPIFFS.remove(n);
+                }
+                file = root.openNextFile();
+            }
+            root.close();
+        }
+        File f1 = SPIFFS.open("/station.txt", FILE_WRITE);
+        if (f1) { f1.print(clean_id); f1.close(); }
+        File f2 = SPIFFS.open("/station.doc", FILE_WRITE);
+        if (f2) { f2.print(clean_id); f2.close(); }
+        xSemaphoreGive(fsMutex);
+    }
+
     strncpy(station_name, clean_id, sizeof(station_name) - 1);
     station_name[sizeof(station_name) - 1] = '\0';
     strncpy(ftp_station, station_name, sizeof(ftp_station) - 1);
     ftp_station[sizeof(ftp_station) - 1] = '\0';
 
-    // Persist to NVS
     Preferences prefs;
     prefs.begin("sys-config", false);
     prefs.putString("station", station_name);
     prefs.end();
-
-    // Persist to SPIFFS files
-    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
-        File f1 = SPIFFS.open("/station.txt", FILE_WRITE);
-        if (f1) { f1.println(station_name); f1.close(); }
-        File f2 = SPIFFS.open("/station.doc", FILE_WRITE);
-        if (f2) { f2.println(station_name); f2.close(); }
-        xSemaphoreGive(fsMutex);
-    }
-
-    snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: Station ID set to %s", station_name);
-    force_health_upload = true;
-    debugf("[CMD] Station ID updated & persisted to %s\n", station_name);
+    debugf("[CMD] Station ID set to %s%s\n", station_name, wipe ? " (old records cleared)" : "");
 }
 
-void set_server_config(int srv_index, const char* param_str) {
-    if (srv_index < 0 || srv_index > 1 || param_str == NULL || param_str[0] == '\0') return;
-    
-    char host_buf[64] = {0};
-    char port_buf[8] = {0};
-    char path_buf[64] = {0};
-    char key_buf[15] = {0};
-
-    const char* h_ptr = strstr(param_str, "host=");
-    if (h_ptr) sscanf(h_ptr, "host=%63[^;]", host_buf);
-    
-    const char* p_ptr = strstr(param_str, "port=");
-    if (p_ptr) sscanf(p_ptr, "port=%7[^;]", port_buf);
-    
-    const char* path_ptr = strstr(param_str, "path=");
-    if (path_ptr) sscanf(path_ptr, "path=%63[^;]", path_buf);
-    
-    const char* k_ptr = strstr(param_str, "key=");
-    if (k_ptr) sscanf(k_ptr, "key=%14[^;]", key_buf);
-
-    if (srv_index == 0) {
-        int target_idx = (primary_http_no >= 0 && primary_http_no < (int)(sizeof(httpSet)/sizeof(httpSet[0]))) ? primary_http_no : 0;
-        if (host_buf[0] != '\0') {
-            strncpy(httpSet[target_idx].serverName, host_buf, sizeof(httpSet[target_idx].serverName) - 1);
-            strncpy(httpSet[target_idx].IP, host_buf, sizeof(httpSet[target_idx].IP) - 1);
-        }
-        if (port_buf[0] != '\0') strncpy(httpSet[target_idx].Port, port_buf, sizeof(httpSet[target_idx].Port) - 1);
-        if (path_buf[0] != '\0') strncpy(httpSet[target_idx].Link, path_buf, sizeof(httpSet[target_idx].Link) - 1);
-        if (key_buf[0] != '\0') strncpy(httpSet[target_idx].Key, key_buf, sizeof(httpSet[target_idx].Key) - 1);
-    } else {
-        if (host_buf[0] != '\0') {
-            strncpy(secondaryServer.serverName, host_buf, sizeof(secondaryServer.serverName) - 1);
-            strncpy(secondaryServer.IP, host_buf, sizeof(secondaryServer.IP) - 1);
-        }
-        if (port_buf[0] != '\0') strncpy(secondaryServer.Port, port_buf, sizeof(secondaryServer.Port) - 1);
-        if (path_buf[0] != '\0') strncpy(secondaryServer.Link, path_buf, sizeof(secondaryServer.Link) - 1);
-        if (key_buf[0] != '\0') strncpy(secondaryServer.Key, key_buf, sizeof(secondaryServer.Key) - 1);
-    }
-
+// Server 2 (SMS SET_SERVER_2). host "" = none. Kept in NVS "srv-1", read at boot.
+bool server2_save(const char *host, uint16_t port, const char *path, const char *key) {
+    char port_s[8];
+    snprintf(port_s, sizeof(port_s), "%u", (unsigned)(port ? port : 80));
     Preferences prefs;
-    char ns[16];
-    snprintf(ns, sizeof(ns), "srv-%d", srv_index);
-    prefs.begin(ns, false);
-    if (host_buf[0] != '\0') prefs.putString("host", host_buf);
-    if (port_buf[0] != '\0') prefs.putString("port", port_buf);
-    if (path_buf[0] != '\0') prefs.putString("path", path_buf);
-    if (key_buf[0] != '\0') prefs.putString("key", key_buf);
+    if (!prefs.begin("srv-1", false)) return false;
+    prefs.putString("host", host);
+    prefs.putString("port", port_s);
+    prefs.putString("path", path ? path : "");
+    prefs.putString("key", key ? key : "");
     prefs.end();
-
-    snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: Server %d updated", srv_index + 1);
-    force_health_upload = true;
-    int cur_p_idx = (primary_http_no >= 0 && primary_http_no < (int)(sizeof(httpSet)/sizeof(httpSet[0]))) ? primary_http_no : 0;
-    debugf("[CMD] Server %d updated: host=%s port=%s path=%s\n", srv_index + 1, 
-           (srv_index == 0 ? httpSet[cur_p_idx].serverName : secondaryServer.serverName),
-           (srv_index == 0 ? httpSet[cur_p_idx].Port : secondaryServer.Port),
-           (srv_index == 0 ? httpSet[cur_p_idx].Link : secondaryServer.Link));
+    snprintf(secondaryServer.serverName, sizeof(secondaryServer.serverName), "%s", host);
+    snprintf(secondaryServer.IP, sizeof(secondaryServer.IP), "%s", host);
+    snprintf(secondaryServer.Port, sizeof(secondaryServer.Port), "%s", port_s);
+    snprintf(secondaryServer.Link, sizeof(secondaryServer.Link), "%s", path ? path : "");
+    if (key && key[0]) snprintf(secondaryServer.Key, sizeof(secondaryServer.Key), "%s", key);
+    debugf("[CMD] Server 2: %s:%s%s\n", host[0] ? host : "(none)", port_s, path ? path : "");
+    return true;
 }
 
-void parse_health_response(const char* body) {
-    if (body == NULL || body[0] == '\0') return;
-
-    sync_rtc_from_server_tm(body, false);
-
-    const char* idTag = strstr(body, "\"id\"");
-    if (idTag) {
-        const char* col = strchr(idTag, ':');
-        if (col) {
-            last_cmd_id = atoi(col + 1);
-        }
-    }
-
-    if (strstr(body, "\"REBOOT\"")) {
-        force_reboot = true;
-        strcpy(last_cmd_res, "Success: Rebooting Device");
-    }
-    if (strstr(body, "\"PAUSE_LIVE_POST\"") || strstr(body, "\"PAUSE_TX\"") || strstr(body, "\"PAUSE_KSNDMC\"")) {
-        live_post_muted = true;
-        Preferences pMute; pMute.begin("sys-config", false); pMute.putBool("muted", true); pMute.end();
-        strcpy(last_cmd_res, "Success: Primary Transmissions Muted");
-        force_health_upload = true;
-        debugln("[CMD] Primary server live transmissions MUTED.");
-    }
-    if (strstr(body, "\"RESUME_LIVE_POST\"") || strstr(body, "\"RESUME_TX\"") || strstr(body, "\"RESUME_KSNDMC\"")) {
-        live_post_muted = false;
-        Preferences pMute; pMute.begin("sys-config", false); pMute.putBool("muted", false); pMute.end();
-        strcpy(last_cmd_res, "Success: Primary Transmissions Resumed");
-        force_health_upload = true;
-        debugln("[CMD] Primary server live transmissions RESUMED.");
-    }
-    if (strstr(body, "\"OTA_CHECK\"")) {
-        force_ota = true;
-        strcpy(last_cmd_res, "Success: OTA Triggered");
-        ota_cmd_param[0] = '\0'; // Clear previous parameter before parsing
-        const char* pTag = strstr(body, "\"p\"");
-        if (pTag) {
-            const char* col = strchr(pTag, ':');
-            if (col) {
-                const char* q1 = strchr(col, '"');
-                if (q1) {
-                    const char* q2 = strchr(q1 + 1, '"');
-                    if (q2 && (q2 > q1 + 1)) {
-                        size_t len = q2 - (q1 + 1);
-                        if (len >= sizeof(ota_cmd_param)) len = sizeof(ota_cmd_param) - 1;
-                        strncpy(ota_cmd_param, q1 + 1, len);
-                        ota_cmd_param[len] = '\0';
-                        debugf("[CMD] Parsed OTA filename parameter: %s\n", ota_cmd_param);
-                    }
-                }
-            }
-        }
-    }
-    if (strstr(body, "\"GET_STATUS\"") || strstr(body, "\"GET_HEALTH\"")) {
-        force_health_upload = true;
-        strcpy(last_cmd_res, "Success: Telemetry Refreshed");
-    }
-    if (strstr(body, "\"GET_NUM\"")) {
-        force_get_num = true;
-        strcpy(last_cmd_res, "Executing GET_NUM");
-    }
-    if (strstr(body, "\"FTP_BACKLOG\"") || strstr(body, "\"SYNC_BACKLOG\"") || strstr(body, "\"BACKLOG_SYNC\"")) {
-        force_ftp = true;
-        strcpy(last_cmd_res, "Success: Backlog Sync Triggered");
-    }
-    if (strstr(body, "\"FTP_DAILY\"")) {
-        force_ftp_daily = true;
-        strcpy(last_cmd_res, "Success: Daily Log Triggered");
-        const char* dTag = strstr(body, "\"p\"");
-        if (dTag) {
-            const char* col = strchr(dTag, ':');
-            if (col) {
-                const char* q1 = strchr(col, '"');
-                if (q1) { strncpy(ftp_daily_date, q1+1, 8); ftp_daily_date[8]='\0'; }
-            }
-        }
-    }
-    if (strstr(body, "\"SET_WIFI_PASS\"")) {
-        const char* pTag = strstr(body, "\"p\"");
-        if (pTag) {
-            const char* col = strchr(pTag, ':');
-            if (col) {
-                const char* q1 = strchr(col, '"');
-                if (q1) {
-                    const char* q2 = strchr(q1 + 1, '"');
-                    if (q2) {
-                        int passLen = q2 - (q1 + 1);
-                        if (passLen >= 8 && passLen < 32) {
-                            char newPass[32]; strncpy(newPass, q1+1, passLen); newPass[passLen] = '\0';
-                            if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
-                                File f = SPIFFS.open("/wifi_pass.txt", FILE_WRITE);
-                                if (f) { f.print(newPass); f.close(); strcpy(last_cmd_res, "Success: WiFi Pass Updated"); force_health_upload = true; }
-                                xSemaphoreGive(fsMutex);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    if (strstr(body, "\"GET_GPS\"")) {
-        force_gps_refresh = true;
-        strcpy(last_cmd_res, "Success: GPS Refresh");
-    }
-    if (strstr(body, "\"CLEAR_FTP_QUEUE\"")) {
-        force_clear_ftp_queue = true;
-        strcpy(last_cmd_res, "Success: FTP Queue Cleared");
-    }
-    if (strstr(body, "\"DELETE_DATA\"")) {
-        force_delete_data = true;
-        strcpy(last_cmd_res, "Success: Data Wiped");
-    }
-    
-    // Command: SET_STATION_ID / SET_STN_ID
-    if (strstr(body, "\"SET_STATION_ID\"") || strstr(body, "\"SET_STN_ID\"")) {
-        const char* pTag = strstr(body, "\"p\"");
-        if (pTag) {
-            const char* col = strchr(pTag, ':');
-            if (col) {
-                const char* q1 = strchr(col, '"');
-                if (q1) {
-                    const char* q2 = strchr(q1 + 1, '"');
-                    if (q2 && (q2 > q1 + 1)) {
-                        char stn_buf[16];
-                        size_t slen = q2 - (q1 + 1);
-                        if (slen >= sizeof(stn_buf)) slen = sizeof(stn_buf) - 1;
-                        strncpy(stn_buf, q1 + 1, slen);
-                        stn_buf[slen] = '\0';
-                        set_station_id(stn_buf);
-                    }
-                }
-            }
-        }
-    }
-
-    // Command: SET_SERVER_1
-    if (strstr(body, "\"SET_SERVER_1\"")) {
-        const char* pTag = strstr(body, "\"p\"");
-        if (pTag) {
-            const char* col = strchr(pTag, ':');
-            if (col) {
-                const char* q1 = strchr(col, '"');
-                if (q1) {
-                    const char* q2 = strchr(q1 + 1, '"');
-                    if (q2 && (q2 > q1 + 1)) {
-                        char s1_buf[150];
-                        size_t len = q2 - (q1 + 1);
-                        if (len >= sizeof(s1_buf)) len = sizeof(s1_buf) - 1;
-                        strncpy(s1_buf, q1 + 1, len);
-                        s1_buf[len] = '\0';
-                        set_server_config(0, s1_buf);
-                    }
-                }
-            }
-        }
-    }
-
-    // Command: SET_SERVER_2
-    if (strstr(body, "\"SET_SERVER_2\"")) {
-        const char* pTag = strstr(body, "\"p\"");
-        if (pTag) {
-            const char* col = strchr(pTag, ':');
-            if (col) {
-                const char* q1 = strchr(col, '"');
-                if (q1) {
-                    const char* q2 = strchr(q1 + 1, '"');
-                    if (q2 && (q2 > q1 + 1)) {
-                        char s2_buf[150];
-                        size_t len = q2 - (q1 + 1);
-                        if (len >= sizeof(s2_buf)) len = sizeof(s2_buf) - 1;
-                        strncpy(s2_buf, q1 + 1, len);
-                        s2_buf[len] = '\0';
-                        set_server_config(1, s2_buf);
-                    }
-                }
-            }
-        }
-    }
-
-    // Command: SET_SERVER_MODE (0: Server 1 Only, 1: Server 2 Only, 2: Dual Broadcast)
-    if (strstr(body, "\"SET_SERVER_MODE\"")) {
-        const char* pTag = strstr(body, "\"p\"");
-        if (pTag) {
-            const char* col = strchr(pTag, ':');
-            if (col) {
-                int mode_val = atoi(col + 1);
-                if (mode_val >= 0 && mode_val <= 2) {
-                    server_mode = mode_val;
-                    Preferences pSrv; pSrv.begin("sys-config", false);
-                    pSrv.putInt("srv_mode", server_mode); pSrv.end();
-                    snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: Server Mode set to %d", server_mode);
-                    force_health_upload = true;
-                    debugf("[CMD] Server Routing Mode updated & persisted to %d\n", server_mode);
-                }
-            }
-        }
-    }
-
-    const char* rfTag = strstr(body, "\"SET_RF_RES\"");
-    if (rfTag) {
-        const char* pSub = strstr(rfTag, "\"p\"");
-        if (pSub) {
-            const char* valStart = strchr(pSub, ':');
-            if (valStart) {
-                float new_val = (float)atof(valStart + 1);
-                if (fabsf(new_val - 0.25f) < 0.05f || fabsf(new_val - 0.50f) < 0.05f) {
-                    float target_res = (fabsf(new_val - 0.25f) < 0.05f) ? 0.25f : 0.50f;
-                    RF_RESOLUTION = target_res;
-                    Preferences rfPrefs; rfPrefs.begin("sys-config", false);
-                    rfPrefs.putFloat("rf_res", target_res); rfPrefs.end();
-                    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
-                        File f = SPIFFS.open("/rf_res.txt", FILE_WRITE);
-                        if (f) { f.print(target_res, 2); f.close(); }
-                        xSemaphoreGive(fsMutex);
-                    }
-                    snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: RF Res Set (%.2fmm)", target_res);
-                    force_health_upload = true;
-                }
-            }
-        }
-    }
-
-    const char* pTag = strstr(body, "\"INTERVAL\"");
-    if (pTag) {
-        const char* pSub = strstr(pTag, "\"p\"");
-        if (pSub) {
-            const char* valStart = strchr(pSub, ':');
-            if (valStart) {
-                String valStr = "";
-                for (int k = 1; valStart[k] != '\0'; k++) {
-                    if (isdigit(valStart[k])) valStr += valStart[k];
-                    else if (valStr.length() > 0) break;
-                }
-                if (valStr.length() > 0) {
-                    test_health_every_slot = (valStr.toInt() <= 15) ? 1 : 0;
-                    Preferences prefs; prefs.begin("sys-config", false);
-                    prefs.putInt("test_health", test_health_every_slot); prefs.end();
-                    snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: Interval Set (%d min)", valStr.toInt());
-                    force_health_upload = true;
-                }
-            }
-        }
-    }
+// Server mode (SMS SET_SERVER_MODE): 0 server 1 only, 1 server 2 only, 2 both
+bool server_mode_save(int mode) {
+    Preferences prefs;
+    if (!prefs.begin("sys-config", false)) return false;
+    const bool ok = prefs.putInt("srv_mode", mode) > 0;
+    prefs.end();
+    if (ok) server_mode = mode;
+    debugf("[CMD] Server mode %d\n", mode);
+    return ok;
 }
-
-bool send_health_report(bool useJitter, bool alreadyLocked, bool cmdPollOnly) {
-  set_sys_status("SENDING HEALTH");
-#if ENABLE_HEALTH_REPORT == 1
-  if (schedulerBusy) {
-    debugln("[Health] Deferring: scheduler mid-write.");
-    return false;
-  }
-
-  // v5.96 Adaptive Holistic Fix: Polled wait instead of fixed delay
-  unsigned long startWait = millis();
-  while (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) && (millis() - startWait < 2000)) {
-    vTaskDelay(20 / portTICK_PERIOD_MS);
-  }
-  
-  // v5.96: Airtel 200ms vs BSNL 3000ms delay (M-03 restoration)
-  if (strstr(carrier, "BSNL") || strstr(carrier, "bsnl"))
-    vTaskDelay(3000 / portTICK_PERIOD_MS);
-  else
-    vTaskDelay(200 / portTICK_PERIOD_MS);
-
-  if (schedulerBusy) {
-    debugln("[Health] Deferring: scheduler activated during delay.");
-    return false;
-  }
-
-  bool mutex_acquired_by_us = false;
-  if (alreadyLocked || (xSemaphoreGetMutexHolder(modemMutex) == xTaskGetCurrentTaskHandle())) {
-    mutex_acquired_by_us = false;
-  } else if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) == pdTRUE) {
-    mutex_acquired_by_us = true;
-  } else {
-    debugln("[Health] Error: Modem Mutex Timeout.");
-    diag_modem_mutex_fails++;
-    return false;
-  }
-
-  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
-    debugln("[SPIFFS] Mutex Timeout.");
-    if (mutex_acquired_by_us) xSemaphoreGive(modemMutex); 
-    return false;
-  }
-
-  // [Health] Proceeding with Health report transmission for all connected carriers
-
-  // Terminate any leftover HTTP session context from prior telemetry tasks before starting health report
-  SerialSIT.println("AT+HTTPTERM");
-  waitForResponse("OK", 500);
-
-  SerialSIT.println("AT+CGEREP=0");
-  waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CREG=0");
-  waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CEREG=0");
-  waitForResponse("OK", 1000);
-
-  // Prepare Payload
-  char cleanStn[16];
-  strncpy(cleanStn, (ftp_station[0] != '\0') ? ftp_station : station_name, 15);
-  cleanStn[15] = '\0';
-  int slen = strlen(cleanStn);
-  while (slen > 0 && cleanStn[slen - 1] == ' ') { cleanStn[slen - 1] = '\0'; slen--; }
-
-  char feedback[128] = "";
-  if (last_cmd_id > 0) snprintf(feedback, sizeof(feedback), ",\"last_cmd_id\":%d,\"last_cmd_res\":\"%s\"", last_cmd_id, last_cmd_res);
-
-  memset(gprs_payload, 0, sizeof(gprs_payload));
-  if (diag_pd_count == 0 && current_year > 2024) reconstructSentMasks(true);
-  checkRainfallIntegrity();
-
-  bool unresolvedPD = false, unresolvedNDM = false;
-  bool dummyPD = false, dummyNDM = false;
-  analyzeFileHealth(diag_sent_mask_cur, &diag_net_data_count, &dummyPD, &dummyNDM);
-  analyzeFileHealth(diag_sent_mask_prev, &diag_net_data_count_prev, &unresolvedPD, &unresolvedNDM);
-  if (diag_http_success_count == 0 && diag_net_data_count > 0) {
-    diag_http_success_count = (diag_net_data_count > diag_http_retry_count) ? (diag_net_data_count - diag_http_retry_count) : diag_net_data_count;
-  }
-  if (diag_http_success_count_prev == 0 && diag_net_data_count_prev > 0) {
-    diag_http_success_count_prev = (diag_net_data_count_prev > diag_http_retry_count_prev) ? (diag_net_data_count_prev - diag_http_retry_count_prev) : diag_net_data_count_prev;
-  }
-
-  char h_status[256] = "";
-#define H_FAULT(f) do { \
-    size_t _rem = sizeof(h_status) - strlen(h_status) - 1; \
-    if (h_status[0] != '\0' && _rem > 1) strncat(h_status, "_", _rem--); \
-    _rem = sizeof(h_status) - strlen(h_status) - 1; \
-    if (_rem > 0) strncat(h_status, f, _rem); \
-  } while (0)
-
-  if (diag_last_reset_reason == 15) H_FAULT("BROWNOUT");
-  if (diag_last_reset_reason == 7 || diag_last_reset_reason == 8 || diag_last_reset_reason == 9 || diag_last_reset_reason == 13 || diag_last_reset_reason == 16) H_FAULT("WDOG");
-  if (!diag_rtc_battery_ok || current_year < 2025) H_FAULT("RTC_FAIL");
-  if (unresolvedPD) H_FAULT("PD");
-  if (strcmp(diag_cdm_status, "OK") != 0 && current_hour >= 9 && diag_last_rollover_day > 0) H_FAULT("CDM");
-  if (unresolvedNDM || (dummyNDM && current_hour >= 6)) H_FAULT("NDM");
-  if (lati == 0.0 && longi == 0.0) H_FAULT("NO_GPS");
-  if (live_post_muted) H_FAULT("MUTED");
-
-  if (diag_temp_cv) H_FAULT("TEMP_STUCK");
-  if (diag_hum_cv) H_FAULT("HUM_STUCK");
-  if (diag_ws_cv) H_FAULT("WS_STUCK");
-  if (diag_temp_erv || diag_temp_erz) H_FAULT("TEMP_UNREAL");
-  if (diag_hum_erv || diag_hum_erz) H_FAULT("HUM_UNREAL");
-  if (diag_ws_erv) H_FAULT("WS_UNREAL");
-  if (diag_wd_fail) H_FAULT("WD_FAIL");
-  if (diag_rain_jump) H_FAULT("RAIN_SPIKE");
-  if (diag_rain_reset) H_FAULT("RAIN_RESET");
-  if (diag_rain_calc_invalid) H_FAULT("RAIN_CALC");
-
-  if (strcmp(diag_crash_task, "NONE") != 0) {
-    char crash_info[32];
-    snprintf(crash_info, sizeof(crash_info), "CRASH-%s", diag_crash_task);
-    H_FAULT(crash_info);
-  }
-  if (h_status[0] == '\0') strcpy(h_status, "OK");
-
-  char sensor_info[48];
-#if SYSTEM == 0
-  if (diag_rain_jump) snprintf(sensor_info, sizeof(sensor_info), "RF-ERJ");
-  else if (diag_rain_reset) snprintf(sensor_info, sizeof(sensor_info), "RF-RESET");
-  else if (diag_rain_calc_invalid) snprintf(sensor_info, sizeof(sensor_info), "RF-CALC");
-  else snprintf(sensor_info, sizeof(sensor_info), "RF-OK");
-#else
-  char th_st[16] = "TH-OK", ws_st[16] = "WS-OK", wd_st[16] = "WD-OK";
-  if (hdcType == HDC_UNKNOWN) strcpy(th_st, "TH-FAIL");
-  else if (diag_temp_cv || diag_hum_cv) strcpy(th_st, "TH-CV");
-  else if (diag_temp_erz || diag_hum_erz) strcpy(th_st, "TH-ERZ");
-  else if (diag_temp_erv || diag_hum_erv) strcpy(th_st, "TH-ERV");
-
-  if (!ws_ok) strcpy(ws_st, "WS-FAIL");
-  else if (diag_ws_cv) strcpy(ws_st, "WS-CV");
-  else if (diag_ws_erv) strcpy(ws_st, "WS-ERV");
-
-  if (!wd_ok || diag_wd_fail) strcpy(wd_st, "WD-FAIL");
-
-  snprintf(sensor_info, sizeof(sensor_info), "%s,%s,%s", th_st, ws_st, wd_st);
-#endif
-
-  char gps_str[32];
-  if (abs(lati) < 0.00001 && abs(longi) < 0.00001) snprintf(gps_str, sizeof(gps_str), "NA");
-  else snprintf(gps_str, sizeof(gps_str), "%.8f,%.8f", lati, longi);
-
-  int spiffs_used = SPIFFS.usedBytes() / 1024;
-  int spiffs_total = SPIFFS.totalBytes() / 1024;
-  int unsent_count = countStored("/unsent.txt") + countStored("/ftpunsent.txt");
-
-  char rf_cls_date_str[16];
-  if (rf_cls_yy >= 2025 && rf_cls_mm >= 1 && rf_cls_mm <= 12 && rf_cls_dd >= 1 && rf_cls_dd <= 31) {
-    snprintf(rf_cls_date_str, sizeof(rf_cls_date_str), "%04d-%02d-%02d", rf_cls_yy, rf_cls_mm, rf_cls_dd);
-  } else {
-    struct tm snapshot;
-    getTimeSnapshot(&snapshot);
-    int cur_dd = snapshot.tm_mday, cur_mm = snapshot.tm_mon + 1, cur_yy = snapshot.tm_year + 1900;
-    int calcSlot = (snapshot.tm_hour * 4 + snapshot.tm_min / 15 + 61) % 96;
-    if (calcSlot <= 60) next_date(&cur_dd, &cur_mm, &cur_yy);
-    snprintf(rf_cls_date_str, sizeof(rf_cls_date_str), "%04d-%02d-%02d", cur_yy, cur_mm, cur_dd);
-  }
-
-  char calib_report[48] = "NA";
-  if (calib_year > 2000) {
-    snprintf(calib_report, sizeof(calib_report), "CLB-%s (%04d-%02d-%02d)",
-             (calib_sts == 1 ? "OK" : "FAIL"), calib_year, calib_month,
-             calib_day);
-  }
-
-  snprintf(gprs_payload, sizeof(gprs_payload),
-      "{\"stn_id\":\"%s\",\"unit_type\":\"%s\",\"system\":%d,"
-      "\"health_sts\":\"%s\",\"sensor_sts\":\"%s\",\"rtc_ok\":%d,\"sd_ok\":%d,"
-      "\"bat_v\":%.2f,\"mcu_bat\":%.2f,\"sol_v\":%.2f,\"signal\":%d,"
-      "\"net_cnt\":%d,\"net_cnt_prev\":%d,\"cdm_sts\":\"%s\","
-      "\"pd_cnt\":%d,\"ndm_cnt\":%d,"
-      "\"spiffs_kb\":%d,\"spiffs_total_kb\":%d,\"unsent_count\":%d,"
-      "\"reset_reason\":%d,\"ver\":\"%s\",\"iccid\":\"%s\",\"carrier\":\"%s\",\"gps\":\"%s\","
-      "\"calib\":\"%s\",\"rf_res\":%.2f,\"rf_cls_date\":\"%s\","
-      "\"reg_fails\":%d,\"reg_fail_reason\":\"%s\","
-      "\"http_suc_cnt\":%d,\"http_ret_cnt\":%d,\"ftp_suc_cnt\":%d,"
-      "\"http_suc_cnt_prev\":%d,\"http_ret_cnt_prev\":%d,\"ftp_suc_cnt_prev\":%d,"
-      "\"http_present_fails\":%d,\"http_cum_fails\":%d,\"http_backlog_cnt\":%d,"
-      "\"mutex_fail\":%d,\"ota_fails\":%d,\"ota_fail_reason\":\"%s\","
-      "\"cmd_poll\":%d,\"token\":\"%s\"%s}", 
-      cleanStn, UNIT, SYSTEM,
-      h_status, sensor_info, (diag_rtc_battery_ok ? 1 : 0), (sd_card_ok ? 1 : 0),
-      li_bat_val, bat_3v3_val, solar_val, signal_lvl,
-      diag_net_data_count, diag_net_data_count_prev, diag_cdm_status,
-      (unresolvedPD ? 1 : 0), diag_ndm_count_prev,
-      spiffs_used, spiffs_total, unsent_count,
-      diag_last_reset_reason, UNIT_VER, cached_iccid, carrier, gps_str,
-      calib_report, RF_RESOLUTION, rf_cls_date_str,
-      diag_gprs_fails, diag_reg_fail_type,
-      diag_http_success_count, diag_http_retry_count, diag_ftp_success_count,
-      diag_http_success_count_prev, diag_http_retry_count_prev, diag_ftp_success_count_prev,
-      diag_http_present_fails, diag_http_cum_fails, get_total_backlogs(true),
-      diag_modem_mutex_fails, ota_fail_count, ota_fail_reason,
-      (cmdPollOnly ? 1 : 0), TELEMETRY_TOKEN, feedback);
-
-  xSemaphoreGive(fsMutex); 
-
-  bool success = false;
-  // Dynamic max attempts: 1 attempt for 15-min pulse mode (to conserve battery), 2 attempts for 24-hour daily report
-  int max_attempts = (test_health_every_slot == 1) ? 1 : 2;
-
-  for (int attempt = 1; attempt <= max_attempts; attempt++) {
-    debugf("[Health] Attempt %d/%d\n", attempt, max_attempts);
-
-    if (!verify_bearer_or_recover()) {
-      debugln("[Health] Bearer recovery failed. Aborting health attempt to preserve battery.");
-      break;
-    }
-
-    // ----------------------------------------------------
-    // Path 1: Direct TCP Socket Primary Transport (~300ms) - Exact A7672S Implementation
-    // ----------------------------------------------------
-    bool tcp_success = false;
-    debugln("[Health] Attempting Direct TCP Transport...");
-
-    flushSerialSIT();
-    SerialSIT.println("AT+NETOPEN?");
-    waitForResponse("OK", 2000);
-    if (strstr(modem_response_buf, "+NETOPEN: 1") == NULL) {
-      SerialSIT.println("AT+NETOPEN");
-      waitForResponse("OK", 5000);
-    }
-
-    const char *health_hosts[2] = {
-#ifdef HEALTH_SERVER_IP
-      HEALTH_SERVER_IP,
-#else
-      HEALTH_SERVER_DOMAIN,
-#endif
-#ifdef HEALTH_SERVER_DOMAIN
-      HEALTH_SERVER_DOMAIN
-#else
-      HEALTH_SERVER_IP
-#endif
-    };
-
-    for (int h = 0; h < 2; h++) {
-      const char *connHost = health_hosts[h];
-      if (connHost == NULL || connHost[0] == '\0') continue;
-      if (h == 1 && strcmp(health_hosts[0], health_hosts[1]) == 0) continue;
-
-      SerialSIT.println("AT+CIPCLOSE=0");
-      waitForResponse("OK", 1000);
-
-      char hostHeader[128];
-      if (atoi(HEALTH_SERVER_PORT) == 80) {
-        snprintf(hostHeader, sizeof(hostHeader), "%s", HEALTH_SERVER_DOMAIN);
-      } else {
-        snprintf(hostHeader, sizeof(hostHeader), "%s:%s", HEALTH_SERVER_DOMAIN, HEALTH_SERVER_PORT);
-      }
-
-      char httpRequest[2048];
-      int payloadLen = strlen(gprs_payload);
-      snprintf(httpRequest, sizeof(httpRequest),
-          "POST %s HTTP/1.1\r\n"
-          "Host: %s\r\n"
-          "Content-Type: application/json\r\n"
-          "Content-Length: %d\r\n"
-          "Accept-Encoding: identity\r\n"
-          "Connection: close\r\n\r\n"
-          "%s", HEALTH_SERVER_PATH, hostHeader, payloadLen, gprs_payload);
-
-      int reqLen = strlen(httpRequest);
-
-      char openCmd[128];
-      snprintf(openCmd, sizeof(openCmd), "AT+CIPOPEN=0,\"TCP\",\"%s\",%s", connHost, HEALTH_SERVER_PORT);
-      SerialSIT.println(openCmd);
-      
-      if (waitForResponse("+CIPOPEN: 0,0", 15000)) {
-          debugf("[Health] TCP Connected successfully to %s.\n", connHost);
-          SerialSIT.println("ATE0");
-          waitForResponse("OK", 1000);
-
-          char sendCmd[32];
-          snprintf(sendCmd, sizeof(sendCmd), "AT+CIPSEND=0,%d", reqLen);
-          SerialSIT.println(sendCmd);
-
-          if (waitForResponse(">", 5000)) {
-              vTaskDelay(10 / portTICK_PERIOD_MS);
-              modem_response_buf[0] = '\0'; // Clear buffer before response accumulation
-              SerialSIT.write((const uint8_t *)httpRequest, reqLen);
-
-              if (waitForResponseNoFlush("+IPD", 25000)) {
-                  uint32_t respStart = millis();
-                  // Wait for complete JSON body (ends with '}') or connection termination before parsing
-                  while (strstr(modem_response_buf, "}") == NULL && (millis() - respStart < 6000)) {
-                    while (SerialSIT.available()) {
-                      int len = strlen(modem_response_buf);
-                      if (len < 2047) {
-                        char c = SerialSIT.read();
-                        if (c == '\0') c = ' '; // Sanitize null bytes to prevent premature string truncation
-                        modem_response_buf[len] = c;
-                        modem_response_buf[len + 1] = '\0';
-                      } else {
-                        SerialSIT.read();
-                      }
-                    }
-                    vTaskDelay(20 / portTICK_PERIOD_MS);
-                  }
-
-                  if (strstr(modem_response_buf, "200") != NULL || strstr(modem_response_buf, "status") != NULL || strstr(modem_response_buf, "stored") != NULL || strstr(modem_response_buf, "\"tm\"") != NULL) {
-                      tcp_success = true;
-                      success = true;
-                      debugln("[Health] ✅ Direct TCP Delivered & Confirmed by Server (200 OK).");
-                      debugf("[Health] Server Response Body:\n%s\n", modem_response_buf);
-                      parse_health_response(modem_response_buf);
-                      SerialSIT.println("AT+CIPCLOSE=0");
-                      waitForResponse("OK", 1000);
-                      break;
-                  } else {
-                      debugf("[Health] TCP Response missing 200/status after +IPD. Resp: '%s'\n", modem_response_buf);
-                  }
-              } else {
-                  debugf("[Health] TCP wait for +IPD failed/timeout. Resp: '%s'\n", modem_response_buf);
-              }
-          } else {
-              debugf("[Health] TCP CIPSEND Prompt (>) failed. Resp: '%s'\n", modem_response_buf);
-          }
-          SerialSIT.println("AT+CIPCLOSE=0");
-          waitForResponse("OK", 1000);
-      } else {
-          debugf("[Health] TCP Connection to %s failed.\n", connHost);
-          SerialSIT.println("AT+CIPCLOSE=0");
-          waitForResponse("OK", 1000);
-      }
-    }
-
-    if (success) break;
-
-    // ----------------------------------------------------
-    // Path 2: High-Level AT+HTTPINIT Stack (Fallback)
-    // ----------------------------------------------------
-    debugln("[Health] Attempting High-Level HTTPINIT Transport...");
-
-    flushSerialSIT();
-    SerialSIT.println("AT+CIPCLOSE=0");
-    waitForResponse("OK", 1000);
-
-    flushSerialSIT();
-    SerialSIT.println("AT+HTTPTERM"); 
-    waitForResponse("OK", 1000);
-    vTaskDelay(200 / portTICK_PERIOD_MS);
-    
-    flushSerialSIT();
-    SerialSIT.println("AT+HTTPINIT");
-    if (waitForResponse("OK", 5000)) {
-      SerialSIT.println("AT+HTTPPARA=\"CID\",1");
-      waitForResponse("OK", 1000);
-      char ht_url[150];
-      if (atoi(HEALTH_SERVER_PORT) == 80) {
-        snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s%s\"", HEALTH_SERVER_IP, HEALTH_SERVER_PATH);
-      } else {
-        snprintf(ht_url, sizeof(ht_url), "AT+HTTPPARA=\"URL\",\"http://%s:%s%s\"", HEALTH_SERVER_IP, HEALTH_SERVER_PORT, HEALTH_SERVER_PATH);
-      }
-      debugf("[Health] Prepared URL: %s\n", ht_url);
-      flushSerialSIT(); 
-      SerialSIT.println(ht_url);
-      if (waitForResponse("OK", 3000)) {
-        flushSerialSIT();
-        SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-        waitForResponse("OK", 1000);
-
-        int actualLen = strlen(gprs_payload);
-        char ht_data_cmd[64];
-        snprintf(ht_data_cmd, sizeof(ht_data_cmd), "AT+HTTPDATA=%d,15000", actualLen); 
-        flushSerialSIT();
-        SerialSIT.println(ht_data_cmd);
-
-        if (waitForResponse("DOWNLOAD", 15000)) {
-          vTaskDelay(20 / portTICK_PERIOD_MS);
-          SerialSIT.write((const uint8_t *)gprs_payload, actualLen);
-
-          if (waitForResponse("OK", 10000) || strstr(modem_response_buf, "OK") != NULL) {
-            flushSerialSIT();
-            SerialSIT.println("AT+HTTPACTION=1");
-            if (waitForResponse("+HTTPACTION:", 30000)) {
-              debugf("[Health] HTTPACTION Response: %s\n", modem_response_buf);
-              if (strstr(modem_response_buf, "200") != NULL) {
-                success = true;
-                debugln("[Health] ✅ High-Level HTTPINIT Delivered & Confirmed by Server (200 OK).");
-              } else if (strstr(modem_response_buf, "714") || strstr(modem_response_buf, "706")) {
-                debugln("[Health] 🧟 Zombie Socket (714/706). Nuking Bearer Context...");
-                SerialSIT.println("AT+HTTPTERM"); waitForResponse("OK", 1000);
-                SerialSIT.println("AT+CGACT=0,1"); waitForResponse("OK", 3000);
-                vTaskDelay(500 / portTICK_PERIOD_MS);
-              }
-            }
-            if (success) {
-              vTaskDelay(200 / portTICK_PERIOD_MS);
-              SerialSIT.println("AT+HTTPREAD=0,512"); 
-              if (waitForResponse("+HTTPREAD:", 5000)) {
-                parse_health_response(modem_response_buf);
-              }
-            }
-          } else {
-            debugf("[Health] HTTPDATA payload write failed. Resp: '%s'\n", modem_response_buf);
-          }
-        } else {
-          debugf("[Health] DOWNLOAD Fail. Resp: '%s'\n", modem_response_buf);
-        }
-      } else {
-        debugln("[Health] [ERR] URL PARA Reject.");
-      }
-    } else {
-      debugln("[Health] [ERR] HTTPINIT Reject.");
-    }
-
-    SerialSIT.println("AT+HTTPTERM");
-    waitForResponse("OK", 1000);
-    if (success) break;
-  }
-
-  SerialSIT.println("AT+CGEREP=2"); waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CREG=1"); waitForResponse("OK", 1000);
-  SerialSIT.println("AT+CEREG=1"); waitForResponse("OK", 1000);
-
-  if (mutex_acquired_by_us) xSemaphoreGive(modemMutex);
-  if (success) strcpy(diag_crash_task, "NONE");
-  return success;
-#else
-  debugln("[Health] Reporting Disabled (v5.72 Hardened).");
-  return true;
-#endif
-}
-
-/*
- *   GRACEFUL REBOOT (v5.58 Fix)
- */

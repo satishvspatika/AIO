@@ -38,32 +38,19 @@ TaskHandle_t scheduler_h;
 TaskHandle_t gprs_h; // http,sms,ftp,dota
 volatile bool primary_data_delivered = false;
 RTC_DATA_ATTR volatile bool skip_primary_http = false; // v5.50: Survive warm resets (volatile Fix)
-volatile bool force_ftp = false;
 volatile bool sleep_sequence_active = false; // v5.77: Sleep Gate signal
-volatile bool force_ftp_daily = false;
-volatile bool force_health_upload = false;
-volatile bool force_get_num = false;
 RTC_DATA_ATTR int rtc_daily_sync_count = 0; // v5.77: Daily sync retry cap
-char ftp_daily_date[12] = "";
-volatile bool force_reboot = false;
-volatile bool force_ota = false;
-volatile bool force_gps_refresh =
-    false; // v7.59: Server-requested GPS re-acquire
-volatile bool force_clear_ftp_queue = false;
-volatile bool force_delete_data = false;
+volatile bool force_delete_data = false;     // VARSHA ERASE_DATA (sms_remote.ino)
 
 // --- v5.81 DEFINITIVE SYMBOL SEAL ---
 int send_at_cmd_data(char *payload, bool robust);
 
 // v5.83 Fix: Consensus System State (Standardized sizes & proper init)
-volatile bool ota_silent_mode = false;
 volatile bool bearer_recovery_active = false;
 volatile bool gprs_active = false; 
 volatile uint32_t last_activity_time = 0; 
 char last_fw_ver[32] = {0}; 
 char chip_id[13] = "";
-RTC_DATA_ATTR int health_last_sent_day = -1;
-RTC_DATA_ATTR int health_last_sent_hour = -1;
 
 // v5.66: Core System State (Moved from globals.h)
 volatile int sync_mode = eSyncModeInitial;
@@ -131,9 +118,8 @@ SensorData latestSensorData; // Global sensor data anchor
 char *startptr = NULL;
 int send_status = 0;
 bool valid_dt = false, valid_time = false;
-int ftp_login_flag = 0;
 size_t len = 0;
-char last_logged[16] = "";
+char last_logged[17] = ""; // v6.56: 16 chars "YYYY-MM-DD,HH:MM" + NUL (was 16, cut the last digit)
 char http_data[350] = ""; 
 char sample_cum_rf[10], sample_inst_rf[10], sample_temp[10], sample_hum[10],
     sample_avgWS[10], sample_WD[10], sample_bat[10], ftpsample_avgWS[10],
@@ -238,9 +224,6 @@ volatile bool ota_writing_active = false;
 volatile bool health_in_progress = false; // v5.82 (Golden Master): Restored missing gate
 int ota_fail_count = 0;
 char ota_fail_reason[48] = "NONE";
-char ota_cmd_param[128] = "";
-RTC_DATA_ATTR int last_cmd_id = 0;
-RTC_DATA_ATTR char last_cmd_res[64] = "N/A";
 TaskHandle_t lcdkeypad_h; // v5.82 (Golden Master): Restored handles
 TaskHandle_t tempHum_h;
 // --- End Global Definitions ---
@@ -297,7 +280,6 @@ RTC_DATA_ATTR int diag_cum_fail_reset_month = -1;
 RTC_DATA_ATTR int last_http_ok_slot = -1; // v5.72: Track slot of last successful HTTP
 RTC_DATA_ATTR int last_unsent_sampleNo = -1; // v5.72: Dedup guard for unsent.txt
 RTC_DATA_ATTR int diag_rejected_count = 0;
-RTC_DATA_ATTR bool diag_sensor_fault_sent_today = false;
 RTC_DATA_ATTR char diag_crash_task[16] = "NONE";
 
 RTC_DATA_ATTR uint32_t total_wind_pulses_32 = 0;
@@ -336,6 +318,10 @@ RTC_DATA_ATTR char cached_server_domain[64] = "";
 RTC_DATA_ATTR bool dns_fallback_active = false;
 RTC_DATA_ATTR int preferred_ftp_mode = -1;
 RTC_DATA_ATTR bool healer_reboot_in_progress = false;
+// v6.56 M-1: slots in a row in which nothing reached the server, for any reason (no
+// registration, no bearer, HTTP failures). 96 (24 h) forces one recovery restart.
+RTC_DATA_ATTR int heal_undelivered_slots = 0;
+RTC_DATA_ATTR bool heal_slot_delivered = false;
 RTC_DATA_ATTR char diag_crash_task_rtc[16] = ""; // v5.74: Task name that triggered last stack overflow
 RTC_DATA_ATTR int diag_crash_count = 0;           // v5.74: Consecutive crashes of the same task
 RTC_DATA_ATTR bool diag_fw_just_updated = false;
@@ -366,7 +352,6 @@ RTC_DATA_ATTR bool signature_valid = false;
 char hw_tag = ' '; // v5.75: Passive hardware/VFS health tag
 RTC_DATA_ATTR bool pending_manual_status = false;
 RTC_DATA_ATTR bool pending_manual_gps = false;
-RTC_DATA_ATTR bool pending_manual_health = false;
 RTC_DATA_ATTR int last_successful_cnmp = 38; // v6.40: 38=LTE Preferred, 13=GSM
 RTC_DATA_ATTR bool last_http_ok = false;    // v5.84: Skip IP check if last slot worked
 RTC_DATA_ATTR int gprs_2g_slots_count = 0; // v5.84: Self-recovering 'Peeking' for LTE
@@ -387,7 +372,6 @@ ui_data_t ui_data[FLD_COUNT] = {
     {10, "LAST LOGGED AT", "0", eNumeric},           // 7
     {6, "SEND STATUS", "YES ?", eDisplayOnly},       // 8
     {15, "SEND LAT/LONG", "YES ?", eDisplayOnly},    // 9
-    {28, "SEND HEALTH", "YES ?", eDisplayOnly},      // 10
     {7, "RF CALIBRATION", "Yes?", eLive},            // 11
     {25, "RF RESOLUTION", "0.25", eNumeric},         // 12
     {11, "DELETE DATA?", "YES?", eNumeric},          // 13
@@ -455,7 +439,6 @@ volatile bool initial_boot_complete = false;
 unsigned long last_nuvoton_power_off_time = 0;
 
 // --- System Configuration & Counters (v5.65 ODR Fix) ---
-int test_health_every_slot = TEST_HEALTH_DEFAULT;
 float RF_RESOLUTION = DEFAULT_RF_RESOLUTION;
 unsigned long last_key_time = 0;
 int cur_file_found = 0;
@@ -469,7 +452,6 @@ int http_code = -1;
 volatile int signal_strength = SIGNAL_STRENGTH_NO_DATA; // cross-task: GPRS writes, scheduler reads
 volatile int signal_lvl = SIGNAL_STRENGTH_NO_DATA;      // cross-task: GPRS writes, scheduler reads
 int sd_card_ok = 0;
-int send_daily = 0;
 int cur_mode = 0;
 int cur_fld_no = 0;
 int last_lcd_state = 0; // v5.70 Final: Global UI state tracker
@@ -483,7 +465,11 @@ char pres_str[20] = "NA";
 // --- End System Definitions ---
 
 void setup() {
+#if ENABLE_BROWNOUT_RESET == 0
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Disable brownout detector to prevent reset during 2A modem RF transmit surge
+#endif
+  // v6.56 M-9: with ENABLE_BROWNOUT_RESET 1 the core's default detector (about 2.43 V) stays
+  // on: a sagging supply resets cleanly instead of risking a corrupt flash write.
   set_sys_status("BOOTING");
 
   // Re-configure Watchdog early with a safe 120-second timeout for boot tasks
@@ -543,8 +529,10 @@ void setup() {
 #if DEBUG == 1
   Serial.begin(115200);
 #endif
+  // v6.56 OTA: before any task starts. A new image on trial counts its crash restarts here and
+  // goes back to the old firmware after too many (the units' bootloader has no rollback).
+  ota_boot_init();
   // v5.75: Force-Enable Logs (Clears stale RTC RAM silence flags)
-  ota_silent_mode = false;
   bearer_recovery_active = false;
 
 #if DEBUG == 1
@@ -564,6 +552,7 @@ void setup() {
   // Record Reset Reason and Increment Uptime
   RESET_REASON rr = rtc_get_reset_reason(0);
   diag_last_reset_reason = (int)rr;
+  health_note_boot(); // v6.57: fault/watchdog restarts for the daily report
   
   // v7.93: Only wipe counters on HARD Power-On (1). 
   // Preserve on DEEPSLEEP (5) for better testing resilience.
@@ -619,8 +608,6 @@ void setup() {
       diag_sent_mask_cur[0] = 0; diag_sent_mask_cur[1] = 0; diag_sent_mask_cur[2] = 0;
       diag_sent_mask_prev[0] = 0; diag_sent_mask_prev[1] = 0; diag_sent_mask_prev[2] = 0;
       last_processed_sample_idx = -1; // Force scheduler re-entry
-      health_last_sent_day = -1;      // v5.52 LOOP-6 FIX: Reset health persistence
-      health_last_sent_hour = -1;
 
       // v7.94: Clear physical ULP counters too (Atomic Word Alignment Guaranteed)
       rf_count.val = 0;
@@ -668,14 +655,11 @@ void setup() {
       strcpy(temp, station_name + 2);
       strcpy(station_name, temp);
     }
-    test_health_every_slot = prefs.getInt("test_health", TEST_HEALTH_DEFAULT);
     live_post_muted = prefs.getBool("muted", false);
     server_mode = prefs.getInt("srv_mode", 0);
-    debug("Health Mode: ");
-    debugln(test_health_every_slot == 1 ? "PULSE (15m)" : (test_health_every_slot == 0 ? "TWICE DAILY (1am & 1pm)" : "DISABLED"));
     debugf("Server Mode: %d (%s)\n", server_mode, (server_mode == 0 ? "Server 1 Only" : (server_mode == 1 ? "Server 2 Only" : "Dual Broadcast")));
     if (live_post_muted) {
-      debugln("[BOOT] ⏸️ Primary Server Live Transmissions MUTED (Loaded from NVS).");
+      debugln("[BOOT] Sending stopped by SMS (VARSHA STOP): nothing is sent until VARSHA RESUME.");
     }
     
     // Load Server 2 override from NVS if set
@@ -783,21 +767,6 @@ void setup() {
     prefs.putInt("fail_cnt", 0);
     prefs.putString("fail_res", "NONE");
     prefs.putString("last_ver", FIRMWARE_VERSION);
-
-    char saved_res[64] = {0};
-    prefs.getString("last_cmd_res", saved_res, sizeof(saved_res)-1);
-    if (strlen(saved_res) > 0) {
-      strncpy(last_cmd_res, saved_res, sizeof(last_cmd_res)-1);
-      last_cmd_res[sizeof(last_cmd_res)-1] = '\0';
-      prefs.putString("last_cmd_res", "");
-    } else {
-      snprintf(last_cmd_res, sizeof(last_cmd_res), "Success: OTA %s Installed", FIRMWARE_VERSION);
-    }
-    int saved_id = prefs.getInt("last_cmd_id", 0);
-    if (saved_id > 0) {
-      last_cmd_id = saved_id;
-      prefs.putInt("last_cmd_id", 0);
-    }
 
     // v5.60: Time-aware reset for Version Change
     int ver_hr = 10;
@@ -911,7 +880,7 @@ void setup() {
       signature_valid = true;
 
       // Populate last_logged string for UI display immediately
-      snprintf(last_logged, sizeof(last_logged), "%d-%d-%d,%02d:%02d",
+      snprintf(last_logged, sizeof(last_logged), "%04d-%02d-%02d,%02d:%02d",
                last_recorded_yy, last_recorded_mm, last_recorded_dd,
                last_recorded_hr, last_recorded_min);
     }
@@ -1092,7 +1061,7 @@ void setup() {
     debugln(STATION_TYPE);
     http_no = 1;
   } else if ((strstr(UNIT, "BIHAR_TRG") && (SYSTEM == 0))) {
-    strcpy(universalNumber, "9741391102");
+    strcpy(universalNumber, "9980945474"); // v6.56b: as the LPC Bihar unit (production number, user 2026-11-09)
     snprintf(UNIT_VER, sizeof(UNIT_VER), "TRG9-BIH-%s%s", FIRMWARE_VERSION, UI_SUFFIX);
     strcpy(NETWORK, "DES-BIH");
     strcpy(STATION_TYPE, "TRG");
@@ -1339,26 +1308,30 @@ void setup() {
           }
           root.close();
           debugln("[OTA] Wipe complete.");
+          // v6.56: the rain/wind counters are reset only with a cross-flash (their meaning
+          // changes with the station type). A same-type update (OTA or SD) keeps them: the
+          // restart is warm and the counters stay valid, and resetting them lost the tips
+          // counted since the last slot (OTA installs right after a slot).
+          // RF
+#if (SYSTEM == 0) || (SYSTEM == 2) || (SYSTEM == 3)
+          rf_count.val = 0;
+          rf_value = 0;
+          total_rf_pulses_32 = 0;      // v5.78: Reset accumulator to prevent jump
+          last_raw_rf_count = 0;       // v5.78: Reset anchor to 0
+          last_sched_rf_pulses_32 = 0; // v5.78: Reset scheduler anchor
+#endif
+
+          // TWS
+#if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
+          wind_count.val = 0; // Making the count as 0
+          total_wind_pulses_32 = 0;      // v5.78: Reset accumulator to prevent jump
+          last_raw_wind_count = 0;       // v5.78: Reset anchor to 0
+          last_sched_wind_pulses_32 = 0; // v5.78: Reset scheduler anchor
+#endif
       } else {
           debugln("[OTA] Minor version update detected. Preserving backlog data intact.");
       }
 
-      // RF
-#if (SYSTEM == 0) || (SYSTEM == 2) || (SYSTEM == 3)
-      rf_count.val = 0;
-      rf_value = 0;
-      total_rf_pulses_32 = 0;      // v5.78: Reset accumulator to prevent jump
-      last_raw_rf_count = 0;       // v5.78: Reset anchor to 0
-      last_sched_rf_pulses_32 = 0; // v5.78: Reset scheduler anchor
-#endif
-
-// TWS
-#if (SYSTEM == 1) || (SYSTEM == 2) || (SYSTEM == 3)
-      wind_count.val = 0; // Making the count as 0
-      total_wind_pulses_32 = 0;      // v5.78: Reset accumulator to prevent jump
-      last_raw_wind_count = 0;       // v5.78: Reset anchor to 0
-      last_sched_wind_pulses_32 = 0; // v5.78: Reset scheduler anchor
-#endif
     }
   } else {
     // Create firmware.doc if missing (Fresh install)
@@ -1388,7 +1361,10 @@ void setup() {
           firmware.close();
           SPIFFS.remove("/firmware.bin");
           SPIFFS.remove("/firmware.ready");
-          return; // Skip update
+          // v6.56 C-2: was "return;", which left setup() before any task was
+          // created; loop() then never slept. The bad file is gone, so restart.
+          delay(200);
+          ESP.restart();
         }
         firmware.seek(0); // Reset to start for writeStream
 
@@ -1683,11 +1659,50 @@ void setup() {
 volatile bool sd_ota_lcd_active = false;
 static int last_lcd_percent = -1;
 
-void progressCallBack(size_t currSize, size_t totalSize) {
-  if (!ota_silent_mode) {
-    debugf2("CALLBACK:  Update process at %d of %d bytes...\n", currSize,
-            totalSize);
+int ota_sd_file_ui(File &f, const char *sd_ver);   // ota_esp.ino (v6.62)
+
+// v6.62: two lines on the LCD during the boot-time SD firmware check, the same way the SD update shows
+// its progress. sd_ota_lcd_active keeps the keypad task off the LCD; the caller clears it.
+static void sd_fw_lcd_message(const char *l1, const char *l2) {
+  sd_ota_lcd_active = true;
+  digitalWrite(32, HIGH);   // LCD 5V rail on
+  vTaskDelay(100 / portTICK_PERIOD_MS);
+#if USE_NUVOTON_UI == 1
+  Serial1.begin(9600, SERIAL_8N1, 14, 4);
+  vTaskDelay(300 / portTICK_PERIOD_MS);
+  lcd.backlight();
+  lcd.clear();
+  vTaskDelay(10 / portTICK_PERIOD_MS);
+  lcd.setCursor(0, 0);
+  lcd.print(l1);
+  lcd.setCursor(0, 1);
+  lcd.print(l2);
+#else
+  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+    uint8_t target_addr = LCD_I2C_ADDR;
+    Wire.beginTransmission(target_addr);
+    if (Wire.endTransmission() != 0) {
+      uint8_t alt_addr = (target_addr == 0x27) ? 0x3F : 0x27;
+      Wire.beginTransmission(alt_addr);
+      if (Wire.endTransmission() == 0) target_addr = alt_addr;
+    }
+    lcd = LiquidCrystal_I2C(target_addr, 16, 2);
+    lcd.init();
+    lcd.display();
+    lcd.backlight();
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(l1);
+    lcd.setCursor(0, 1);
+    lcd.print(l2);
+    xSemaphoreGive(i2cMutex);
   }
+#endif
+}
+
+void progressCallBack(size_t currSize, size_t totalSize) {
+  debugf2("CALLBACK:  Update process at %d of %d bytes...\n", currSize,
+            totalSize);
   if (sd_ota_lcd_active && totalSize > 0) {
     int percent = (int)((currSize * 100) / totalSize);
     if (percent != last_lcd_percent && percent % 5 == 0) {
@@ -2066,6 +2081,50 @@ void initialize_hw() {
       }
     }
 
+    // v6.62: an SD card may change the station type, never the display hardware (Nuvoton/Matrix).
+    // A refused file is remembered by its MD5, so a wrong card left in the unit is not read again
+    // at every wake; the LCD still says why when the unit is powered on or woken by a key.
+    if (needUpdate) {
+      char refused_md5[64] = {0};
+      if (SPIFFS.exists("/sd_fw_refused.txt")) {
+        File rf = SPIFFS.open("/sd_fw_refused.txt", FILE_READ);
+        if (rf) {
+          int r5 = rf.readBytesUntil('\n', refused_md5, sizeof(refused_md5) - 1);
+          refused_md5[r5] = '\0';
+          trim_whitespace(refused_md5);
+          rf.close();
+        }
+      }
+      int file_ui = -2;   // -2: not read (the same file was refused before)
+      if (strlen(sd_md5) > 0 && strcasecmp(sd_md5, refused_md5) == 0) {
+        debugln("[OTA] SD firmware was refused before (other display hardware): skipped.");
+      } else {
+        File tf = SD.open(bin_path, FILE_READ);
+        file_ui = tf ? ota_sd_file_ui(tf, sd_ver) : -1;
+        if (tf) tf.close();
+      }
+      if (file_ui != USE_NUVOTON_UI) {
+        needUpdate = false;
+        if (file_ui != -2) {
+          debugf("[OTA] SD firmware '%s' is for %s, this unit is %s: refused.\n", sd_ver,
+                 file_ui == 1 ? "a Nuvoton display" : (file_ui == 0 ? "a Matrix display" : "unknown hardware"),
+                 USE_NUVOTON_UI ? "Nuvoton" : "Matrix");
+          if (strlen(sd_md5) > 0) {
+            File rw = SPIFFS.open("/sd_fw_refused.txt", FILE_WRITE);
+            if (rw) {
+              rw.print(sd_md5);
+              rw.close();
+            }
+          }
+        }
+        if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER) {
+          sd_fw_lcd_message("SD FW REFUSED:  ", "OTHER HARDWARE  ");
+          delay(3000);
+          sd_ota_lcd_active = false;
+        }
+      }
+    }
+
     if (needUpdate) {
           File firmware = SD.open(bin_path, FILE_READ);
           if (firmware) {
@@ -2239,6 +2298,27 @@ void loop() {
   bool modemIsBusy = (uxSemaphoreGetCount(modemMutex) == 0);
   bool fsIsBusy = (uxSemaphoreGetCount(fsMutex) == 0);
 
+  // v6.56 M-1: hung-task recovery. It used to sit inside the sleep gate, which only
+  // opens when both mutexes are free, so "mutex held too long" could never be seen.
+  // A lock held without a break for LOCKUP_REBOOT_MS (a normal slot with a full backlog
+  // holds the modem for about 5 min) means a task is stuck: restart. Not while someone
+  // is using the LCD or WiFi, or during an OTA write.
+  {
+    static uint32_t busy_since_ms = 0;
+    if (!(modemIsBusy || fsIsBusy)) {
+      busy_since_ms = 0;
+    } else if (busy_since_ms == 0) {
+      busy_since_ms = millis() | 1;
+    } else if (millis() - busy_since_ms > LOCKUP_REBOOT_MS && !ota_writing_active &&
+               !wifi_active && lcdkeypad_start == 0) {
+      debugf("[PWR] LOCKUP RECOVERY: %s mutex held for over %lu min. Forcing Reboot...\n",
+             modemIsBusy ? "modem" : "fs", (unsigned long)(LOCKUP_REBOOT_MS / 60000));
+      healer_reboot_in_progress = true; // Keep the counters across the restart
+      vTaskDelay(500 / portTICK_PERIOD_MS);
+      ESP.restart();
+    }
+  }
+
   // v5.85: Ghost-UI Safety Override
   // If we woke up by TIMER (scheduled) and all communicating tasks are DONE, 
   // we do not wait for the LCD to timeout (modem current noise can trigger it).
@@ -2246,7 +2326,7 @@ void loop() {
   // AND protect active manual tasks (Calibration, Manual Syncs, OTA).
   bool manualTaskActive;
   portENTER_CRITICAL(&syncMux);
-  manualTaskActive = (pending_manual_status || pending_manual_gps || pending_manual_health || force_ota || ota_writing_active || (calib_flag == 1) || (cur_mode == eEditOn));
+  manualTaskActive = (pending_manual_status || pending_manual_gps || ota_writing_active || (calib_flag == 1) || (cur_mode == eEditOn));
   portEXIT_CRITICAL(&syncMux);
 
   bool uiIsGhosting = (wakeup_reason_is != ext0 && lcdkeypad_start == 1 && !manualTaskActive && (millis() - last_key_time > 60000) && (millis() > 60000));
@@ -2258,8 +2338,7 @@ void loop() {
       (__atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) == false) && (health_in_progress == false) &&
       (snap_schedulerBusy == false) && (gprs_started == false || sync_mode == eHttpStop) &&
       (pending_manual_status == false) && (pending_manual_gps == false) &&
-      (pending_manual_health == false) &&
-      (force_reboot == false) && (force_ota == false) &&
+      (force_delete_data == false) &&
       (ota_writing_active == false)) {
 
 
@@ -2268,9 +2347,12 @@ void loop() {
     // Modem/ESP peripheral state is corrupted and force a hard system reboot.
     // v5.68 Fix: Threshold increased from 8 to 96 to prevent infinite reboot
     // loops during sustained rural cellular network outages.
-    if (diag_consecutive_http_fails >= 96) {
-       debugln("[HEAL] CRITICAL: 96 consecutive slots failed (24h). Forcing System Recovery Reboot...");
-       diag_consecutive_http_fails = 0; // Reset so we don't boot loop if it's a real outage
+    // v6.56 M-1: counted per slot (heal_undelivered_slots), not per HTTP failure: a
+    // modem that never registers never failed an HTTP send, so it was never counted.
+    if (heal_undelivered_slots >= HEAL_REBOOT_SLOTS) {
+       debugln("[HEAL] CRITICAL: 96 slots in a row with nothing delivered (24h). Forcing System Recovery Reboot...");
+       heal_undelivered_slots = 0; // Once per 24 h at most during a real outage
+       diag_consecutive_http_fails = 0;
        healer_reboot_in_progress = true; // v5.55: Protect counters
        vTaskDelay(2000 / portTICK_PERIOD_MS);
        ESP.restart();
@@ -2289,9 +2371,9 @@ void loop() {
     portENTER_CRITICAL(&syncMux);
     bool race_sync_invalid = (sync_mode != eHttpStop && sync_mode != eSMSStop && sync_mode != eExceptionHandled);
     sys_busy = (snap_schedulerBusy || (gprs_started && sync_mode != eHttpStop) || health_in_progress || __atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) || 
-                force_reboot || force_ota || ota_writing_active || (lcdkeypad_start && !uiIsGhosting) || (wakeup_reason_is == ext0) || 
+                force_delete_data || ota_writing_active || (lcdkeypad_start && !uiIsGhosting) || (wakeup_reason_is == ext0) || 
                 wifi_active || race_sync_invalid || 
-                pending_manual_status || pending_manual_gps || pending_manual_health);
+                pending_manual_status || pending_manual_gps);
     portEXIT_CRITICAL(&syncMux);
 
     if (sys_busy) {
@@ -2300,11 +2382,8 @@ void loop() {
         bool awake_cap_reached = (millis() > 315000); // 5 mins 15 secs absolute max
         bool idle_cap_reached = (millis() - last_activity_time > 180000); // 3 mins idle
 
-        // v5.75: Mutex Hang Recovery
-        if (awake_cap_reached && (modemIsBusy || fsIsBusy)) {
-            debugln("[PWR] LOCKUP RECOVERY: Mutex held by hung task > 5min 15s. Forcing Reboot...");
-            ESP.restart();
-        }
+        // v6.56 M-1: the hung-mutex restart moved to the top of loop() (it could
+        // not be reached here: this gate needs both mutexes free).
 
         // v5.85: Ghost-UI Safety Override
         // If we woke up by TIMER (scheduled) and all communicating tasks are DONE, 

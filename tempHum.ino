@@ -17,11 +17,6 @@ void tempHum(void *pvParameters) {
     esp_task_wdt_reset();
 
     // v5.52: Absolute Silence Protocol — Pause task during OTA to prevent
-    // crosstalk
-    while (ota_silent_mode) {
-      vTaskDelay(2000 / portTICK_PERIOD_MS);
-      esp_task_wdt_reset();
-    }
     if (hdcType != HDC_UNKNOWN) {
       float t_raw, h_raw;
       if (readHDC(t_raw, h_raw)) {

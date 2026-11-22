@@ -108,6 +108,7 @@ void start_deep_sleep() {
   graceful_modem_shutdown();
   esp_task_wdt_reset();
   delay(100);
+  health_note_awake(millis()); // v6.57: the day's average time awake
 
   // SELF-HEALING: Force GPIO 26 and 32 to stay strictly LOW during sleep
   // v5.79 Fix: digitalWrite LOW must happen BEFORE gpio_hold_en()
@@ -286,11 +287,17 @@ void start_deep_sleep() {
   bool fsMutexTaken = (uxSemaphoreGetCount(fsMutex) == 0);
 
   if (schedulerBusy || gprs_started || httpInitiated || race_sync_invalid || health_in_progress || modemMutexTaken || fsMutexTaken) {
-      debugln("[PWR] [CRIT] RACE PREVENTED: Activity detected during final shutdown. Aborting sleep to process task.");
-      __atomic_store_n(&sleep_sequence_active, false, __ATOMIC_RELEASE); // [v5.77 Signal Reset]
-      // Phase 10 Fix: Instead of a violent reboot, we just return. 
-      // Hardware state (Modem/I2C power cut) must be restored by the task that took control.
-      return; 
+      // v6.56 M-2: no return from here. The modem is off and held, Wire has ended, the LCD
+      // rail and the UART pins are held, SD/SPI have ended: nothing brings them back, so a
+      // task that went on from here worked without its hardware (it used to return).
+      // Let a file write in progress finish, then sleep 1 s: the unit starts clean and
+      // the slot logic (in RTC memory) picks up whatever had started.
+      debugln("[PWR] [CRIT] Activity during final shutdown: short 1 s sleep for a clean restart.");
+      if (fsMutexTaken && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        // Held to the end: no new write can start before the sleep
+      }
+      sleep_seconds = 1;
+      esp_sleep_enable_timer_wakeup((uint64_t)1 * uS_TO_S_FACTOR);
   }
 
   esp_task_wdt_reset();
@@ -1456,10 +1463,10 @@ void reset_all_diagnostics() {
   // Pulse / Accuracy counters (v5.49)
   total_wind_pulses_32 = 0;
   last_sched_wind_pulses_32 = 0;
-  last_raw_wind_count = 0;
+  last_raw_wind_count = wind_count.val; // v6.56: anchor to hardware (counter is not zeroed)
   total_rf_pulses_32 = 0;
   last_sched_rf_pulses_32 = 0;
-  last_raw_rf_count = 0;
+  last_raw_rf_count = rf_count.val;     // v6.56 H-1: anchor to hardware (counter is not zeroed)
   diag_last_rf_val = 0;
 
   // Sensor diagnostic flags
@@ -1486,7 +1493,6 @@ void reset_all_diagnostics() {
   strcpy(diag_cdm_status, "PENDING");
   strcpy(diag_http_fail_reason, "NONE");
   diag_rejected_count = 0;
-  diag_sensor_fault_sent_today = false;
 
   // Masks
   for (int i = 0; i < 3; i++) {
@@ -1494,9 +1500,7 @@ void reset_all_diagnostics() {
     diag_sent_mask_prev[i] = 0;
   }
 
-  // Force a fresh Daily/Health cycle
-  health_last_sent_day = -1;
-  health_last_sent_hour = -1;
+  // Force a fresh daily cycle
   diag_last_rollover_day = -1;
   diag_http_success_count = 0;
   diag_http_retry_count = 0;
@@ -1666,27 +1670,74 @@ float get_calibrated_battery_voltage() {
 }
 
 
+// v6.56 H-4: one place that writes the backlog pointer. Caller holds fsMutex.
+// Written to a temp file and renamed, so a power cut leaves the old or the new value.
+void save_unsent_pointer_locked(long ptr) {
+  if (ptr < 0) ptr = 0;
+  unsent_pointer_count = (int)ptr;
+  File fTmp = SPIFFS.open("/unsent_ptr.tmp", FILE_WRITE);
+  if (!fTmp) {
+    debugln("[SPIFFS] Pointer save failed (open tmp)");
+    return;
+  }
+  fTmp.print(ptr);
+  fTmp.close();
+  SPIFFS.remove("/unsent_pointer.txt");
+  if (!SPIFFS.rename("/unsent_ptr.tmp", "/unsent_pointer.txt")) {
+    debugln("[SPIFFS] Pointer save failed (rename)");
+  }
+}
+
+// v6.56 H-4: bytes cut from the front of /unsent.txt by pruneFile since boot. The sender
+// notes it when it reads a record and, once the record has gone, moves its pointer back by
+// whatever was cut meanwhile (the fsMutex is not held during the send).
+volatile long backlog_cut_total = 0;
+
+// Moves the backlog pointer past a record that was read when backlog_cut_total was
+// cut_at_fetch. Takes fsMutex.
+void advance_backlog_pointer(long next_record_pos, long cut_at_fetch) {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    debugln("[Backlog] Pointer not saved (fsMutex busy): the record may be sent again");
+    return;
+  }
+  long ptr = next_record_pos - (backlog_cut_total - cut_at_fetch);
+  save_unsent_pointer_locked(ptr < 0 ? 0 : ptr);
+  xSemaphoreGive(fsMutex);
+}
+
+// v6.56 H-4: the saved backlog pointer (0 if none). Caller holds fsMutex.
+long load_unsent_pointer_locked() {
+  const char *names[] = {"/unsent_pointer.txt", "/unsent_ptr.tmp"};
+  for (int i = 0; i < 2; i++) {
+    File f = SPIFFS.open(names[i], FILE_READ);
+    if (!f) continue;
+    char buf[16] = {0};
+    int r = read_line_to_buf(f, buf, sizeof(buf));
+    f.close();
+    if (r > 0) return atol(buf);
+  }
+  return 0;
+}
+
+// Trims a backlog file that has grown past 'limit' bytes.
+// v6.56 H-4: for /unsent.txt the records already sent (before the pointer) go first, and
+// unsent ones only if the file would still be over half the limit. The pointer is moved
+// with the data (it was left pointing into the old file, so records were skipped or sent
+// twice). fsMutex is held from start to end: it used to be released between the delete and
+// the rename, and a record appended in that gap made the rename fail and lost the backlog.
 void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
-  // v5.85.1 Hardened: fsMutex is NOT recursive. If alreadyLocked is true,
-  // the caller MUST already hold the lock and we MUST NOT attempt to take it again.
   if (!alreadyLocked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
     debugln("[SPIFFS] pruneFile Mutex Timeout: skipping.");
     return;
   }
 
-  // Turner-Fix: Correct recovery path identifying current per-file temp name
   char tmp_path[48];
   snprintf(tmp_path, sizeof(tmp_path), "%s.ptr", path);
 
-  // v5.70 Hardened: [R-1 Recovery] If original is missing but tmp exists, recover it.
+  // A trim cut short by a power loss: the trimmed copy is complete only if the original is gone
   if (!SPIFFS.exists(path) && SPIFFS.exists(tmp_path)) {
-      debugf1("[SPIFFS] pruneFile: path %s missing, recovering from %s\n", path, tmp_path);
-      SPIFFS.rename(tmp_path, path);
-  }
-
-  if (!SPIFFS.exists(path)) {
-    if (!alreadyLocked) xSemaphoreGive(fsMutex);
-    return;
+    debugf1("[SPIFFS] pruneFile: path %s missing, recovering from %s\n", path, tmp_path);
+    SPIFFS.rename(tmp_path, path);
   }
 
   File f = SPIFFS.open(path, FILE_READ);
@@ -1695,66 +1746,69 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked) {
     return;
   }
 
-  size_t current_size = f.size();
+  const size_t current_size = f.size();
   if (current_size < limit) {
     f.close();
     if (!alreadyLocked) xSemaphoreGive(fsMutex);
     return;
   }
 
-  debugf2("[SPIFFS] Pruning %s (%d bytes). Limit exceeded.\n", path, (int)current_size);
+  const bool is_backlog = (strcmp(path, "/unsent.txt") == 0);
+  long ptr = is_backlog ? load_unsent_pointer_locked() : 0;
+  if (ptr < 0 || (size_t)ptr > current_size) ptr = 0;
 
-  // Buffer recent half of max allowed limit
-  size_t keep_size = limit / 2;
-  if (current_size > keep_size) {
-    f.seek(current_size - keep_size);
-  } else {
-    f.seek(0);
+  const size_t keep_size = limit / 2;
+  size_t cut = (current_size > keep_size) ? current_size - keep_size : 0;
+  if (is_backlog && (size_t)ptr > cut) {
+    cut = (size_t)ptr;      // Only sent records go: everything from the pointer on is kept
   }
-  
-  // v5.75 FIX: [M-05] Heap fragment stall prevention
-  // Discard partial line via rapid char drain instead of bloated string allocation
-  // (f.readStringUntil('\n') allocates on exactly the code path where we are already choked)
-  char c;
-  while (f.available() && (c = f.read()) != '\n') {
-      // drain partial line into the void
+  f.seek(cut);
+  if (cut != (size_t)ptr) {
+    // Cut inside the unsent part: start at the next whole record
+    int c;
+    while ((c = f.read()) >= 0 && c != '\n') {
+    }
+  }
+  const size_t kept_from = f.position();
+  const long dropped_unsent = (is_backlog && (long)kept_from > ptr) ? (long)kept_from - ptr : 0;
+  debugf3("[SPIFFS] Pruning %s: %d bytes, keeping from %d\n", path, (int)current_size, (int)kept_from);
+  if (dropped_unsent > 0) {
+    debugf1("[SPIFFS] Backlog full: %ld bytes of the oldest UNSENT records dropped\n", dropped_unsent);
   }
 
-  // Turner-Fix: Use unique per-file temporary path to prevent collision
-  // tmp_path already declared in recovery check above
-  snprintf(tmp_path, sizeof(tmp_path), "%s.ptr", path);
-  
   File tmp = SPIFFS.open(tmp_path, FILE_WRITE);
-  if (tmp) {
-    uint8_t buf[512];
-    while (f.available()) {
-      int n = f.read(buf, sizeof(buf));
-      tmp.write(buf, n);
-      esp_task_wdt_reset();
-    }
-    tmp.close();
+  if (!tmp) {
     f.close();
-    SPIFFS.remove(path);
-    
-    // v5.86 Correction: [C-01] Mutex Restoration
-    // We only release the mutex during the delay if we aren't already locked by the caller.
-    // Releasing a caller's lock violates the ownership contract and stalls the station.
+    debugln("[SPIFFS] pruneFile: no room for the trimmed copy: file left as it is");
+    if (!alreadyLocked) xSemaphoreGive(fsMutex);
+    return;
+  }
+  uint8_t buf[512];
+  bool ok = true;
+  while (f.available()) {
+    int n = f.read(buf, sizeof(buf));
+    if (n <= 0) break;
+    if (tmp.write(buf, n) != (size_t)n) {
+      ok = false;
+      break;
+    }
     esp_task_wdt_reset();
-    if (!alreadyLocked) xSemaphoreGive(fsMutex); 
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-    
-    if (!alreadyLocked && xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
-        debugln("[SPIFFS] pruneFile: FAILED to retake mutex after VFS delay!");
-        return; 
-    }
-    
-    if (!SPIFFS.rename(tmp_path, path)) {
-      debugf1("[SPIFFS] FATAL: Final rename failed for %s.\n", path);
-    }
+  }
+  tmp.close();
+  f.close();
+
+  if (!ok) {
+    // The copy is short (flash full): keep the original, drop the copy
+    debugln("[SPIFFS] pruneFile: copy failed: file left as it is");
+    SPIFFS.remove(tmp_path);
   } else {
-    f.close();
-    debugf1("[SPIFFS] Clear: %s to recover space.\n", path);
     SPIFFS.remove(path);
+    if (!SPIFFS.rename(tmp_path, path)) {
+      debugf1("[SPIFFS] pruneFile: rename failed for %s (recovered at the next trim/boot)\n", path);
+    } else if (is_backlog) {
+      backlog_cut_total += (long)kept_from;
+      save_unsent_pointer_locked(0);   // Everything before the pointer was cut: it now starts at 0
+    }
   }
 
   if (!alreadyLocked) xSemaphoreGive(fsMutex);

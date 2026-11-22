@@ -1,6 +1,7 @@
 #include "globals.h"
 
-extern int last_ftp_login_result; // For HTTP Fallback Tracking
+
+static bool http_stack_prepare(); // v6.56 M-3 (defined below)
 
 void prepare_data_and_send() {
 
@@ -316,6 +317,15 @@ void prepare_data_and_send() {
     cleanStn[sizeof(cleanStn) - 1] = '\0';
   }
 
+  // v6.56b: Bihar station IDs are 8 digits on the Bihar server, as the LPC unit sends them
+  // (AIO_LPC v6.9.32, STATION_ID_DIGITS 8): stored 009983 goes out as 00009983.
+  if (!strcmp(NETWORK, "DES-BIH") && cleanStn[0] && isDigitStr(cleanStn) && strlen(cleanStn) < 8) {
+    char padded[16];
+    snprintf(padded, sizeof(padded), "%08ld", atol(cleanStn));
+    strncpy(cleanStn, padded, sizeof(cleanStn) - 1);
+    cleanStn[sizeof(cleanStn) - 1] = '\0';
+  }
+
   if (!strcmp(httpSet[http_no].Format,
               "json")) { // if json then this loop otherwise goto urlencoded one
 // BIHAR TRG
@@ -471,7 +481,18 @@ void prepare_data_and_send() {
   // v6.76: One retry added above for current data.
   // Fails after retry will trigger FTP backlog storage.
 
+  // v6.56 H-2: 3 = the server answered and rejected this record. No radio-reset
+  // retries (the answer won't change). Backlog: returned as 3 and skipped by the
+  // backlog loop. Current record: stored to the backlog below for one more try
+  // after the clock correction made on the rejection.
+  bool server_rejected = (success_count == 3);
+  if (server_rejected && data_mode != eUnsentData) {
+    success_count = 0;
+  }
+
   if (success_count == 1) {
+    health_note_delivered(temp_year, temp_month, temp_day, temp_hr, temp_min, data_mode == eUnsentData); // v6.57
+    heal_slot_delivered = true;      // v6.56 M-1: something reached the server this slot
     diag_consecutive_http_fails = 0; // v5.49 Build 5: Reset fail streaks
     diag_consecutive_reg_fails = 0;
     last_http_ok = true;          // v5.84: Success recorded
@@ -552,6 +573,7 @@ void prepare_data_and_send() {
   //       }
 
   if (success_count == 0) { // First attempt failed
+   if (!server_rejected) { // v6.56 H-2: no radio-reset retry for a server rejection
     // v5.54: SIMPLIFIED RETRY STRATEGY
     // ─────────────────────────────────────────────────────────────────────
     // Errors 706/713/714 are TCP/server-path failures, NOT bearer failures.
@@ -629,26 +651,9 @@ void prepare_data_and_send() {
       SerialSIT.println("AT+CGEREP=0");
       waitForResponse("OK", 1000);
 
-      flushSerialSIT(); // Clear stale UART bytes before HTTPINIT
-
-      SerialSIT.println("AT+HTTPINIT");
-      if (waitForResponse("OK", 5000)) {
-        http_ready = true; // v5.42: Session live for retry attempt
-        
-        // Restore all parameters
-        SerialSIT.println(httpPostRequest);
-        waitForResponse("OK", 1000);
-
-        if (!strcmp(httpSet[http_no].Format, "json")) {
-          SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-        } else {
-          SerialSIT.println(
-              "AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"");
-        }
-        waitForResponse("OK", 1000);
-
-        SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
-        waitForResponse("OK", 1000);
+      // v6.56 M-3: one helper sets up HTTPINIT + URL + CONTENT (the URL used to be
+      // sent as bare text). Method 1 (TCP) doesn't need it; Method 2 does.
+      if (http_stack_prepare()) {
 
         if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
           debugln("[HTTP] Retry attempt...");
@@ -656,12 +661,15 @@ void prepare_data_and_send() {
         }
         // rate on weak/noisy networks, as this is already a retry cycle.
         success_count = send_at_cmd_data(http_data, true);
+        if (success_count == 3) success_count = 0; // v6.56 H-2: rejected on retry: store to backlog below
 
         // v5.63: Tower Cooldown. Airtel towers need ~3s to clear previous
         // socket before accepting a new rapid-fire request in a backlog loop.
         vTaskDelay(3000 / portTICK_PERIOD_MS);
 
         if (success_count == 1) {
+          health_note_delivered(temp_year, temp_month, temp_day, temp_hr, temp_min, data_mode == eUnsentData); // v6.57
+          heal_slot_delivered = true; // v6.56 M-1
           diag_consecutive_reg_fails = 0;
           diag_consecutive_http_fails = 0;
           last_http_ok = true;          // v5.84: Success on retry
@@ -693,6 +701,7 @@ void prepare_data_and_send() {
         }
       }
     } // End of verify_bearer_or_recover else block
+   } // v6.56 H-2: end of if (!server_rejected)
 
   fail_handling:
     if (success_count == 0) { // Complete failure
@@ -720,6 +729,7 @@ void prepare_data_and_send() {
         }
         diag_http_present_fails++;
         diag_http_cum_fails++;
+        health_note_failed(diag_http_fail_reason); // v6.57: the day's report
         snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
                  sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
                  diag_http_present_fails, diag_http_cum_fails,
@@ -730,7 +740,13 @@ void prepare_data_and_send() {
       debugf1(" | CumMth: %d\n", diag_http_cum_fails);
 
       if (data_mode == eCurrentData) {
-        char current_record[record_length + 1];
+        // v6.56 H-7: the record queued here is built only from this send's own
+        // snapshot (temp_*/sample_*, parsed from the slot's stored line). It used to be
+        // the scheduler's globals (append_text for TWS/TWS-RF, inst_rf/cum_rf for TRG),
+        // which the next slot or a gap-fill may have rewritten by the time the retries
+        // give up: the wrong record went to the backlog and the real one was lost.
+        // Room to spare so a long field can never cut off the "\r\n".
+        char current_record[record_length + 32];
         debugln("CURRENT DATA : Retries exceeded limit... Storing to backlog.");
 
         debugln();
@@ -738,7 +754,7 @@ void prepare_data_and_send() {
         snprintf(current_record, sizeof(current_record),
                  "%02d,%04d-%02d-%02d,%02d:%02d,%s,%s,%04d,%05.2f\r\n",
                  temp_sampleNo, temp_year, temp_month, temp_day, temp_hr,
-                 temp_min, inst_rf, cum_rf, temp_sig, temp_bat);
+                 temp_min, sample_inst_rf, sample_cum_rf, temp_sig, temp_bat);
 #endif
 #if SYSTEM == 1 // TWS
         snprintf(current_record, sizeof(current_record),
@@ -817,7 +833,9 @@ void prepare_data_and_send() {
         // v5.55 SELF-HEALING: If we are failing 4 times in a row, the bearer is
         // likely a zombie. Force a HARD MODEM RESET (GPIO 26 cycle) as per
         // Rule 19.
-        if (diag_consecutive_http_fails >= 4) {
+        // v6.56 M-1: every 4th failure in a row, and the count is kept (it was reset to
+        // 0 here, so nothing that waits for a longer streak could ever see one).
+        if (diag_consecutive_http_fails > 0 && diag_consecutive_http_fails % 4 == 0) {
           debugln("[RECOVERY] 4 Consecutive HTTP Fail Slots (Zombie Bearer). "
                   "Hard Resetting Modem...");
           SerialSIT.println("AT+HTTPTERM");
@@ -827,7 +845,6 @@ void prepare_data_and_send() {
           digitalWrite(26, HIGH);                // Pull GPRS Power HIGH
           vTaskDelay(8000 / portTICK_PERIOD_MS); // allow boot + SIM init
           recoverI2CBus(); // v5.82 Platinum: Mitigate spike on HTTP recovery
-          diag_consecutive_http_fails = 0; // Reset counter - fresh start
         }
 
         // v6.31 Fix: Dynamic buffer sizing tied to record_length + 32 padding
@@ -837,7 +854,7 @@ void prepare_data_and_send() {
         // SYSTEM 0 BACKLOG APPEND handled above in unified TWS pattern v7.70
 #if SYSTEM == 0
         if (last_unsent_sampleNo !=
-            sampleNo) { // v5.72 Hardened: Dedup guard for TRG fallback write
+            temp_sampleNo) { // v5.72 Dedup guard; v6.56 H-7: this record's own slot
           if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
             snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
             File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
@@ -848,7 +865,7 @@ void prepare_data_and_send() {
             }
             xSemaphoreGive(fsMutex);
           }
-          last_unsent_sampleNo = sampleNo;
+          last_unsent_sampleNo = temp_sampleNo;
         }
 #endif
 
@@ -858,23 +875,13 @@ void prepare_data_and_send() {
         if (last_ftp_unsent_sampleNo != temp_sampleNo &&
             last_unsent_sampleNo != temp_sampleNo) {
           if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-#if ENABLE_HTTP_BACKLOG_FALLBACK == 1
             snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
             File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
             if (file2) {
-              file2.print(append_text);
+              file2.print(current_record); // v6.56 H-7 (was append_text)
               file2.close();
               last_unsent_sampleNo = temp_sampleNo;
             }
-#else
-            snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-            File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-            if (ftpfile2) {
-              ftpfile2.print(finalBuffer);
-              ftpfile2.close();
-              last_ftp_unsent_sampleNo = temp_sampleNo;
-            }
-#endif
             xSemaphoreGive(fsMutex);
           }
         } else {
@@ -888,23 +895,13 @@ void prepare_data_and_send() {
         if (last_ftp_unsent_sampleNo != temp_sampleNo &&
             last_unsent_sampleNo != temp_sampleNo) {
           if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-#if ENABLE_HTTP_BACKLOG_FALLBACK == 1
             snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
             File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
             if (file2) {
-              file2.print(append_text);
+              file2.print(current_record); // v6.56 H-7 (was append_text)
               file2.close();
               last_unsent_sampleNo = temp_sampleNo;
             }
-#else
-            snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-            File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-            if (ftpfile2) {
-              ftpfile2.print(finalBuffer);
-              ftpfile2.close();
-              last_ftp_unsent_sampleNo = temp_sampleNo;
-            }
-#endif
             xSemaphoreGive(fsMutex);
           }
         } else {
@@ -918,10 +915,66 @@ void prepare_data_and_send() {
   // GPRS task now follows granular lock pattern.
 } // closes prepare_data_and_send()
 
+// v6.56: true when the backlog should stop for this slot: too close to the next slot
+// boundary (BACKLOG_STOP_BEFORE_SLOT_S), the per-slot maximum, or a weak battery (then
+// the old 15-record limit).
+static bool backlog_session_over(int sent_this_slot) {
+  if (sent_this_slot >= BACKLOG_MAX_PER_SLOT) return true;
+  if (li_bat_val > 0.5f && li_bat_val < BACKLOG_FULL_DRAIN_MIN_V && sent_this_slot >= 15) return true;
+  int mi, se;
+  portENTER_CRITICAL(&rtcTimeMux);
+  mi = current_min;
+  se = current_sec;
+  portEXIT_CRITICAL(&rtcTimeMux);
+  const int to_boundary = (15 - (mi % 15)) * 60 - se;
+  return to_boundary < BACKLOG_STOP_BEFORE_SLOT_S;
+}
+
+// v6.56 H-5: moves records left in /ftpunsent.txt (from an FTP build) to the end of
+// /unsent.txt, where the HTTP backlog sends them (it reads both record formats). Caller
+// holds fsMutex. The source used to be deleted even when the copy failed (flash full is
+// the usual cause, and that is when the backlog is big): now only after a complete copy.
+static void migrate_ftp_backlog_locked() {
+  File fSource = SPIFFS.open("/ftpunsent.txt", FILE_READ);
+  if (!fSource) return;
+  const size_t need = fSource.size();
+  const size_t free_bytes = SPIFFS.totalBytes() - SPIFFS.usedBytes();
+  if (need + 8192 > free_bytes) {
+    fSource.close();
+    debugf("[Backlog] Migration put off: %u bytes to move, %u free\n", (unsigned)need, (unsigned)free_bytes);
+    return;
+  }
+  File fDest = SPIFFS.open("/unsent.txt", FILE_APPEND);
+  bool ok = (bool)fDest;
+  if (ok) {
+    uint8_t fb[256];
+    int br;
+    while ((br = fSource.read(fb, sizeof(fb))) > 0) {
+      if (fDest.write(fb, br) != (size_t)br) {
+        ok = false;
+        break;
+      }
+      esp_task_wdt_reset();
+    }
+    fDest.close();
+  }
+  fSource.close();
+  if (ok) {
+    SPIFFS.remove("/ftpunsent.txt");
+    debugln("[Backlog] /ftpunsent.txt moved to /unsent.txt");
+  } else {
+    debugln("[Backlog] Migration FAILED: /ftpunsent.txt kept");
+  }
+}
+
 void send_http_data() {
   if (live_post_muted) {
-    debugln("[GPRS] ⏸️ Primary Server Live Transmissions MUTED by server "
-            "request. Skipping HTTP send.");
+    // VARSHA STOP: nothing sent or queued; the SIM is still read so VARSHA RESUME can come
+    debugln("[GPRS] Sending stopped by SMS (VARSHA STOP): nothing sent. Reading SMS only.");
+    portENTER_CRITICAL(&syncMux);
+    sync_mode = eSMSStart;
+    portEXIT_CRITICAL(&syncMux);
+    send_sms();
     return;
   }
   if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
@@ -1079,14 +1132,10 @@ void send_http_data() {
   // Pre-HTTP Diagnostic Audit
   SerialSIT.println("AT+CSQ");
   waitForResponse("OK", 2000);
-  if (!ota_silent_mode) {
-    Serial.printf("[GPRS-AUDIT] Signal (CSQ): %s\n", modem_response_buf);
-  }
+  debugf("[GPRS-AUDIT] Signal (CSQ): %s\n", modem_response_buf);
   SerialSIT.println("AT+CGPADDR=1");
   waitForResponse("OK", 2000);
-  if (!ota_silent_mode) {
-    Serial.printf("[GPRS-AUDIT] Assigned IP (CID 1): %s\n", modem_response_buf);
-  }
+  debugf("[GPRS-AUDIT] Assigned IP (CID 1): %s\n", modem_response_buf);
 
   http_ready = true;
 
@@ -1128,7 +1177,7 @@ void send_http_data() {
     }
 
     // Update Internal LCD Markers
-    snprintf(last_logged, sizeof(last_logged), "%d-%d-%d,%02d:%02d",
+    snprintf(last_logged, sizeof(last_logged), "%04d-%02d-%02d,%02d:%02d",
              last_recorded_yy, last_recorded_mm, last_recorded_dd,
              last_recorded_hr, last_recorded_min);
     strcpy(ui_data[FLD_LAST_LOGGED].bottomRow, last_logged);
@@ -1149,32 +1198,13 @@ void send_http_data() {
     /*
      * SENDING 8:30 as well as UNSENT DATA IF FILE EXISTS ...
      */
-#if ENABLE_HTTP_BACKLOG_FALLBACK == 1
-    if (SPIFFS.exists("/ftpunsent.txt")) {
-      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-        debugln("[Backlog] Early Migration: Moving /ftpunsent.txt to "
-                "/unsent.txt before HTTP backlog send...");
-        File fSource = SPIFFS.open("/ftpunsent.txt", FILE_READ);
-        if (fSource) {
-          File fDest = SPIFFS.open("/unsent.txt", FILE_APPEND);
-          if (fDest) {
-            byte fb[256];
-            size_t br;
-            while ((br = fSource.read(fb, sizeof(fb))) > 0) {
-              fDest.write(fb, br);
-              esp_task_wdt_reset();
-              vTaskDelay(1 / portTICK_PERIOD_MS);
-            }
-            fDest.close();
-          }
-          fSource.close();
-        }
-        SPIFFS.remove("/ftpunsent.txt");
-        debugln("[Backlog] Early Migration complete.");
-        xSemaphoreGive(fsMutex);
-      }
+    // v6.56: anything an older FTP build left in flash joins the HTTP backlog first
+    // (once per power-on: a directory walk is not needed every slot)
+    static RTC_DATA_ATTR bool legacy_ftp_swept = false;
+    if (!legacy_ftp_swept || SPIFFS.exists("/ftpunsent.txt")) {
+      send_unsent_data();
+      legacy_ftp_swept = true;
     }
-#endif
 
     // v7.70+: Broad fsMutex removed. Helper pulses used below.
     bool exists = false;
@@ -1210,12 +1240,10 @@ void send_http_data() {
                httpSet[http_no].Port, httpSet[http_no].Link);
       unsent_pointer_count = 0; // resetting to 1st record of unsent data ..
       unsent_counter = 0;
-      int total_unsent = 0;
-      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-        total_unsent = countStored(unsent_file);
-        xSemaphoreGive(fsMutex);
-      }
-      debugf("[Backlog] Total records in queue: %d\n", total_unsent);
+      // v6.56: records still to send (from the pointer on). countStored() counted
+      // the records already sent too, so the queue looked full after every slot.
+      int total_unsent = get_total_backlogs(true);
+      debugf("[Backlog] Records waiting to be sent: %d\n", total_unsent);
 
       if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
         bool ptr_loaded = false;
@@ -1269,8 +1297,11 @@ void send_http_data() {
       // filesize logic decoupled
       debugln("Backlog session ready.");
 
-      if (strstr(carrier, "Airtel") != nullptr ||
-          strstr(carrier, "Jio") != nullptr) {
+      // v6.56: refresh the bearer only if nothing has gone through it this slot. The
+      // backlog normally follows a delivered current record, so the connection is
+      // proven; tearing it down cost ~8 s per slot and could fail on a weak network.
+      if ((strstr(carrier, "Airtel") != nullptr ||
+           strstr(carrier, "Jio") != nullptr) && !heal_slot_delivered) {
         debugln(
             "[Backlog] Airtel/Jio: proactive bearer refresh before backlog.");
         SerialSIT.println("AT+HTTPTERM");
@@ -1282,25 +1313,7 @@ void send_http_data() {
         verify_bearer_or_recover();     // rebuilds APN + IP
         SerialSIT.println("AT+CGEREP=0");
         waitForResponse("OK", 1000);
-        flushSerialSIT();
-        SerialSIT.println("AT+HTTPINIT");
-        if (waitForResponse("OK", 5000)) {
-          http_ready = true;
-        }
-        // Set all HTTPPARA fields — required before AT+HTTPACTION can fire
-        SerialSIT.println(
-            httpPostRequest); // URL already built by
-                              // send_http_data()/send_unsent_data()
-        waitForResponse("OK", 1000);
-        if (!strcmp(httpSet[http_no].Format, "json")) {
-          SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-        } else {
-          SerialSIT.println(
-              "AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"");
-        }
-        waitForResponse("OK", 1000);
-        SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
-        waitForResponse("OK", 1000);
+        http_stack_prepare(); // v6.56 M-3 (the URL used to be sent as bare text)
         debugln("[Backlog] Session rebuilt and configured. Starting backlog "
                 "sends.");
       }
@@ -1316,17 +1329,27 @@ void send_http_data() {
       }
 
       size_t backlogFileSize = (size_t)fileSize;
-      while (unsent_pointer_count < backlogFileSize) {
+      while (true) {
         // v7.70+: Granular Lock Pulse per record fetch
         if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
           debugln("[Backlog] Mutex Timeout: Skipping record fetch.");
           break;
         }
 
+        // v6.56 H-4: the pointer and size are read again for every record: a trim
+        // (pruneFile) may have rewritten the file since the last one.
+        unsent_pointer_count = (int)load_unsent_pointer_locked();
+        const long cut_at_fetch = backlog_cut_total;
         long record_start_pos = unsent_pointer_count;
         long next_record_pos = unsent_pointer_count;
 
         File file_backlog = SPIFFS.open(unsent_file, FILE_READ);
+        if (file_backlog && (size_t)unsent_pointer_count >= file_backlog.size()) {
+          backlogFileSize = file_backlog.size();
+          file_backlog.close();
+          xSemaphoreGive(fsMutex);
+          break;    // Everything sent
+        }
         if (file_backlog) {
           file_backlog.seek(unsent_pointer_count);
 
@@ -1353,8 +1376,10 @@ void send_http_data() {
         }
         xSemaphoreGive(fsMutex); // Unlock BEFORE long HTTP handshake
 
-        int current_remaining =
-            get_total_backlogs(true); // Force fresh backlog count calculation
+        // v6.56: counted down from the total read once at the start (the file was
+        // scanned twice per record just for this number)
+        int current_remaining = total_unsent - backlog_processed_count;
+        if (current_remaining < 1) current_remaining = 1;
 
         debugf("[Backlog] Processing Record #%d (Remaining in queue: %d, "
                "Pointer: %d)\n",
@@ -1365,18 +1390,7 @@ void send_http_data() {
 
         if (strlen(gprs_payload) < 10) {
           debugln("Skipping blank/invalid line in unsent backlog.");
-          unsent_pointer_count = next_record_pos;
-          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-            File fTmp = SPIFFS.open("/unsent_ptr.tmp", FILE_WRITE);
-            if (fTmp) {
-              fTmp.print(unsent_pointer_count);
-              fTmp.close();
-              SPIFFS.remove("/unsent_pointer.txt");
-              vTaskDelay(20 / portTICK_PERIOD_MS); // metadata breath
-              SPIFFS.rename("/unsent_ptr.tmp", "/unsent_pointer.txt");
-            }
-            xSemaphoreGive(fsMutex);
-          }
+          advance_backlog_pointer(next_record_pos, cut_at_fetch);
           continue;
         }
 
@@ -1393,20 +1407,10 @@ void send_http_data() {
         // v5.82 LTS: Atomic update MUST happen after the send attempt ONLY IF
         // SUCCESSFUL.
         if (success_count == 1) {
-          unsent_pointer_count = next_record_pos;
-          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-            File fTmp = SPIFFS.open("/unsent_ptr.tmp", FILE_WRITE);
-            if (fTmp) {
-              fTmp.print(unsent_pointer_count);
-              fTmp.close();
-              SPIFFS.remove("/unsent_pointer.txt");
-              vTaskDelay(20 / portTICK_PERIOD_MS); // metadata breath
-              SPIFFS.rename("/unsent_ptr.tmp", "/unsent_pointer.txt");
-            }
-            xSemaphoreGive(fsMutex);
-          }
+          advance_backlog_pointer(next_record_pos, cut_at_fetch);
 
-          int updated_remaining = get_total_backlogs(true);
+          int updated_remaining = current_remaining - 1;
+          diag_backlog_total = updated_remaining;
           snprintf(ui_data[FLD_HTTP_FAILS].bottomRow,
                    sizeof(ui_data[FLD_HTTP_FAILS].bottomRow), "P:%d C:%d B:%d",
                    diag_http_present_fails, diag_http_cum_fails,
@@ -1414,6 +1418,14 @@ void send_http_data() {
           draw_current_page();
           debugf("[Backlog] Record #%d sent OK! Remaining backlog: %d\n",
                  backlog_processed_count, updated_remaining);
+        } else if (success_count == 3) {
+          // v6.56 H-2: The server answered and rejected this record. The current
+          // record was accepted this session (the backlog only runs after that), so
+          // the endpoint and key are good: this record itself is refused. Move past
+          // it so one refused record can't block the whole queue.
+          debugf("[Backlog] Record #%d REJECTED by the server. Skipping it.\n",
+                 backlog_processed_count);
+          advance_backlog_pointer(next_record_pos, cut_at_fetch);
         } else {
           debugf("[Backlog] Record #%d FAILED! Halting backlog loop for retry "
                  "next cycle.\n",
@@ -1421,10 +1433,16 @@ void send_http_data() {
           break;
         }
 
-        if (backlog_processed_count >= 15 || pending_manual_status ||
-            pending_manual_gps || pending_manual_health) {
-          if (backlog_processed_count >= 15)
-            debugln("[Power] Backlog limit (15) reached.");
+        // v6.56: a time budget instead of a fixed 15 records: send while there is
+        // a safe margin before the next slot (one long session costs less than
+        // starting the modem, registering and attaching again in each slot). On a
+        // weak battery the old 15-record limit still applies.
+        const bool backlog_limit = backlog_session_over(backlog_processed_count);
+        if (backlog_limit || pending_manual_status ||
+            pending_manual_gps) {
+          if (backlog_limit)
+            debugf("[Power] Backlog stop after %d records (time/battery budget).\n",
+                   backlog_processed_count);
           else
             debugln("[GPRS] Manual interrupt during backlog.");
           break;
@@ -1465,8 +1483,8 @@ void send_http_data() {
     } else {
       debugln("No unsent file found ...");
     }
-    // v5.51: send_unsent_data() is called ONCE via the Independent FTP Trigger
-    // below (line 1580+). Do NOT call it here again inside the HTTP-success
+    // v6.56: old FTP leftovers are moved by send_unsent_data() before the backlog above.
+    // (was: the Independent FTP Trigger. Not called here again inside the HTTP-success
     // block to avoid double-upload and wasted power.
 
   } else { // Handle failure to send current data
@@ -1493,547 +1511,131 @@ void send_http_data() {
   xSemaphoreGive(
       modemMutex); // v5.55: Release modem early to allow sub-calls to take it
 
-#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
-  // v5.49 Build 5: INDEPENDENT FTP TRIGGER
-  // Decoupled from HTTP Success. FTP serves as the robust rescue layer.
-  if (gprs_mode == eGprsSignalOk && (signal_lvl > -96)) {
-    // v5.68 FIX: UART Race Condition Prevented. If the user queued a manual
-    // LCD command during the HTTP HTTP-Fill, skip the massive FTP job
-    // so the Modem Mutex is immediately available for the UI.
-    if (!pending_manual_status && !pending_manual_gps &&
-        !pending_manual_health) {
-      send_unsent_data();
-    } else {
-      debugln("[GPRS] Yielding FTP transfer to instantly service manual LCD/UI "
-              "request.");
-    }
-  }
-#endif
+  // v6.56: the independent FTP trigger is gone (FTP removed: the backlog goes by HTTP above)
 
-  // v5.65 Selective SMS Check: Guaranteed once an hour (at Minute 0 slot)
-  if (record_min == 0) {
-    portENTER_CRITICAL(&syncMux);
-    sync_mode = eSMSStart;
-    portEXIT_CRITICAL(&syncMux);
-    send_sms(); // This function will internally take modemMutex
-  } else {
-    debugln("[GPRS] Skipping SMS check (hourly task).");
-    portENTER_CRITICAL(&syncMux);
-    sync_mode = eHttpStop;
-    portEXIT_CRITICAL(&syncMux);
-  }
+  // v6.57: the SIM is read every slot (was once an hour): VARSHA commands, as the LPC unit
+  portENTER_CRITICAL(&syncMux);
+  sync_mode = eSMSStart;
+  portEXIT_CRITICAL(&syncMux);
+  send_sms(); // takes modemMutex itself
+
 
   if (is_server2_override && http_no >= 0) {
     httpSet[http_no] = primary_backup;
   }
 } // end of send_http_data
 
-void send_unsent_data() { // ONLY FOR TWS AND TWS-ADDON
-  if (live_post_muted) {
-    debugln("[Backlog] ⏸️ Muted: Skipping backlog send to primary server.");
+// v6.56: FTP removed. Every system sends its backlog by HTTP from /unsent.txt. This only
+// moves what an older FTP build may have left in flash into that queue:
+//   /ftpremain.txt  remainder of an interrupted FTP chunking  -> back into /ftpunsent.txt
+//   /ftpunsent.txt  the FTP backlog                            -> appended to /unsent.txt
+//   /TWS*_*.kwd|swd a chunk file of an interrupted FTP send    -> appended to /unsent.txt
+//   /dailyftp_*.txt the daily FTP staging copy (records already in the day file) -> deleted
+// The HTTP sender reads both record formats ("NN,date,..." and "STN;date;...").
+void send_unsent_data() {
+  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
+    debugln("[Backlog] fsMutex busy: legacy FTP files left for the next slot");
     return;
   }
-  // v7.70+: Decoupled lock. Function now takes locks locally for I/O only.
-  const char
-      // *charArray;
-      *ptr;
-  debugln("[Backlog] Checking queue for unsent HTTP records...");
-  int ftp_year = rf_cls_yy % 100;
-  char fileName[50];
-
-  char stnId[16];
-  if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
-    snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
-  } else {
-    strcpy(stnId, ftp_station);
+  if (!SPIFFS.exists("/ftpunsent.txt") && SPIFFS.exists("/ftpremain.txt")) {
+    SPIFFS.rename("/ftpremain.txt", "/ftpunsent.txt");
   }
-
-  int snap_hr, snap_mi;
-  portENTER_CRITICAL(&rtcTimeMux);
-  snap_hr = current_hour;
-  snap_mi = current_min;
-  portEXIT_CRITICAL(&rtcTimeMux);
-
-#if SYSTEM == 1
-  if (strstr(UNIT, "SPATIKA") || strstr(NETWORK, "SPATIKA"))
-    snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.swd",
-             stnId, ftp_year, rf_cls_mm, rf_cls_dd, snap_hr, snap_mi);
-  else
-    snprintf(fileName, sizeof(fileName), "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd",
-             stnId, ftp_year, rf_cls_mm, rf_cls_dd, snap_hr, snap_mi);
-#endif
-
-#if SYSTEM == 2
-  if (strstr(UNIT, "SPATIKA") || strstr(NETWORK, "SPATIKA"))
-    snprintf(fileName, sizeof(fileName),
-             "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
-             rf_cls_mm, rf_cls_dd, snap_hr, snap_mi);
-  else
-    snprintf(fileName, sizeof(fileName),
-             "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
-             rf_cls_mm, rf_cls_dd, snap_hr, snap_mi);
-#endif
-
-#if SYSTEM == 3
-  if (strstr(UNIT, "SPATIKA") || strstr(NETWORK, "SPATIKA"))
-    snprintf(fileName, sizeof(fileName),
-             "/TWSRP_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
-             rf_cls_mm, rf_cls_dd, snap_hr, snap_mi);
-  else
-    snprintf(fileName, sizeof(fileName),
-             "/TWSRP_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
-             rf_cls_mm, rf_cls_dd, snap_hr, snap_mi);
-#endif
-
-  // v5.56: BACKLOG RECOVERY ON EVERY CYCLE
-  // Removed 'primary_data_delivered' gate and hourly restriction per user
-  // request. Backlog will be attempted whenever signal is usable (-95 dBm or
-  // better).
-  // v5.51: Power-Saving FTP Gating logic
-  snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-#if ENABLE_HTTP_BACKLOG_FALLBACK == 1
-  if (SPIFFS.exists(ftpunsent_file)) {
-    debugln("[FTP] HTTP Fallback Mode Enabled. Bypassing FTP and migrating "
-            "backlog to /unsent.txt...");
-    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-      File fSource = SPIFFS.open(ftpunsent_file, FILE_READ);
-      if (fSource) {
-        File fDest = SPIFFS.open("/unsent.txt", FILE_APPEND);
-        if (fDest) {
-          byte fb[256];
-          size_t br;
-          while ((br = fSource.read(fb, sizeof(fb))) > 0) {
-            fDest.write(fb, br);
-            esp_task_wdt_reset();
-            vTaskDelay(1 / portTICK_PERIOD_MS);
-          }
-          fDest.close();
-        }
-        fSource.close();
+  // Interrupted chunk files: renamed onto /ftpunsent.txt one at a time and migrated
+  for (int pass = 0; pass < 8; pass++) {
+    char found[48] = "";
+    bool daily_left = false;
+    File root = SPIFFS.open("/");
+    for (File f = root.openNextFile(); f; f = root.openNextFile()) {
+      const char *n = f.name();
+      if (n[0] == '/') n++;
+      const size_t len = strlen(n);
+      const bool chunk = (strncmp(n, "TWS", 3) == 0) && len > 4 &&
+                         (strcmp(n + len - 4, ".kwd") == 0 || strcmp(n + len - 4, ".swd") == 0);
+      if (chunk && found[0] == '\0') {
+        snprintf(found, sizeof(found), "/%s", n);
       }
-      SPIFFS.remove(ftpunsent_file);
-      debugln("[FTP] Migration complete.");
-      xSemaphoreGive(fsMutex);
+      if (strncmp(n, "dailyftp_", 9) == 0) daily_left = true;
+      f.close();
     }
-  }
-  return;
-#endif
-  int unsent_cnt = 0;
-
-  // v5.85: M-02 Hardening - Wrap orphan recovery and countStored in fsMutex
-  if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
-    // v5.52 RELIABILITY: Recover orphaned remainders from failed previous
-    // renames
-    if (!SPIFFS.exists(ftpunsent_file) && SPIFFS.exists("/ftpremain.txt")) {
-      debugln(
-          "[Healer] Orphaned ftpremain.txt found. Recovering to ftpunsent.txt");
-      SPIFFS.rename("/ftpremain.txt", "/ftpunsent.txt");
+    root.close();
+    if (daily_left) {
+      // Collected first, deleted after the walk (no delete while iterating)
+      char names[8][48];
+      int cnt = 0;
+      root = SPIFFS.open("/");
+      for (File f = root.openNextFile(); f && cnt < 8; f = root.openNextFile()) {
+        const char *n = f.name();
+        if (n[0] == '/') n++;
+        if (strncmp(n, "dailyftp_", 9) == 0) snprintf(names[cnt++], 48, "/%s", n);
+        f.close();
+      }
+      root.close();
+      for (int i = 0; i < cnt; i++) SPIFFS.remove(names[i]);
     }
-    unsent_cnt = countStored(ftpunsent_file);
-    xSemaphoreGive(fsMutex);
-  } else {
-    // If mutex take fails, we must still respect the cached count to avoid
-    // infinite loop
-    debugln("[Healer] fsMutex timeout in orphan recovery. Skipping for this "
-            "cycle.");
-  }
-
-  // v5.52 FIX: Ensure signal_lvl isn't 0 if polling failed (prevents false
-  // triggers/0000 in logs)
-  if (signal_lvl == 0)
-    signal_lvl = SIGNAL_STRENGTH_MISSING_DATA;
-
-  // v7.63 FIX: Use current_hour/current_min (actual RTC wakeup time) instead
-  // of record_hr/record_min (data record timestamp) for scheduled-slot checks.
-  // The data timestamp (record_hr) is the FLOOR of the current time to the
-  // nearest 15-min boundary. At a 03:01 wakeup, record_hr=3 & record_min=0
-  // but at a 00:01 wakeup the record is stored under the PREVIOUS day's
-  // period (rf_close logic), causing record_hr to be 23 even though the
-  // actual wall-clock hour is 0. Using current_hour/current_min guarantees
-  // the check fires at the correct 3-hour boundary regardless of rounding.
-  //
-  // Scheduled Sync Slots: every 3 hours when minute is < 15 (wakeup window)
-  //   00:00-00:14, 03:00-03:14, 06:00-06:14, 09:00-09:14 ... 21:00-21:14
-  // Final Day Cleanup: 08:45-08:59 to clear remaining backlog before 09:00
-  // Scheduled slots fire when current_min <= 15 and hour is divisible by 3.
-  // Using <= 15 ensures a 03:15 wakeup (or similar slight overshoot) is still
-  // caught as part of the 03:00 3-hour boundary window.
-  // v5.74: Atomic Snapshot to prevent torn reads at hour boundary (R-01 fix)
-  // (Snapshot now taken at the top of the function for fileName generation)
-
-  bool scheduled_slot = (snap_mi <= 15) && (snap_hr % 3 == 0);
-  bool morning_cleanup = (snap_hr == 8 && snap_mi >= 45 && snap_mi < 60);
-  debugf5("[FTP-Gate] unsent=%d cur_time=%02d:%02d sched=%s cleanup=%s\n",
-          unsent_cnt, snap_hr, snap_mi, scheduled_slot ? "YES" : "NO",
-          morning_cleanup ? "YES" : "NO");
-  bool should_push =
-      (unsent_cnt > 2) ||
-      (unsent_cnt > 0 &&
-       morning_cleanup); // v5.81: Daily Drain phase phase phase phase phase
-                         // phase phase phase (Summary truncated)
-
-  if (signal_lvl > -95 && (should_push || force_ftp) &&
-      SPIFFS.exists(ftpunsent_file)) {
-    // v7.54: BSNL Carrier Congestion Breather
-    // Switching from HTTP POST to FTP immediately causes Socket Zombies and
-    // drops the modem into an '85' signal panic loop. Force a 5s tower release
-    // delay.
-    debugln("[FTP] HTTP finished. Waiting 5s for Tower to release context "
-            "(Breather)...");
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    if (SPIFFS.exists("/ftpunsent.txt")) {
+      migrate_ftp_backlog_locked();
+      if (SPIFFS.exists("/ftpunsent.txt")) break;   // No room: tried again next slot
+    }
+    if (found[0] == '\0') break;
+    debugf("[Backlog] Old FTP chunk %s moved to the HTTP backlog\n", found);
+    SPIFFS.rename(found, "/ftpunsent.txt");
     esp_task_wdt_reset();
-
-    debugf2("[FTP] Backlog Push: %d records found. Mode: %s\n", unsent_cnt,
-            (scheduled_slot
-                 ? "SCHEDULED_SLOT"
-                 : (morning_cleanup ? "MORNING_CLEANUP" : "THRESHOLD_MET")));
-    debugln();
-    debug("FTP file name is ");
-    debugln(fileName);
-    debugln();
-    debug("SampleNo  is ");
-    debugln(sampleNo);
-    debugln();
-    debugln("Entering time bound FTP loop");
-
-    if (SPIFFS.exists(ftpunsent_file)) {
-      debugln("[FTP] Checking Registration before backlog upload...");
-      // Signal guard: skip 24-retry loop if signal already known to be dead
-      if (signal_lvl <= -98) {
-        debugf("[FTP] Skip Backlog: Signal too weak (%d dBm).\n", signal_lvl);
-      } else {
-        bool fs_locked_unsent = false;
-        // v6.31 Fix: Bearer is ONLY fresh if HTTP succeeded AND modem activity
-        // was < 90s ago
-        bool bearer_fresh = (diag_consecutive_http_fails == 0) &&
-                            ((millis() - last_activity_time) < 90000);
-        if (!bearer_fresh) {
-          debugln(
-              "[FTP] Bearer stale/failed. Re-registering with modemMutex...");
-          if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-            get_registration();
-            xSemaphoreGive(modemMutex);
-          }
-        } else {
-          debugln("[FTP] Bearer fresh (HTTP success <90s ago). Skipping "
-                  "re-registration.");
-        }
-        if (bearer_fresh || gprs_mode == eGprsSignalOk) {
-          if (!bearer_fresh) {
-            debugln("[FTP] Registration OK. Verifying IP (PDP Context)...");
-            if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-              get_a7672s(); // Only needed if we re-registered
-              xSemaphoreGive(modemMutex);
-            }
-          }
-          if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-            fs_locked_unsent = true;
-          }
-
-          if (!fs_locked_unsent) {
-            debugln(
-                "[FTP] Mutex Timeout: Cannot proceed with SPIFFS chunking.");
-            return;
-          }
-
-          // v6.45: Brief settle before FTP to avoid socket conflicts
-          debugln(
-              bearer_fresh
-                  ? "[FTP] Bearer fresh. Brief 5s settle before FTP..."
-                  : "[FTP] Assigned IP. Waiting 5s for tower stabilization...");
-          vTaskDelay(5000 / portTICK_PERIOD_MS);
-          esp_task_wdt_reset();
-
-          // v7.55 Queue Draining & Payload Chunking (Massive Bug Fix)
-          // Avoids 5.7 KB Timeout on BSNL by securely extracting 15 records
-          // (~900 bytes)
-          SPIFFS.remove(fileName); // Ensure dest is clean
-
-          File src = SPIFFS.open(ftpunsent_file, FILE_READ);
-          if (src) {
-            File chunk = SPIFFS.open(fileName, FILE_WRITE);
-            File remainder = SPIFFS.open("/ftpremain.txt", FILE_WRITE);
-
-            // v5.65 Fix: Guard against file-creation failure (SPIFFS Full or
-            // busy) If the chunk file fails to open, we MUST ABORT now.
-            // Proceeding with an empty chunk file and then deleting the source
-            // queue leads to permanent data loss.
-            if (!chunk) {
-              debugln(
-                  "[FTP] CRITICAL: Failed to create chunk file. Aborting FTP.");
-              src.close();
-              if (remainder)
-                remainder.close();
-              xSemaphoreGive(fsMutex);
-              return;
-            }
-
-            int linesRead = 0;
-            char lineBuf[128];
-            while (src.available()) {
-              esp_task_wdt_reset();
-              size_t len =
-                  src.readBytesUntil('\n', lineBuf, sizeof(lineBuf) - 1);
-              if (len == 0 && !src.available())
-                break;
-              lineBuf[len] = '\0';
-
-              // [FTP-M02] Defensive Hardening: Verify record length to avoid
-              // corruption propagation
-              int expected_len =
-                  record_length - 2; // Content length excluding \r\n
-              if (len > 0 && lineBuf[len - 1] == '\r') {
-                lineBuf[--len] = '\0';
-              }
-
-              if (len == expected_len || len == expected_len - 1) {
-                if (linesRead < FTP_CHUNK_SIZE) {
-                  chunk.write((uint8_t *)lineBuf, len);
-                  chunk.print("\r\n");
-                } else {
-                  if (remainder) {
-                    remainder.write((uint8_t *)lineBuf, len);
-                    remainder.print("\r\n");
-                  }
-                }
-                linesRead++;
-              } else if (len > 0) {
-                debugf("[FTP] Dropping malformed record: len=%d, expected=%d\n",
-                       len, expected_len);
-              }
-            }
-            if (chunk)
-              chunk.close();
-            if (remainder)
-              remainder.close();
-            src.close();
-
-            // v5.52 FIX: Constant parity
-            if (linesRead > FTP_CHUNK_SIZE) {
-              debugln("[FTP] Huge Backlog! Records chunked for TX. "
-                      "Original queue protected until success.");
-            } else {
-              SPIFFS.remove("/ftpremain.txt");
-              debugln("[FTP] Backlog fully chunked into Active Payload.");
-            }
-          } else {
-            debugln("Failed to open ftpunsent.txt for chunking.");
-            if (fs_locked_unsent) {
-              xSemaphoreGive(fsMutex);
-              fs_locked_unsent = false;
-            }
-            return; // Hygiene Fix: Abort on source failure to prevent wasted
-                    // blank FTP sequence
-          }
-          debug("Retrieved file is ");
-          debugln(fileName);
-          esp_task_wdt_reset();
-          // v5.66: Release FS mutex before long FTP upload to allow scheduler
-          // to record
-          if (fs_locked_unsent) {
-            xSemaphoreGive(fsMutex);
-            fs_locked_unsent = false;
-          }
-          send_ftp_file(fileName, false, false); // Pass alreadyLocked=false
-
-          // [HTTP FALLBACK LOGIC]
-          if (last_ftp_login_result == 9) {
-#if ENABLE_HTTP_BACKLOG_FALLBACK == 1
-            debugln("[FTP] Firewall block detected (Error 9). Falling back to "
-                    "HTTP Backlog...");
-            if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-              File fSource = SPIFFS.open(ftpunsent_file, FILE_READ);
-              if (fSource) {
-                File fDest = SPIFFS.open("/unsent.txt", FILE_APPEND);
-                if (fDest) {
-                  byte fb[256];
-                  size_t br;
-                  while ((br = fSource.read(fb, sizeof(fb))) > 0) {
-                    fDest.write(fb, br);
-                  }
-                  fDest.close();
-                }
-                fSource.close();
-              }
-              SPIFFS.remove(ftpunsent_file); // Clear FTP queue
-              debugln("[FTP] HTTP Fallback migration complete. Records moved "
-                      "to /unsent.txt");
-              xSemaphoreGive(fsMutex);
-            }
-#else
-            debugln("[FTP] Firewall block detected (Error 9). Initiating APN "
-                    "Swap to 'airtelgprs.com'...");
-            send_at_cmd("AT+CGACT=0,1", "OK", "\r\n");
-
-            if (try_activate_apn("airtelgprs.com")) {
-              debugln("[FTP] APN Swap Successful. Retrying FTP backlog...");
-              send_ftp_file(fileName, false, false);
-
-              debugln("[FTP] Backlog retry complete. Restoring default APN...");
-              send_at_cmd("AT+CGACT=0,1", "OK", "\r\n");
-              try_activate_apn(apn_str);
-              verify_bearer_or_recover();
-            } else {
-              debugln("[FTP] APN Swap Failed. Reverting...");
-              try_activate_apn(apn_str);
-              verify_bearer_or_recover();
-            }
-#endif
-          }
-
-          // Note: send_ftp_file will take its own lock for cleanup
-        } else {
-          debugln("[FTP] Skip: Registration lost. Retrying next hour.");
-          if (fs_locked_unsent) {
-            xSemaphoreGive(fsMutex);
-            fs_locked_unsent = false;
-          }
-        }
-      } // end else (signal OK)
-    } else {
-      debugln("No ftpunsent.txt found. Skipping FTP.");
-    }
-
-    // v5.68 BUGFIX: fsMutex was released at 2121 to allow background FTP.
-    // We MUST legally retake it before performing SPIFFS file modifications for
-    // Daily FTP!
-    if (sampleNo == 3) { // v5.65 P2: Fixed cleanup condition — only run at
-                         // 09:30 AM (sampleNo 3) to avoid accidental backlog
-                         // clears if sampleNo 7 is reached via reboot.
-      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-        // v5.75 FIX: [M-02] 09:00 Time-Tear Race Condition
-        // Snap the volatile time integers atomically to prevent a context
-        // switch exactly at 08:59:59 from producing a phantom 09:59 evaluation
-        // and destroying the backlog an hour early.
-        int snap_hr, snap_mi;
-        portENTER_CRITICAL(&rtcTimeMux);
-        snap_hr = current_hour;
-        snap_mi = current_min;
-        portEXIT_CRITICAL(&rtcTimeMux);
-
-        if (snap_hr == 9 && snap_mi > 30 && snap_mi < 45) {
-          // v5.72: Guarded Cleanup - Only wipe if the backlog is already empty.
-          // Prevents silent deletion of undrained records from overnight
-          // outages.
-          snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-          int remaining = countStored(ftpunsent_file);
-          if (remaining == 0) {
-            SPIFFS.remove(ftpunsent_file);
-            debugln("[FTP] Daily transition: Backlog already empty, cleanup "
-                    "SUCCESS.");
-          } else {
-            debugf("[FTP] Daily transition: %d undrained records in backlog - "
-                   "PRESERVING for drain.\n",
-                   remaining);
-          }
-        }
-        debugln();
-        debug("***DAILY FTP file name is ");
-        debugln(fileName);
-        previous_rfclose_day = rf_cls_dd;
-        previous_rfclose_month = rf_cls_mm;
-        previous_rfclose_year = rf_cls_yy;
-        previous_date(
-            &previous_rfclose_day, &previous_rfclose_month,
-            &previous_rfclose_year); // to ge the previous rf_close_date file
-        // v5.52 BUG-1 FIX: Removed duplicate snprintf (was copy-paste error)
-        snprintf(temp_file, sizeof(temp_file), "/dailyftp_%04d%02d%02d.txt",
-                 previous_rfclose_year, previous_rfclose_month,
-                 previous_rfclose_day);
-
-        // Maintain original standard filename
-        int ftp_year = rf_cls_yy % 100;
-        char stnId[16];
-        if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
-          snprintf(stnId, sizeof(stnId), "00%s", ftp_station);
-        } else {
-          strcpy(stnId, ftp_station);
-        }
-
-#if SYSTEM == 1
-        if (strstr(UNIT, "SPATIKA"))
-          snprintf(fileName, sizeof(fileName),
-                   "/TWS_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
-                   rf_cls_mm, rf_cls_dd, record_hr, record_min);
-        else
-          snprintf(fileName, sizeof(fileName),
-                   "/TWS_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
-                   rf_cls_mm, rf_cls_dd, record_hr, record_min);
-#endif
-#if SYSTEM == 2
-        if (strstr(UNIT, "SPATIKA"))
-          snprintf(fileName, sizeof(fileName),
-                   "/TWSRF_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
-                   rf_cls_mm, rf_cls_dd, record_hr, record_min);
-        else
-          snprintf(fileName, sizeof(fileName),
-                   "/TWSRF_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
-                   rf_cls_mm, rf_cls_dd, record_hr, record_min);
-#endif
-#if SYSTEM == 3
-        if (strstr(UNIT, "SPATIKA"))
-          snprintf(fileName, sizeof(fileName),
-                   "/TWSRP_%s_%02d%02d%02d_%02d%02d00.swd", stnId, ftp_year,
-                   rf_cls_mm, rf_cls_dd, record_hr, record_min);
-        else
-          snprintf(fileName, sizeof(fileName),
-                   "/TWSRP_%s_%02d%02d%02d_%02d%02d00.kwd", stnId, ftp_year,
-                   rf_cls_mm, rf_cls_dd, record_hr, record_min);
-#endif
-
-        // v5.75: Atomic open under lock (R-02 fix)
-        File f_src = SPIFFS.open(temp_file, FILE_READ);
-        if (f_src) {
-          f_src.close(); // Just verifying existence under lock
-          copyFile(temp_file, fileName, true); // v5.75: alreadyLocked=true
-          debug("Retrieved file is ");
-          debugln(fileName);
-          esp_task_wdt_reset();
-          xSemaphoreGive(fsMutex);
-          send_ftp_file(fileName, true, false);
-
-          if (last_ftp_login_result == 9) {
-#if ENABLE_HTTP_BACKLOG_FALLBACK == 0
-            debugln("[FTP] Firewall block detected (Error 9). Initiating APN "
-                    "Swap for Daily FTP...");
-            send_at_cmd("AT+CGACT=0,1", "OK", "\r\n");
-
-            if (try_activate_apn("airtelgprs.com")) {
-              debugln("[FTP] APN Swap Successful. Retrying Daily FTP...");
-              send_ftp_file(fileName, true, false);
-
-              debugln(
-                  "[FTP] Daily FTP retry complete. Restoring default APN...");
-              send_at_cmd("AT+CGACT=0,1", "OK", "\r\n");
-              try_activate_apn(apn_str);
-              verify_bearer_or_recover();
-            } else {
-              debugln("[FTP] APN Swap Failed. Reverting...");
-              try_activate_apn(apn_str);
-              verify_bearer_or_recover();
-            }
-#endif
-          }
-        } else {
-          debugln("Daily FTP: Temp file not found. Skipping.");
-          xSemaphoreGive(fsMutex);
-        }
-      } else {
-        debugln(
-            "[FTP] Failed to retake fsMutex for Daily operation. Skipping.");
-      }
-    }
   }
-} // end send_unsent_data
+  xSemaphoreGive(fsMutex);
+}
+
+// v6.56 M-3: sets up the modem's own HTTP stack for one POST to httpSet[http_no]:
+// HTTPTERM, HTTPINIT, URL, CONTENT, ACCEPT. Method 2 used to send AT+HTTPDATA with no
+// HTTPINIT and no URL, and the retry paths sent the bare "http://..." text of
+// httpPostRequest to the modem as if it were a command, so none of them could succeed.
+// Returns false if HTTPINIT or the URL is refused.
+static bool http_stack_prepare() {
+  char url[200];
+  const char *base = httpPostRequest;
+  if (strncmp(base, "http://", 7) != 0) {
+    // Not built for this send (e.g. a session rebuilt before any send): build it here
+    const bool port80 = (strcmp(httpSet[http_no].Port, "80") == 0 || httpSet[http_no].Port[0] == '\0');
+    if (port80) {
+      snprintf(url, sizeof(url), "http://%s%s", httpSet[http_no].serverName, httpSet[http_no].Link);
+    } else {
+      snprintf(url, sizeof(url), "http://%s:%s%s", httpSet[http_no].serverName, httpSet[http_no].Port,
+               httpSet[http_no].Link);
+    }
+  } else {
+    snprintf(url, sizeof(url), "%s", base);
+  }
+  SerialSIT.println("AT+HTTPTERM");
+  waitForResponse("OK", 2000);
+  flushSerialSIT();
+  SerialSIT.println("AT+HTTPINIT");
+  if (!waitForResponse("OK", 5000)) {
+    http_ready = false;
+    return false;
+  }
+  http_ready = true;
+  char cmd[240];
+  snprintf(cmd, sizeof(cmd), "AT+HTTPPARA=\"URL\",\"%s\"", url);
+  SerialSIT.println(cmd);
+  if (!waitForResponse("OK", 2000)) {
+    return false;
+  }
+  if (!strcmp(httpSet[http_no].Format, "json")) {
+    SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+  } else {
+    SerialSIT.println("AT+HTTPPARA=\"CONTENT\",\"application/x-www-form-urlencoded\"");
+  }
+  waitForResponse("OK", 1000);
+  SerialSIT.println("AT+HTTPPARA=\"ACCEPT\",\"*/*\"");
+  waitForResponse("OK", 1000);
+  return true;
+}
 
 int send_at_cmd_data(char *payload, bool robust) {
   uint32_t start_time = millis();
   strcpy(diag_http_fail_reason, "NONE"); // Clear stale context
   int plen = strlen(payload);
 
-  if (!ota_silent_mode) {
-    Serial.printf("Payload is %s\n", payload);
-  }
+  debugf("Payload is %s\n", payload);
 
   // --- METHOD 1: DIRECT TCP SOCKET HTTP POST (100% System A & B / Airtel & BSNL Compatible) ---
   SerialSIT.println("AT+NETOPEN?");
@@ -2092,26 +1694,71 @@ int send_at_cmd_data(char *payload, bool robust) {
         vTaskDelay(10 / portTICK_PERIOD_MS);
         SerialSIT.write((const uint8_t *)rawHttp, rawLen);
 
-        if (waitForResponseNoFlush("+IPD", 15000) || strstr(modem_response_buf, "200 OK") != NULL || strstr(modem_response_buf, "Success") != NULL) {
-          uint32_t respStart = millis();
-          while (strstr(modem_response_buf, "200") == NULL && strstr(modem_response_buf, "Success") == NULL && (millis() - respStart < 8000)) {
-            while (SerialSIT.available()) {
-              int len = strlen(modem_response_buf);
-              if (len < 2047) {
-                modem_response_buf[len] = SerialSIT.read();
-                modem_response_buf[len + 1] = '\0';
-              } else {
-                SerialSIT.read();
-              }
+        // v6.56 H-2: Decide on the server's real HTTP status line and body.
+        // Before, any "200" or "Success" anywhere in the buffer counted as delivered,
+        // so an "HTTP/1.1 200" reply with a "Rejected" body (the Spatika slot rule) or
+        // a 500 page with "Content-Length: 1200" was taken as success and the record
+        // was dropped from the backlog.
+        modem_response_buf[0] = '\0'; // drop the "> " prompt text so nothing stale can match
+        waitForResponseNoFlush("HTTP/1.", 15000);
+        uint32_t respStart = millis();
+        // The server closes the connection (Connection: close) after the body.
+        while (strstr(modem_response_buf, "+IPCLOSE") == NULL &&
+               (millis() - respStart < 5000)) {
+          while (SerialSIT.available()) {
+            int len = strlen(modem_response_buf);
+            if (len < 2047) {
+              char c = SerialSIT.read();
+              modem_response_buf[len] = (c == '\0') ? ' ' : c;
+              modem_response_buf[len + 1] = '\0';
+            } else {
+              SerialSIT.read();
             }
-            vTaskDelay(20 / portTICK_PERIOD_MS);
           }
-          if (strstr(modem_response_buf, "200") != NULL || strstr(modem_response_buf, "Success") != NULL) {
-            debugln("[HTTP] Direct TCP Socket POST Successful! Received 200 OK.");
-            SerialSIT.println("AT+CIPCLOSE=0");
-            waitForResponse("OK", 2000);
-            return 1;
+          vTaskDelay(20 / portTICK_PERIOD_MS);
+        }
+        const char *status_line = strstr(modem_response_buf, "HTTP/1.");
+        int http_status = status_line ? atoi(status_line + 9) : 0;
+        const char *body = status_line ? strstr(status_line, "\r\n\r\n") : NULL;
+        body = body ? body + 4 : "";
+        bool srv_rejected = (strstr(body, "Rejected") || strstr(body, "rejected") ||
+                             strstr(body, "REJECTED") || strstr(body, "Invalid") ||
+                             strstr(body, "invalid"));
+
+        if (http_status >= 200 && http_status <= 202 && !srv_rejected) {
+          debugf("[HTTP] Direct TCP Socket POST delivered (HTTP %d).\n", http_status);
+          diag_rejected_count = 0;
+          // v6.56 H-3: This path never synced the clock, so in builds without the
+          // health report nothing corrected DS1307 drift. Once a day: the body's
+          // "tm" field if the server sends one, else the HTTP Date header.
+          if (!rtc_daily_sync_done) {
+            sync_rtc_from_server_tm(body, false);
           }
+          if (!rtc_daily_sync_done) {
+            sync_rtc_from_http_header(modem_response_buf);
+          }
+          diag_http_time_total += (millis() - start_time);
+          strcpy(diag_http_fail_reason, "NONE");
+          SerialSIT.println("AT+CIPCLOSE=0");
+          waitForResponse("OK", 2000);
+          return 1;
+        }
+        if (http_status > 0) {
+          // The server answered "no". Another route or a radio reset won't change that.
+          if (srv_rejected) {
+            diag_rejected_count++;
+            debugf("[HTTP] Server REJECTED the record (HTTP %d): %.60s\n", http_status, body);
+            // A rejection is most often the clock: correct it now.
+            sync_rtc_from_server_tm(body, true);
+            sync_rtc_from_http_header(modem_response_buf);
+            strncpy(diag_http_fail_reason, "REJECTED", sizeof(diag_http_fail_reason) - 1);
+          } else {
+            snprintf(diag_http_fail_reason, sizeof(diag_http_fail_reason), "HTTP_%d", http_status);
+            debugf("[HTTP] Server answered HTTP %d.\n", http_status);
+          }
+          SerialSIT.println("AT+CIPCLOSE=0");
+          waitForResponse("OK", 2000);
+          return srv_rejected ? 3 : 0; // 3 = rejected by the server (see prepare_data_and_send)
         }
       }
       SerialSIT.println("AT+CIPCLOSE=0");
@@ -2122,6 +1769,11 @@ int send_at_cmd_data(char *payload, bool robust) {
   // --- METHOD 2: FALLBACK TO HIGH-LEVEL AT+HTTPINIT STACK ---
   debugln("[HTTP] TCP Socket POST unconfirmed. Trying High-Level AT+HTTPINIT fallback...");
   char cmd_buf[80];
+  if (!http_stack_prepare()) {
+    strncpy(diag_http_fail_reason, "HTTPINIT_ERR", sizeof(diag_http_fail_reason) - 1);
+    debugln("[HTTP] HTTPINIT/URL refused: Method 2 not possible.");
+    return 0;
+  }
 
   if (robust) {
     flushSerialSIT();
@@ -2184,9 +1836,7 @@ int send_at_cmd_data(char *payload, bool robust) {
   if (response == NULL) {
     return 0;
   }
-  if (!ota_silent_mode) {
-    Serial.printf("[HTTP] Response of AT+HTTPACTION=1 is: %s\n", response);
-  }
+  debugf("[HTTP] Response of AT+HTTPACTION=1 is: %s\n", response);
 
   if (strstr(response, "200") == NULL && strstr(response, "201") == NULL &&
       strstr(response, "202") == NULL) {
@@ -2456,94 +2106,21 @@ void store_current_unsent_data() {
     return;
   }
 
-  // Memory logic: derivation using pointers
-  char cleanFtp[160] = {0};
+  // v6.56: one backlog for every system (FTP removed): the slot's stored CSV line goes
+  // to /unsent.txt. TWS/TWS-RF used to rewrite it into the FTP ";" format for
+  // /ftpunsent.txt, which only reached the server after being moved to /unsent.txt.
   char cleanData[160] = {0};
-
-#if SYSTEM == 0
   strncpy(cleanData, finalStringBuffer, sizeof(cleanData) - 1);
   trim_whitespace(cleanData);
   if (strlen(cleanData) < 20) {
     strncpy(cleanData, append_text, sizeof(cleanData) - 1);
     trim_whitespace(cleanData);
   }
-#else
-  if (strlen(finalStringBuffer) > 20) {
-    char csv[160];
-    strncpy(csv, finalStringBuffer, sizeof(csv) - 1);
-    csv[sizeof(csv) - 1] = '\0';
-    trim_whitespace(csv);
 
-    char *firstComma = strchr(csv, ',');
-    if (firstComma != NULL) {
-      char derived_stn[20];
-      if (strlen(ftp_station) == 4 && isDigitStr(ftp_station)) {
-        snprintf(derived_stn, sizeof(derived_stn), "00%s", ftp_station);
-      } else {
-        strncpy(derived_stn, ftp_station, sizeof(derived_stn) - 1);
-      }
-
-      char *rest = firstComma + 1;
-      char *dtComma = strchr(rest, ',');
-      if (dtComma != NULL) {
-        char *fieldStartPtr = strchr(dtComma + 1, ',');
-        if (fieldStartPtr != NULL) {
-          fieldStartPtr++; // Move past comma
-          char dtPart[40] = {0};
-          int dtLen = (fieldStartPtr - 1) - rest;
-          if (dtLen > 0 && dtLen < (int)sizeof(dtPart)) {
-            strncpy(dtPart, rest, dtLen);
-            dtPart[dtLen] = '\0';
-          }
-
-          char *fields = fieldStartPtr;
-#if (SYSTEM == 2 || SYSTEM == 3)
-          char *c1 = strchr(fields, ',');
-          if (c1 != NULL) {
-            char cumRfStr[16] = {0};
-            int crfLen = c1 - fields;
-            strncpy(cumRfStr, fields, (crfLen < 15) ? crfLen : 15);
-            float cumRfVal = atof(cumRfStr);
-            char paddedCumRf[10];
-            snprintf(paddedCumRf, sizeof(paddedCumRf), "%05.2f", cumRfVal);
-
-            char remaining[100];
-            strncpy(remaining, c1 + 1, sizeof(remaining) - 1);
-            remaining[sizeof(remaining) - 1] = '\0';
-            // Replace commas with semicolons in remaining
-            for (int j = 0; remaining[j]; j++)
-              if (remaining[j] == ',')
-                remaining[j] = ';';
-
-            snprintf(cleanFtp, sizeof(cleanFtp), "%s;%s;%s;%s", derived_stn,
-                     dtPart, paddedCumRf, remaining);
-          }
-#else
-          char fields_buf[120];
-          strncpy(fields_buf, fields, sizeof(fields_buf) - 1);
-          fields_buf[sizeof(fields_buf) - 1] = '\0';
-          for (int j = 0; fields_buf[j]; j++)
-            if (fields_buf[j] == ',')
-              fields_buf[j] = ';';
-          snprintf(cleanFtp, sizeof(cleanFtp), "%s;%s;%s", derived_stn, dtPart,
-                   fields_buf);
-#endif
-        }
-      }
-    }
-  }
-
-  if (strlen(cleanFtp) < 30) {
-    strncpy(cleanFtp, ftpappend_text, sizeof(cleanFtp) - 1);
-    trim_whitespace(cleanFtp);
-  }
-#endif
-
-#if SYSTEM == 0
   snprintf(unsent_file, sizeof(unsent_file), "/unsent.txt");
   if (last_unsent_sampleNo != snap_sampleNo) { // v5.75: Atomic Dedup
     if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-      pruneFile(unsent_file, (300 * record_length), true);
+      pruneFile(unsent_file, (BACKLOG_MAX_RECORDS * record_length), true);
       File file2 = SPIFFS.open(unsent_file, FILE_APPEND);
       if (file2) {
         if (strlen(cleanData) > 0) {
@@ -2559,28 +2136,6 @@ void store_current_unsent_data() {
       xSemaphoreGive(fsMutex);
     }
   }
-#endif
-
-#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
-  snprintf(ftpunsent_file, sizeof(ftpunsent_file), "/ftpunsent.txt");
-  if (last_unsent_sampleNo != snap_sampleNo) { // v5.75: Atomic Dedup
-    if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-      pruneFile(ftpunsent_file, (300 * record_length), true);
-      File ftpfile2 = SPIFFS.open(ftpunsent_file, FILE_APPEND);
-      if (ftpfile2) {
-        if (strlen(cleanFtp) > 0) {
-          ftpfile2.print(cleanFtp); // v5.75: Explicitly print (Fixed H-06)
-          ftpfile2.print("\r\n");
-          if (diag_backlog_total < 999999)
-            diag_backlog_total++;
-        }
-        ftpfile2.close();
-        last_unsent_sampleNo = snap_sampleNo;
-      }
-      xSemaphoreGive(fsMutex);
-    }
-  }
-#endif
 
   // v5.50: Update HTTP fail counters
   if (current_month > 0 && diag_cum_fail_reset_month != current_month) {
@@ -2598,7 +2153,6 @@ void store_current_unsent_data() {
 #if DEBUG == 1
   // v5.72 Core Hardening: Protect debug reads with Mutex Pulse
   if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-#if SYSTEM == 0
     if (SPIFFS.exists("/unsent.txt")) {
       File file4 = SPIFFS.open("/unsent.txt", FILE_READ);
       if (file4) {
@@ -2614,24 +2168,6 @@ void store_current_unsent_data() {
         file4.close();
       }
     }
-#endif
-#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
-    if (SPIFFS.exists("/ftpunsent.txt")) {
-      File ftpfile4 = SPIFFS.open("/ftpunsent.txt", FILE_READ);
-      if (ftpfile4) {
-        if (ftpfile4.size() > 0) {
-          int seekPos = (ftpfile4.size() > 500) ? ftpfile4.size() - 500 : 0;
-          ftpfile4.seek(seekPos);
-          char tail_buf[512];
-          int r = ftpfile4.readBytes(tail_buf, sizeof(tail_buf) - 1);
-          tail_buf[r] = '\0';
-          debugln("   ... [Tail FTP Unsent] ...");
-          debug(tail_buf);
-        }
-        ftpfile4.close();
-      }
-    }
-#endif
     xSemaphoreGive(fsMutex);
   }
 #endif

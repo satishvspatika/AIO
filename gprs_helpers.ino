@@ -582,6 +582,7 @@ void sync_rtc_from_http_header(const char *header_override) {
 
     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
       // 1. Update Physical RTC always (Hard correction)
+      health_note_clock_change((long)(DateTime(s_yy, s_mm, s_dd, s_hh, s_mi, s_ss).unixtime() - rtc.now().unixtime()));
       rtc.adjust(DateTime(s_yy, s_mm, s_dd, s_hh, s_mi, s_ss));
       xSemaphoreGive(i2cMutex);
       
@@ -733,6 +734,7 @@ void sync_rtc_from_server_tm(const char *payload, bool force) {
 
   if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
     // Write perfectly translated server IST time and date to physical RTC
+    health_note_clock_change((long)(DateTime(s_yy + 2000, s_mm, s_dd, s_hh, s_mi, s_ss).unixtime() - rtc.now().unixtime()));
     rtc.adjust(DateTime(s_yy + 2000, s_mm, s_dd, s_hh, s_mi, s_ss));
     xSemaphoreGive(i2cMutex);
   }
@@ -819,15 +821,11 @@ void start_gprs() {
       esp_task_wdt_reset(); // v5.83: Prevent WDT trigger during long recovery windows
       SerialSIT.println("AT+CPIN?");
       bool cpin_ok = waitForResponse("+CPIN: READY", 1000);
-      if (!ota_silent_mode) {
-        Serial.printf("[SIM-DIAG] Iter #%d: CPIN Resp: '%s'\n", i + 1, modem_response_buf);
-      }
+      debugf("[SIM-DIAG] Iter #%d: CPIN Resp: '%s'\n", i + 1, modem_response_buf);
       if (cpin_ok) {
         sim_ready = true;
         set_sys_status("SIM READY");
-        if (!ota_silent_mode) {
-          Serial.printf("[SIM-DIAG] SIM Ready confirmed on attempt %d!\n", i + 1);
-        }
+        debugf("[SIM-DIAG] SIM Ready confirmed on attempt %d!\n", i + 1);
         break;
       }
       
@@ -991,39 +989,6 @@ void graceful_modem_shutdown() {
   }
 }
 
-void send_sms() {
-  set_sys_status("CHECKING SMS");
-  if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-  vTaskDelay(500 /
-             portTICK_PERIOD_MS); // TRG8-3.0.5g reduced from 1min to 500ms
-  int msg_no;
-
-  debugln();
-  debugln("[GPRS] Checking SMS...");
-  debugln();
-
-  for (msg_no = 1; msg_no < 10; msg_no++) { // v5.65 P2: Increased from 5 to 10 to scan more slots
-    process_sms(msg_no);
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-  }
-  // v5.65 fix: Changed flag from 4 to 3.
-  // AT+CMGD=1,4 = delete message at index 1 AND ALL messages of ANY status (nuke all).
-  // A command SMS arriving at the tower DURING the processing loop above (~400ms)
-  // would be silently dropped — a race condition that loses operator commands.
-  // AT+CMGD=1,3 = delete only READ+SENT messages. UNREAD messages are preserved
-  // and will be processed on the next SMS check cycle.
-  SerialSIT.println("AT+CMGD=1,3");
-  waitForResponse("OK", 5000);
-  debugln("Removed READ/SENT messages (UNREAD preserved)");
-
-  portENTER_CRITICAL(&syncMux);
-  sync_mode = eSMSStop;
-  portEXIT_CRITICAL(&syncMux);
-
-  xSemaphoreGive(modemMutex);
-  }
-}
-
 // REQUIRES: modemMutex held by caller (Not thread-safe due to static buffer)
 bool waitForResponse(const char *expected, unsigned long timeout) {
   if (!modemMutex) return false;
@@ -1151,34 +1116,6 @@ int read_line_to_buf(File &f, char *buf, size_t max_len) {
   return i;
 }
 
-int read_line(char *src, char *dest, int max_len, char delim_chr) {
-  int i, j;
-  char c;
-  if (!dest || max_len <= 0)
-    return 0;
-  *dest = 0;
-  j = 0;
-  for (i = 0; (i < (max_len - 1)); i++, j++) { // Use max_len to prevent OOB
-    c = *src;
-    if (c == 0)
-      return (j);
-    if (c == delim_chr)
-      return (++j);
-    src++;
-    if ((c == '\r') || (c == '\n')) {
-      c = *src++;
-      j++;
-      if ((c == '\r') || (c == '\n'))
-        j++;
-      break;
-    } else {
-      dest[i] = c;     // Standard indexing
-      dest[i + 1] = 0; // Safe null termination
-    }
-  }
-  return (j);
-}
-
 // Function to convert GMT to IST
 void convert_gmt_to_ist(struct tm *gmt_time) {
   // Adding 5 hours and 30 minutes to GMT for IST conversion
@@ -1198,51 +1135,13 @@ void send_at_cmd(char *cmd, char *check, char *spl) {
   waitForResponse(check, 2000);
 }
 
-/**
- * Sends a health report to the Google Sheets "Server"
- * Parameters: stn, type, gbat, ebat, sig
- */
-#if ENABLE_HEALTH_REPORT == 1
-void power_cut_modem_shutdown() {
-  debugln("[HEAL] Graceful 2 PM Maintenance Reboot Activated.");
-  sync_mode = eHttpStop; // Prevent stray UART tasks (eHttpStop equivalent)
-  digitalWrite(26, LOW); // Cut modem VCC instantly
-  vTaskDelay(3000 / portTICK_PERIOD_MS); // allow 3-second delay to settle heavy current draw
-}
-#endif
-
 /*
- *   HTTP
- *  - send_health_report()
- *  - send_http_data()
- *  - send_at_cmd_data()
- *  - store_current_unsent_data()
- */
-
-/*
- *  SIM Network Registration and Setup
- *  - get_signal_strength();//2024 iter3
- *  - get_network();
- *  - get_registration();
- *  - get_a7672s();
- */
-
-/*
- *  SMS & FTP
- *  - process_sms()
- *  - prepare_and_send_status()
- *  - get_lat_long_date_time()
- *  - setup_ftp()
- *  - fetchFromFtpAndUpdate()
- *  - copyFromSPIFFSToFS()
- */
-
-/*
- * COMMON FUNCTIONS
- *  - parse_http_head()
- *  - waitForResponse()
- *  - read_line()
- *  - resync_time()
+ *  Where things are
+ *  - HTTP: send_http_data(), send_at_cmd_data(), store_current_unsent_data()  (gprs_http.ino)
+ *  - Network: get_signal_strength(), get_network(), get_registration(), get_a7672s()  (gprs_health.ino)
+ *  - SMS: send_sms() reads the SIM and runs VARSHA commands (sms_remote.ino); sms_send_text(),
+ *    prepare_and_send_status(), get_lat_long_date_time()  (gprs_health.ino)
+ *  - OTA and the daily health report: ota_esp.ino, health_day.ino
  */
 
 // 28,2025-07-15,15:45,0008.0,24.29,73.28,01.34,323,-073,04.2

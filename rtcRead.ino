@@ -28,11 +28,6 @@ void rtcRead(void *pvParameters) {
     esp_task_wdt_reset();
 
     // v5.52: Absolute Silence Protocol — Pause task during OTA to prevent
-    // crosstalk
-    while (ota_silent_mode) {
-      vTaskDelay(2000 / portTICK_PERIOD_MS);
-      esp_task_wdt_reset();
-    }
 
     memset(data, 0, sizeof(data)); // Initialize array to zero
     rtc_ok = false;
@@ -98,10 +93,14 @@ void rtcRead(void *pvParameters) {
     // Check DS1307 Clock Halt (CH) bit 7 in Register 0x00
     if (data[0] & 0x80) {
       debugln("[RTC] Clock Halt bit set! Restarting oscillator...");
-      Wire.beginTransmission(RTC_ADDRESS);
-      Wire.write(0x00);
-      Wire.write(data[0] & 0x7F);
-      Wire.endTransmission();
+      // v6.56 M-8: the I2C bus is shared (LCD, sensors): this write needs i2cMutex too
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+        Wire.beginTransmission(RTC_ADDRESS);
+        Wire.write(0x00);
+        Wire.write(data[0] & 0x7F);
+        Wire.endTransmission();
+        xSemaphoreGive(i2cMutex);
+      }
     }
 
     sec = bcdToDec(data[0] & 0x7F);
@@ -299,19 +298,7 @@ void resync_time() {
     }
 
     if (!synced_time) {
-      debugln("[RTC] [WARN] Both +CLBS and +CCLK failed. Falling back to HTTP Health server time sync...");
-#if ENABLE_HEALTH_REPORT == 1
-      if (send_health_report(false, true)) {
-        if (badReads == 0 || (current_year >= 2025 && current_year <= 2060)) {
-          synced_time = true;
-          debugln("[RTC] ✅ HTTP Health Server timestamp successfully synced RTC!");
-        }
-      }
-#endif
-    }
-
-    if (!synced_time) {
-      debugln("[RTC] [WARN] All time resync methods (+CLBS, +CCLK, HTTP) failed for this attempt.");
+      debugln("[RTC] [WARN] Time resync (+CLBS, +CCLK) failed for this attempt. The data server's reply corrects it later.");
     }
 
     xSemaphoreGive(modemMutex);
@@ -346,6 +333,28 @@ void resync_time() {
   //  &lati,&longi,&tmp3,&year1,&month1,&day1,&hour1,&minute1,&seconds1);
 
   // Parse and convert the time from the response
+}
+
+// v6.56 M-6: one place that turns a UTC time (+CLBS) into IST and sets the RTC and the
+// time globals. Returns false if the time is not plausible or the I2C bus is busy.
+bool set_rtc_from_utc(int yyyy, int mm, int dd, int hr, int mi, int ss) {
+  if (yyyy < 2025 || yyyy > 2060 || mm < 1 || mm > 12 || dd < 1 || dd > 31 || hr < 0 || hr > 23 ||
+      mi < 0 || mi > 59 || ss < 0 || ss > 59) {
+    return false;
+  }
+  const DateTime ist = DateTime(yyyy, mm, dd, hr, mi, ss) + TimeSpan(5 * 3600 + 30 * 60);
+  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    return false;
+  }
+  rtc.adjust(ist);
+  xSemaphoreGive(i2cMutex);
+  portENTER_CRITICAL(&rtcTimeMux);
+  current_year = ist.year(); current_month = ist.month(); current_day = ist.day();
+  current_hour = ist.hour(); current_min = ist.minute(); current_sec = ist.second();
+  portEXIT_CRITICAL(&rtcTimeMux);
+  debugf("[RTC] Set from UTC to IST: %04d-%02d-%02d %02d:%02d:%02d\n", ist.year(), ist.month(), ist.day(),
+         ist.hour(), ist.minute(), ist.second());
+  return true;
 }
 
 // Function to parse the +CLBS response and convert to IST

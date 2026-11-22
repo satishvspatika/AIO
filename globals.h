@@ -1,6 +1,7 @@
 #ifndef GATEWAY_GLOBALS_H
 #define GATEWAY_GLOBALS_H
 
+#include "remote_health_types.h" // v6.57: SMS commands and daily health report
 #include "user_config.h"
 
 // =========================================================================
@@ -97,7 +98,6 @@ enum HDC_Type { // Sensor type enum
 
 enum BME_Type { BME_UNKNOWN, BME_280 };
 
-extern volatile bool ota_silent_mode;
 // v5.81: Multi-Core Control Flags (volatile to prevent compiler optimization across tasks)
 extern volatile bool bearer_recovery_active;
 extern RTC_DATA_ATTR volatile bool low_bat_mode_active;
@@ -138,13 +138,27 @@ void pruneFile(const char *path, size_t limit, bool alreadyLocked = false);
 /************************************************************************************************/
 extern char
     UNIT[15]; // (Initialized secretly in .ino via UNIT_CFG to avoid ODR issues)
-extern int test_health_every_slot;
 extern float RF_RESOLUTION;
 extern RTC_DATA_ATTR int server_mode; // 0: Server 1 Only, 1: Server 2 Only, 2: Dual Broadcast (Both)
 extern RTC_DATA_ATTR int primary_http_no;
 extern struct http_params secondaryServer;
-void set_station_id(const char* new_id);
-void set_server_config(int srv_index, const char* param_str);
+void set_station_id(const char* new_id, bool wipe);
+bool server2_save(const char *host, uint16_t port, const char *path, const char *key);
+bool server_mode_save(int mode);
+bool sms_send_text(const char *number, const char *text, unsigned long confirm_ms);
+void send_sms();
+const char *ota_server_host();
+int ota_server_port();
+bool ota_server_set(const char *host, int port);
+void health_note_clock_change(long seconds);
+void health_note_boot();
+void health_note_slot(const char *record, float bat);
+void health_note_delivered(int y, int mo, int d, int hh, int mi, bool backlog);
+void health_note_failed(const char *why);
+void health_note_awake(unsigned long ms);
+bool health_report_due();
+void health_append_report(char *out, size_t n);
+void health_report_sent();
 
 /************************************************************************************************/
 
@@ -169,6 +183,23 @@ void set_server_config(int srv_index, const char* param_str);
 #define RECORD_LENGTH_RF 46    // SYSTEM == 0 (NN,YYYY-MM-DD,HH:MM,II.II,CC.CC,SSSY,BB.BB\r\n)
 #define RECORD_LENGTH_TWS 57   // SYSTEM == 1 (NN,YYYY-MM-DD,HH:MM,TT.T,HHH.H,WW.W,DDD,SSSY,BB.BB\r\n) => 55 + 2 = 57
 #define RECORD_LENGTH_TWSRF 63 // SYSTEM == 2 (NN,YYYY-MM-DD,HH:MM,RR.RR,TT.T,HHH.H,WW.W,DDD,SSSY,BB.BB\r\n) => 61 + 2 = 63
+// v6.56 H-4: the backlog keeps up to 30 days of records (96 a day) before the oldest unsent
+// ones are dropped (was 300, about 3 days). At most 2880 x 71 = 205 KB, a small part of
+// even the 4 MB layout's 1.5 MB SPIFFS.
+#define BACKLOG_MAX_RECORDS 2880
+// v6.56 H-6: below this the slot's record is not written to flash (brownout risk).
+// Between this and 3.4 V (Survival Mode) records are stored for the backlog, modem off.
+#define FLASH_WRITE_MIN_V 3.2f
+// v6.56 M-1: self-healing limits
+#define HEAL_REBOOT_SLOTS 96                  // 24 h with nothing delivered: one restart
+#define LOCKUP_REBOOT_MS (14UL * 60UL * 1000UL) // a mutex held this long without a break (an OTA
+                                                // download session can hold the modem ~11 min)
+// v6.56: backlog per slot. Sending stops this many seconds before the next slot boundary
+// (the unit wakes ~2 min after it, so up to ~8 min of sending), after BACKLOG_MAX_PER_SLOT
+// records, or after 15 records when the GPRS battery is below BACKLOG_FULL_DRAIN_MIN_V.
+#define BACKLOG_STOP_BEFORE_SLOT_S 300
+#define BACKLOG_MAX_PER_SLOT 96
+#define BACKLOG_FULL_DRAIN_MIN_V 3.7f
 #define RECORD_LENGTH_TWSRP 71 // SYSTEM == 3 (NN,YYYY-MM-DD,HH:MM,RR.RR,TT.T,HHH.H,WW.W,DDD,PPPP.PP,SSSY,BB.BB\r\n) => 69 + 2 = 71
 
 // Sample number constants
@@ -252,9 +283,9 @@ extern unsigned long last_key_time;
 // record_length moved below
 extern int cur_file_found;
 #if DEBUG == 1
-  #define debug(...)         do { if(!ota_silent_mode && !bearer_recovery_active) Serial.print(__VA_ARGS__); } while (0)
-  #define debugln(...)       do { if(!ota_silent_mode && !bearer_recovery_active) Serial.println(__VA_ARGS__); } while (0)
-  #define debugf(fmt, ...)   do { if(!ota_silent_mode && !bearer_recovery_active) Serial.printf(fmt, ##__VA_ARGS__); } while (0)
+  #define debug(...)         do { if(!bearer_recovery_active) Serial.print(__VA_ARGS__); } while (0)
+  #define debugln(...)       do { if(!bearer_recovery_active) Serial.println(__VA_ARGS__); } while (0)
+  #define debugf(fmt, ...)   do { if(!bearer_recovery_active) Serial.printf(fmt, ##__VA_ARGS__); } while (0)
   #define debugf1(fmt, ...)  debugf(fmt, ##__VA_ARGS__)
   #define debugf2(fmt, ...)  debugf(fmt, ##__VA_ARGS__)
   #define debugf3(fmt, ...)  debugf(fmt, ##__VA_ARGS__)
@@ -284,8 +315,7 @@ enum {
   eSMSStart,
   eSMSStop,
   eGPSStart,
-  eStartupGPS,
-  eHealthStart
+  eStartupGPS
 }; // sync_mode
 enum {
   eGprsInitial,
@@ -324,16 +354,7 @@ extern volatile bool health_in_progress;
 extern volatile bool primary_data_delivered;
 extern volatile RTC_DATA_ATTR bool skip_primary_http;
 extern volatile bool sleep_sequence_active;    // v5.77: Sleep Gate signal
-extern volatile bool force_ftp;               // v5.77: RESTORED
-extern volatile bool force_ftp_daily;
-extern volatile bool force_health_upload;
-extern volatile bool force_get_num;
 extern RTC_DATA_ATTR int rtc_daily_sync_count; // v5.77: Daily sync retry cap
-extern char ftp_daily_date[12];
-extern volatile bool force_reboot;
-extern volatile bool force_ota;
-extern volatile bool force_gps_refresh;
-extern volatile bool force_clear_ftp_queue;
 extern volatile bool force_delete_data;
 // v5.87: ota_writing_active deduplicated (defined at line 84)
 extern char hw_tag; // v5.75: Passive hardware/VFS health tag
@@ -341,21 +362,17 @@ extern bool
     http_ready; // v5.42: Tracks HTTPINIT success; defined in gprs_core.ino
 extern int ota_fail_count;
 extern char ota_fail_reason[48];
-extern char ota_cmd_param[128];
-extern RTC_DATA_ATTR int last_cmd_id;
-extern RTC_DATA_ATTR char last_cmd_res[64];
 extern char cur_file[32], unsent_file[32], new_file[32], temp_file[50];
 extern char station_name[16];
 extern char last_fw_ver[32]; // v5.87: Standardized to [32]
 extern char ftp_station[16];  // v5.86: RESTORED
-extern char last_logged[16];  // v5.86: RESTORED
+extern char last_logged[17];  // v5.86: RESTORED
 extern size_t len;            // v5.86: RESTORED
 
 extern char chip_id[13];
 extern char calib_state[5], calib_text[40], calib_content[16];
 extern char ftpunsent_file[50];
 extern char ftpdaily_file[50];
-extern int ftp_login_flag;
 extern int calib_header_drawn;
 // GPRS
 extern int http_no, msg_sent;
@@ -367,7 +384,6 @@ extern int delay_val;                            // Delay before starting GPRS
 extern volatile int signal_strength; // cross-task: GPRS writes, scheduler reads
 extern volatile int signal_lvl;      // cross-task: GPRS writes, scheduler reads
 extern int sd_card_ok;
-extern int send_daily;
 extern float solar_val, solar;
 extern float li_bat, li_bat_val;
 extern float bat_3v3_val;
@@ -469,7 +485,6 @@ extern RTC_DATA_ATTR int diag_http_present_fails;
 extern RTC_DATA_ATTR int diag_http_cum_fails;
 extern RTC_DATA_ATTR int diag_cum_fail_reset_month;
 extern RTC_DATA_ATTR int diag_rejected_count;
-extern RTC_DATA_ATTR bool diag_sensor_fault_sent_today;
 extern RTC_DATA_ATTR char diag_crash_task[16]; // v5.59: Survive restart
 
 // Accuracy Counters (v5.49): Use 32-bit accumulators to prevent 16-bit ULP
@@ -516,8 +531,6 @@ extern RTC_DATA_ATTR int preferred_ftp_mode;
 extern RTC_DATA_ATTR bool healer_reboot_in_progress;
 
 // Health Report Retry Logic (persists across deep sleep)
-extern RTC_DATA_ATTR int health_last_sent_hour;
-extern RTC_DATA_ATTR int health_last_sent_day;
 extern RTC_DATA_ATTR bool diag_fw_just_updated;
 extern RTC_DATA_ATTR bool rtc_daily_sync_done;
 // v5.85: badReads relocated to main process block
@@ -560,6 +573,8 @@ extern RTC_DATA_ATTR int current_year, current_month, current_day, current_hour,
     calib_year, calib_month, calib_day, calib_sts;
 extern RTC_DATA_ATTR int firmwareUpdated;
 extern RTC_DATA_ATTR int last_processed_sample_idx;
+extern RTC_DATA_ATTR int heal_undelivered_slots;   // v6.56 M-1
+extern RTC_DATA_ATTR bool heal_slot_delivered;     // v6.56 M-1
 extern RTC_DATA_ATTR bool fresh_boot_check_done;
 extern RTC_DATA_ATTR bool apn_saved_this_sim;
 extern RTC_DATA_ATTR float last_valid_temp;
@@ -600,7 +615,6 @@ extern volatile bool rtcTimeChanged;
 extern RTC_DATA_ATTR bool signature_valid;
 extern RTC_DATA_ATTR bool pending_manual_status;
 extern RTC_DATA_ATTR bool pending_manual_gps;
-extern RTC_DATA_ATTR bool pending_manual_health;
 
 // LCD and Navigation
 extern volatile char show_now;
@@ -655,25 +669,26 @@ void set_wakeup_reason();
 // (v5.40+)
 void send_at_cmd(char *cmd, char *check, char *spl);
 void resync_time();
-char *parse_http_head(char *response, char *check);
 void next_date(int *Nd, int *Nm, int *Ny);
+uint16_t rf_pulses_since_slot(); // v6.56 H-1: live tips since last slot capture
+bool set_rtc_from_utc(int yyyy, int mm, int dd, int hr, int mi, int ss); // v6.56 M-6 (rtcRead.ino)
+void ota_boot_init();         // v6.56 ESP32 OTA (ota_esp.ino)
+void ota_confirm_step();
+void ota_slot_step(int slot);
+// v6.56 H-4: backlog pointer helpers (global_functions.ino)
+extern volatile long backlog_cut_total;
+void save_unsent_pointer_locked(long ptr);
+long load_unsent_pointer_locked();
+void advance_backlog_pointer(long next_record_pos, long cut_at_fetch);
 void previous_date(int *Cd, int *Cm, int *Cy);
 void get_p_file_info(char *pfn, int *pdd, int *pmm, int *pyy);
 void get_c_file_info(char *cfn, int *cdd, int *cmm, int *cyy);
 void getTimeSnapshot(struct tm *timeinfo); // v5.79: Hardened Time Sync
 int send_at_cmd_data(char *payload, bool robust);
 void send_http_data();
-bool send_health_report(bool useJitter = true, bool alreadyLocked = false, bool cmdPollOnly = false);
 void send_unsent_data();
-void send_ftp_file(char *fileName, bool isDailyFTP, bool alreadyLocked = false);
 void start_gprs();
-void send_sms();
-void process_sms(char msg_no);
 void retrieveOwnNumber(char* outBuf, size_t outSize, bool alreadyLocked = false);
-int setup_ftp(int transMode = 0);
-void fetchFromHttpAndUpdate(char *fileName, bool alreadyLocked = false);
-void fetchFromTcpAndUpdate(char *fileName, bool alreadyLocked = false);
-void copyFromSPIFFSToFS(char *dateFile, bool alreadyLocked = false);
 void saveGPS();
 void loadGPS();
 bool parse_clbs_response(const char *response, double &out_lat, double &out_lon,
@@ -684,20 +699,15 @@ void sync_rtc_from_http_header(const char *header_override = NULL);
 // MODEM / GPRS
 bool waitForResponse(const char *expected, unsigned long timeout);
 bool waitForResponseNoFlush(const char *expected, unsigned long timeout);
-void parse_health_response(const char* body);
 void disableWDT();
 void trim_whitespace(char *str);
 void saveYearToSPIFFS(int year);
 void configure_sensors_for_awake();
 void configure_sensors_for_sleep();
 bool copyFilesFromSPIFFSToSD(const char *dirname);
-void copyFile(const char *sourcePath, const char *destPath,
-              bool alreadyLocked = false); // v5.75
 void flushSerialSIT();
-bool copyFile_legacy(String fileName);
 void validate_ulp_counters();
 int read_line_to_buf(File &f, char *buf, size_t max_len);
-int read_line(char *src, char *dest, int max_len, char delim_chr);
 void parse_and_convert_clbs_response(const char *response, int year1,
                                      int month1, int day1, int hour1,
                                      int minute1, int seconds1);
@@ -715,7 +725,6 @@ void get_lat_long_date_time(char *number, bool alreadyLocked = false);
 void store_current_unsent_data();
 void get_gps_coordinates(bool alreadyLocked = true);
 void prepare_data_and_send();
-void power_cut_modem_shutdown();
 // (prototype above at line 90)
 
 // GPRS Helpers (gprs_helpers.ino)
@@ -752,7 +761,6 @@ enum UI_FIELD_ID {
   FLD_LAST_LOGGED,
   FLD_SEND_STATUS,
   FLD_SEND_GPS,
-  FLD_SEND_HEALTH,
   FLD_RF_CALIB,
   FLD_RF_RES,
   FLD_DELETE_DATA,

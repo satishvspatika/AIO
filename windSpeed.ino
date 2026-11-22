@@ -36,17 +36,17 @@ void windSpeed(void *pvParameters) {
   for (;;) {
     esp_task_wdt_reset();
 
-    // v5.52: Absolute Silence Protocol — Pause task during OTA
-    while (ota_silent_mode) {
-      vTaskDelay(2000 / portTICK_PERIOD_MS);
-      esp_task_wdt_reset();
-    }
 
     // 32-Bit Accumulation (Handles ULP 16-bit wraps safely)
-    uint16_t current_count = wind_count.val;
-    uint16_t raw_delta = (current_count >= last_raw_wind_count)
-                             ? (current_count - last_raw_wind_count)
-                             : (65536 + current_count - last_raw_wind_count);
+    // v6.56 M-4: read, difference and anchor update in one critical section. The
+    // scheduler does the same thing at the slot; done in two steps (difference outside
+    // the lock) the same pulses could be counted by both and the anchor moved back.
+    uint16_t current_count, raw_delta;
+    portENTER_CRITICAL(&windMux);
+    current_count = wind_count.val;
+    raw_delta = (uint16_t)(current_count - last_raw_wind_count); // 16-bit wrap safe
+    last_raw_wind_count = current_count;
+    portEXIT_CRITICAL(&windMux);
     
     // v5.90 Bounce Gate: Compute the implied speed for this 1-second raw_delta.
     // If delta exceeds physical limits (MAX_ACCEL_MS2), cap it to prevent phantom spikes.
@@ -61,7 +61,6 @@ void windSpeed(void *pvParameters) {
     // v5.65 Fix: Atomic protection for 32-bit counter shared with scheduler task
     portENTER_CRITICAL(&windMux);
     total_wind_pulses_32 += raw_delta;
-    last_raw_wind_count = current_count;
     portEXIT_CRITICAL(&windMux);
 
     // Store current count in buffer for INSTANTANEOUS calculation

@@ -481,7 +481,7 @@ void handleRoot() { // v5.70 STREAMING
 #if SYSTEM == 0 || SYSTEM == 2 || SYSTEM == 3
     server.sendContent("<div class='card'><div class='label'>" + String(s_rf) +
                        "</div><div id='live_rf' class='value'>" +
-                       String((float)rf_count.val * RF_RESOLUTION, 2) +
+                       String((float)rf_pulses_since_slot() * RF_RESOLUTION, 2) +
                        " <span style='font-size:0.6em'>mm</span></div></div>");
 #endif
 #if SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3
@@ -1226,7 +1226,7 @@ void handleData() {
       "\"time\": \"" + String(current_hour) + ":" + String(current_min) + "\"";
 
 #if SYSTEM == 0
-  json += ", \"rf_inst\": " + String((float)rf_count.val * RF_RESOLUTION, 2);
+  json += ", \"rf_inst\": " + String((float)rf_pulses_since_slot() * RF_RESOLUTION, 2);
 #endif
 
 #if SYSTEM == 1
@@ -1241,7 +1241,7 @@ void handleData() {
 #endif
 
 #if SYSTEM == 2 || SYSTEM == 3
-  json += ", \"rf_inst\": " + String((float)rf_count.val * RF_RESOLUTION, 2) +
+  json += ", \"rf_inst\": " + String((float)rf_pulses_since_slot() * RF_RESOLUTION, 2) +
           ", \"rf_cum\": " + String(new_current_cumRF, 2) +
           ", \"temperature\": " + String(temperature, 1) +
           ", \"humidity\": " + String(humidity, 1) +

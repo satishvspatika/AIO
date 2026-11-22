@@ -124,11 +124,6 @@ bool isFieldVisible(int fld_id) {
     return false;
 #endif
 
-#if ENABLE_HEALTH_REPORT == 0
-  if (fld_id == FLD_SEND_HEALTH)
-    return false;
-#endif
-
   if (fld_id == FLD_ALTITUDE)
     return false;
 
@@ -185,6 +180,10 @@ void IRAM_ATTR onTimer() {
 }
 
 DRAM_ATTR volatile bool lcd_power_cut_pending = false;
+// v6.56b: TURN OFF LCD shows "GOING TO SLEEP" until the unit sleeps; if it is still awake after
+// LCD_SLEEP_MSG_MS (sleep held back by a slot or a send), the screen is blanked as before.
+#define LCD_SLEEP_MSG_MS 60000UL
+static volatile unsigned long lcd_sleep_msg_until = 0;
 
 // LCD Timer ISR callback function
 void IRAM_ATTR lcdTimer() {
@@ -235,8 +234,6 @@ bool draw_current_page() {
         bool is_pending = (!initial_boot_complete && cur_fld_no == FLD_STATION) ||
                           (pending_manual_status && cur_fld_no == FLD_SEND_STATUS) ||
                           (pending_manual_gps && cur_fld_no == FLD_SEND_GPS) ||
-                          (pending_manual_health && cur_fld_no == FLD_SEND_HEALTH) ||
-                          (mode_snap == eHealthStart && cur_fld_no == FLD_SEND_HEALTH) ||
                           (mode_snap == eGPSStart && cur_fld_no == FLD_SEND_GPS) ||
                           (mode_snap == eSMSStart && cur_fld_no == FLD_SEND_STATUS) ||
                           (mode_snap == eStartupGPS && cur_fld_no == FLD_SEND_GPS);
@@ -484,7 +481,7 @@ void refresh_sensor_data() {
     snprintf(ui_data[FLD_RF_RES].bottomRow, 17, "%0.2f", RF_RESOLUTION);
   }
   else if (cur_fld_no == FLD_RF_ML) {
-    float live_rf = (float)rf_count.val * RF_RESOLUTION;
+    float live_rf = (float)rf_pulses_since_slot() * RF_RESOLUTION; // v6.56 H-1
     snprintf(ui_data[FLD_RF_ML].bottomRow, 17, "%06.2f", live_rf);
   }
   else if (cur_fld_no == FLD_SIM_STATUS) {
@@ -644,6 +641,17 @@ void lcdkeypad(void *pvParameters) {
     }
     last_gprs_active_state = current_gprs_active_state;
 
+#if USE_NUVOTON_UI == 1
+    if (lcd_sleep_msg_until && lcdkeypad_start == 0 && (long)(millis() - lcd_sleep_msg_until) >= 0) {
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_MUTEX_WAIT_TIME)) == pdTRUE) {
+        lcd.clear();
+        lcd.noBacklight();
+        xSemaphoreGive(i2cMutex);
+        lcd_sleep_msg_until = 0;
+        debugln("[UI] Still awake: 'GOING TO SLEEP' message blanked.");
+      }
+    }
+#endif
     // Phase 7 Fix: Safely execute the deferred LCD power cut with I2C Mutex protection
     if (lcd_power_cut_pending) {
       debugln("[UI] Deferred LCD power cut pending...");
@@ -689,6 +697,7 @@ void lcdkeypad(void *pvParameters) {
       if (verified_press) {
          wakeup_reason_is = ext0;
          savedWakeupKey = wakeupKey;
+         lcd_sleep_msg_until = 0;   // v6.56b: woken again, no pending blank
          debugf("[UI] Verified Key: %c\n", (wakeupKey != '\0' ? wakeupKey : 'P'));
       }
 #else
@@ -719,6 +728,7 @@ void lcdkeypad(void *pvParameters) {
       if (verified_press) {
          wakeup_reason_is = ext0;
          savedWakeupKey = wakeupKey;
+         lcd_sleep_msg_until = 0;   // v6.56b: woken again, no pending blank
          debugf("[UI] Verified Key: %c\n", (wakeupKey != NO_KEY ? wakeupKey : 'P'));
       }
 #endif
@@ -1033,11 +1043,28 @@ void lcdkeypad(void *pvParameters) {
             debugln("[UI] TURN OFF LCD selected and SET pressed. Cutting Nuvoton power...");
             lcdkeypad_start = 0; 
 #if USE_NUVOTON_UI == 1
-            lcd.clear();
-            lcd.noBacklight();
+            // v6.56b: the unit sleeps only when the modem has finished (up to ~30 s): say so on the
+            // screen instead of leaving a lit blank screen. Sleep blanks it; so does lcd_sleep_msg_until.
+            {
+              portENTER_CRITICAL(&syncMux);
+              const bool modem_busy = gprs_started || __atomic_load_n(&httpInitiated, __ATOMIC_ACQUIRE) ||
+                                      (sync_mode != eHttpStop && sync_mode != eSMSStop &&
+                                       sync_mode != eExceptionHandled && sync_mode != eSyncModeInitial);
+              portEXIT_CRITICAL(&syncMux);
+              if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                lcd.clear();
+                lcd.setCursor(0, 0);
+                lcd.print("GOING TO SLEEP  ");
+                lcd.setCursor(0, 1);
+                lcd.print(modem_busy ? "MODEM OFF..WAIT " : "PLEASE WAIT...  ");
+                xSemaphoreGive(i2cMutex);
+              }
+              unsigned long until = millis() + LCD_SLEEP_MSG_MS;
+              lcd_sleep_msg_until = until ? until : 1;
+            }
             digitalWrite(32, HIGH);
             last_nuvoton_power_off_time = millis();
-            debugln("[UI] Nuvoton screen off complete.");
+            debugln("[UI] Nuvoton: 'GOING TO SLEEP' shown until sleep.");
 #else
             digitalWrite(32, LOW);
 #endif
@@ -1066,22 +1093,6 @@ void lcdkeypad(void *pvParameters) {
               portEXIT_CRITICAL(&syncMux);
               strcpy(ui_data[FLD_SEND_GPS].bottomRow, "PLEASE WAIT..  ");
             }
-          } else if (cur_fld_no == FLD_SEND_HEALTH) {
-#if ENABLE_HEALTH_REPORT == 1
-            portENTER_CRITICAL(&syncMux);
-            if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
-              pending_manual_health = true;
-              sync_mode = eHealthStart; // Uses the GPS + HEALTH sequence explicitly
-              portEXIT_CRITICAL(&syncMux);
-              strcpy(ui_data[FLD_SEND_HEALTH].bottomRow, "SENDING...     ");
-            } else {
-              pending_manual_health = true;
-              portEXIT_CRITICAL(&syncMux);
-              strcpy(ui_data[FLD_SEND_HEALTH].bottomRow, "PLEASE WAIT..  ");
-            }
-#else
-            strcpy(ui_data[FLD_SEND_HEALTH].bottomRow, "DISABLED       ");
-#endif
           } else if (cur_fld_no == FLD_HTTP_FAILS) {
             if (pcb_clear_state == 0) {
               pcb_clear_state = 1;
@@ -1492,15 +1503,10 @@ void lcdkeypad(void *pvParameters) {
                    // NVS Save (Internal Flash)
                    Preferences prefs; prefs.begin("sys-config", false); 
                    prefs.putString("station", station_name); prefs.end();
-                   // Requirement: Acquire GPS whenever ID changes (eStartupGPS does GPS + Health)
                    portENTER_CRITICAL(&syncMux);
                    if (sync_mode == eSyncModeInitial || sync_mode == eSMSStop || 
                        sync_mode == eHttpStop || sync_mode == eExceptionHandled) {
-#if ENABLE_HEALTH_REPORT == 1
-                      sync_mode = eStartupGPS;
-#else
-                      sync_mode = eHttpStop; // Savings: Skip GPS acquisition when health is disabled
-#endif
+                      sync_mode = eHttpStop;
                       portEXIT_CRITICAL(&syncMux);
                       strcpy(ui_data[FLD_SEND_GPS].bottomRow, "ACQUIRING GPS..");
                    } else {
@@ -1594,7 +1600,7 @@ void lcdkeypad(void *pvParameters) {
       portEXIT_CRITICAL(&syncMux);
 
       if (mode_check == eSMSStart || mode_check == eGPSStart || 
-          mode_check == eHealthStart || mode_check == eStartupGPS || cur_fld_no == FLD_LOG && cur_mode == eEditOn) {
+          mode_check == eStartupGPS || cur_fld_no == FLD_LOG && cur_mode == eEditOn) {
         timerWrite(lcd_timer, 0);
       }
     }

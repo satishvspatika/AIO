@@ -45,6 +45,9 @@ ALL_FLASH_VARIANTS = {
     "16mb": ("16M,FlashFreq=80", "partitions_16mb.csv"),   # 16MB units (80MHz SPI, matches compile.sh)
 }
 
+# Smallest app slot in the field fleet (units on the Feb 2026 8 MB partition table)
+FLEET_MIN_APP_SLOT = 1441792
+
 # External Release Path
 EXTERNAL_RELEASE_BASE = Path("/Users/satishkripavasan/Documents/Arduino/ESP32_NEW_DESIGN/RELEASE/AIO9_5")
 
@@ -211,6 +214,17 @@ def check_arduino_cli():
         print("Or download from: https://arduino.github.io/arduino-cli/")
         return False
 
+def app_slot_size(csv_path):
+    """Size in bytes of the app0 partition in an ESP32 partition table csv (hex, decimal, K or M)."""
+    for line in Path(csv_path).read_text().splitlines():
+        cols = [c.strip() for c in line.split('#')[0].split(',')]
+        if len(cols) >= 5 and cols[0] == 'app0':
+            s = cols[4].upper()
+            mult = 1024 if s.endswith('K') else (1024 * 1024 if s.endswith('M') else 1)
+            s = s.rstrip('KM')
+            return int(s, 0) * mult
+    raise ValueError(f"No app0 partition in {csv_path}")
+
 def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", partition_csv="partitions.csv", use_nuvoton_ui=1):
     """Build a specific configuration for a specific flash hardware and UI variant"""
     # Tagged output name includes UI variant and flash size
@@ -240,14 +254,19 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
     log_file = output_dir / "build.log"
 
     partitions_file = SKETCH_DIR / partition_csv
+    app_slot = app_slot_size(partitions_file)
 
+    # 22/11/2026: core 3.x copies the sketch's own partitions.csv (the 8 MB table) into every build in its
+    # first prebuild hook, so build.custom_partitions was never used: 4 MB and 16 MB builds carried the
+    # 8 MB table and the 8 MB size limit. That hook now copies this flash size's table instead, and the
+    # size limit is this table's app slot (a too-big image fails the build instead of the board).
     cmd = [
         'arduino-cli', 'compile',
         '--clean',                                                              # Force fresh compile, no stale cache
         '--fqbn', f'esp32:esp32:esp32:FlashSize={flash_fqbn},FlashMode=dio,PartitionScheme=custom',
         '--build-property', 'build.partitions=custom',
-        '--build-property', f'build.custom_partitions={partitions_file}',
-        '--build-property', 'upload.maximum_size=1769472',
+        '--build-property', f'recipe.hooks.prebuild.1.pattern=/bin/cp -f "{partitions_file}" "{config_build_dir / "partitions.csv"}"',
+        '--build-property', f'upload.maximum_size={app_slot}',
         '--build-path', str(config_build_dir),
         '--export-binaries',
         str(SKETCH_DIR)
@@ -257,8 +276,14 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
         result = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT)
 
     if result.returncode == 0:
+        # The table the build used must be this flash size's, byte for byte
+        used_csv = config_build_dir / "partitions.csv"
+        if not used_csv.exists() or used_csv.read_bytes() != partitions_file.read_bytes():
+            print_error(f"Build used the wrong partition table (expected {partition_csv}). Not exported.")
+            return False
         print_success("Compilation successful")
-        
+        print_info(f"Partition table: {partition_csv}, app slot {app_slot:,} bytes")
+
         # Resilient binary locator: search config_build_dir first
         binary = None
         for b_cand in [
@@ -289,6 +314,12 @@ def build_config(system, unit, output_name, flash_size="8mb", flash_fqbn="8M", p
             size = firmware_path.stat().st_size
             size_mb = size / (1024 * 1024)
             print_success(f"Binary exported: firmware.bin ({size_mb:.2f} MB)")
+            # 22/11/2026: units flashed with the Feb 2026 8 MB table (and 16 MB units flashed from the old
+            # flash_files/16mb) have a 1,441,792-byte app slot. SD and OTA updates keep the unit's own table,
+            # so a bigger image cannot reach them: SD update refused, OTA offer refused by the size check.
+            if size > FLEET_MIN_APP_SLOT:
+                print_error(f"WARNING: {size:,} bytes is over {FLEET_MIN_APP_SLOT:,}, the app slot of units on the "
+                            f"Feb 2026 partition table: they cannot take this image by SD card or OTA.")
             
             # Get firmware version from user_config.h
             import re

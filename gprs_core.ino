@@ -35,24 +35,20 @@ void gprs(void *pvParameters) {
     // v5.82: Pending Request Promotion (Ensures 'PLEASE WAIT' requests are picked up when idle)
     if (mode_snap == eSyncModeInitial || mode_snap == eSMSStop || 
         mode_snap == eHttpStop || mode_snap == eExceptionHandled) {
-      if (pending_manual_status || pending_manual_gps || pending_manual_health) {
+      if (pending_manual_status || pending_manual_gps) {
         portENTER_CRITICAL(&syncMux);
         if (pending_manual_status) {
           send_status = 1;
           sync_mode = eSMSStart;
         }
         else if (pending_manual_gps) sync_mode = eGPSStart;
-        else if (pending_manual_health) sync_mode = eHealthStart;
         mode_snap = sync_mode; // Update local snap to trigger the handler below
         portEXIT_CRITICAL(&syncMux);
       }
     }
 
-    if (mode_snap == eSMSStart || mode_snap == eGPSStart ||
-        mode_snap == eStartupGPS || mode_snap == eHealthStart) {
-      target_fld = (mode_snap == eSMSStart) ? FLD_SEND_STATUS :
-                   (mode_snap == eGPSStart) ? FLD_SEND_GPS :
-                   (mode_snap == eHealthStart) ? FLD_SEND_HEALTH : FLD_SEND_GPS;
+    if (mode_snap == eSMSStart || mode_snap == eGPSStart || mode_snap == eStartupGPS) {
+      target_fld = (mode_snap == eSMSStart) ? FLD_SEND_STATUS : FLD_SEND_GPS;
 
       // [A-09] v5.89: Added 100ms breather to prevent contention timeout 
       // if an automated task just finished releasing the mutex.
@@ -62,16 +58,21 @@ void gprs(void *pvParameters) {
         // Clear the queued pending flag once lock is successfully acquired
         if (mode_snap == eSMSStart) pending_manual_status = false;
         else if (mode_snap == eGPSStart) pending_manual_gps = false;
-        else if (mode_snap == eHealthStart) pending_manual_health = false;
         
         if (gprs_mode == eGprsInitial) {
           debugln("[GPRS] Manual Trigger: Initiating Power On...");
           strcpy(ui_data[target_fld].bottomRow, "GPRS POWER ON...");
           show_now = 1;
           start_gprs();
-          
+        }
+        // v6.56 C-1: This check used to run only right after a power-on above. If the
+        // slot had already left the modem in eGprsSignalForStoringOnly (weak signal,
+        // SIM error, no registration) the code skipped both this and the SignalOk block,
+        // and the modemMutex taken above was never given back: the unit could then
+        // never sleep. Now any state other than SignalOk releases it and aborts.
+        {
           if (gprs_mode != eGprsSignalOk) {
-            debugln("[GPRS] Initialization failed. Aborting trigger.");
+            debugln("[GPRS] Network not ready. Aborting manual trigger.");
           if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             strcpy(ui_data[target_fld].bottomRow, "NETWORK ERROR   ");
             show_now = 1;
@@ -165,9 +166,8 @@ void gprs(void *pvParameters) {
             sync_mode = eSMSStop;
             portEXIT_CRITICAL(&syncMux);
           }
-        } else if (mode_snap == eStartupGPS || mode_snap == eHealthStart) {
-          debugln(
-              "[GPRS] Startup/Station Change Triggered GPS & Health Report");
+        } else if (mode_snap == eStartupGPS) {
+          debugln("[GPRS] Startup/Station Change Triggered GPS fix");
           if (signal_strength == 0) {
             get_signal_strength();
             get_network();
@@ -192,30 +192,7 @@ void gprs(void *pvParameters) {
           }
           vTaskDelay(2000 / portTICK_PERIOD_MS); 
 
-#if ENABLE_HEALTH_REPORT == 1
-            if (target_fld == FLD_SEND_HEALTH) {
-               strcpy(ui_data[target_fld].bottomRow, "SENDING HEALTH..");
-               show_now = 1;
-            }
-            bool health_ok = send_health_report(false, true); // Manual: No Jitter, ALREADY LOCKED
-
-            portENTER_CRITICAL(&syncMux);
-            health_in_progress = false;
-            portEXIT_CRITICAL(&syncMux);
-
-            if (target_fld == FLD_SEND_HEALTH) {
-               if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                 if (health_ok) strcpy(ui_data[target_fld].bottomRow, "HEALTH SUCCESS! ");
-                 else strcpy(ui_data[target_fld].bottomRow, "HEALTH FAILED   ");
-                 show_now = 1;
-                 xSemaphoreGive(i2cMutex);
-               }
-               vTaskDelay(3000 / portTICK_PERIOD_MS);
-             }
-#else
-            debugln("[Health] Startup send skipped (disabled).");
-#endif
-        } // Close targets (GPS, Health, etc)
+        } // Close targets (status, GPS)
         
         xSemaphoreGive(modemMutex); // Release lock after transmission attempt
       } // Close gprs_mode == eGprsSignalOk
@@ -253,7 +230,7 @@ void gprs(void *pvParameters) {
             show_now = 1;
             xSemaphoreGive(i2cMutex);
           }
-        } else if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
+        } else if (target_fld != FLD_SEND_STATUS) {
           if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             strcpy(ui_data[target_fld].bottomRow, "SENT SUCCESS    ");
             show_now = 1;
@@ -268,7 +245,7 @@ void gprs(void *pvParameters) {
         }
       } else {
         // If msg_sent is 0, check if we should show failure (excluding auto-tasks)
-        if (target_fld != FLD_SEND_HEALTH && target_fld != FLD_SEND_STATUS) {
+        if (target_fld != FLD_SEND_STATUS) {
             // Note: If gprs_mode was never SignalOk, this provides feedback
             if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
               if (strlen(ui_data[target_fld].bottomRow) == 0 || strstr(ui_data[target_fld].bottomRow, "CONNECTED")) {
@@ -346,73 +323,6 @@ void gprs(void *pvParameters) {
           }
           __atomic_store_n(&httpInitiated, true, __ATOMIC_RELEASE); // v5.65 P4: Mark cycle as started for responsive cleanup block
 
-          // v5.70 (N-6): Snapshot time globals under rtcTimeMux for health/cdm scheduling
-          int snap_hour, snap_min, snap_day;
-          portENTER_CRITICAL(&rtcTimeMux);
-          snap_hour = current_hour;
-          snap_min = current_min;
-          snap_day = current_day;
-          portEXIT_CRITICAL(&rtcTimeMux);
-
-          // Twice-Daily Health Triggering (1:00 AM & 1:00 PM)
-          bool is_health_time = false;
-#if ENABLE_HEALTH_REPORT == 1
-          if (test_health_every_slot == 1) {
-            is_health_time = true; // Every 15 mins
-          } else if (test_health_every_slot == 0) {
-            // Window 1: 1:00 AM (Hour 1), Window 2: 1:00 PM (Hour 13)
-            if ((snap_hour == 1 || snap_hour == 13) && health_last_sent_hour != snap_hour) {
-              is_health_time = true;
-            } else if ((snap_hour == 2 || snap_hour == 14) && snap_min < 20 && health_last_sent_hour != (snap_hour - 1)) {
-              is_health_time = true; // Graceful fallback for network congestion
-            }
-          }
-          // If test_health_every_slot == 2, it remains false (Disabled)
-#endif
-
-          // v5.66: CDM True-Failure Fallback Check
-          // If the Morning closing data (08:30) and Health windows (01:00 / 13:00) both pass
-          // without success, the closing window is permanently missed for this day.
-          // v5.86: Only flag FAIL if we've been awake for >2 hours since a fresh boot
-          // This prevents false alarms during mid-day maintenance reboots.
-          bool reboot_grace = (millis() < (2 * 60 * 60 * 1000UL));
-
-          if (strcmp(diag_cdm_status, "PENDING") == 0 && snap_hour >= 15 && 
-              health_last_sent_day != snap_day && !reboot_grace) {
-            strcpy(diag_cdm_status, "FAIL");
-            debugln("[Health] CDM window entirely missed today. Flagging FAIL.");
-          }
-
-#if ENABLE_HEALTH_REPORT == 1
-          // v5.76 Post-OTA Confirmation Health Report Check
-          bool is_ota_confirm = false;
-          if (diag_fw_just_updated && gprs_mode == eGprsSignalOk) {
-            is_ota_confirm = true;
-            diag_fw_just_updated = false; // Reset persistent flag
-            strcpy(diag_cdm_status, "Firmware Updated");
-            // Refresh Location via Fresh CLBS
-            get_gps_coordinates(true);
-          }
-
-          // v5.55: One-time sensor fault trigger (Non-scheduled window)
-          bool is_sensor_fault_trigger = false;
-          bool has_sensor_issue = diag_temp_cv || diag_hum_cv || diag_ws_cv || 
-                                 diag_temp_erv || diag_hum_erv || diag_ws_erv || 
-                                 diag_temp_erz || diag_hum_erz || diag_rain_jump ||
-                                 diag_rain_reset || diag_rain_calc_invalid;
-
-          if (has_sensor_issue && !diag_sensor_fault_sent_today && (current_hour != 1 && current_hour != 13)) {
-              is_sensor_fault_trigger = true;
-              debugln("[Health] [CRIT] Sensor issue detected! Triggering one-time fault report.");
-          }
-
-          if (is_health_time || is_ota_confirm || is_sensor_fault_trigger) {
-            portENTER_CRITICAL(&syncMux);
-            health_in_progress = true; // Block deep sleep
-            portEXIT_CRITICAL(&syncMux);
-          }
-#endif
-
           if (!skip_primary_http) {
             debugln(
                 "[BATT] Proceeding with Spatika Upload regardless of battery "
@@ -429,92 +339,19 @@ void gprs(void *pvParameters) {
               debugln("[HTTP] Primary Server Upload: FAILED (Data stored to Backlog)");
             }
           } else {
-            debugln("[SCHED] Skipping Duplicate/Fresh Upload. Checking Backlog/Health...");
+            debugln("[SCHED] Skipping Duplicate/Fresh Upload. Checking Backlog...");
             primary_data_delivered = true; // Assume 'Success' to allow backlog
-#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
-            // v7.65: Handle backlog push sequentially in GPRS task
-            if (gprs_mode == eGprsSignalOk && (signal_lvl > -96)) {
-              send_unsent_data();
-            }
-#endif
             portENTER_CRITICAL(&syncMux);
             sync_mode = eHttpStop; // v5.51 FIX: Advance state to prevent infinite loop!
             gprs_started = false;
             portEXIT_CRITICAL(&syncMux);
+            send_sms(); // v6.57: VARSHA commands are read every slot, sent or not
           }
 
 
-          // v5.65 P4: HIGH RESPONSIVENESS - If a manual command is pending, prioritize it
-          // over the lengthy/unreliable automated health report.
-          if (pending_manual_status || pending_manual_gps || pending_manual_health) {
-            debugln("[GPRS] 💡 Priority Interrupt: Manual command detected during automated cycle.");
-            // We let the end-of-cycle block (line ~600) handle the actual transition
-            // but we skip the optional automated health report below to speed things up.
-            portENTER_CRITICAL(&syncMux);
-            health_in_progress = false; 
-            portEXIT_CRITICAL(&syncMux);
-          }
-
-          if (health_in_progress) {
-#if ENABLE_HEALTH_REPORT == 1
-            debugln("[Health] Triggering Reliable Health Report...");
-            // v7.01: Consolidate reset logic. send_health_report now handles
-            // termination.
-            vTaskDelay(3000 / portTICK_PERIOD_MS);
-
-            bool health_ok = send_health_report(true, true, false); // useJitter=true, alreadyLocked=true, cmdPollOnly=false
-
-            if (health_ok) {
-              // v7.67: Only flag as completed if SUCCESSFUL so it retries
-              // within the same hour window on failure.
-              health_last_sent_day = current_day;
-              health_last_sent_hour = current_hour;
-              
-              // v5.55: One-time fault successful - mark it so we don't spam
-              if (is_sensor_fault_trigger) {
-                diag_sensor_fault_sent_today = true;
-                debugln("[Health] One-time sensor fault report marked as SENT.");
-              }
-              
-              debugln("[Health] \u2705 Report sent successfully!");
-              if (strcmp(diag_cdm_status, "PENDING") == 0) {
-                strcpy(diag_cdm_status,
-                       "OK"); // v7.67: CDM successfully delivered
-              }
-            } else {
-              debugln("[Health] \u274c Report failed - will retry next slot if "
-                      "window open.");
-              // v5.66: Removed premature diag_cdm_status="FAIL" assignment to allow fallback slot retries
-            }
-
-            if (!force_ota) {
-              portENTER_CRITICAL(&syncMux);
-              health_in_progress = false; // Finished attempt - no OTA pending
-              portEXIT_CRITICAL(&syncMux);
-            } else {
-              debugln(
-                  "[Health] OTA Pending. Holding health_in_progress=TRUE to "
-                  "block sleep.");
-            }
-#else
-            debugln("[Health] Skip: Health reporting disabled.");
-            portENTER_CRITICAL(&syncMux);
-            health_in_progress = false; // Allow sleep
-            portEXIT_CRITICAL(&syncMux);
-#endif
-            debugln("[GPRS] Automations finished. Checking for Piggybacked Commands...");
-          } else {
-#if ENABLE_HEALTH_REPORT == 1
-            // Active-Slot Command Polling: Runs fast command check during every active wake-up slot before deep sleep
-            debugln("[Health] Active Slot: Checking for remote commands...");
-            send_health_report(false, true, true); // useJitter=false, alreadyLocked=true, cmdPollOnly=true
-            if (force_health_upload) {
-              debugln("[Health] Command feedback / GET_STATUS received! Uploading full health report...");
-              force_health_upload = false;
-              send_health_report(false, true, false); // Upload full report!
-            }
-#endif
-          }
+          // v6.56: ESP32 OTA check/download, after the slot's record and backlog
+          // (v6.57: the day check also carries the daily health report, health_day.ino)
+          ota_slot_step(sampleNo);
         } else if (gprs_mode == eGprsSignalForStoringOnly) {
           if (skip_primary_http) {
             debugln("[GPRS] Signal too weak, but data already queued cleanly by scheduler skip.");
@@ -526,135 +363,15 @@ void gprs(void *pvParameters) {
       }
     }
 
-    // --- REMOTE COMMAND EXECUTION (Command Piggybacking) ---
-    if (force_reboot) {
-      debugln("[CMD] Remote HARD REBOOT triggered. Killing Modem Power...");
-      strcpy(last_cmd_res, "Success: Rebooting...");
-      digitalWrite(26, LOW); // Kill VCC to A7672S
-      vTaskDelay(2000 / portTICK_PERIOD_MS);
-      debugln("[CMD] Restarting ESP32...");
-      ESP.restart();
-    }
-
-    if (force_ftp) { // v5.80: FTP_BACKLOG
-      debugln("[CMD] Remote FTP_BACKLOG triggered. Syncing unsent backlog...");
-#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
-      send_unsent_data();
-#endif
-      force_ftp = false;
-      force_health_upload = true;
-    }
-
-    if (force_ftp_daily) { // v5.80: FTP_DAILY
-      debugf1("[CMD] Remote FTP_DAILY triggered for date: %s\n",
-              ftp_daily_date);
-#if (SYSTEM == 1 || SYSTEM == 2 || SYSTEM == 3)
-      if (strlen(ftp_daily_date) >= 8) { 
-        char ftpPath[50];
-        // Surgical Fix: Construct proper SPIFFS path from date param
-        snprintf(ftpPath, sizeof(ftpPath), "/dailyftp_%s.txt", ftp_daily_date);
-        send_ftp_file(ftpPath, true);
-      } else {
-        debugln("[CMD] Error: Invalid FTP date format. Skipping FTP_DAILY.");
-      }
-#else
-      if (strlen(ftp_daily_date) >= 8) {
-        copyFromSPIFFSToFS(ftp_daily_date, false);
-      } else {
-        debugln("[CMD] Error: Invalid FTP date format. Skipping FTP_DAILY.");
-      }
-#endif
-      force_ftp_daily = false;
-    }
-
-    if (force_get_num) {
-      debugln("[CMD] Remote GET_NUM triggered...");
-      char numBuf[32];
-      retrieveOwnNumber(numBuf, sizeof(numBuf), false);
-      snprintf(last_cmd_res, sizeof(last_cmd_res), "Num: %s", numBuf);
-      debugf("[CMD] GET_NUM Result: %s\n", last_cmd_res);
-      force_get_num = false;
-      force_health_upload = true;
-    }
-
-    if (force_ota) {
-      snprintf(ui_data[FLD_SEND_STATUS].bottomRow, sizeof(ui_data[FLD_SEND_STATUS].bottomRow), "OTA UPDATING...");
-      portENTER_CRITICAL(&syncMux);
-      health_in_progress = true; // Ensure sleep is blocked
-      portEXIT_CRITICAL(&syncMux);
-      debugln("[CMD] Remote OTA_CHECK triggered. Checking for updates...");
-      // v7.03: Ensure HTTP is closed from health report before OTA begins
-      if (xSemaphoreTake(modemMutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-        SerialSIT.println("AT+HTTPTERM");
-        waitForResponse("OK", 2000);
-        xSemaphoreGive(modemMutex);
-      }
-      http_ready = false;
-      vTaskDelay(2000 / portTICK_PERIOD_MS); // Stabilize modem stack
-      if (strlen(ota_cmd_param) > 0) {
-        Serial.printf("[CMD] Initiating Direct TCP Socket download for target: %s\n", ota_cmd_param);
-        fetchFromTcpAndUpdate(ota_cmd_param);
-      } else {
-        char defaultUpdate[] = "firmware.bin";
-        Serial.printf("[CMD] Initiating Direct TCP Socket download for fallback: %s\n", defaultUpdate);
-        fetchFromTcpAndUpdate(defaultUpdate);
-      }
-      ota_cmd_param[0] = '\0';
-      force_ota = false;
-      if (!force_reboot) {
-        health_in_progress =
-            false; // Allow sleep now (only if download failed/skipped)
-      } else {
-        debugln("[GPRS] Reboot pending. Holding health_in_progress=TRUE.");
-      }
-      snprintf(ui_data[FLD_SEND_STATUS].bottomRow, sizeof(ui_data[FLD_SEND_STATUS].bottomRow), "OTA FINISHED");
-    }
-
-    // v7.59: GET_GPS — Re-acquire GPS coordinates on server request
-    if (force_gps_refresh) {
-      debugln("[CMD] GET_GPS: Re-acquiring GPS coordinates...");
-      get_lat_long_date_time(universalNumber);
-      if (lati != 0 || longi != 0) {
-        saveGPS(); // Persist to SPIFFS for next boot
-        debugf2("[CMD] GPS acquired: %.6f, %.6f\n", lati, longi);
-        strcpy(last_cmd_res, "Success: GPS Refreshed");
-      } else {
-        debugln("[CMD] GPS re-acquire failed. Will retry next cycle.");
-        strcpy(last_cmd_res, "Fail: No GPS Fix");
-      }
-      force_gps_refresh = false;
-      force_health_upload = true;
-    }
-
-    // v7.59: CLEAR_FTP_QUEUE — server-requested FTP backlog clear
-    if (force_clear_ftp_queue) {
-      debugln(
-          "[CMD] CLEAR_FTP_QUEUE: Removing ftpunsent.txt by server request...");
-      bool cleared = false;
-      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-          if (SPIFFS.exists("/ftpunsent.txt")) {
-            SPIFFS.remove("/ftpunsent.txt");
-            debugln("[CMD] /ftpunsent.txt cleared.");
-            cleared = true;
-          }
-          if (SPIFFS.exists("/ftpremain.txt")) {
-            SPIFFS.remove("/ftpremain.txt");
-            debugln("[CMD] /ftpremain.txt cleared.");
-            cleared = true;
-          }
-          xSemaphoreGive(fsMutex);
-      } else {
-          debugln("[CMD] fsMutex Timeout: Could not clear FTP queue.");
-      }
-      strcpy(last_cmd_res, cleared ? "Success: Queue Cleared" : "Success: Already Empty");
-      force_clear_ftp_queue = false;
-      force_health_upload = true;
-    }
-
-    // v7.94: DELETE_DATA — Server-requested Factory Reset
+    // VARSHA ERASE_DATA <id> (sms_remote.ino): records and backlog wiped, then a restart
     if (force_delete_data) {
-      debugln("[CMD] DELETE_DATA: Factory Reset requested by server...");
-      strcpy(last_cmd_res, "Success: Deleting & Reboot");
+      debugln("[CMD] ERASE_DATA: wiping records and backlog by SMS...");
+
+      // v6.56 M-8: the wipe holds fsMutex (the scheduler or the web page could be writing
+      // a file while it was walked and deleted). Held through the restart.
+      if (xSemaphoreTake(fsMutex, pdMS_TO_TICKS(15000)) != pdTRUE) {
+        debugln("[CMD] DELETE_DATA: fsMutex busy for 15 s: wiping anyway before restart.");
+      }
 
       // Perform deletion (Matches LCD Factory Reset logic)
       SPIFFS.remove("/unsent.txt");
@@ -692,17 +409,8 @@ void gprs(void *pvParameters) {
       ESP.restart();
     }
 
-    // v7.90: Final Cycle Reset - Move here to ensure COMMANDS (OTA/FTP/GPS)
-    // finish before loopTask triggers deep sleep.
-    // v7.90: Final Cycle Reset - Move here to ensure COMMANDS (OTA/FTP/GPS)
-    // finish before loopTask triggers deep sleep.
+    // v7.90: Final Cycle Reset: after the slot's commands, before loopTask lets the unit sleep
     if (httpInitiated) {
-      if (force_health_upload) {
-        debugln("[GPRS] 💡 Command feedback pending. Transmitting result to server...");
-        force_health_upload = false;
-        send_health_report(false, true, false);
-      }
-
       debugln("[GPRS] Cycle fully complete (including Commands).");
       
       // v5.50: Sequential Handling — Check if a manual LCD command was queued
@@ -719,13 +427,6 @@ void gprs(void *pvParameters) {
         target_fld = FLD_SEND_GPS;
         portENTER_CRITICAL(&syncMux);
         sync_mode = eGPSStart;
-        portEXIT_CRITICAL(&syncMux);
-      } else if (pending_manual_health) {
-        debugln("[GPRS] 💡 Found queued manual Health request. Handling now...");
-        pending_manual_health = false;
-        target_fld = FLD_SEND_HEALTH;
-        portENTER_CRITICAL(&syncMux);
-        sync_mode = eHealthStart;
         portEXIT_CRITICAL(&syncMux);
       } else {
         debugln("[GPRS] No queued commands. Allowing sleep.");
