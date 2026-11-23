@@ -113,19 +113,22 @@ void gprs(void *pvParameters) {
           prepare_and_send_status(universalNumber, true);
           const bool sms_ok = msg_sent;
 
-          // v6.64: and the office page (ota_esp.ino), with the modem still held
-          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            strcpy(ui_data[target_fld].bottomRow, "OFFICE CHECK... ");
-            show_now = 1;
-            xSemaphoreGive(i2cMutex);
-          }
-          const bool office_ok = ota_keypad_status();
+          // v6.64: and the office page (ota_esp.ino), with the modem still held. Not when the SMS was
+          // refused for a low battery (< 3.35 V, brownout risk): its LOW BATT message stays on screen.
+          if (!(li_bat_val > 0.1f && li_bat_val < 3.35f)) {
+            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+              strcpy(ui_data[target_fld].bottomRow, "OFFICE CHECK... ");
+              show_now = 1;
+              xSemaphoreGive(i2cMutex);
+            }
+            const bool office_ok = ota_keypad_status();
 
-          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            strcpy(ui_data[target_fld].bottomRow, sms_ok ? (office_ok ? "SMS+OFFICE OK   " : "SMS OK,OFFICE NO")
-                                                         : (office_ok ? "SMS NO,OFFICE OK" : "SMS+OFFICE FAIL "));
-            show_now = 1;
-            xSemaphoreGive(i2cMutex);
+            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+              strcpy(ui_data[target_fld].bottomRow, sms_ok ? (office_ok ? "SMS+OFFICE OK   " : "SMS OK,OFFICE NO")
+                                                           : (office_ok ? "SMS NO,OFFICE OK" : "SMS+OFFICE FAIL "));
+              show_now = 1;
+              xSemaphoreGive(i2cMutex);
+            }
           }
           // NOTE: modemMutex released by the single outer xSemaphoreGive below
 

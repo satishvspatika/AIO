@@ -845,4 +845,14 @@ struct IpdFilterCtx {
   void reset() { state = IPDFS_NORMAL; payloadRemaining = 0; lenAccumulator = 0; }
 };
 
+// office OTA state (ota_esp.ino); here so Arduino's generated prototypes see it (v6.64)
+struct OtaState {
+  uint32_t file_crc, image_id, size, have;
+  char phase;         // '-' idle, 'D' downloading, 'I' install started, 'T' new image on trial,
+                      // 'F' that image failed here (not taken again)
+  uint32_t prev;      // flash address of the app slot the old firmware is in (for going back)
+  uint32_t crashes;   // crash restarts while on trial (phase D: whole-file CRC failures, v6.61)
+  char why;           // v6.61: why phase F (OTA_WHY_*), sent as e= so the office can say it
+};
+
 #endif

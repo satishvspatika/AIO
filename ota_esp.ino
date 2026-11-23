@@ -78,14 +78,7 @@ static int ota_type() { return ota_ident_ref->type; }
 bool verifyRollbackLater() { return true; }
 
 // ---------------------------------------------------------------- state
-struct OtaState {
-  uint32_t file_crc, image_id, size, have;
-  char phase;         // '-' idle, 'D' downloading, 'I' install started, 'T' new image on trial,
-                      // 'F' that image failed here (not taken again)
-  uint32_t prev;      // flash address of the app slot the old firmware is in (for going back)
-  uint32_t crashes;   // crash restarts while on trial (phase D: whole-file CRC failures, v6.61)
-  char why;           // v6.61: why phase F (OTA_WHY_*), sent as e= so the office can say it
-};
+// struct OtaState: in globals.h (v6.64), so Arduino's generated prototypes see it
 static OtaState st;
 // v6.61: why an image was given up (the office page words them; DWLR and LPC send the same letters)
 #define OTA_WHY_CRASH   'C'   // crashed again and again on trial: went back
@@ -100,20 +93,27 @@ static uint8_t ota_buf[OTA_RESP_MAX + 16];
 static int ota_buf_len = 0;
 static bool ota_sock_open = false;
 
-static void ota_load() {
-  st = {0, 0, 0, 0, '-', 0, 0, 0};
-  if (ota_prefs.begin("espota", true)) {
-    st.file_crc = ota_prefs.getUInt("fcrc", 0);
-    st.image_id = ota_prefs.getUInt("icrc", 0);
-    st.size = ota_prefs.getUInt("size", 0);
-    st.have = ota_prefs.getUInt("have", 0);
-    st.phase = (char)ota_prefs.getUChar("phase", '-');
-    st.prev = ota_prefs.getUInt("prev", 0);
-    st.crashes = ota_prefs.getUInt("crashes", 0);
-    st.why = (char)ota_prefs.getUChar("why", 0);
-    ota_prefs.end();
+// v6.64: into o, with its own Preferences handle, so the keypad check (GPRS task) can read the saved
+// state while the scheduler task's ota_confirm_step() has st and ota_prefs in use
+static void ota_read_state(OtaState &o) {
+  o = {0, 0, 0, 0, '-', 0, 0, 0};
+  Preferences p;
+  if (p.begin("espota", true)) {
+    o.file_crc = p.getUInt("fcrc", 0);
+    o.image_id = p.getUInt("icrc", 0);
+    o.size = p.getUInt("size", 0);
+    o.have = p.getUInt("have", 0);
+    o.phase = (char)p.getUChar("phase", '-');
+    o.prev = p.getUInt("prev", 0);
+    o.crashes = p.getUInt("crashes", 0);
+    o.why = (char)p.getUChar("why", 0);
+    p.end();
   }
-  if (!strchr("-DITF", st.phase)) st.phase = '-';
+  if (!strchr("-DITF", o.phase)) o.phase = '-';
+}
+
+static void ota_load() {
+  ota_read_state(st);
 }
 
 static void ota_save() {
@@ -601,16 +601,17 @@ static void ota_install(const esp_partition_t *part) {
 bool ota_keypad_status() {
 #if ENABLE_ESP_OTA == 1
   if (ota_type() == 0) return false;
-  ota_load();
+  OtaState ks;                 // the saved state, read into our own copy (st belongs to the slot path)
+  ota_read_state(ks);
   char stn[16], wait[12];
   ota_station_id(stn, sizeof(stn));
   ota_wait_code(wait, sizeof(wait));
-  const bool failed = (st.phase == 'F');
+  const bool failed = (ks.phase == 'F');
   static char path[400];
   snprintf(path, sizeof(path), "/lpc/check?id=%s&p=%d&cc=00000000&v=%s&c=%08lX&s=%c&t=%08lX&w=%s&k=1", stn,
            ota_type(), FIRMWARE_VERSION, (unsigned long)running_image_id(),
-           st.phase == 'D' ? '1' : failed ? '3' : st.phase == 'T' ? '2' : '0',
-           (unsigned long)(failed ? st.image_id : 0), wait);
+           ks.phase == 'D' ? '1' : failed ? '3' : ks.phase == 'T' ? '2' : '0',
+           (unsigned long)(failed ? ks.image_id : 0), wait);
   hd_addf(path, sizeof(path), "bv", "%.2f", li_bat_val);
   if (signal_strength < 0 && signal_strength > -120) hd_addf(path, sizeof(path), "sig", "%d", (int)signal_strength);
   hd_add(path, sizeof(path), "net", isLTE ? "4" : "2");

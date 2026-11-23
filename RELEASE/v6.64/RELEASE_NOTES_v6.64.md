@@ -6,12 +6,12 @@
 
 | Config | For units | LCD version (`fw_version.txt`) | OTA type | Size (bytes) | CRC32 |
 |---|---|---|---|---|---|
-| BIHAR_TRG_NUV | Bihar TRG, Nuvoton LCD/keypad | `TRG9-BIH-6.64-N` | 12 | 1,304,240 | 49FF532B |
-| BIHAR_TRG_MAT | Bihar TRG, matrix keypad / I2C LCD | `TRG9-BIH-6.64-M` | 13 | 1,304,160 | 93C67A1E |
-| KSNDMC_TRG_NUV | KSNDMC TRG, Nuvoton | `TRG9-DMC-6.64-N` | 10 | 1,304,240 | 039BD10F |
-| KSNDMC_TRG_MAT | KSNDMC TRG, matrix | `TRG9-DMC-6.64-M` | 11 | 1,304,160 | 6D083075 |
-| KSNDMC_TWS_NUV | KSNDMC TWS, Nuvoton | `TWS9-DMC-6.64-N` | 14 | 1,317,360 | 19830936 |
-| KSNDMC_TWS_MAT | KSNDMC TWS, matrix | `TWS9-DMC-6.64-M` | 15 | 1,317,088 | B2F096D0 |
+| BIHAR_TRG_NUV | Bihar TRG, Nuvoton LCD/keypad | `TRG9-BIH-6.64-N` | 12 | 1,304,384 | FF65E8A4 |
+| BIHAR_TRG_MAT | Bihar TRG, matrix keypad / I2C LCD | `TRG9-BIH-6.64-M` | 13 | 1,304,272 | 32F39EAF |
+| KSNDMC_TRG_NUV | KSNDMC TRG, Nuvoton | `TRG9-DMC-6.64-N` | 10 | 1,304,384 | 57D22DA8 |
+| KSNDMC_TRG_MAT | KSNDMC TRG, matrix | `TRG9-DMC-6.64-M` | 11 | 1,304,272 | E3E5E9CE |
+| KSNDMC_TWS_NUV | KSNDMC TWS, Nuvoton | `TWS9-DMC-6.64-N` | 14 | 1,317,456 | 73EF84AA |
+| KSNDMC_TWS_MAT | KSNDMC TWS, matrix | `TWS9-DMC-6.64-M` | 15 | 1,317,216 | DC37E226 |
 
 All images are below 1,441,792 bytes, so units on the Feb 2026 partition table can take them too.
 `FACTORY_USB/` bootloader, partitions and boot_app0 are the same files as v6.63.
@@ -33,6 +33,8 @@ All images are below 1,441,792 bytes, so units on the Feb 2026 partition table c
   `SMS+OFFICE FAIL`. A technician on site knows at once whether the unit reaches the office server.
 - It is kept apart from the daily health report and never starts a firmware download (the office answers
   `OTA NONE`); downloads still happen only at the unit's own checks.
+- Not when the battery is below 3.35 V: the status SMS is refused then (brownout risk) and its `LOW BATT`
+  message stays on screen.
 - Needs the office page update (AIO_LPC `ota_server/lpc_ota.py`, `./deploy_now.sh`) to show the report.
 
 ## What to test
