@@ -15,9 +15,14 @@ SD_v6.64_KSNDMC_TRG_MAT       TRG9-DMC-6.64-M    KSNDMC TRG, matrix
 SD_v6.64_KSNDMC_TWS_NUV       TWS9-DMC-6.64-N    KSNDMC TWS, Nuvoton
 SD_v6.64_KSNDMC_TWS_MAT       TWS9-DMC-6.64-M    KSNDMC TWS, matrix
 
-The unit checks the display hardware before installing: Nuvoton (-N) firmware only goes on a
-Nuvoton unit and Matrix (-M) only on a Matrix unit. Otherwise the LCD shows "SD FW REFUSED: /
-OTHER HARDWARE" and the unit keeps its firmware. The station type CAN be changed by SD card
+PICK THE FOLDER FOR THE UNIT'S DISPLAY: _NUV for a Nuvoton unit, _MAT for a Matrix unit.
+A unit on firmware 6.61 or OLDER does NOT check this: it installs whatever is on the card, and
+the wrong display type leaves it with a dead LCD and keypad (USB reflash needed). Check the
+LCD version before you start: it ends in -N (Nuvoton) or -M (Matrix).
+
+Units already on 6.62 or later check the display hardware before installing: Nuvoton (-N) firmware
+only goes on a Nuvoton unit and Matrix (-M) only on a Matrix unit. Otherwise the LCD shows
+"SD FW REFUSED: / OTHER HARDWARE" and the unit keeps its firmware. The station type CAN be changed by SD card
 (e.g. KSNDMC TWS -N firmware on a KSNDMC TRG -N or BIHAR TRG -N unit): check you have the folder
 for the type you want.
 
