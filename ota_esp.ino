@@ -593,6 +593,42 @@ static void ota_install(const esp_partition_t *part) {
   ESP.restart();
 }
 
+// v6.64 (23 Nov 2026): SEND STATUS on the keypad also reaches the office page: the unit's check marked
+// k=1 with what it sees now (battery, signal, network, operator, records waiting, SD card). The office keeps
+// it apart from the daily health report and answers OTA NONE: the button never starts a download. A
+// technician on site sees at once whether the unit reaches the office server. Called with modemMutex held
+// and the modem on the network (gprs_core.ino, keypad SEND STATUS). True if the office answered.
+bool ota_keypad_status() {
+#if ENABLE_ESP_OTA == 1
+  if (ota_type() == 0) return false;
+  ota_load();
+  char stn[16], wait[12];
+  ota_station_id(stn, sizeof(stn));
+  ota_wait_code(wait, sizeof(wait));
+  const bool failed = (st.phase == 'F');
+  static char path[400];
+  snprintf(path, sizeof(path), "/lpc/check?id=%s&p=%d&cc=00000000&v=%s&c=%08lX&s=%c&t=%08lX&w=%s&k=1", stn,
+           ota_type(), FIRMWARE_VERSION, (unsigned long)running_image_id(),
+           st.phase == 'D' ? '1' : failed ? '3' : st.phase == 'T' ? '2' : '0',
+           (unsigned long)(failed ? st.image_id : 0), wait);
+  hd_addf(path, sizeof(path), "bv", "%.2f", li_bat_val);
+  if (signal_strength < 0 && signal_strength > -120) hd_addf(path, sizeof(path), "sig", "%d", (int)signal_strength);
+  hd_add(path, sizeof(path), "net", isLTE ? "4" : "2");
+  if (carrier[0]) hd_add(path, sizeof(path), "op", carrier);
+  hd_addf(path, sizeof(path), "q", "%d", get_total_backlogs(false));
+  hd_add(path, sizeof(path), "sd", sd_card_ok ? "1" : "0");
+  int status = 0;
+  const uint8_t *body = NULL;
+  const int blen = ota_http_get(path, &body, &status);
+  const bool ok = blen >= 4 && status == 200 && strncmp((const char *)body, "OTA ", 4) == 0;
+  ota_sock_close();
+  debugf("[OTA] SEND STATUS: %s (HTTP %d)\n", ok ? "the office answered" : "no answer from the office", status);
+  return ok;
+#else
+  return false;
+#endif
+}
+
 void ota_slot_step(int slot) {
 #if ENABLE_ESP_OTA == 1
   // v6.61: a unit stopped by SMS (VARSHA STOP) still checks in: the office sees it (health "STOPPED")

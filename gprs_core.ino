@@ -111,19 +111,25 @@ void gprs(void *pvParameters) {
           vTaskDelay(500 / portTICK_PERIOD_MS);
           
           prepare_and_send_status(universalNumber, true);
+          const bool sms_ok = msg_sent;
+
+          // v6.64: and the office page (ota_esp.ino), with the modem still held
+          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            strcpy(ui_data[target_fld].bottomRow, "OFFICE CHECK... ");
+            show_now = 1;
+            xSemaphoreGive(i2cMutex);
+          }
+          const bool office_ok = ota_keypad_status();
 
           if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            if (msg_sent) {
-              strcpy(ui_data[target_fld].bottomRow, "SMS SUCCESS     ");
-            } else {
-              strcpy(ui_data[target_fld].bottomRow, "SMS FAILED      ");
-            }
+            strcpy(ui_data[target_fld].bottomRow, sms_ok ? (office_ok ? "SMS+OFFICE OK   " : "SMS OK,OFFICE NO")
+                                                         : (office_ok ? "SMS NO,OFFICE OK" : "SMS+OFFICE FAIL "));
             show_now = 1;
             xSemaphoreGive(i2cMutex);
           }
           // NOTE: modemMutex released by the single outer xSemaphoreGive below
 
-          vTaskDelay(3000 / portTICK_PERIOD_MS);
+          vTaskDelay(5000 / portTICK_PERIOD_MS);   // v6.64: 5 s (was 3): two results to read
           if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             strcpy(ui_data[target_fld].bottomRow, "YES ?           ");
             show_now = 1;
